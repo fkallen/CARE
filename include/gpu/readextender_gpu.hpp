@@ -3464,7 +3464,7 @@ struct GpuReadExtender{
             assert(soainputmateLengths.size() == size());
             assert(soainputAnchorLengths.size() == size());
             assert(soaNumEntriesPerTask.size() == size());
-            assert(soaNumEntriesPerTaskPrefixSum.size() == size());
+            assert(soaNumEntriesPerTaskPrefixSum.size() == size() + 1);
         }
 
         SoAExtensionTaskGpuData(cub::CachingDeviceAllocator& cubAlloc_) : SoAExtensionTaskGpuData(cubAlloc_, 0,0,0,0, (cudaStream_t)0) {}
@@ -3544,7 +3544,8 @@ struct GpuReadExtender{
             soatotalAnchorQualityScoresFlat.destroy();
             soatotalAnchorBeginInExtendedRead.destroy();
             soaNumEntriesPerTask.clear();
-            soaNumEntriesPerTaskPrefixSum.clear();
+            soaNumEntriesPerTaskPrefixSum.resizeUninitialized(1, stream);
+            cudaMemsetAsync(soaNumEntriesPerTaskPrefixSum.data(), 0, sizeof(int), stream); CUERR;
 
             entries = 0;
 
@@ -3571,7 +3572,7 @@ struct GpuReadExtender{
             soainputAnchorQualities.reserve(newsize * qualityPitchInBytes, stream);
             soainputAnchorLengths.reserve(newsize, stream);
             soaNumEntriesPerTask.reserve(newsize, stream);
-            soaNumEntriesPerTaskPrefixSum.reserve(newsize, stream);
+            soaNumEntriesPerTaskPrefixSum.reserve(newsize + 1, stream);
 
             reservedEntries = newsize;
 
@@ -3598,7 +3599,7 @@ struct GpuReadExtender{
             soainputAnchorQualities.resize(newsize * qualityPitchInBytes, stream);
             soainputAnchorLengths.resize(newsize, stream);
             soaNumEntriesPerTask.resize(newsize, stream);
-            soaNumEntriesPerTaskPrefixSum.resize(newsize, stream);
+            soaNumEntriesPerTaskPrefixSum.resize(newsize + 1, stream);
 
             entries = newsize;
             reservedEntries = std::max(entries, reservedEntries);
@@ -3666,7 +3667,7 @@ struct GpuReadExtender{
                 CachedDeviceUVector<int> newsoainputmateLengths(newsize, stream, *cubAllocator);
                 CachedDeviceUVector<int> newsoainputAnchorLengths(newsize, stream, *cubAllocator);
                 CachedDeviceUVector<int> newsoaNumEntriesPerTask(newsize, stream, *cubAllocator);
-                CachedDeviceUVector<int> newsoaNumEntriesPerTaskPrefixSum(newsize, stream, *cubAllocator);
+                CachedDeviceUVector<int> newsoaNumEntriesPerTaskPrefixSum(newsize + 1, stream, *cubAllocator);
 
                 helpers::call_copy_n_kernel(
                     thrust::make_zip_iterator(thrust::make_tuple(
@@ -3919,7 +3920,7 @@ struct GpuReadExtender{
                         soaNumEntriesPerTaskPrefixSum.data() + size() - 1
                     ),
                     soaNumEntriesPerTaskPrefixSum.data() + size(),
-                    rhs.size()
+                    rhs.size() + 1
                 ); CUERR;
             }
 
@@ -4048,7 +4049,7 @@ struct GpuReadExtender{
             auto gathersize = thrust::distance(d_mapBegin, d_mapEnd);
 
             selection.soaNumEntriesPerTask.resize(gathersize, stream);
-            selection.soaNumEntriesPerTaskPrefixSum.resize(gathersize, stream);
+            selection.soaNumEntriesPerTaskPrefixSum.resize(gathersize + 1, stream);
 
             selection.soainputdecodedMateRevC.resize(gathersize * decodedSequencePitchInBytes, stream);
             selection.soainputmateQualityScoresReversed.resize(gathersize * qualityPitchInBytes, stream);
@@ -4069,41 +4070,51 @@ struct GpuReadExtender{
             std::size_t tempbytes = 0;
             cudaError_t status = cudaSuccess;
 
-            status = cub::DeviceScan::ExclusiveSum(
+            status = cub::DeviceScan::InclusiveSum(
                 nullptr,
                 tempbytes,
                 selection.soaNumEntriesPerTask.begin(),
-                selection.soaNumEntriesPerTaskPrefixSum.begin(),
+                selection.soaNumEntriesPerTaskPrefixSum.begin() + 1,
                 gathersize,
                 stream
             );
             assert(status == cudaSuccess);
 
             CachedDeviceUVector<char> d_cubtemp(tempbytes, stream, *cubAllocator);
-            status = cub::DeviceScan::ExclusiveSum(
+            status = cub::DeviceScan::InclusiveSum(
                 d_cubtemp.data(),
                 tempbytes,
                 selection.soaNumEntriesPerTask.begin(),
-                selection.soaNumEntriesPerTaskPrefixSum.begin(),
+                selection.soaNumEntriesPerTaskPrefixSum.begin() + 1,
                 gathersize,
                 stream
             );
             assert(status == cudaSuccess);
             d_cubtemp.destroy();
 
+            cudaMemsetAsync(
+                selection.soaNumEntriesPerTaskPrefixSum.data(),
+                0, 
+                sizeof(int),
+                stream
+            ); CUERR;
+
             std::size_t irregularsize = 0;
             if(gathersize > 0){
-                CachedDeviceUVector<int> tmp(1, stream, *cubAllocator);
+                // CachedDeviceUVector<int> tmp(1, stream, *cubAllocator);
 
-                readextendergpukernels::vectorAddKernel<<<1,1, 0, stream>>>(
-                    selection.soaNumEntriesPerTaskPrefixSum.data() + gathersize - 1, 
-                    selection.soaNumEntriesPerTask.data() + gathersize - 1, 
-                    tmp.data(), 
-                    1
-                ); CUERR;
+                // readextendergpukernels::vectorAddKernel<<<1,1, 0, stream>>>(
+                //     selection.soaNumEntriesPerTaskPrefixSum.data() + gathersize - 1, 
+                //     selection.soaNumEntriesPerTask.data() + gathersize - 1, 
+                //     tmp.data(), 
+                //     1
+                // ); CUERR;
+
+                // int result = 0;
+                // cudaMemcpyAsync(&result, tmp.data(), sizeof(int), D2H, stream); CUERR;
 
                 int result = 0;
-                cudaMemcpyAsync(&result, tmp.data(), sizeof(int), D2H, stream); CUERR;
+                cudaMemcpyAsync(&result, selection.soaNumEntriesPerTaskPrefixSum.data() + gathersize, sizeof(int), D2H, stream); CUERR;
                 cudaStreamSynchronize(stream); CUERR;
                 irregularsize = result;
 
@@ -4196,7 +4207,7 @@ struct GpuReadExtender{
         ){
 
             CachedDeviceUVector<int> newNumEntriesPerTask(size(), stream, *cubAllocator);
-            CachedDeviceUVector<int> newNumEntriesPerTaskPrefixSum(size(), stream, *cubAllocator);
+            CachedDeviceUVector<int> newNumEntriesPerTaskPrefixSum(size() + 1, stream, *cubAllocator);
 
             readextendergpukernels::vectorAddKernel<<<SDIV(size(), 128), 128, 0, stream>>>(
                 d_addNumEntriesPerTask, 
@@ -4208,41 +4219,48 @@ struct GpuReadExtender{
             std::size_t tempbytes = 0;
             cudaError_t status = cudaSuccess;
 
-            status = cub::DeviceScan::ExclusiveSum(
+            status = cub::DeviceScan::InclusiveSum(
                 nullptr,
                 tempbytes,
                 newNumEntriesPerTask.begin(),
-                newNumEntriesPerTaskPrefixSum.begin(),
+                newNumEntriesPerTaskPrefixSum.begin() + 1,
                 size(),
                 stream
             );
             assert(status == cudaSuccess);
 
             CachedDeviceUVector<char> d_cubtemp(tempbytes, stream, *cubAllocator);
-            status = cub::DeviceScan::ExclusiveSum(
+            status = cub::DeviceScan::InclusiveSum(
                 d_cubtemp.data(),
                 tempbytes,
                 newNumEntriesPerTask.begin(),
-                newNumEntriesPerTaskPrefixSum.begin(),
+                newNumEntriesPerTaskPrefixSum.begin() + 1,
                 size(),
                 stream
             );
             assert(status == cudaSuccess);
             d_cubtemp.destroy();
 
-            std::size_t newirregularsize = 0;
-            {
-                CachedDeviceUVector<int> tmp(1, stream, *cubAllocator);
+            cudaMemsetAsync(
+                newNumEntriesPerTaskPrefixSum.data(),
+                0, 
+                sizeof(int),
+                stream
+            ); CUERR;
 
-                readextendergpukernels::vectorAddKernel<<<1,1, 0, stream>>>(
-                    newNumEntriesPerTaskPrefixSum.data() + size() - 1, 
-                    newNumEntriesPerTask.data() + size() - 1, 
-                    tmp.data(), 
-                    1
-                ); CUERR;
+            std::size_t newirregularsize = 0;
+            if(size() > 0){
+                // CachedDeviceUVector<int> tmp(1, stream, *cubAllocator);
+
+                // readextendergpukernels::vectorAddKernel<<<1,1, 0, stream>>>(
+                //     newNumEntriesPerTaskPrefixSum.data() + size() - 1, 
+                //     newNumEntriesPerTask.data() + size() - 1, 
+                //     tmp.data(), 
+                //     1
+                // ); CUERR;
 
                 int result = 0;
-                cudaMemcpyAsync(&result, tmp.data(), sizeof(int), D2H, stream); CUERR;
+                cudaMemcpyAsync(&result, newNumEntriesPerTaskPrefixSum.data() + size(), sizeof(int), D2H, stream); CUERR;
                 cudaStreamSynchronize(stream); CUERR;
 
                 newirregularsize = result;
@@ -6184,36 +6202,16 @@ struct GpuReadExtender{
 
         cudaEventRecord(gpuPairResultDataEvent, stream2); CUERR;
 
-        d_numCandidatesPerAnchor.resizeUninitialized(numFinishedTasks, stream);
-        d_numCandidatesPerAnchorPrefixSum.resizeUninitialized(numFinishedTasks + 1, stream);
-
-        cudaMemcpyAsync(
-            d_numCandidatesPerAnchor.data(),
-            finishedTasks4.soaNumEntriesPerTask.data(),
-            sizeof(int) * numFinishedTasks,
-            D2D,
-            stream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            d_numCandidatesPerAnchorPrefixSum.data(),
-            finishedTasks4.soaNumEntriesPerTaskPrefixSum.data(),
-            sizeof(int) * numFinishedTasks,
-            D2D,
-            stream
-        ); CUERR;
-
-        readextendergpukernels::vectorAddKernel<<<1,1, 0, stream>>>(
-            d_numCandidatesPerAnchorPrefixSum.data() + numFinishedTasks - 1, 
-            d_numCandidatesPerAnchor.data() + numFinishedTasks - 1, 
-            d_numCandidatesPerAnchorPrefixSum.data() + numFinishedTasks, 
-            1
-        ); CUERR;       
-
+        // readextendergpukernels::vectorAddKernel<<<1,1, 0, stream>>>(
+        //     finishedTasks4.soaNumEntriesPerTaskPrefixSum.data() + numFinishedTasks - 1, 
+        //     finishedTasks4.soaNumEntriesPerTask.data() + numFinishedTasks - 1, 
+        //     finishedTasks4.soaNumEntriesPerTaskPrefixSum.data() + numFinishedTasks, 
+        //     1
+        // ); CUERR;       
         
         cudaMemcpyAsync(
             h_numCandidates.data(),
-            d_numCandidatesPerAnchorPrefixSum.data() + numFinishedTasks,
+            finishedTasks4.soaNumEntriesPerTaskPrefixSum.data() + numFinishedTasks,
             sizeof(int),
             D2H,
             stream
@@ -6276,8 +6274,8 @@ struct GpuReadExtender{
         readextendergpukernels::segmentedIotaKernel<32><<<SDIV(threads, 128), 128, 0, stream>>>(
             indices1.data(),
             numFinishedTasks,
-            d_numCandidatesPerAnchor.data(),
-            d_numCandidatesPerAnchorPrefixSum.data()
+            finishedTasks4.soaNumEntriesPerTask.data(),
+            finishedTasks4.soaNumEntriesPerTaskPrefixSum.data()
         ); CUERR;
 
         *h_numAnchors = numFinishedTasks;
@@ -6288,8 +6286,8 @@ struct GpuReadExtender{
             d_alignment_nOps.data(),
             d_alignment_best_alignment_flags.data(),
             indices1.data(),
-            d_numCandidatesPerAnchor.data(),
-            d_numCandidatesPerAnchorPrefixSum.data(),
+            finishedTasks4.soaNumEntriesPerTask.data(),
+            finishedTasks4.soaNumEntriesPerTaskPrefixSum.data(),
             finishedTasks4.soainputAnchorLengths.data(),
             finishedTasks4.inputAnchorsEncoded.data(),
             nullptr, //anchor qualities
