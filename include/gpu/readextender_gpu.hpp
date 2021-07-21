@@ -23,6 +23,7 @@
 #include <gpu/cuda_block_select.cuh>
 #include <mystringview.hpp>
 #include <gpu/gpustringglueing.cuh>
+#include <gpu/memcpykernel.cuh>
 
 #include <algorithm>
 #include <vector>
@@ -6163,77 +6164,21 @@ struct GpuReadExtender{
         rawResults.h_gpugoodscores.resize(numFinishedTasks);
         rawResults.h_gpuMateHasBeenFound.resize(numFinishedTasks);
 
-        cudaMemcpyAsync(
-            rawResults.h_gpuabortReasons.data(),
-            finishedTasks4.abortReason.data(),
-            sizeof(extension::AbortReason) * numFinishedTasks,
-            D2H,
-            callerstream
-        ); CUERR;
+        using care::gpu::MemcpyParams;
 
-        cudaMemcpyAsync(
-            rawResults.h_gpudirections.data(),
-            finishedTasks4.direction.data(),
-            sizeof(extension::ExtensionDirection) * numFinishedTasks,
-            D2H,
-            callerstream
-        ); CUERR;
+        auto memcpyParams1 = cuda::std::tuple_cat(
+            cuda::std::make_tuple(MemcpyParams(rawResults.h_gpuabortReasons.data(), finishedTasks4.abortReason.data(), sizeof(extension::AbortReason) * numFinishedTasks)),
+            cuda::std::make_tuple(MemcpyParams(rawResults.h_gpudirections.data(), finishedTasks4.direction.data(), sizeof(extension::ExtensionDirection) * numFinishedTasks)),
+            cuda::std::make_tuple(MemcpyParams(rawResults.h_gpuiterations.data(), finishedTasks4.iteration.data(), sizeof(int) * numFinishedTasks)),
+            cuda::std::make_tuple(MemcpyParams(rawResults.h_gpuReadIds.data(), finishedTasks4.myReadId.data(), sizeof(read_number) * numFinishedTasks)),
+            cuda::std::make_tuple(MemcpyParams(rawResults.h_gpuMateReadIds.data(), finishedTasks4.mateReadId.data(), sizeof(read_number) * numFinishedTasks)),
+            cuda::std::make_tuple(MemcpyParams(rawResults.h_gpuAnchorLengths.data(), finishedTasks4.soainputAnchorLengths.data(), sizeof(int) * numFinishedTasks)),
+            cuda::std::make_tuple(MemcpyParams(rawResults.h_gpuMateLengths.data(), finishedTasks4.soainputmateLengths.data(), sizeof(int) * numFinishedTasks)),
+            cuda::std::make_tuple(MemcpyParams(rawResults.h_gpugoodscores.data(), finishedTasks4.goodscore.data(), sizeof(float) * numFinishedTasks)),
+            cuda::std::make_tuple(MemcpyParams(rawResults.h_gpuMateHasBeenFound.data(), finishedTasks4.mateHasBeenFound.data(), sizeof(bool) * numFinishedTasks))
+        );
 
-        cudaMemcpyAsync(
-            rawResults.h_gpuiterations.data(),
-            finishedTasks4.iteration.data(),
-            sizeof(int) * numFinishedTasks,
-            D2H,
-            callerstream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            rawResults.h_gpuReadIds.data(),
-            finishedTasks4.myReadId.data(),
-            sizeof(read_number) * numFinishedTasks,
-            D2H,
-            callerstream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            rawResults.h_gpuMateReadIds.data(),
-            finishedTasks4.mateReadId.data(),
-            sizeof(read_number) * numFinishedTasks,
-            D2H,
-            callerstream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            rawResults.h_gpuAnchorLengths.data(),
-            finishedTasks4.soainputAnchorLengths.data(),
-            sizeof(int) * numFinishedTasks,
-            D2H,
-            callerstream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            rawResults.h_gpuMateLengths.data(),
-            finishedTasks4.soainputmateLengths.data(),
-            sizeof(int) * numFinishedTasks,
-            D2H,
-            callerstream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            rawResults.h_gpugoodscores.data(),
-            finishedTasks4.goodscore.data(),
-            sizeof(float) * numFinishedTasks,
-            D2H,
-            callerstream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            rawResults.h_gpuMateHasBeenFound.data(),
-            finishedTasks4.mateHasBeenFound.data(),
-            sizeof(bool) * numFinishedTasks,
-            D2H,
-            callerstream
-        ); CUERR;
+        care::gpu::memcpyKernel<int><<<SDIV(numFinishedTasks, 256), 256, 0, callerstream>>>(memcpyParams1); CUERR;
        
         cudaEventSynchronize(h_numCandidatesEvent); CUERR;
 
@@ -6433,69 +6378,19 @@ struct GpuReadExtender{
         rawResults.h_pairResultMateHasBeenFound.resize(numResults);
         rawResults.h_pairResultMergedDifferentStrands.resize(numResults);
 
-        cudaMemcpyAsync(
-            rawResults.h_pairResultMateHasBeenFound.data(),
-            d_pairResultMateHasBeenFound.data(),
-            sizeof(bool) * numResults,
-            D2H,
-            callerstream
-        ); CUERR;
+        auto memcpyParams2 = cuda::std::tuple_cat(
+            cuda::std::make_tuple(MemcpyParams(rawResults.h_pairResultMateHasBeenFound.data(), d_pairResultMateHasBeenFound.data(), sizeof(bool) * numResults)),
+            cuda::std::make_tuple(MemcpyParams(rawResults.h_pairResultMergedDifferentStrands.data(), d_pairResultMergedDifferentStrands.data(), sizeof(bool) * numResults)),
+            cuda::std::make_tuple(MemcpyParams(rawResults.h_pairResultAnchorIsLR.data(), d_pairResultAnchorIsLR.data(), sizeof(bool) * numResults)),
+            cuda::std::make_tuple(MemcpyParams(rawResults.h_pairResultSequences.data(), d_pairResultSequences.data(), sizeof(char) * outputPitch * numResults)),
+            cuda::std::make_tuple(MemcpyParams(rawResults.h_pairResultQualities.data(), d_pairResultQualities.data(), sizeof(char) * outputPitch * numResults)),
+            cuda::std::make_tuple(MemcpyParams(rawResults.h_pairResultLengths.data(), d_pairResultLengths.data(), sizeof(int) * numResults)),
+            cuda::std::make_tuple(MemcpyParams(rawResults.h_pairResultRead1Begins.data(), d_pairResultRead1Begins.data(), sizeof(int) * numResults)),
+            cuda::std::make_tuple(MemcpyParams(rawResults.h_pairResultRead2Begins.data(), d_pairResultRead2Begins.data(), sizeof(int) * numResults))
+        );
 
-        cudaMemcpyAsync(
-            rawResults.h_pairResultMergedDifferentStrands.data(),
-            d_pairResultMergedDifferentStrands.data(),
-            sizeof(bool) * numResults,
-            D2H,
-            callerstream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            rawResults.h_pairResultAnchorIsLR.data(),
-            d_pairResultAnchorIsLR.data(),
-            sizeof(bool) * numResults,
-            D2H,
-            callerstream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            rawResults.h_pairResultSequences.data(),
-            d_pairResultSequences.data(),
-            sizeof(char) * numResults * outputPitch,
-            D2H,
-            callerstream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            rawResults.h_pairResultQualities.data(),
-            d_pairResultQualities.data(),
-            sizeof(char) * numResults * outputPitch,
-            D2H,
-            callerstream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            rawResults.h_pairResultLengths.data(),
-            d_pairResultLengths.data(),
-            sizeof(int) * numResults,
-            D2H,
-            callerstream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            rawResults.h_pairResultRead1Begins.data(),
-            d_pairResultRead1Begins.data(),
-            sizeof(int) * numResults,
-            D2H,
-            callerstream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            rawResults.h_pairResultRead2Begins.data(),
-            d_pairResultRead2Begins.data(),
-            sizeof(int) * numResults,
-            D2H,
-            callerstream
-        ); CUERR;
+        const int memcpyThreads = std::min(65536ul, (sizeof(char) * outputPitch * numResults) / sizeof(int));
+        care::gpu::memcpyKernel<int><<<SDIV(memcpyThreads, 256), 256, 0, callerstream>>>(memcpyParams2); CUERR;
 
         rawResults.outputpitch = outputPitch;
 
