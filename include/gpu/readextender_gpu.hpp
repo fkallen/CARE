@@ -1574,8 +1574,33 @@ namespace readextendergpukernels{
             atomicAdd(d_numPositionsNot4_out + 0, countNot4);
         }
     }
+
     
     //requires external shared memory of size (sizeof(int) * numTasks * 2) bytes;
+    template<int blocksize, int elementsPerThread>
+    __global__
+    void computeTaskSplitGatherIndicesSmallInputGetStaticSmemSizeKernel(
+        std::size_t* output
+    ){
+        using BlockLoad = cub::BlockLoad<int, blocksize, elementsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
+        using BlockRadixSort = cub::BlockRadixSort<int, blocksize, elementsPerThread, int>;
+        using BlockDiscontinuity = cub::BlockDiscontinuity<int, blocksize>;
+        using BlockStore = cub::BlockStore<int, blocksize, elementsPerThread, cub::BLOCK_STORE_WARP_TRANSPOSE>;
+        using BlockScan = cub::BlockScan<int, blocksize>;
+        using BlockExchange = cub::BlockExchange<int, blocksize, elementsPerThread>;
+
+        using TempType = union{
+            typename BlockLoad::TempStorage load;
+            typename BlockRadixSort::TempStorage sort;
+            typename BlockDiscontinuity::TempStorage discontinuity;
+            typename BlockStore::TempStorage store;
+            typename BlockScan::TempStorage scan;
+            typename BlockExchange::TempStorage exchange;
+        };
+
+        *output = sizeof(TempType);
+    }
+
     template<int blocksize, int elementsPerThread>
     __global__
     void computeTaskSplitGatherIndicesSmallInputKernel(
@@ -1616,7 +1641,6 @@ namespace readextendergpukernels{
         int* const sharedIndices = sharedCounts + numTasks;
 
         int numRuns = 0;
-
         int prefixsum[elementsPerThread];
 
         {
@@ -1676,6 +1700,7 @@ namespace readextendergpukernels{
         }
 
         //compute output offsets and perform split
+        
         int myCounts[elementsPerThread];
         int outputoffsets4[elementsPerThread];
         int outputoffsetsNot4[elementsPerThread];
@@ -1764,7 +1789,7 @@ namespace readextendergpukernels{
 
             }
         }
-    
+
         __syncthreads();
         if(threadIdx.x == 0){
             atomicAdd(d_numPositions4_out, numPos4);
@@ -2110,6 +2135,150 @@ namespace readextendergpukernels{
         }
     }
 
+    template<int blocksize>
+    __global__
+    void makePairResultsFromFinishedTasksDryRunKernel(
+        int numResults,
+        int* __restrict__ outputLengthUpperBounds,
+        const int* __restrict__ originalReadLengths,
+        const int* __restrict__ dataExtendedReadLengths,
+        const char* __restrict__ dataExtendedReadSequences,
+        const char* __restrict__ dataExtendedReadQualities,
+        const bool* __restrict__ dataMateHasBeenFound,
+        const float* __restrict__ dataGoodScores,
+        int inputPitch,
+        int insertSize,
+        int insertSizeStddev
+    ){
+        auto group = cg::this_thread_block();
+        const int numGroupsInGrid = (blockDim.x * gridDim.x) / group.size();
+        const int groupIdInGrid = (threadIdx.x + blockDim.x * blockIdx.x) / group.size();
+
+        auto computeRead2Begin = [&](int i){
+            if(dataMateHasBeenFound[i]){
+                return dataExtendedReadLengths[i] - originalReadLengths[i+1];
+            }else{
+                return -1;
+            }
+        };
+
+        auto mergelength = [&](int l, int r){
+            assert(l+1 == r);
+            assert(l % 2 == 0);
+
+            const int lengthR = dataExtendedReadLengths[r];
+
+            const int read2begin = computeRead2Begin(l);
+   
+            auto overlapstart = read2begin;
+
+            const int resultsize = overlapstart + lengthR;
+            
+            return resultsize;
+        };
+    
+        //process pair at position pairIdsToProcess[posInList] and store to result position posInList
+        for(int posInList = groupIdInGrid; posInList < numResults; posInList += numGroupsInGrid){
+            group.sync(); //reuse smem
+
+            const int p = posInList;
+
+            const int i0 = 4 * p + 0;
+            const int i1 = 4 * p + 1;
+            const int i2 = 4 * p + 2;
+            const int i3 = 4 * p + 3;
+
+            int* const myResultLengths = outputLengthUpperBounds + posInList;            
+
+            auto LRmatefoundfunc = [&](){
+                const int extendedReadLength3 = dataExtendedReadLengths[i3];
+                const int originalLength3 = originalReadLengths[i3];
+
+                int resultsize = mergelength(i0, i1);
+                if(extendedReadLength3 > originalLength3){
+                    resultsize += extendedReadLength3 - originalLength3;
+                }                
+
+                if(group.thread_rank() == 0){
+                    *myResultLengths = resultsize;
+                }
+            };
+
+            auto RLmatefoundfunc = [&](){
+                const int extendedReadLength1 = dataExtendedReadLengths[i1];
+                const int originalLength1 = originalReadLengths[i1];
+
+                const int mergedLength = mergelength(i2, i3);
+                int resultsize = mergedLength;
+                if(extendedReadLength1 > originalLength1){
+                    resultsize += extendedReadLength1 - originalLength1;
+                }
+                
+                if(group.thread_rank() == 0){
+                    *myResultLengths = resultsize;
+                }
+            };
+
+            if(dataMateHasBeenFound[i0] && dataMateHasBeenFound[i2]){
+                if(dataGoodScores[i0] < dataGoodScores[i2]){
+                    LRmatefoundfunc();
+                }else{
+                    RLmatefoundfunc();
+                }                
+            }else 
+            if(dataMateHasBeenFound[i0]){
+                LRmatefoundfunc();                
+            }else if(dataMateHasBeenFound[i2]){
+                RLmatefoundfunc();                
+            }else{
+                constexpr int minimumOverlap = 40;
+
+                int currentsize = 0;
+
+                const int extendedReadLength0 = dataExtendedReadLengths[i0];
+                const int extendedReadLength1 = dataExtendedReadLengths[i1];
+                const int extendedReadLength2 = dataExtendedReadLengths[i2];
+                const int extendedReadLength3 = dataExtendedReadLengths[i3];
+
+                const int originalLength1 = originalReadLengths[i1];
+                const int originalLength3 = originalReadLengths[i3];
+
+                //insert extensions of reverse complement of d3 at beginning
+                if(extendedReadLength3 > originalLength3){
+                    currentsize = (extendedReadLength3 - originalLength3);
+                }
+
+                //try to find overlap of d0 and revc(d2)
+                bool didMergeDifferentStrands = false;
+
+                if(extendedReadLength0 + extendedReadLength2 >= insertSize - insertSizeStddev + minimumOverlap){
+                    const int maxNumberOfPossibilities = 2*insertSizeStddev + 1;
+                    const int resultLengthUpperBound = insertSize - insertSizeStddev + maxNumberOfPossibilities;
+                    currentsize += resultLengthUpperBound;
+                    didMergeDifferentStrands = true;
+                }
+
+                if(didMergeDifferentStrands){
+
+                }else{
+                    currentsize += extendedReadLength0;
+                }
+
+                if(didMergeDifferentStrands && extendedReadLength1 > originalLength1){
+
+                    //insert extensions of d1 at end
+                    currentsize += (extendedReadLength1 - originalLength1);
+                }
+
+                if(group.thread_rank() == 0){
+                    *myResultLengths = currentsize;
+                }
+            }
+
+        }
+    }
+
+
     //requires external shared memory of 2*outputPitch per group in block
     template<int blocksize>
     __global__
@@ -2133,7 +2302,6 @@ namespace readextendergpukernels{
         int inputPitch,
         int insertSize,
         int insertSizeStddev
-        //int debugindex
     ){
         auto group = cg::this_thread_block();
         const int numGroupsInGrid = (blockDim.x * gridDim.x) / group.size();
@@ -2144,9 +2312,6 @@ namespace readextendergpukernels{
         char* const smemSequence = smemChars;
         char* const smemSequence2 = smemSequence + outputPitch;
         char* const smemQualities = smemSequence2; //alias
-
-        using BlockReduce = cub::BlockReduce<int, blocksize>;
-
 
         __shared__ typename gpu::MismatchRatioGlueDecider<blocksize>::TempStorage smemDecider;
 
@@ -2353,8 +2518,6 @@ namespace readextendergpukernels{
                 RLmatefoundfunc();                
             }else{
                 
-                //assert(false); //nope. kernel cannot handle this case
-
                 constexpr int minimumOverlap = 40;
                 constexpr float maxRelativeErrorInOverlap = 0.05;
 
@@ -2372,35 +2535,6 @@ namespace readextendergpukernels{
                 const int originalLength2 = originalReadLengths[i2];
                 const int originalLength3 = originalReadLengths[i3];
 
-                // if(group.thread_rank() == 0 && posInList == debugindex){
-                //     printf("d0 %d %d\n", extendedReadLength0, originalLength0);
-                //     for(int k = 0; k < extendedReadLength0; k++){
-                //         printf("%c", dataExtendedReadSequences[i0 * inputPitch + k]);
-                //     }
-                //     printf("\n");
-
-                //     printf("d1 %d %d\n", extendedReadLength1, originalLength1);
-                //     for(int k = 0; k < extendedReadLength1; k++){
-                //         printf("%c", dataExtendedReadSequences[i1 * inputPitch + k]);
-                //     }
-                //     printf("\n");
-
-                //     printf("d2 %d %d\n", extendedReadLength2, originalLength2);
-                //     for(int k = 0; k < extendedReadLength2; k++){
-                //         printf("%c", dataExtendedReadSequences[i2 * inputPitch + k]);
-                //     }
-                //     printf("\n");
-
-                //     printf("d3 %d %d\n", extendedReadLength3, originalLength3);
-                //     for(int k = 0; k < extendedReadLength3; k++){
-                //         printf("%c", dataExtendedReadSequences[i3 * inputPitch + k]);
-                //     }
-                //     printf("\n");
-
-                //     printf("read2begin %d\n", read2begin);
-                // }   
-                // group.sync();
-
                 //insert extensions of reverse complement of d3 at beginning
                 if(extendedReadLength3 > originalLength3){
 
@@ -2417,21 +2551,9 @@ namespace readextendergpukernels{
 
                     currentsize = (extendedReadLength3 - originalLength3);
                     read1begin = (extendedReadLength3 - originalLength3);
-
-                    // if(group.thread_rank() == 0 && posInList == debugindex){
-                    //     printf("d3ext begin\n");
-                    //     for(int k = 0; k < currentsize; k++){
-                    //         printf("%c", myResultSequence[k]);
-                    //     }
-                    //     printf("\n");
-                    // }
-
-
                 }
 
-                //try to find overlap of d0 and revc(d2)
-
-                
+                //try to find overlap of d0 and revc(d2)                
 
                 bool didMergeDifferentStrands = false;
 
@@ -2492,11 +2614,6 @@ namespace readextendergpukernels{
                     currentsize += extendedReadLength0;
                 }
 
-                // if(group.thread_rank() == 0 && posInList == debugindex){
-                //     printf("after merge different. read2begin = %d\n", read2begin);
-                // }
-                // group.sync();
-
                 if(didMergeDifferentStrands && extendedReadLength1 > originalLength1){
 
                     //insert extensions of d1 at end
@@ -2511,11 +2628,6 @@ namespace readextendergpukernels{
 
                     currentsize += (extendedReadLength1 - originalLength1);
                 }
-
-                // if(group.thread_rank() == 0 && posInList == debugindex){
-                //     printf("after done. read2begin = %d\n", read2begin);
-                // }
-                // group.sync();
 
                 if(group.thread_rank() == 0){
                     *myResultRead1Begins = read1begin;
@@ -3401,7 +3513,70 @@ namespace readextendergpukernels{
     }
 
 
+    struct ComputeTaskSplitGatherIndicesSmallInput{
 
+        std::size_t staticSharedMemory = 0;
+        std::size_t maxDynamicSharedMemory = 0;
+
+        ComputeTaskSplitGatherIndicesSmallInput(){
+            std::size_t* d_output;
+            cudaMalloc(&d_output, sizeof(std::size_t));
+
+            readextendergpukernels::computeTaskSplitGatherIndicesSmallInputGetStaticSmemSizeKernel<256,16><<<1, 1, 0, cudaStreamPerThread>>>(d_output); CUERR;
+
+            cudaMemcpyAsync(&staticSharedMemory, d_output, sizeof(std::size_t), D2H, cudaStreamPerThread); CUERR;
+            cudaStreamSynchronize(cudaStreamPerThread); CUERR;
+
+            cudaFree(d_output); CUERR;
+
+            int device = 0;
+            cudaGetDevice(&device); CUERR;
+
+            int smemoptin = 0;
+            cudaDeviceGetAttribute(&smemoptin, cudaDevAttrMaxSharedMemoryPerBlockOptin, device); CUERR;
+            
+            cudaFuncSetAttribute(
+                readextendergpukernels::computeTaskSplitGatherIndicesSmallInputKernel<256,16>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize, 
+                smemoptin - staticSharedMemory
+            ); CUERR;
+
+            maxDynamicSharedMemory = smemoptin - staticSharedMemory;
+        }
+
+        std::size_t getRequiredDynamicSharedMemory(int numTasks) const{
+            return sizeof(int) * numTasks * 2;
+        }
+
+        bool computationPossible(int numTasks) const{
+            return numTasks <= (256 * 16) && getRequiredDynamicSharedMemory(numTasks) <= maxDynamicSharedMemory;
+        }
+
+        void compute(
+            int numTasks,
+            int* d_positions4,
+            int* d_positionsNot4,
+            int* d_numPositions4_out,
+            int* d_numPositionsNot4_out,
+            const int* task_pairIds,
+            const int* task_ids,
+            const int* d_minmax_pairId,
+            cudaStream_t stream
+        ) const{
+
+            std::size_t smem = getRequiredDynamicSharedMemory(numTasks);
+            readextendergpukernels::computeTaskSplitGatherIndicesSmallInputKernel<256,16><<<1, 256, smem, stream>>>(
+                numTasks,
+                d_positions4,
+                d_positionsNot4,
+                d_numPositions4_out,
+                d_numPositionsNot4_out,
+                task_pairIds,
+                task_ids,
+                d_minmax_pairId
+            ); CUERR;
+        }
+    };
 
 }
 
@@ -3943,7 +4118,7 @@ struct GpuReadExtender{
                 id.data(),
                 abortReason.data(), 
                 iteration.data()
-            );
+            ); CUERR;
         }
 
         template<class FlagIter>
@@ -4102,17 +4277,6 @@ struct GpuReadExtender{
 
             std::size_t irregularsize = 0;
             if(gathersize > 0){
-                // CachedDeviceUVector<int> tmp(1, stream, *cubAllocator);
-
-                // readextendergpukernels::vectorAddKernel<<<1,1, 0, stream>>>(
-                //     selection.soaNumEntriesPerTaskPrefixSum.data() + gathersize - 1, 
-                //     selection.soaNumEntriesPerTask.data() + gathersize - 1, 
-                //     tmp.data(), 
-                //     1
-                // ); CUERR;
-
-                // int result = 0;
-                // cudaMemcpyAsync(&result, tmp.data(), sizeof(int), D2H, stream); CUERR;
 
                 int result = 0;
                 cudaMemcpyAsync(&result, selection.soaNumEntriesPerTaskPrefixSum.data() + gathersize, sizeof(int), D2H, stream); CUERR;
@@ -4173,7 +4337,7 @@ struct GpuReadExtender{
                 soatotalDecodedAnchorsFlat.data(),
                 selection.soatotalAnchorQualityScoresFlat.data(),
                 soatotalAnchorQualityScoresFlat.data()
-            );
+            ); CUERR;
 
         }
 
@@ -4251,15 +4415,6 @@ struct GpuReadExtender{
 
             std::size_t newirregularsize = 0;
             if(size() > 0){
-                // CachedDeviceUVector<int> tmp(1, stream, *cubAllocator);
-
-                // readextendergpukernels::vectorAddKernel<<<1,1, 0, stream>>>(
-                //     newNumEntriesPerTaskPrefixSum.data() + size() - 1, 
-                //     newNumEntriesPerTask.data() + size() - 1, 
-                //     tmp.data(), 
-                //     1
-                // ); CUERR;
-
                 int result = 0;
                 cudaMemcpyAsync(&result, newNumEntriesPerTaskPrefixSum.data() + size(), sizeof(int), D2H, stream); CUERR;
                 cudaStreamSynchronize(stream); CUERR;
@@ -4597,7 +4752,7 @@ struct GpuReadExtender{
             decodedSequencePitchInBytes,
             qualityPitchInBytes,
             encodedSequencePitchInInts
-        );
+        ); CUERR;
         
         // cudaStreamSynchronize(streams[0]); CUERR;
 
@@ -5345,7 +5500,7 @@ struct GpuReadExtender{
             d_sizeOfGapToMate.data(),
             minCoverageForExtension,
             maxextensionPerStep
-        );
+        ); CUERR;
 
         readextendergpukernels::computeExtensionStepQualityKernel<128><<<numTasks, 128, 0, stream>>>(
             d_goodscores.data(),
@@ -5363,7 +5518,7 @@ struct GpuReadExtender{
             d_candidateSequencesData.data(),
             multiMSA.d_columnProperties.data(),
             encodedSequencePitchInInts
-        );
+        ); CUERR;
 
         readextendergpukernels::flagFullyUsedCandidatesKernel<128>
         <<<numTasks, 128, 0, stream>>>(
@@ -5378,7 +5533,7 @@ struct GpuReadExtender{
             d_abortReasons.data(),
             d_outputMateHasBeenFound.data(),
             d_isFullyUsedCandidate.data()
-        );
+        ); CUERR;
 
         nvtx::push_range("gpuunpack", 3);
 
@@ -5854,60 +6009,68 @@ struct GpuReadExtender{
 
         cudaStream_t stream = streams[0];
 
-        CachedDeviceUVector<int> d_positions4(finishedTasks.size(), stream, *cubAllocator);
-        CachedDeviceUVector<int> d_positionsNot4(finishedTasks.size(), stream, *cubAllocator);
-        CachedDeviceUVector<int> d_numPositions(2, stream, *cubAllocator);
+        if(finishedTasks.size() > 0){
+            CachedDeviceUVector<int> d_positions4(finishedTasks.size(), stream, *cubAllocator);
+            CachedDeviceUVector<int> d_positionsNot4(finishedTasks.size(), stream, *cubAllocator);
+            CachedDeviceUVector<int> d_numPositions(2, stream, *cubAllocator);
 
-        helpers::call_fill_kernel_async(d_numPositions.data(), 2, 0, stream);
+            helpers::call_fill_kernel_async(d_numPositions.data(), 2, 0, stream);
 
-        if(finishedTasks.size() <= 4096){
-            computeSplitGatherIndicesOfFinishedTasksSmall(
-                d_positions4.data(), 
-                d_positionsNot4.data(), 
-                d_numPositions.data(), 
-                d_numPositions.data() + 1,
+            if(computeTaskSplitGatherIndicesSmallInput.computationPossible(finishedTasks.size())){
+                computeSplitGatherIndicesOfFinishedTasksSmall(
+                    d_positions4.data(), 
+                    d_positionsNot4.data(), 
+                    d_numPositions.data(), 
+                    d_numPositions.data() + 1,
+                    stream
+                );
+            }else{
+                computeSplitGatherIndicesOfFinishedTasksDefault(
+                    d_positions4.data(), 
+                    d_positionsNot4.data(), 
+                    d_numPositions.data(), 
+                    d_numPositions.data() + 1,
+                    stream
+                );
+            }
+
+            h_inputMateLengths.resize(2);
+            int* h_numPositions = h_inputMateLengths.data();
+
+            cudaMemcpyAsync(
+                h_numPositions,
+                d_numPositions.data(),
+                sizeof(int) * 2,
+                D2H,
                 stream
-            );
+            ); CUERR;
+
+            cudaStreamSynchronize(stream); CUERR;
+
+            if(h_numPositions[0] > 0){
+
+                SoAExtensionTaskGpuData gpufinishedTasks4 = finishedTasks.gather(
+                    d_positions4.data(), 
+                    d_positions4.data() + h_numPositions[0],
+                    streams[0]
+                );
+
+                SoAExtensionTaskGpuData gpufinishedTasksNot4 = finishedTasks.gather(
+                    d_positionsNot4.data(), 
+                    d_positionsNot4.data() + h_numPositions[1],
+                    streams[0]
+                );
+
+                std::swap(finishedTasks, gpufinishedTasksNot4);
+
+                return gpufinishedTasks4;
+            }else{
+                return SoAExtensionTaskGpuData(*cubAllocator); //empty. no finished tasks to process
+            }
         }else{
-            computeSplitGatherIndicesOfFinishedTasksDefault(
-                d_positions4.data(), 
-                d_positionsNot4.data(), 
-                d_numPositions.data(), 
-                d_numPositions.data() + 1,
-                stream
-            );
+            return SoAExtensionTaskGpuData(*cubAllocator); //empty. no finished tasks to process
         }
-
-        h_inputMateLengths.resize(2);
-        int* h_numPositions = h_inputMateLengths.data();
-
-        cudaMemcpyAsync(
-            h_numPositions,
-            d_numPositions.data(),
-            sizeof(int) * 2,
-            D2H,
-            stream
-        ); CUERR;
-
-        cudaStreamSynchronize(stream); CUERR;
-
-        SoAExtensionTaskGpuData gpufinishedTasks4 = finishedTasks.gather(
-            d_positions4.data(), 
-            d_positions4.data() + h_numPositions[0],
-            streams[0]
-        );
-
-        SoAExtensionTaskGpuData gpufinishedTasksNot4 = finishedTasks.gather(
-            d_positionsNot4.data(), 
-            d_positionsNot4.data() + h_numPositions[1],
-            streams[0]
-        );
-
-        std::swap(finishedTasks, gpufinishedTasksNot4);
-
-        return gpufinishedTasks4;
     }
-
 
     void computeSplitGatherIndicesOfFinishedTasksSmall(
         int* d_positions4, 
@@ -5916,8 +6079,13 @@ struct GpuReadExtender{
         int* d_numPositionsNot4,
         cudaStream_t stream
     ){
-        constexpr std::size_t maxproblemsize = 4096;
-        assert(finishedTasks.size() <= maxproblemsize);
+        assert(computeTaskSplitGatherIndicesSmallInput.computationPossible(finishedTasks.size()));
+
+        if(finishedTasks.size() == 0){
+            cudaMemsetAsync(d_numPositions4, 0, sizeof(int), stream);
+            helpers::call_fill_kernel_async(d_numPositionsNot4, 1, int(finishedTasks.size()), stream);
+            return;
+        }
 
         CachedDeviceUVector<int> d_minmax(2, stream, *cubAllocator);
 
@@ -5925,25 +6093,9 @@ struct GpuReadExtender{
             finishedTasks.pairId.data(),
             finishedTasks.size(),
             d_minmax.data()
-        );        
+        ); CUERR;       
 
-        h_anchorSequencesLength.resize(2); //pinned buffer which is repurposed
-
-        int* const h_minmax = h_anchorSequencesLength.data();
-
-        cudaMemcpyAsync(
-            h_minmax,
-            d_minmax.data(),
-            sizeof(int) * 2,
-            D2H,
-            stream
-        ); CUERR;
-
-        cudaStreamSynchronize(stream); CUERR;
-
-        std::size_t smem = sizeof(int) * finishedTasks.size() * 2;
-
-        readextendergpukernels::computeTaskSplitGatherIndicesSmallInputKernel<256,16><<<1, 256, smem, stream>>>(
+        computeTaskSplitGatherIndicesSmallInput.compute(
             finishedTasks.size(),
             d_positions4,
             d_positionsNot4,
@@ -5951,9 +6103,9 @@ struct GpuReadExtender{
             d_numPositionsNot4,
             finishedTasks.pairId.data(),
             finishedTasks.id.data(),
-            d_minmax.data()
-        ); CUERR;
-
+            d_minmax.data(),
+            stream
+        );
     }
 
 
@@ -5965,13 +6117,19 @@ struct GpuReadExtender{
         int* d_numPositionsNot4,
         cudaStream_t stream
     ){
+        if(finishedTasks.size() == 0){
+            cudaMemsetAsync(d_numPositions4, 0, sizeof(int), stream);
+            helpers::call_fill_kernel_async(d_numPositionsNot4, 1, int(finishedTasks.size()), stream);
+            return;
+        }
+
         CachedDeviceUVector<int> d_minmax(2, stream, *cubAllocator);
 
         readextendergpukernels::minmaxSingleBlockKernel<512><<<1, 512, 0, stream>>>(
             finishedTasks.pairId.data(),
             finishedTasks.size(),
             d_minmax.data()
-        );        
+        ); CUERR;
 
         h_anchorSequencesLength.resize(2); //pinned buffer which is repurposed
 
@@ -5998,7 +6156,7 @@ struct GpuReadExtender{
             thrust::make_constant_iterator(-h_minmax[0]),
             d_pairIds1.data(),
             finishedTasks.size()
-        );        
+        ); CUERR;
 
         readextendergpukernels::iotaKernel<<<SDIV(finishedTasks.size(), 128), 128, 0, stream>>>(
             d_indices1.begin(), 
@@ -6311,7 +6469,36 @@ struct GpuReadExtender{
         cudaEventRecord(events[0], stream); CUERR;
         cudaStreamWaitEvent(stream2, events[0], 0); CUERR;
 
-        //TODO in stream2, compute maximum pair result output size and use it as output pitch
+        const int numResults = numFinishedTasks / 4;
+
+        CachedDeviceUVector<int> d_pairResultLengths(numResults, stream2, *cubAllocator);
+
+        //in stream2, compute pair result output sizes and use them to determine required memory
+        readextendergpukernels::makePairResultsFromFinishedTasksDryRunKernel<128><<<numResults, 128, 0, stream2>>>(
+            numResults,
+            d_pairResultLengths.data(),
+            finishedTasks4.soainputAnchorLengths.data(), 
+            d_resultLengths.data(),
+            d_decodedConsensus.data(),
+            d_consensusQuality.data(),
+            finishedTasks4.mateHasBeenFound.data(),
+            finishedTasks4.goodscore.data(),
+            resultMSAColumnPitchInElements,
+            insertSize,
+            insertSizeStddev
+        ); CUERR;
+
+        h_anchorSequencesLength.resize(2); //pinned buffer which is repurposed
+
+        int* const h_minmax = h_anchorSequencesLength.data();
+
+        readextendergpukernels::minmaxSingleBlockKernel<512><<<1, 512, 0, stream2>>>(
+            d_pairResultLengths.data(),
+            numResults,
+            h_minmax
+        ); CUERR;
+
+        cudaEventRecord(h_numAnchorsEvent, stream2); CUERR;
 
         //replace positions which are covered by anchor and mate with the original data
         readextendergpukernels::applyOriginalReadsToExtendedReads<128,32>
@@ -6329,14 +6516,13 @@ struct GpuReadExtender{
             qualityPitchInBytes
         ); CUERR;
 
-        const int numResults = numFinishedTasks / 4;
+        cudaEventSynchronize(h_numAnchorsEvent); CUERR;
 
-        int outputPitch = 2048; //TODO see above
+        const int outputPitch = SDIV(h_minmax[1], 4) * 4; //round up maximum output size to 4 bytes
 
         CachedDeviceUVector<bool> d_pairResultAnchorIsLR(numResults, stream, *cubAllocator);
         CachedDeviceUVector<char> d_pairResultSequences(numResults * outputPitch, stream, *cubAllocator);
         CachedDeviceUVector<char> d_pairResultQualities(numResults * outputPitch, stream, *cubAllocator);
-        CachedDeviceUVector<int> d_pairResultLengths(numResults, stream, *cubAllocator);
         CachedDeviceUVector<int> d_pairResultRead1Begins(numResults, stream, *cubAllocator);
         CachedDeviceUVector<int> d_pairResultRead2Begins(numResults, stream, *cubAllocator);
         CachedDeviceUVector<bool> d_pairResultMateHasBeenFound(numResults, stream, *cubAllocator);
@@ -6364,7 +6550,7 @@ struct GpuReadExtender{
             resultMSAColumnPitchInElements,
             insertSize,
             insertSizeStddev
-        );
+        ); CUERR;
 
         cudaEventRecord(events[0], stream); CUERR;
         cudaStreamWaitEvent(callerstream, events[0], 0); CUERR;
@@ -6503,7 +6689,7 @@ struct GpuReadExtender{
             d_segmentIds,
             d_numElementsPerSegmentPrefixSum,
             numSegments
-        );
+        ); CUERR;
 
         cubInclusiveScan(
             d_segmentIds, 
@@ -7274,15 +7460,16 @@ struct GpuReadExtender{
 
     // -----
 
-
-
     CudaStream hostOutputStream{};
+
+    readextendergpukernels::ComputeTaskSplitGatherIndicesSmallInput computeTaskSplitGatherIndicesSmallInput{};
     
     std::array<CudaEvent, 1> events{};
     std::array<cudaStream_t, 4> streams{};
 
     SoAExtensionTaskGpuData tasks;
     SoAExtensionTaskGpuData finishedTasks;
+    
 
 };
 
