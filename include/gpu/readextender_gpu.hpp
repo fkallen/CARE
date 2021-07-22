@@ -2711,7 +2711,7 @@ namespace readextendergpukernels{
         }
     }
 
-    //output[map[i]] = input[i];
+
     template<class T, class U>
     __global__ 
     void setFirstSegmentIdsKernel(
@@ -3062,7 +3062,7 @@ namespace readextendergpukernels{
         int numIndices,
         const read_number* __restrict__ d_usedReadIdsIn,
         read_number* __restrict__ d_usedReadIdsOut,
-        int* __restrict__ segmentIdsOut,
+        //int* __restrict__ segmentIdsOut,
         const int* __restrict__ d_numUsedReadIdsPerAnchor,
         const int* __restrict__ inputSegmentOffsets,
         const int* __restrict__ outputSegmentOffsets
@@ -3081,7 +3081,7 @@ namespace readextendergpukernels{
                 //copy read id
                 d_usedReadIdsOut[outputOffset + i] = d_usedReadIdsIn[inputOffset + i];
                 //set new segment id
-                segmentIdsOut[outputOffset + i] = t;
+                //segmentIdsOut[outputOffset + i] = t;
             }
         }
     }
@@ -4646,31 +4646,23 @@ struct GpuReadExtender{
         d_candidateSequencesLength(cubAllocator_),    
         d_candidateReadIds(cubAllocator_),
         d_isPairedCandidate(cubAllocator_),
-        d_segmentIdsOfCandidates(cubAllocator_),
         d_alignment_overlaps(cubAllocator_),
         d_alignment_shifts(cubAllocator_),
         d_alignment_nOps(cubAllocator_),
         d_alignment_best_alignment_flags(cubAllocator_),
         d_numCandidatesPerAnchor(cubAllocator_),
         d_numCandidatesPerAnchorPrefixSum(cubAllocator_),
-        //d_inputanchormatedata(cubAllocator_),
         d_subjectSequencesDataDecoded(cubAllocator_),
         d_anchorQualityScores(cubAllocator_),
         d_anchorSequencesLength(cubAllocator_),
-        // d_anchorReadIds(cubAllocator_),
-        // d_mateReadIds(cubAllocator_),
-        // d_inputMateLengths(cubAllocator_),
-        // d_isPairedTask(cubAllocator_),
         d_subjectSequencesData(cubAllocator_),
         d_accumExtensionsLengths(cubAllocator_),
         d_usedReadIds(cubAllocator_),
         d_numUsedReadIdsPerAnchor(cubAllocator_),
         d_numUsedReadIdsPerAnchorPrefixSum(cubAllocator_),
-        //d_segmentIdsOfUsedReadIds(cubAllocator_),
         d_fullyUsedReadIds(cubAllocator_),
         d_numFullyUsedReadIdsPerAnchor(cubAllocator_),
         d_numFullyUsedReadIdsPerAnchorPrefixSum(cubAllocator_),
-        //d_segmentIdsOfFullyUsedReadIds(cubAllocator_),
         multiMSA(cubAllocator_),
         d_outputAnchors(cubAllocator_),
         d_outputAnchorQualities(cubAllocator_),
@@ -5035,24 +5027,10 @@ struct GpuReadExtender{
             firstStream
         );
 
-        CachedDeviceUVector<int> d_segmentIdsOfCandidates2(initialNumCandidates, firstStream, *cubAllocator);
-
-        helpers::call_fill_kernel_async(d_segmentIdsOfCandidates2.data(), initialNumCandidates, 0, firstStream);
-
-        setGpuSegmentIds(
-            d_segmentIdsOfCandidates2.data(),
-            numTasks,
-            initialNumCandidates,
-            d_numCandidatesPerAnchor2.data(),
-            d_numCandidatesPerAnchorPrefixSum2.data(),
-            firstStream
-        );
-
         cudaEventSynchronize(h_numCandidatesEvent); CUERR; //wait for h_numCandidates
    
         #ifdef DO_ONLY_REMOVE_MATE_IDS
             std::swap(d_candidateReadIds, d_candidateReadIds2);
-            std::swap(d_segmentIdsOfCandidates, d_segmentIdsOfCandidates2);
             std::swap(d_numCandidatesPerAnchor, d_numCandidatesPerAnchor2);
         #else
             int tmp1;
@@ -5065,19 +5043,8 @@ struct GpuReadExtender{
 
             *h_numFullyUsedReadIds = tmp1 + tmp2;
 
-            CachedDeviceUVector<int> d_segmentIdsOfFullyUsedReadIds(*h_numFullyUsedReadIds, firstStream, *cubAllocator);
-
-            setGpuSegmentIds(
-                d_segmentIdsOfFullyUsedReadIds.data(),
-                numTasks,
-                *h_numFullyUsedReadIds,
-                d_numFullyUsedReadIdsPerAnchor.data(),
-                d_numFullyUsedReadIdsPerAnchorPrefixSum.data(),
-                firstStream
-            );
-
             ThrustCachingAllocator<char> thrustCachingAllocator1(deviceId, cubAllocator, firstStream);
-            d_segmentIdsOfCandidates.resizeUninitialized(initialNumCandidates, firstStream);
+            
 
             //compute segmented set difference.  d_candidateReadIds = d_candidateReadIds2 \ d_usedReadIds
             auto d_candidateReadIds_end = GpuSegmentedSetOperation::set_difference(
@@ -5085,18 +5052,15 @@ struct GpuReadExtender{
                 d_candidateReadIds2.data(),
                 d_numCandidatesPerAnchor2.data(),
                 d_numCandidatesPerAnchorPrefixSum2.data(),
-                d_segmentIdsOfCandidates2.data(),
                 *h_numCandidates,
                 numTasks,
                 d_fullyUsedReadIds.data(),
                 d_numFullyUsedReadIdsPerAnchor.data(),
                 d_numFullyUsedReadIdsPerAnchorPrefixSum.data(),
-                d_segmentIdsOfFullyUsedReadIds.data(),
                 *h_numFullyUsedReadIds,
                 numTasks,        
                 d_candidateReadIds.data(),
                 d_numCandidatesPerAnchor.data(),
-                d_segmentIdsOfCandidates.data(),
                 numTasks,
                 firstStream
             );
@@ -5120,7 +5084,6 @@ struct GpuReadExtender{
         cudaEventRecord(h_candidateReadIdsEvent, hostOutputStream); CUERR;        
 
         d_numCandidatesPerAnchor2.destroy();
-        d_segmentIdsOfCandidates2.destroy();
         d_numCandidatesPerAnchorPrefixSum2.destroy();        
         
         cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.data(), 0, sizeof(int), firstStream); CUERR;
@@ -5132,13 +5095,7 @@ struct GpuReadExtender{
             firstStream
         );
 
-        //removeUsedIdsAndMateIds is a compaction step. check early exit.
-        // cudaEventSynchronize(h_numCandidatesEvent); CUERR;
-        // if(*h_numCandidates == 0){
-        //     setStateToFinished();
-        // }else{
-            setState(GpuReadExtender::State::BeforeComputePairFlags);
-        //}
+        setState(GpuReadExtender::State::BeforeComputePairFlags);
     }
 
     void computePairFlagsGpu() {
@@ -5273,6 +5230,16 @@ struct GpuReadExtender{
         assert(state == GpuReadExtender::State::BeforeAlignment);
 
         cudaStream_t stream = streams[0];
+
+        CachedDeviceUVector<int> d_segmentIdsOfCandidates(initialNumCandidates, stream, *cubAllocator);
+        setGpuSegmentIds(
+            d_segmentIdsOfCandidates.data(),
+            numTasks,
+            initialNumCandidates,
+            d_numCandidatesPerAnchor.data(),
+            d_numCandidatesPerAnchorPrefixSum.data(),
+            stream
+        );
 
 
         d_alignment_overlaps.resizeUninitialized(initialNumCandidates, stream);
@@ -5676,34 +5643,14 @@ struct GpuReadExtender{
 
         cudaStream_t stream = streams[0];
 
-        // setGpuSegmentIds(
-        //     d_segmentIdsOfCandidates.data(),
-        //     numTasks,
-        //     initialNumCandidates,
-        //     d_numCandidatesPerAnchor.data(),
-        //     d_numCandidatesPerAnchorPrefixSum.data(),
-        //     stream
-        // );
-
         cudaEventSynchronize(h_numCandidatesEvent); CUERR;
 
         {
 
             const int maxoutputsize = initialNumCandidates + *h_numUsedReadIds;
 
-            CachedDeviceUVector<int> d_segmentIdsOfUsedReadIds(*h_numUsedReadIds, stream, *cubAllocator);
-            setGpuSegmentIds(
-                d_segmentIdsOfUsedReadIds.data(),
-                numTasks,
-                *h_numUsedReadIds,
-                d_numUsedReadIdsPerAnchor.data(),
-                d_numUsedReadIdsPerAnchorPrefixSum.data(),
-                stream
-            );
-
             CachedDeviceUVector<read_number> d_newUsedReadIds(maxoutputsize, stream, *cubAllocator);
             CachedDeviceUVector<int> d_newNumUsedreadIdsPerAnchor(numTasks, stream, *cubAllocator);
-            CachedDeviceUVector<int> d_newSegmentIdsOfUsedReadIds(maxoutputsize, stream, *cubAllocator);
 
             ThrustCachingAllocator<char> thrustCachingAllocator1(deviceId, cubAllocator, stream);
 
@@ -5712,18 +5659,15 @@ struct GpuReadExtender{
                 d_candidateReadIds.data(),
                 d_numCandidatesPerAnchor.data(),
                 d_numCandidatesPerAnchorPrefixSum.data(),
-                d_segmentIdsOfCandidates.data(),
                 *h_numCandidates,
                 numTasks,
                 d_usedReadIds.data(),
                 d_numUsedReadIdsPerAnchor.data(),
                 d_numUsedReadIdsPerAnchorPrefixSum.data(),
-                d_segmentIdsOfUsedReadIds.data(),
                 *h_numUsedReadIds,
                 numTasks,        
                 d_newUsedReadIds.data(),
                 d_newNumUsedreadIdsPerAnchor.data(),
-                d_newSegmentIdsOfUsedReadIds.data(),
                 numTasks,
                 stream
             );
@@ -5731,10 +5675,8 @@ struct GpuReadExtender{
             int newsize = std::distance(d_newUsedReadIds.data(), d_newUsedReadIds_end);
 
             d_newUsedReadIds.erase(d_newUsedReadIds.begin() + newsize, d_newUsedReadIds.end(), stream);
-            d_newSegmentIdsOfUsedReadIds.erase(d_newSegmentIdsOfUsedReadIds.begin() + newsize, d_newSegmentIdsOfUsedReadIds.end(), stream);
 
             std::swap(d_usedReadIds, d_newUsedReadIds);
-            std::swap(d_segmentIdsOfUsedReadIds, d_newSegmentIdsOfUsedReadIds);
             std::swap(d_numUsedReadIdsPerAnchor, d_newNumUsedreadIdsPerAnchor);
 
             cubExclusiveSum(
@@ -5753,27 +5695,12 @@ struct GpuReadExtender{
             CachedDeviceUVector<read_number> d_currentFullyUsedReadIds(initialNumCandidates, stream, *cubAllocator);
             CachedDeviceUVector<int> d_currentNumFullyUsedreadIdsPerAnchor(numTasks, stream, *cubAllocator);
             CachedDeviceUVector<int> d_currentNumFullyUsedreadIdsPerAnchorPS(numTasks, stream, *cubAllocator);
-            CachedDeviceUVector<int> d_currentSegmentIdsOfFullyUsedReadIds(initialNumCandidates, stream, *cubAllocator);
             
-            auto candidatesAndSegmentIdsIn = thrust::make_zip_iterator(
-                thrust::make_tuple(
-                    d_candidateReadIds.data(),
-                    d_segmentIdsOfCandidates.data()
-                )
-            );
-
-            auto candidatesAndSegmentIdsOut = thrust::make_zip_iterator(
-                thrust::make_tuple(
-                    d_currentFullyUsedReadIds.data(),
-                    d_currentSegmentIdsOfFullyUsedReadIds.data()
-                )
-            );
-
             //make compact list of current fully used candidates
             cubSelectFlagged(
-                candidatesAndSegmentIdsIn,
+                d_candidateReadIds.data(),
                 d_isFullyUsedCandidate.data(),
-                candidatesAndSegmentIdsOut,
+                d_currentFullyUsedReadIds.data(),
                 h_numFullyUsedReadIds2.data(),
                 initialNumCandidates,
                 stream
@@ -5803,24 +5730,11 @@ struct GpuReadExtender{
             cudaEventSynchronize(h_numFullyUsedReadIds2Event); CUERR;
 
             d_currentFullyUsedReadIds.erase(d_currentFullyUsedReadIds.begin() + *h_numFullyUsedReadIds2, d_currentFullyUsedReadIds.end(), stream);
-            d_currentSegmentIdsOfFullyUsedReadIds.erase(d_currentSegmentIdsOfFullyUsedReadIds.begin() + *h_numFullyUsedReadIds2, d_currentSegmentIdsOfFullyUsedReadIds.end(), stream);
 
             const int maxoutputsize = *h_numFullyUsedReadIds2 + *h_numFullyUsedReadIds;
 
             CachedDeviceUVector<read_number> d_newFullyUsedReadIds(maxoutputsize, stream, *cubAllocator);
             CachedDeviceUVector<int> d_newNumFullyUsedreadIdsPerAnchor(numTasks, stream, *cubAllocator);
-            CachedDeviceUVector<int> d_newSegmentIdsOfFullyUsedReadIds(maxoutputsize, stream, *cubAllocator);
-
-            CachedDeviceUVector<int> d_segmentIdsOfFullyUsedReadIds(*h_numFullyUsedReadIds, stream, *cubAllocator);
-
-            setGpuSegmentIds(
-                d_segmentIdsOfFullyUsedReadIds.data(),
-                numTasks,
-                *h_numFullyUsedReadIds,
-                d_numFullyUsedReadIdsPerAnchor.data(),
-                d_numFullyUsedReadIdsPerAnchorPrefixSum.data(),
-                stream
-            );
 
             ThrustCachingAllocator<char> thrustCachingAllocator1(deviceId, cubAllocator, stream);
 
@@ -5829,18 +5743,15 @@ struct GpuReadExtender{
                 d_currentFullyUsedReadIds.data(),
                 d_currentNumFullyUsedreadIdsPerAnchor.data(),
                 d_currentNumFullyUsedreadIdsPerAnchorPS.data(),
-                d_currentSegmentIdsOfFullyUsedReadIds.data(),
                 *h_numFullyUsedReadIds2,
                 numTasks,
                 d_fullyUsedReadIds.data(),
                 d_numFullyUsedReadIdsPerAnchor.data(),
                 d_numFullyUsedReadIdsPerAnchorPrefixSum.data(),
-                d_segmentIdsOfFullyUsedReadIds.data(),
                 *h_numFullyUsedReadIds,
                 numTasks,        
                 d_newFullyUsedReadIds.data(),
                 d_newNumFullyUsedreadIdsPerAnchor.data(),
-                d_newSegmentIdsOfFullyUsedReadIds.data(),
                 numTasks,
                 stream
             );
@@ -5849,10 +5760,8 @@ struct GpuReadExtender{
             *h_numFullyUsedReadIds = newsize;
 
             d_newFullyUsedReadIds.erase(d_newFullyUsedReadIds.begin() + newsize, d_newFullyUsedReadIds.end(), stream);
-            d_newSegmentIdsOfFullyUsedReadIds.erase(d_newSegmentIdsOfFullyUsedReadIds.begin() + newsize, d_newSegmentIdsOfFullyUsedReadIds.end(), stream);
 
             std::swap(d_fullyUsedReadIds, d_newFullyUsedReadIds);
-            std::swap(d_segmentIdsOfFullyUsedReadIds, d_newSegmentIdsOfFullyUsedReadIds);
             std::swap(d_numFullyUsedReadIdsPerAnchor, d_newNumFullyUsedreadIdsPerAnchor);
 
             cubExclusiveSum(
@@ -5982,8 +5891,7 @@ struct GpuReadExtender{
 
             cudaEventSynchronize(h_numUsedReadIdsEvent); CUERR; //wait until h_numUsedReadIds is ready
 
-            CachedDeviceUVector<read_number> d_usedReadIds2(*h_numUsedReadIds, streams[0], *cubAllocator);
-            CachedDeviceUVector<int> d_segmentIdsOfUsedReadIds2(*h_numUsedReadIds, streams[0], *cubAllocator);        
+            CachedDeviceUVector<read_number> d_usedReadIds2(*h_numUsedReadIds, streams[0], *cubAllocator);      
 
             const int possibleNumWarps = newNumTasks;
             const int possibleNumBlocks = SDIV(possibleNumWarps, 128 / 32);
@@ -5994,7 +5902,6 @@ struct GpuReadExtender{
                 newNumTasks,
                 d_usedReadIds.data(),
                 d_usedReadIds2.data(),
-                d_segmentIdsOfUsedReadIds2.data(),
                 d_numUsedReadIdsPerAnchor2.data(),
                 d_numUsedReadIdsPerAnchorPrefixSum.data(), 
                 d_numUsedReadIdsPerAnchorPrefixSum2.data()
@@ -6003,7 +5910,6 @@ struct GpuReadExtender{
             std::swap(d_usedReadIds, d_usedReadIds2);
             std::swap(d_numUsedReadIdsPerAnchor, d_numUsedReadIdsPerAnchor2);
             std::swap(d_numUsedReadIdsPerAnchorPrefixSum, d_numUsedReadIdsPerAnchorPrefixSum2);
-            //std::swap(d_segmentIdsOfUsedReadIds, d_segmentIdsOfUsedReadIds2);
         }
 
         //update fully used ids
@@ -6039,7 +5945,6 @@ struct GpuReadExtender{
             cudaEventSynchronize(h_numFullyUsedReadIdsEvent); CUERR; //wait until h_numFullyUsedReadIds is ready
 
             CachedDeviceUVector<read_number> d_fullyUsedReadIds2(*h_numFullyUsedReadIds, streams[0], *cubAllocator);
-            CachedDeviceUVector<int> d_segmentIdsOfFullyUsedReadIds2(*h_numFullyUsedReadIds, streams[0], *cubAllocator); 
 
             const int possibleNumWarps = newNumTasks;
             const int possibleNumBlocks = SDIV(possibleNumWarps, 128 / 32);
@@ -6050,7 +5955,6 @@ struct GpuReadExtender{
                 newNumTasks,
                 d_fullyUsedReadIds.data(),
                 d_fullyUsedReadIds2.data(),
-                d_segmentIdsOfFullyUsedReadIds2.data(),
                 d_numFullyUsedReadIdsPerAnchor2.data(),
                 d_numFullyUsedReadIdsPerAnchorPrefixSum.data(), 
                 d_numFullyUsedReadIdsPerAnchorPrefixSum2.data()
@@ -6059,7 +5963,6 @@ struct GpuReadExtender{
             std::swap(d_fullyUsedReadIds, d_fullyUsedReadIds2);
             std::swap(d_numFullyUsedReadIdsPerAnchor, d_numFullyUsedReadIdsPerAnchor2);
             std::swap(d_numFullyUsedReadIdsPerAnchorPrefixSum, d_numFullyUsedReadIdsPerAnchorPrefixSum2);
-            //std::swap(d_segmentIdsOfFullyUsedReadIds, d_segmentIdsOfFullyUsedReadIds2);
 
         }
     }
@@ -6891,16 +6794,6 @@ struct GpuReadExtender{
 
         std::swap(d_candidateSequencesData, d_candidateSequencesData2);
         d_candidateSequencesData2.destroy();
-
-        setGpuSegmentIds(
-            d_segmentIdsOfCandidates.data(),
-            numTasks,
-            initialNumCandidates,
-            d_numCandidatesPerAnchor.data(),
-            d_numCandidatesPerAnchorPrefixSum.data(),
-            stream
-        );
-
     }
 
 
@@ -7044,15 +6937,6 @@ struct GpuReadExtender{
         // );
 
         // std::swap(d_candidateQualityScores, d_candidateQualities2);
-
-        setGpuSegmentIds(
-            d_segmentIdsOfCandidates.data(),
-            numTasks,
-            initialNumCandidates,
-            d_numCandidatesPerAnchor.data(),
-            d_numCandidatesPerAnchorPrefixSum.data(),
-            stream
-        );
     }
 
     void setStateToFinished(){
@@ -7415,7 +7299,6 @@ struct GpuReadExtender{
     CachedDeviceUVector<int> d_candidateSequencesLength{};    
     CachedDeviceUVector<read_number> d_candidateReadIds{};
     CachedDeviceUVector<bool> d_isPairedCandidate{};
-    CachedDeviceUVector<int> d_segmentIdsOfCandidates{};
     CachedDeviceUVector<int> d_alignment_overlaps{};
     CachedDeviceUVector<int> d_alignment_shifts{};
     CachedDeviceUVector<int> d_alignment_nOps{};
@@ -7440,14 +7323,9 @@ struct GpuReadExtender{
 
     // ----- input data
 
-    //CachedDeviceUVector<unsigned int> d_inputanchormatedata{};
     CachedDeviceUVector<char> d_subjectSequencesDataDecoded{};
     CachedDeviceUVector<char> d_anchorQualityScores{};
     CachedDeviceUVector<int> d_anchorSequencesLength{};
-    //CachedDeviceUVector<read_number> d_anchorReadIds{};
-    //CachedDeviceUVector<read_number> d_mateReadIds{};
-    //CachedDeviceUVector<int> d_inputMateLengths{};
-    //CachedDeviceUVector<bool> d_isPairedTask{};
     CachedDeviceUVector<unsigned int> d_subjectSequencesData{};
     CachedDeviceUVector<int> d_accumExtensionsLengths{};
 
@@ -7457,14 +7335,12 @@ struct GpuReadExtender{
     CachedDeviceUVector<read_number> d_usedReadIds{};
     CachedDeviceUVector<int> d_numUsedReadIdsPerAnchor{};
     CachedDeviceUVector<int> d_numUsedReadIdsPerAnchorPrefixSum{};
-    //CachedDeviceUVector<int> d_segmentIdsOfUsedReadIds{};
 
     PinnedBuffer<int> h_numUsedReadIds{};
 
     CachedDeviceUVector<read_number> d_fullyUsedReadIds{};
     CachedDeviceUVector<int> d_numFullyUsedReadIdsPerAnchor{};
     CachedDeviceUVector<int> d_numFullyUsedReadIdsPerAnchorPrefixSum{};
-    //CachedDeviceUVector<int> d_segmentIdsOfFullyUsedReadIds{};
 
     PinnedBuffer<int> h_numFullyUsedReadIds{};
     PinnedBuffer<int> h_numFullyUsedReadIds2{};
@@ -7482,30 +7358,6 @@ struct GpuReadExtender{
     CachedDeviceUVector<int> d_outputAnchorLengths{};
     CachedDeviceUVector<bool> d_isFullyUsedCandidate{};
     // -----
-
-    // ----- Pinned buffers for constructing output extended read pair from tasks
-    // PinnedBuffer<bool> h_pairResultAnchorIsLR{};
-    // PinnedBuffer<char> h_pairResultSequences{};
-    // PinnedBuffer<char> h_pairResultQualities{};
-    // PinnedBuffer<int> h_pairResultLengths{};
-    // PinnedBuffer<int> h_pairResultRead1Begins{};
-    // PinnedBuffer<int> h_pairResultRead2Begins{};
-    // PinnedBuffer<bool> h_pairResultMateHasBeenFound{};
-    // PinnedBuffer<bool> h_pairResultMergedDifferentStrands{};
-
-    // PinnedBuffer<int> h_numGpuPairIdsToProcess{};
-    // PinnedBuffer<int> h_gpuPairIdsToProcess{};
-
-
-    // PinnedBuffer<extension::AbortReason> h_gpuabortReasons{};
-    // PinnedBuffer<extension::ExtensionDirection> h_gpudirections{};
-    // PinnedBuffer<int> h_gpuiterations{};
-    // PinnedBuffer<read_number> h_gpuReadIds{};
-    // PinnedBuffer<read_number> h_gpuMateReadIds{};
-    // PinnedBuffer<int> h_gpuAnchorLengths{};
-    // PinnedBuffer<int> h_gpuMateLengths{};
-    // PinnedBuffer<float> h_gpugoodscores{};
-    // PinnedBuffer<bool> h_gpuMateHasBeenFound{};
 
 
     // ----- Ready-events for pinned outputs
