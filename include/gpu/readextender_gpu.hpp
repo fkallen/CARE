@@ -44,9 +44,7 @@
 #include <thrust/host_vector.h>
 
 
-#define DO_REMOVE_USED_IDS_AND_MATE_IDS_ON_GPU
-
-#define DO_ONLY_REMOVE_MATE_IDS
+//#define DO_ONLY_REMOVE_MATE_IDS
 
 
 
@@ -675,9 +673,9 @@ namespace readextendergpukernels{
         int gathersize,
         std::size_t decodedSequencePitchInBytes,
         std::size_t qualityPitchInBytes,
-        int* __restrict__ selection_soaNumEntriesPerTaskPrefixSum,
-        const int* __restrict__ soaNumEntriesPerTaskPrefixSum,
-        const int* __restrict__ soaNumEntriesPerTask,
+        int* __restrict__ selection_soaNumIterationResultsPerTaskPrefixSum,
+        const int* __restrict__ soaNumIterationResultsPerTaskPrefixSum,
+        const int* __restrict__ soaNumIterationResultsPerTask,
         int* __restrict__ selection_soatotalDecodedAnchorsLengths,
         const int* __restrict__ soatotalDecodedAnchorsLengths,
         int* __restrict__ selection_soatotalAnchorBeginInExtendedRead,
@@ -691,9 +689,9 @@ namespace readextendergpukernels{
             const std::size_t srcindex = *(d_mapBegin + i);
             const std::size_t destindex = i;
 
-            int destoffset = selection_soaNumEntriesPerTaskPrefixSum[destindex];
-            int srcoffset = soaNumEntriesPerTaskPrefixSum[srcindex];
-            int num = soaNumEntriesPerTask[srcindex];
+            int destoffset = selection_soaNumIterationResultsPerTaskPrefixSum[destindex];
+            int srcoffset = soaNumIterationResultsPerTaskPrefixSum[srcindex];
+            int num = soaNumIterationResultsPerTask[srcindex];
 
             for(int k = threadIdx.x; k < num; k += blockDim.x){
                 selection_soatotalDecodedAnchorsLengths[destoffset + k] 
@@ -732,8 +730,8 @@ namespace readextendergpukernels{
         char* __restrict__ newsoatotalAnchorQualityScoresFlat,
         int* __restrict__ newsoatotalDecodedAnchorsLengths,
         int* __restrict__ newsoatotalAnchorBeginInExtendedRead,
-        const int* __restrict__ soaNumEntriesPerTask,
-        const int* __restrict__ soaNumEntriesPerTaskPrefixSum,
+        const int* __restrict__ soaNumIterationResultsPerTask,
+        const int* __restrict__ soaNumIterationResultsPerTaskPrefixSum,
         const int* __restrict__ soatotalDecodedAnchorsLengths,
         const int* __restrict__ soatotalAnchorBeginInExtendedRead,
         const char* __restrict__ soatotalDecodedAnchorsFlat,
@@ -747,8 +745,8 @@ namespace readextendergpukernels{
     ){
         for(int i = blockIdx.x; i < numTasks; i += gridDim.x){
             //copy current data to new buffer
-            const int currentnum = soaNumEntriesPerTask[i];
-            const int currentoffset = soaNumEntriesPerTaskPrefixSum[i];
+            const int currentnum = soaNumIterationResultsPerTask[i];
+            const int currentoffset = soaNumIterationResultsPerTaskPrefixSum[i];
 
             const int newoffset = newNumEntriesPerTaskPrefixSum[i];
 
@@ -800,8 +798,8 @@ namespace readextendergpukernels{
         int insertSizeStddev,
         bool* __restrict__ d_flags,
         const int* __restrict__ iteration,
-        const int* __restrict__ soaNumEntriesPerTask,
-        const int* __restrict__ soaNumEntriesPerTaskPrefixSum,
+        const int* __restrict__ soaNumIterationResultsPerTask,
+        const int* __restrict__ soaNumIterationResultsPerTaskPrefixSum,
         const int* __restrict__ soatotalAnchorBeginInExtendedRead,
         const int* __restrict__ soainputmateLengths,
         const extension::AbortReason* __restrict__ abortReason,
@@ -811,8 +809,8 @@ namespace readextendergpukernels{
         const int stride = blockDim.x * gridDim.x;
 
         for(int i = tid; i < numTasks; i+= stride){
-            const int num = soaNumEntriesPerTask[i];
-            const int offset = soaNumEntriesPerTaskPrefixSum[i];
+            const int num = soaNumIterationResultsPerTask[i];
+            const int offset = soaNumIterationResultsPerTaskPrefixSum[i];
             const int accumExtensionLength = num > 0 ? soatotalAnchorBeginInExtendedRead[offset + num - 1] : 0;
 
             d_flags[i] = (iteration[i] < insertSize 
@@ -983,8 +981,8 @@ namespace readextendergpukernels{
         int numTasks,
         std::size_t qualityPitchInBytes,
         std::size_t decodedSequencePitchInBytes,
-        const int* __restrict__ soaNumEntriesPerTask,
-        const int* __restrict__ soaNumEntriesPerTaskPrefixSum,
+        const int* __restrict__ soaNumIterationResultsPerTask,
+        const int* __restrict__ soaNumIterationResultsPerTaskPrefixSum,
         int* __restrict__ d_accumExtensionsLengths,
         int* __restrict__ d_anchorSequencesLength,
         char* __restrict__ d_anchorQualityScores,
@@ -1005,8 +1003,8 @@ namespace readextendergpukernels{
         const int numGroups = stride / groupsize;
 
         for(int i = tid; i < numTasks; i += stride){
-            const int num = soaNumEntriesPerTask[i];
-            const int offset = soaNumEntriesPerTaskPrefixSum[i];
+            const int num = soaNumIterationResultsPerTask[i];
+            const int offset = soaNumIterationResultsPerTaskPrefixSum[i];
             if(num == 0){
                 d_accumExtensionsLengths[i] = 0;
                 d_anchorSequencesLength[i] = soainputAnchorLengths[i];
@@ -1017,8 +1015,8 @@ namespace readextendergpukernels{
         }
 
         for(int i = groupId; i < numTasks; i += numGroups){
-            const int num = soaNumEntriesPerTask[i];
-            const int offset = soaNumEntriesPerTaskPrefixSum[i];
+            const int num = soaNumIterationResultsPerTask[i];
+            const int offset = soaNumIterationResultsPerTaskPrefixSum[i];
             if(num == 0){
                 for(int k = group.thread_rank(); k < qualityPitchInBytes; k += group.size()){
                     d_anchorQualityScores[qualityPitchInBytes * i + k]
@@ -3286,8 +3284,8 @@ namespace readextendergpukernels{
         char* __restrict__ inputAnchorsDecoded,// assgdf
         char* __restrict__ inputAnchorQualities,// assgdf
         int* __restrict__ inputAnchorLengths,// assgdf
-        int* __restrict__ soaNumEntriesPerTask,
-        int* __restrict__ soaNumEntriesPerTaskPrefixSum,
+        int* __restrict__ soaNumIterationResultsPerTask,
+        int* __restrict__ soaNumIterationResultsPerTaskPrefixSum,
         int decodedSequencePitchInBytes,
         int qualityPitchInBytes,
         int encodedSequencePitchInInts
@@ -3319,8 +3317,8 @@ namespace readextendergpukernels{
             iteration[t] = 0;
             goodscore[t] = 0.0f;
             abortReason[t] = extension::AbortReason::None;
-            soaNumEntriesPerTask[t] = 0;
-            soaNumEntriesPerTaskPrefixSum[t] = 0;
+            soaNumIterationResultsPerTask[t] = 0;
+            soaNumIterationResultsPerTaskPrefixSum[t] = 0;
 
             if(id == 0){
                 d_anchorReadIds[t] = d_readpair_readIds[2 * inputPairId + 0];
@@ -3622,8 +3620,19 @@ struct GpuReadExtender{
         CachedDeviceUVector<char> soatotalDecodedAnchorsFlat{};
         CachedDeviceUVector<char> soatotalAnchorQualityScoresFlat{};
         CachedDeviceUVector<int> soatotalAnchorBeginInExtendedRead{};
-        CachedDeviceUVector<int> soaNumEntriesPerTask{};
-        CachedDeviceUVector<int> soaNumEntriesPerTaskPrefixSum{};
+        CachedDeviceUVector<int> soaNumIterationResultsPerTask{};
+        CachedDeviceUVector<int> soaNumIterationResultsPerTaskPrefixSum{};
+
+        CachedDeviceUVector<read_number> d_usedReadIds{};
+        CachedDeviceUVector<int> d_numUsedReadIdsPerTask{};
+        CachedDeviceUVector<int> d_numUsedReadIdsPerTaskPrefixSum{};
+
+        CachedDeviceUVector<read_number> d_fullyUsedReadIds{};
+        CachedDeviceUVector<int> d_numFullyUsedReadIdsPerTask{};
+        CachedDeviceUVector<int> d_numFullyUsedReadIdsPerTaskPrefixSum{};
+
+
+
 
         void consistencyCheck() const{
             assert(size() == entries);
@@ -3639,8 +3648,13 @@ struct GpuReadExtender{
             assert(direction.size() == size());
             assert(soainputmateLengths.size() == size());
             assert(soainputAnchorLengths.size() == size());
-            assert(soaNumEntriesPerTask.size() == size());
-            assert(soaNumEntriesPerTaskPrefixSum.size() == size() + 1);
+            assert(soaNumIterationResultsPerTask.size() == size());
+            assert(soaNumIterationResultsPerTaskPrefixSum.size() == size() + 1);
+
+            // assert(d_numUsedReadIdsPerTask.size() == size());
+            // assert(d_numUsedReadIdsPerTaskPrefixSum.size() == size());
+            // assert(d_numFullyUsedReadIdsPerTask.size() == size());
+            // assert(d_numFullyUsedReadIdsPerTaskPrefixSum.size() == size());
         }
 
         SoAExtensionTaskGpuData(cub::CachingDeviceAllocator& cubAlloc_) : SoAExtensionTaskGpuData(cubAlloc_, 0,0,0,0, (cudaStream_t)0) {}
@@ -3679,8 +3693,14 @@ struct GpuReadExtender{
                 soatotalDecodedAnchorsFlat{cubAlloc_},
                 soatotalAnchorQualityScoresFlat{cubAlloc_},
                 soatotalAnchorBeginInExtendedRead{cubAlloc_},
-                soaNumEntriesPerTask{cubAlloc_},
-                soaNumEntriesPerTaskPrefixSum{cubAlloc_}
+                soaNumIterationResultsPerTask{cubAlloc_},
+                soaNumIterationResultsPerTaskPrefixSum{cubAlloc_},
+                d_usedReadIds{cubAlloc_},
+                d_numUsedReadIdsPerTask{cubAlloc_},
+                d_numUsedReadIdsPerTaskPrefixSum{cubAlloc_},
+                d_fullyUsedReadIds{cubAlloc_},
+                d_numFullyUsedReadIdsPerTask{cubAlloc_},
+                d_numFullyUsedReadIdsPerTaskPrefixSum{cubAlloc_}
         {
             cudaGetDevice(&deviceId); CUERR;
             resize(size, stream);
@@ -3719,9 +3739,9 @@ struct GpuReadExtender{
             soatotalDecodedAnchorsFlat.destroy();
             soatotalAnchorQualityScoresFlat.destroy();
             soatotalAnchorBeginInExtendedRead.destroy();
-            soaNumEntriesPerTask.clear();
-            soaNumEntriesPerTaskPrefixSum.resizeUninitialized(1, stream);
-            cudaMemsetAsync(soaNumEntriesPerTaskPrefixSum.data(), 0, sizeof(int), stream); CUERR;
+            soaNumIterationResultsPerTask.clear();
+            soaNumIterationResultsPerTaskPrefixSum.resizeUninitialized(1, stream);
+            cudaMemsetAsync(soaNumIterationResultsPerTaskPrefixSum.data(), 0, sizeof(int), stream); CUERR;
 
             entries = 0;
 
@@ -3747,8 +3767,8 @@ struct GpuReadExtender{
             soainputAnchorsDecoded.reserve(newsize * decodedSequencePitchInBytes, stream);
             soainputAnchorQualities.reserve(newsize * qualityPitchInBytes, stream);
             soainputAnchorLengths.reserve(newsize, stream);
-            soaNumEntriesPerTask.reserve(newsize, stream);
-            soaNumEntriesPerTaskPrefixSum.reserve(newsize + 1, stream);
+            soaNumIterationResultsPerTask.reserve(newsize, stream);
+            soaNumIterationResultsPerTaskPrefixSum.reserve(newsize + 1, stream);
 
             reservedEntries = newsize;
 
@@ -3774,8 +3794,8 @@ struct GpuReadExtender{
             soainputAnchorsDecoded.resize(newsize * decodedSequencePitchInBytes, stream);
             soainputAnchorQualities.resize(newsize * qualityPitchInBytes, stream);
             soainputAnchorLengths.resize(newsize, stream);
-            soaNumEntriesPerTask.resize(newsize, stream);
-            soaNumEntriesPerTaskPrefixSum.resize(newsize + 1, stream);
+            soaNumIterationResultsPerTask.resize(newsize, stream);
+            soaNumIterationResultsPerTaskPrefixSum.resize(newsize + 1, stream);
 
             entries = newsize;
             reservedEntries = std::max(entries, reservedEntries);
@@ -3820,8 +3840,8 @@ struct GpuReadExtender{
             soatotalDecodedAnchorsFlat.append(rhs.soatotalDecodedAnchorsFlat.data(), rhs.soatotalDecodedAnchorsFlat.data() + rhs.soatotalDecodedAnchorsFlat.size(), stream);
             soatotalAnchorQualityScoresFlat.append(rhs.soatotalAnchorQualityScoresFlat.data(), rhs.soatotalAnchorQualityScoresFlat.data() + rhs.soatotalAnchorQualityScoresFlat.size(), stream);
             soatotalAnchorBeginInExtendedRead.append(rhs.soatotalAnchorBeginInExtendedRead.data(), rhs.soatotalAnchorBeginInExtendedRead.data() + rhs.soatotalAnchorBeginInExtendedRead.size(), stream);
-            soaNumEntriesPerTask.append(rhs.soaNumEntriesPerTask.data(), rhs.soaNumEntriesPerTask.data() + rhs.soaNumEntriesPerTask.size(), stream);
-            soaNumEntriesPerTaskPrefixSum.append(rhs.soaNumEntriesPerTaskPrefixSum.data(), rhs.soaNumEntriesPerTaskPrefixSum.data() + rhs.soaNumEntriesPerTaskPrefixSum.size(), stream);
+            soaNumIterationResultsPerTask.append(rhs.soaNumIterationResultsPerTask.data(), rhs.soaNumIterationResultsPerTask.data() + rhs.soaNumIterationResultsPerTask.size(), stream);
+            soaNumIterationResultsPerTaskPrefixSum.append(rhs.soaNumIterationResultsPerTaskPrefixSum.data(), rhs.soaNumIterationResultsPerTaskPrefixSum.data() + rhs.soaNumIterationResultsPerTaskPrefixSum.size(), stream);
             #else 
 
             //cudaDeviceSynchronize(); CUERR;
@@ -3842,8 +3862,8 @@ struct GpuReadExtender{
                 CachedDeviceUVector<extension::ExtensionDirection> newdirection(newsize, stream, *cubAllocator);
                 CachedDeviceUVector<int> newsoainputmateLengths(newsize, stream, *cubAllocator);
                 CachedDeviceUVector<int> newsoainputAnchorLengths(newsize, stream, *cubAllocator);
-                CachedDeviceUVector<int> newsoaNumEntriesPerTask(newsize, stream, *cubAllocator);
-                CachedDeviceUVector<int> newsoaNumEntriesPerTaskPrefixSum(newsize + 1, stream, *cubAllocator);
+                CachedDeviceUVector<int> newsoaNumIterationResultsPerTask(newsize, stream, *cubAllocator);
+                CachedDeviceUVector<int> newsoaNumIterationResultsPerTaskPrefixSum(newsize + 1, stream, *cubAllocator);
 
                 helpers::call_copy_n_kernel(
                     thrust::make_zip_iterator(thrust::make_tuple(
@@ -3901,8 +3921,8 @@ struct GpuReadExtender{
                         direction.data(),
                         soainputmateLengths.data(),
                         soainputAnchorLengths.data(),
-                        soaNumEntriesPerTask.data(),
-                        soaNumEntriesPerTaskPrefixSum.data()
+                        soaNumIterationResultsPerTask.data(),
+                        soaNumIterationResultsPerTaskPrefixSum.data()
                     )),
                     size(),
                     thrust::make_zip_iterator(thrust::make_tuple(
@@ -3910,8 +3930,8 @@ struct GpuReadExtender{
                         newdirection.data(),
                         newsoainputmateLengths.data(),
                         newsoainputAnchorLengths.data(),
-                        newsoaNumEntriesPerTask.data(),
-                        newsoaNumEntriesPerTaskPrefixSum.data()
+                        newsoaNumIterationResultsPerTask.data(),
+                        newsoaNumIterationResultsPerTaskPrefixSum.data()
                     )),
                     stream
                 );                
@@ -3922,8 +3942,8 @@ struct GpuReadExtender{
                         rhs.direction.data(),
                         rhs.soainputmateLengths.data(),
                         rhs.soainputAnchorLengths.data(),
-                        rhs.soaNumEntriesPerTask.data(),
-                        rhs.soaNumEntriesPerTaskPrefixSum.data()
+                        rhs.soaNumIterationResultsPerTask.data(),
+                        rhs.soaNumIterationResultsPerTaskPrefixSum.data()
                     )),
                     rhs.size(),
                     thrust::make_zip_iterator(thrust::make_tuple(
@@ -3931,8 +3951,8 @@ struct GpuReadExtender{
                         newdirection.data() + size(),
                         newsoainputmateLengths.data() + size(),
                         newsoainputAnchorLengths.data() + size(),
-                        newsoaNumEntriesPerTask.data() + size(),
-                        newsoaNumEntriesPerTaskPrefixSum.data() + size()
+                        newsoaNumIterationResultsPerTask.data() + size(),
+                        newsoaNumIterationResultsPerTaskPrefixSum.data() + size()
                     )),
                     stream
                 );
@@ -3949,8 +3969,8 @@ struct GpuReadExtender{
                 std::swap(direction, newdirection);
                 std::swap(soainputmateLengths, newsoainputmateLengths);
                 std::swap(soainputAnchorLengths, newsoainputAnchorLengths);
-                std::swap(soaNumEntriesPerTask, newsoaNumEntriesPerTask);
-                std::swap(soaNumEntriesPerTaskPrefixSum, newsoaNumEntriesPerTaskPrefixSum);
+                std::swap(soaNumIterationResultsPerTask, newsoaNumIterationResultsPerTask);
+                std::swap(soaNumIterationResultsPerTaskPrefixSum, newsoaNumIterationResultsPerTaskPrefixSum);
 
                 newpairedEnd.destroy();
                 newmateHasBeenFound.destroy();
@@ -3964,8 +3984,8 @@ struct GpuReadExtender{
                 newdirection.destroy();
                 newsoainputmateLengths.destroy();
                 newsoainputAnchorLengths.destroy();
-                newsoaNumEntriesPerTask.destroy();
-                newsoaNumEntriesPerTaskPrefixSum.destroy();
+                newsoaNumIterationResultsPerTask.destroy();
+                newsoaNumIterationResultsPerTaskPrefixSum.destroy();
 
                 CachedDeviceUVector<unsigned int> newinputEncodedMate(newsize * encodedSequencePitchInInts, stream, *cubAllocator);
                 CachedDeviceUVector<unsigned int> newinputAnchorsEncoded(newsize * encodedSequencePitchInInts, stream, *cubAllocator);
@@ -4090,12 +4110,12 @@ struct GpuReadExtender{
             if(entries > 0 && rhs.entries > 0){
 
                 readextendergpukernels::vectorAddConstantKernel<<<SDIV(rhs.size(), 128), 128, 0, stream>>>(
-                    soaNumEntriesPerTaskPrefixSum.data() + size(), 
+                    soaNumIterationResultsPerTaskPrefixSum.data() + size(), 
                     readextendergpukernels::makeConstantSumIterator<int>(
-                        soaNumEntriesPerTask.data() + size() - 1, 
-                        soaNumEntriesPerTaskPrefixSum.data() + size() - 1
+                        soaNumIterationResultsPerTask.data() + size() - 1, 
+                        soaNumIterationResultsPerTaskPrefixSum.data() + size() - 1
                     ),
-                    soaNumEntriesPerTaskPrefixSum.data() + size(),
+                    soaNumIterationResultsPerTaskPrefixSum.data() + size(),
                     rhs.size() + 1
                 ); CUERR;
             }
@@ -4224,8 +4244,8 @@ struct GpuReadExtender{
 
             auto gathersize = thrust::distance(d_mapBegin, d_mapEnd);
 
-            selection.soaNumEntriesPerTask.resize(gathersize, stream);
-            selection.soaNumEntriesPerTaskPrefixSum.resize(gathersize + 1, stream);
+            selection.soaNumIterationResultsPerTask.resize(gathersize, stream);
+            selection.soaNumIterationResultsPerTaskPrefixSum.resize(gathersize + 1, stream);
 
             selection.soainputdecodedMateRevC.resize(gathersize * decodedSequencePitchInBytes, stream);
             selection.soainputmateQualityScoresReversed.resize(gathersize * qualityPitchInBytes, stream);
@@ -4236,8 +4256,8 @@ struct GpuReadExtender{
             selection.inputAnchorsEncoded.resize(gathersize * encodedSequencePitchInInts, stream);
 
             helpers::call_compact_kernel_async(
-                selection.soaNumEntriesPerTask.begin(),
-                soaNumEntriesPerTask.begin(),
+                selection.soaNumIterationResultsPerTask.begin(),
+                soaNumIterationResultsPerTask.begin(),
                 d_mapBegin,
                 gathersize,
                 stream
@@ -4249,8 +4269,8 @@ struct GpuReadExtender{
             status = cub::DeviceScan::InclusiveSum(
                 nullptr,
                 tempbytes,
-                selection.soaNumEntriesPerTask.begin(),
-                selection.soaNumEntriesPerTaskPrefixSum.begin() + 1,
+                selection.soaNumIterationResultsPerTask.begin(),
+                selection.soaNumIterationResultsPerTaskPrefixSum.begin() + 1,
                 gathersize,
                 stream
             );
@@ -4260,8 +4280,8 @@ struct GpuReadExtender{
             status = cub::DeviceScan::InclusiveSum(
                 d_cubtemp.data(),
                 tempbytes,
-                selection.soaNumEntriesPerTask.begin(),
-                selection.soaNumEntriesPerTaskPrefixSum.begin() + 1,
+                selection.soaNumIterationResultsPerTask.begin(),
+                selection.soaNumIterationResultsPerTaskPrefixSum.begin() + 1,
                 gathersize,
                 stream
             );
@@ -4269,7 +4289,7 @@ struct GpuReadExtender{
             d_cubtemp.destroy();
 
             cudaMemsetAsync(
-                selection.soaNumEntriesPerTaskPrefixSum.data(),
+                selection.soaNumIterationResultsPerTaskPrefixSum.data(),
                 0, 
                 sizeof(int),
                 stream
@@ -4279,7 +4299,7 @@ struct GpuReadExtender{
             if(gathersize > 0){
 
                 int result = 0;
-                cudaMemcpyAsync(&result, selection.soaNumEntriesPerTaskPrefixSum.data() + gathersize, sizeof(int), D2H, stream); CUERR;
+                cudaMemcpyAsync(&result, selection.soaNumIterationResultsPerTaskPrefixSum.data() + gathersize, sizeof(int), D2H, stream); CUERR;
                 cudaStreamSynchronize(stream); CUERR;
                 irregularsize = result;
 
@@ -4326,9 +4346,9 @@ struct GpuReadExtender{
                 gathersize,
                 decodedSequencePitchInBytes,
                 qualityPitchInBytes,
-                selection.soaNumEntriesPerTaskPrefixSum.data(),
-                soaNumEntriesPerTaskPrefixSum.data(),
-                soaNumEntriesPerTask.data(),
+                selection.soaNumIterationResultsPerTaskPrefixSum.data(),
+                soaNumIterationResultsPerTaskPrefixSum.data(),
+                soaNumIterationResultsPerTask.data(),
                 selection.soatotalDecodedAnchorsLengths.data(),
                 soatotalDecodedAnchorsLengths.data(),
                 selection.soatotalAnchorBeginInExtendedRead.data(),
@@ -4376,7 +4396,7 @@ struct GpuReadExtender{
 
             readextendergpukernels::vectorAddKernel<<<SDIV(size(), 128), 128, 0, stream>>>(
                 d_addNumEntriesPerTask, 
-                soaNumEntriesPerTask.begin(), 
+                soaNumIterationResultsPerTask.begin(), 
                 newNumEntriesPerTask.begin(), 
                 size()
             ); CUERR;
@@ -4438,8 +4458,8 @@ struct GpuReadExtender{
                 newsoatotalAnchorQualityScoresFlat.data(),
                 newsoatotalDecodedAnchorsLengths.data(),
                 newsoatotalAnchorBeginInExtendedRead.data(),
-                soaNumEntriesPerTask.data(),
-                soaNumEntriesPerTaskPrefixSum.data(),
+                soaNumIterationResultsPerTask.data(),
+                soaNumIterationResultsPerTaskPrefixSum.data(),
                 soatotalDecodedAnchorsLengths.data(),
                 soatotalAnchorBeginInExtendedRead.data(),
                 soatotalDecodedAnchorsFlat.data(),
@@ -4452,8 +4472,8 @@ struct GpuReadExtender{
                 d_addTotalAnchorQualityScoresFlat
             ); CUERR;
 
-            std::swap(soaNumEntriesPerTask, newNumEntriesPerTask);
-            std::swap(soaNumEntriesPerTaskPrefixSum, newNumEntriesPerTaskPrefixSum);
+            std::swap(soaNumIterationResultsPerTask, newNumEntriesPerTask);
+            std::swap(soaNumIterationResultsPerTaskPrefixSum, newNumEntriesPerTaskPrefixSum);
             std::swap(soatotalDecodedAnchorsLengths, newsoatotalDecodedAnchorsLengths);
             std::swap(soatotalAnchorBeginInExtendedRead, newsoatotalAnchorBeginInExtendedRead);
             std::swap(soatotalDecodedAnchorsFlat, newsoatotalDecodedAnchorsFlat);
@@ -4499,8 +4519,8 @@ struct GpuReadExtender{
                 insertSizeStddev,
                 d_flags,
                 iteration.data(),
-                soaNumEntriesPerTask.data(),
-                soaNumEntriesPerTaskPrefixSum.data(),
+                soaNumIterationResultsPerTask.data(),
+                soaNumIterationResultsPerTaskPrefixSum.data(),
                 soatotalAnchorBeginInExtendedRead.data(),
                 soainputmateLengths.data(),
                 abortReason.data(),
@@ -4646,11 +4666,11 @@ struct GpuReadExtender{
         d_usedReadIds(cubAllocator_),
         d_numUsedReadIdsPerAnchor(cubAllocator_),
         d_numUsedReadIdsPerAnchorPrefixSum(cubAllocator_),
-        d_segmentIdsOfUsedReadIds(cubAllocator_),
+        //d_segmentIdsOfUsedReadIds(cubAllocator_),
         d_fullyUsedReadIds(cubAllocator_),
         d_numFullyUsedReadIdsPerAnchor(cubAllocator_),
         d_numFullyUsedReadIdsPerAnchorPrefixSum(cubAllocator_),
-        d_segmentIdsOfFullyUsedReadIds(cubAllocator_),
+        //d_segmentIdsOfFullyUsedReadIds(cubAllocator_),
         multiMSA(cubAllocator_),
         d_outputAnchors(cubAllocator_),
         d_outputAnchorQualities(cubAllocator_),
@@ -4747,8 +4767,8 @@ struct GpuReadExtender{
             newGpuSoaTaskData.soainputAnchorsDecoded.data(),
             newGpuSoaTaskData.soainputAnchorQualities.data(),
             newGpuSoaTaskData.soainputAnchorLengths.data(),
-            newGpuSoaTaskData.soaNumEntriesPerTask.data(),
-            newGpuSoaTaskData.soaNumEntriesPerTaskPrefixSum.data(),
+            newGpuSoaTaskData.soaNumIterationResultsPerTask.data(),
+            newGpuSoaTaskData.soaNumIterationResultsPerTaskPrefixSum.data(),
             decodedSequencePitchInBytes,
             qualityPitchInBytes,
             encodedSequencePitchInInts
@@ -4862,8 +4882,8 @@ struct GpuReadExtender{
                 numTasks,
                 qualityPitchInBytes,
                 decodedSequencePitchInBytes,
-                tasks.soaNumEntriesPerTask.data(),
-                tasks.soaNumEntriesPerTaskPrefixSum.data(),
+                tasks.soaNumIterationResultsPerTask.data(),
+                tasks.soaNumIterationResultsPerTaskPrefixSum.data(),
                 d_accumExtensionsLengths.data(),
                 d_anchorSequencesLength.data(),
                 d_anchorQualityScores.data(),
@@ -5035,6 +5055,26 @@ struct GpuReadExtender{
             std::swap(d_segmentIdsOfCandidates, d_segmentIdsOfCandidates2);
             std::swap(d_numCandidatesPerAnchor, d_numCandidatesPerAnchor2);
         #else
+            int tmp1;
+            int tmp2;
+            assert(d_numFullyUsedReadIdsPerAnchor.size() == numTasks);
+            assert(d_numFullyUsedReadIdsPerAnchorPrefixSum.size() == numTasks);
+            cudaMemcpyAsync(&tmp1, d_numFullyUsedReadIdsPerAnchor.data() + numTasks - 1, sizeof(int), D2H, firstStream); CUERR;
+            cudaMemcpyAsync(&tmp2, d_numFullyUsedReadIdsPerAnchorPrefixSum.data() + numTasks - 1, sizeof(int), D2H, firstStream); CUERR;
+            cudaStreamSynchronize(firstStream);
+
+            *h_numFullyUsedReadIds = tmp1 + tmp2;
+
+            CachedDeviceUVector<int> d_segmentIdsOfFullyUsedReadIds(*h_numFullyUsedReadIds, firstStream, *cubAllocator);
+
+            setGpuSegmentIds(
+                d_segmentIdsOfFullyUsedReadIds.data(),
+                numTasks,
+                *h_numFullyUsedReadIds,
+                d_numFullyUsedReadIdsPerAnchor.data(),
+                d_numFullyUsedReadIdsPerAnchorPrefixSum.data(),
+                firstStream
+            );
 
             ThrustCachingAllocator<char> thrustCachingAllocator1(deviceId, cubAllocator, firstStream);
             d_segmentIdsOfCandidates.resizeUninitialized(initialNumCandidates, firstStream);
@@ -5636,20 +5676,30 @@ struct GpuReadExtender{
 
         cudaStream_t stream = streams[0];
 
-        setGpuSegmentIds(
-            d_segmentIdsOfCandidates.data(),
-            numTasks,
-            initialNumCandidates,
-            d_numCandidatesPerAnchor.data(),
-            d_numCandidatesPerAnchorPrefixSum.data(),
-            stream
-        );
+        // setGpuSegmentIds(
+        //     d_segmentIdsOfCandidates.data(),
+        //     numTasks,
+        //     initialNumCandidates,
+        //     d_numCandidatesPerAnchor.data(),
+        //     d_numCandidatesPerAnchorPrefixSum.data(),
+        //     stream
+        // );
 
         cudaEventSynchronize(h_numCandidatesEvent); CUERR;
 
         {
 
             const int maxoutputsize = initialNumCandidates + *h_numUsedReadIds;
+
+            CachedDeviceUVector<int> d_segmentIdsOfUsedReadIds(*h_numUsedReadIds, stream, *cubAllocator);
+            setGpuSegmentIds(
+                d_segmentIdsOfUsedReadIds.data(),
+                numTasks,
+                *h_numUsedReadIds,
+                d_numUsedReadIdsPerAnchor.data(),
+                d_numUsedReadIdsPerAnchorPrefixSum.data(),
+                stream
+            );
 
             CachedDeviceUVector<read_number> d_newUsedReadIds(maxoutputsize, stream, *cubAllocator);
             CachedDeviceUVector<int> d_newNumUsedreadIdsPerAnchor(numTasks, stream, *cubAllocator);
@@ -5760,6 +5810,17 @@ struct GpuReadExtender{
             CachedDeviceUVector<read_number> d_newFullyUsedReadIds(maxoutputsize, stream, *cubAllocator);
             CachedDeviceUVector<int> d_newNumFullyUsedreadIdsPerAnchor(numTasks, stream, *cubAllocator);
             CachedDeviceUVector<int> d_newSegmentIdsOfFullyUsedReadIds(maxoutputsize, stream, *cubAllocator);
+
+            CachedDeviceUVector<int> d_segmentIdsOfFullyUsedReadIds(*h_numFullyUsedReadIds, stream, *cubAllocator);
+
+            setGpuSegmentIds(
+                d_segmentIdsOfFullyUsedReadIds.data(),
+                numTasks,
+                *h_numFullyUsedReadIds,
+                d_numFullyUsedReadIdsPerAnchor.data(),
+                d_numFullyUsedReadIdsPerAnchorPrefixSum.data(),
+                stream
+            );
 
             ThrustCachingAllocator<char> thrustCachingAllocator1(deviceId, cubAllocator, stream);
 
@@ -5942,7 +6003,7 @@ struct GpuReadExtender{
             std::swap(d_usedReadIds, d_usedReadIds2);
             std::swap(d_numUsedReadIdsPerAnchor, d_numUsedReadIdsPerAnchor2);
             std::swap(d_numUsedReadIdsPerAnchorPrefixSum, d_numUsedReadIdsPerAnchorPrefixSum2);
-            std::swap(d_segmentIdsOfUsedReadIds, d_segmentIdsOfUsedReadIds2);
+            //std::swap(d_segmentIdsOfUsedReadIds, d_segmentIdsOfUsedReadIds2);
         }
 
         //update fully used ids
@@ -5998,7 +6059,7 @@ struct GpuReadExtender{
             std::swap(d_fullyUsedReadIds, d_fullyUsedReadIds2);
             std::swap(d_numFullyUsedReadIdsPerAnchor, d_numFullyUsedReadIdsPerAnchor2);
             std::swap(d_numFullyUsedReadIdsPerAnchorPrefixSum, d_numFullyUsedReadIdsPerAnchorPrefixSum2);
-            std::swap(d_segmentIdsOfFullyUsedReadIds, d_segmentIdsOfFullyUsedReadIds2);
+            //std::swap(d_segmentIdsOfFullyUsedReadIds, d_segmentIdsOfFullyUsedReadIds2);
 
         }
     }
@@ -6303,7 +6364,7 @@ struct GpuReadExtender{
 
         cudaMemcpyAsync(
             h_numCandidates.data(),
-            finishedTasks4.soaNumEntriesPerTaskPrefixSum.data() + numFinishedTasks,
+            finishedTasks4.soaNumIterationResultsPerTaskPrefixSum.data() + numFinishedTasks,
             sizeof(int),
             D2H,
             stream
@@ -6406,8 +6467,8 @@ struct GpuReadExtender{
         readextendergpukernels::segmentedIotaKernel<32><<<SDIV(threads, 128), 128, 0, stream>>>(
             indices1.data(),
             numFinishedTasks,
-            finishedTasks4.soaNumEntriesPerTask.data(),
-            finishedTasks4.soaNumEntriesPerTaskPrefixSum.data()
+            finishedTasks4.soaNumIterationResultsPerTask.data(),
+            finishedTasks4.soaNumIterationResultsPerTaskPrefixSum.data()
         ); CUERR;
 
         *h_numAnchors = numFinishedTasks;
@@ -6418,8 +6479,8 @@ struct GpuReadExtender{
             d_alignment_nOps.data(),
             d_alignment_best_alignment_flags.data(),
             indices1.data(),
-            finishedTasks4.soaNumEntriesPerTask.data(),
-            finishedTasks4.soaNumEntriesPerTaskPrefixSum.data(),
+            finishedTasks4.soaNumIterationResultsPerTask.data(),
+            finishedTasks4.soaNumIterationResultsPerTaskPrefixSum.data(),
             finishedTasks4.soainputAnchorLengths.data(),
             finishedTasks4.inputAnchorsEncoded.data(),
             nullptr, //anchor qualities
@@ -7396,14 +7457,14 @@ struct GpuReadExtender{
     CachedDeviceUVector<read_number> d_usedReadIds{};
     CachedDeviceUVector<int> d_numUsedReadIdsPerAnchor{};
     CachedDeviceUVector<int> d_numUsedReadIdsPerAnchorPrefixSum{};
-    CachedDeviceUVector<int> d_segmentIdsOfUsedReadIds{};
+    //CachedDeviceUVector<int> d_segmentIdsOfUsedReadIds{};
 
     PinnedBuffer<int> h_numUsedReadIds{};
 
     CachedDeviceUVector<read_number> d_fullyUsedReadIds{};
     CachedDeviceUVector<int> d_numFullyUsedReadIdsPerAnchor{};
     CachedDeviceUVector<int> d_numFullyUsedReadIdsPerAnchorPrefixSum{};
-    CachedDeviceUVector<int> d_segmentIdsOfFullyUsedReadIds{};
+    //CachedDeviceUVector<int> d_segmentIdsOfFullyUsedReadIds{};
 
     PinnedBuffer<int> h_numFullyUsedReadIds{};
     PinnedBuffer<int> h_numFullyUsedReadIds2{};
