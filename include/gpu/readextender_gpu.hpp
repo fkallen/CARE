@@ -822,7 +822,7 @@ struct GpuReadExtender{
 
             nvtx::push_range("soa_select", 1);
             CachedDeviceUVector<int> positions(entries, stream, *cubAllocator);
-            CachedDeviceUVector<int> d_numSelected(1, stream, *cubAllocator);
+            CachedDeviceUScalar<int> d_numSelected(1, stream, *cubAllocator);
 
             CubCallWrapper(*cubAllocator).cubSelectFlagged(
                 thrust::make_counting_iterator(0),
@@ -1251,7 +1251,7 @@ struct GpuReadExtender{
             CachedDeviceUVector<read_number> d_currentFullyUsedReadIds(numCandidateIds, stream, *cubAllocator);
             CachedDeviceUVector<int> d_currentNumFullyUsedreadIdsPerAnchor(size(), stream, *cubAllocator);
             CachedDeviceUVector<int> d_currentNumFullyUsedreadIdsPerAnchorPS(size(), stream, *cubAllocator);
-            CachedDeviceUVector<int> d_addNumFullyUsed(1, stream, *cubAllocator);
+            CachedDeviceUScalar<int> d_addNumFullyUsed(1, stream, *cubAllocator);
             
             //make compact list of current fully used candidates
             CubCallWrapper(*cubAllocator).cubSelectFlagged(
@@ -1491,6 +1491,8 @@ struct GpuReadExtender{
         goodAlignmentProperties(&gap),
         qualityConversion(&qualityConversion_),
         readStorageHandle(gpuReadStorage->makeHandle()),
+        d_numAnchors(cubAllocator_),
+        d_numCandidates(cubAllocator_),
         d_mateIdHasBeenRemoved(cubAllocator_),
         d_candidateSequencesData(cubAllocator_),
         d_candidateSequencesLength(cubAllocator_),    
@@ -1517,28 +1519,26 @@ struct GpuReadExtender{
 
         kernelLaunchHandle = gpu::make_kernel_launch_handle(deviceId);
 
-        //h_numUsedReadIds.resize(1);
-        //h_numFullyUsedReadIds.resize(1);
         h_numAnchors.resize(1);
         h_numCandidates.resize(1);
         h_numAnchorsWithRemovedMates.resize(1);
-        //h_numFullyUsedReadIds2.resize(1);
 
-        d_numAnchors.resize(1);
-        d_numCandidates.resize(1);
-        d_numCandidates2.resize(1);
+        h_minmax.resize(2);
+        h_numPositions.resize(2);
 
-        //*h_numUsedReadIds = 0;
-        //*h_numFullyUsedReadIds = 0;
+        d_numAnchors.resize(1, cudaStreamDefault);
+        d_numCandidates.resize(1, cudaStreamDefault);
+
         *h_numAnchors = 0;
         *h_numCandidates = 0;
         *h_numAnchorsWithRemovedMates = 0;
-        //*h_numFullyUsedReadIds2 = 0;
 
         encodedSequencePitchInInts = encodedSequencePitchInInts_;
         decodedSequencePitchInBytes = decodedSequencePitchInBytes_;
         qualityPitchInBytes = qualityPitchInBytes_;
         msaColumnPitchInElements = msaColumnPitchInElements_;
+
+        cudaDeviceSynchronize(); CUERR;
     }
 
     ~GpuReadExtender(){
@@ -1904,7 +1904,7 @@ struct GpuReadExtender{
         d_isPairedCandidate.resizeUninitialized(initialNumCandidates, stream);
         CachedDeviceUVector<int> d_firstTasksOfPairsToCheck(tasks.size(), stream, *cubAllocator);
         CachedDeviceUVector<bool> d_flags(tasks.size(), stream, *cubAllocator);
-        CachedDeviceUVector<int> d_numChecks(1, stream, *cubAllocator);
+        CachedDeviceUScalar<int> d_numChecks(1, stream, *cubAllocator);
 
         helpers::call_fill_kernel_async(d_isPairedCandidate.data(), initialNumCandidates, false, stream);
         helpers::call_fill_kernel_async(d_flags.data(), tasks.size(), false, stream);
@@ -2138,20 +2138,20 @@ struct GpuReadExtender{
     void computeMSAs(){
         assert(state == GpuReadExtender::State::BeforeMSA);
 
-        cudaStream_t firstStream = streams[0];
-        //cudaStream_t secondStream = firstStream;
+        cudaStream_t stream = streams[0];
 
-        CachedDeviceUVector<char> d_candidateQualityScores(qualityPitchInBytes * initialNumCandidates, firstStream, *cubAllocator);
+        CachedDeviceUVector<char> d_candidateQualityScores(qualityPitchInBytes * initialNumCandidates, stream, *cubAllocator);
 
-        loadCandidateQualityScores(firstStream, d_candidateQualityScores.data());
+        loadCandidateQualityScores(stream, d_candidateQualityScores.data());
 
-        CachedDeviceUVector<int> d_numCandidatesPerAnchor2(tasks.size(), firstStream, *cubAllocator);
+        CachedDeviceUVector<int> d_numCandidatesPerAnchor2(tasks.size(), stream, *cubAllocator);
 
-        CachedDeviceUVector<int> indices1(initialNumCandidates, firstStream, *cubAllocator);
-        CachedDeviceUVector<int> indices2(initialNumCandidates, firstStream, *cubAllocator); 
+        CachedDeviceUVector<int> indices1(initialNumCandidates, stream, *cubAllocator);
+        CachedDeviceUVector<int> indices2(initialNumCandidates, stream, *cubAllocator);
+        CachedDeviceUScalar<int> d_numCandidates2(1, stream, *cubAllocator);
 
         const int threads = 32 * tasks.size();
-        readextendergpukernels::segmentedIotaKernel<32><<<SDIV(threads, 128), 128, 0, firstStream>>>(
+        readextendergpukernels::segmentedIotaKernel<32><<<SDIV(threads, 128), 128, 0, stream>>>(
             indices1.data(),
             tasks.size(),
             d_numCandidatesPerAnchor.data(),
@@ -2185,7 +2185,7 @@ struct GpuReadExtender{
             useQualityScoresForMSA,
             goodAlignmentProperties->maxErrorRate,
             gpu::MSAColumnCount(msaColumnPitchInElements),
-            firstStream
+            stream
         );
 
         multiMSA.refine(
@@ -2215,16 +2215,16 @@ struct GpuReadExtender{
             goodAlignmentProperties->maxErrorRate,
             correctionOptions->estimatedCoverage,
             getNumRefinementIterations(),
-            firstStream
+            stream
         );
  
-        CachedDeviceUVector<bool> d_shouldBeKept(initialNumCandidates, firstStream, *cubAllocator);
+        CachedDeviceUVector<bool> d_shouldBeKept(initialNumCandidates, stream, *cubAllocator);
 
-        helpers::call_fill_kernel_async(d_shouldBeKept.data(), initialNumCandidates, false, firstStream); CUERR;
+        helpers::call_fill_kernel_async(d_shouldBeKept.data(), initialNumCandidates, false, stream); CUERR;
 
         const int numThreads2 = tasks.size() * 32;
         readextendergpukernels::convertLocalIndicesInSegmentsToGlobalFlags<128,32>
-        <<<SDIV(numThreads2, 128), 128, 0, firstStream>>>(
+        <<<SDIV(numThreads2, 128), 128, 0, stream>>>(
             d_shouldBeKept.data(),
             indices2.data(),
             d_numCandidatesPerAnchor2.data(),
@@ -2241,7 +2241,7 @@ struct GpuReadExtender{
         compactCandidateDataByFlags(
             d_shouldBeKept.data(),
             false,
-            firstStream
+            stream
         );
         
         setState(GpuReadExtender::State::BeforeExtend);
@@ -2519,11 +2519,8 @@ struct GpuReadExtender{
                 );
             }
 
-            h_inputMateLengths.resize(2);
-            int* h_numPositions = h_inputMateLengths.data();
-
             cudaMemcpyAsync(
-                h_numPositions,
+                h_numPositions.data(),
                 d_numPositions.data(),
                 sizeof(int) * 2,
                 D2H,
@@ -2609,25 +2606,11 @@ struct GpuReadExtender{
             return;
         }
 
-        CachedDeviceUVector<int> d_minmax(2, stream, *cubAllocator);
-
         readextendergpukernels::minmaxSingleBlockKernel<512><<<1, 512, 0, stream>>>(
         //readextendergpukernels::minmaxSingleBlockKernel<128><<<1, 128, 0, stream>>>(
             finishedTasks.pairId.data(),
             finishedTasks.size(),
-            d_minmax.data()
-        ); CUERR;
-
-        h_anchorSequencesLength.resize(2); //pinned buffer which is repurposed
-
-        int* const h_minmax = h_anchorSequencesLength.data();
-
-        cudaMemcpyAsync(
-            h_minmax,
-            d_minmax.data(),
-            sizeof(int) * 2,
-            D2H,
-            stream
+            h_minmax.data()
         ); CUERR;
 
         cudaStreamSynchronize(stream); CUERR;
@@ -2690,7 +2673,7 @@ struct GpuReadExtender{
         const int* d_theSortedIndices = d_values.Current();
 
         CachedDeviceUVector<int> d_counts_out(finishedTasks.size(), stream, *cubAllocator);
-        CachedDeviceUVector<int> d_num_runs_out(1, stream, *cubAllocator);
+        CachedDeviceUScalar<int> d_num_runs_out(1, stream, *cubAllocator);
 
         CubCallWrapper(*cubAllocator).cubReduceByKey(
             d_theSortedPairIds, 
@@ -2982,15 +2965,11 @@ struct GpuReadExtender{
             insertSizeStddev
         ); CUERR;
 
-        h_anchorSequencesLength.resize(2); //pinned buffer which is repurposed
-
-        int* const h_minmax = h_anchorSequencesLength.data();
-
         readextendergpukernels::minmaxSingleBlockKernel<512><<<1, 512, 0, stream2>>>(
         //readextendergpukernels::minmaxSingleBlockKernel<128><<<1, 128, 0, stream2>>>(
             d_pairResultLengths.data(),
             numResults,
-            h_minmax
+            h_minmax.data()
         ); CUERR;
 
         cudaEventRecord(h_numAnchorsEvent, stream2); CUERR;
@@ -3519,20 +3498,17 @@ struct GpuReadExtender{
 
     
     PinnedBuffer<read_number> h_candidateReadIds{};
-
-    CachedDeviceUVector<bool> d_mateIdHasBeenRemoved{};
-
     PinnedBuffer<int> h_numCandidatesPerAnchor{};
     PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum{};
-
-
-
     PinnedBuffer<int> h_numAnchors{};
     PinnedBuffer<int> h_numCandidates{};
-    DeviceBuffer<int> d_numAnchors{};
-    DeviceBuffer<int> d_numCandidates{};
-    DeviceBuffer<int> d_numCandidates2{};
     PinnedBuffer<int> h_numAnchorsWithRemovedMates{};
+    PinnedBuffer<int> h_minmax{};
+    PinnedBuffer<int> h_numPositions{};
+
+    CachedDeviceUScalar<int> d_numAnchors{};
+    CachedDeviceUScalar<int> d_numCandidates{};
+    CachedDeviceUVector<bool> d_mateIdHasBeenRemoved{};
 
     // ----- candidate data
     CachedDeviceUVector<unsigned int> d_candidateSequencesData{};
@@ -3548,12 +3524,6 @@ struct GpuReadExtender{
     CachedDeviceUVector<int> d_numCandidatesPerAnchorPrefixSum{};
     // ----- 
     
-
-    // ----- staging buffers for input
-    PinnedBuffer<int> h_anchorSequencesLength{};
-    PinnedBuffer<int> h_inputMateLengths;
-    // ----- 
-
     // ----- input data
 
     CachedDeviceUVector<char> d_subjectSequencesDataDecoded{};

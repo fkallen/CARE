@@ -262,6 +262,9 @@ namespace care{
         }
     };
 
+    template<class T, int overprovisioningPercent = 0>
+    using CachedDeviceUScalar = CachedDeviceUVector<T, overprovisioningPercent>;
+
 }
 
 
