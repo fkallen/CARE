@@ -1060,7 +1060,7 @@ extend_gpu_pairedend(
         auto init = [&](){
             nvtx::push_range("init", 2);
 
-            const int maxNumPairs = (batchsizePairs * 4 - gpuReadExtender->numTasks) / 4;
+            const int maxNumPairs = (batchsizePairs * 4 - gpuReadExtender->tasks.size()) / 4;
             assert(maxNumPairs <= batchsizePairs);
 
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(
@@ -1233,8 +1233,8 @@ extend_gpu_pairedend(
         //std::cerr << "thread " << ompThreadId << " begins main loop\n";
 
         isLastIteration = false;
-        while(!(readIdGenerator.empty() && gpuReadExtender->numTasks == 0)){
-            if(gpuReadExtender->numTasks < (batchsizePairs * 4) / 2){
+        while(!(readIdGenerator.empty() && gpuReadExtender->tasks.size() == 0)){
+            if(int(gpuReadExtender->tasks.size()) < (batchsizePairs * 4) / 2){
                 init();
             }
 
@@ -1277,8 +1277,8 @@ extend_gpu_pairedend(
             std::cerr << "thread " << ompThreadId << " will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
             isLastIteration = (fixedStepsize <= 4);
 
-            while(!(pairsWhichShouldBeRepeated.size() == 0 && gpuReadExtender->numTasks == 0)){
-                if(gpuReadExtender->numTasks < (batchsizePairs * 4) / 2){
+            while(!(pairsWhichShouldBeRepeated.size() == 0 && gpuReadExtender->tasks.size() == 0)){
+                if(int(gpuReadExtender->tasks.size()) < (batchsizePairs * 4) / 2){
                     init();
                 }
     
