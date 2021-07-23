@@ -40,7 +40,7 @@
 #include <thrust/execution_policy.h>
 
 
-//#define DO_ONLY_REMOVE_MATE_IDS
+#define DO_ONLY_REMOVE_MATE_IDS
 
 
 
