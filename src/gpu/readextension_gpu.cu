@@ -1021,6 +1021,14 @@ extend_gpu_pairedend(
 
         const bool isPairedEnd = true;
 
+        GpuReadExtender::Hasher anchorHasher(minhasher);
+
+        GpuReadExtender::TaskData tasks(myCubAllocator, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, (cudaStream_t)0);
+        GpuReadExtender::TaskData finishedTasks(myCubAllocator, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, (cudaStream_t)0);
+
+        GpuReadExtender::AnchorData anchorData(myCubAllocator);
+        GpuReadExtender::AnchorHashResult anchorHashResult(myCubAllocator);
+
         auto gpuReadExtender = std::make_unique<GpuReadExtender>(
             encodedSequencePitchInInts,
             decodedSequencePitchInBytes,
@@ -1028,7 +1036,6 @@ extend_gpu_pairedend(
             msaColumnPitchInElements,
             isPairedEnd,
             gpuReadStorage, 
-            minhasher,
             correctionOptions,
             goodAlignmentProperties,
             qualityConversion,
@@ -1060,7 +1067,7 @@ extend_gpu_pairedend(
         auto init = [&](){
             nvtx::push_range("init", 2);
 
-            const int maxNumPairs = (batchsizePairs * 4 - gpuReadExtender->tasks.size()) / 4;
+            const int maxNumPairs = (batchsizePairs * 4 - tasks.size()) / 4;
             assert(maxNumPairs <= batchsizePairs);
 
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(
@@ -1131,9 +1138,9 @@ extend_gpu_pairedend(
                 
                 const int numReadPairsInBatch = numNewReadsInBatch / 2;
 
-                gpuReadExtender->addTasks(numReadPairsInBatch, currentIds.data(), currentReadLengths.data(), currentEncodedReads.data(), currentQualityScores.data(), stream);
+                tasks.addTasks(numReadPairsInBatch, currentIds.data(), currentReadLengths.data(), currentEncodedReads.data(), currentQualityScores.data(), stream);
 
-                gpuReadExtender->setState(GpuReadExtender::State::UpdateWorkingSet);
+                //gpuReadExtender->setState(GpuReadExtender::State::UpdateWorkingSet);
 
                 //std::cerr << "Added " << (numReadPairsInBatch * 4) << " new tasks to batch\n";
             }
@@ -1145,7 +1152,7 @@ extend_gpu_pairedend(
         auto output = [&](){
             nvtx::push_range("output", 5);
 
-            gpuReadExtender->constructRawResults(rawExtendResult, stream);
+            gpuReadExtender->constructRawResults(finishedTasks, rawExtendResult, stream);
             cudaStreamSynchronize(stream); CUERR;
 
             std::vector<extension::ExtendResult> extensionResults = gpuReadExtender->convertRawExtendResults(rawExtendResult);
@@ -1153,7 +1160,7 @@ extend_gpu_pairedend(
             //std::vector<extension::ExtendResult> extensionResults = gpuReadExtender->constructResults4();
             const int numresults = extensionResults.size();
 
-            //std::cerr << "Got " << (numresults) << " extended reads. Remaining unprocessed finished tasks: " << gpuReadExtender->finishedTasks.size() << "\n";
+            //std::cerr << "Got " << (numresults) << " extended reads. Remaining unprocessed finished tasks: " << gpuReadExtender->finishedTasks->size() << "\n";
 
 
             std::vector<ExtendedRead> extendedReads;
@@ -1233,22 +1240,27 @@ extend_gpu_pairedend(
         //std::cerr << "thread " << ompThreadId << " begins main loop\n";
 
         isLastIteration = false;
-        while(!(readIdGenerator.empty() && gpuReadExtender->tasks.size() == 0)){
-            if(int(gpuReadExtender->tasks.size()) < (batchsizePairs * 4) / 2){
+        while(!(readIdGenerator.empty() && tasks.size() == 0)){
+            if(int(tasks.size()) < (batchsizePairs * 4) / 2){
                 init();
             }
 
-            gpuReadExtender->processOneIteration();
+            tasks.aggregateAnchorData(anchorData, stream);
+            anchorHasher.getCandidateReadIds(anchorData, anchorHashResult, stream);
+
+            gpuReadExtender->processOneIteration(tasks, anchorData, anchorHashResult, finishedTasks, stream);
+
+            cudaStreamSynchronize(stream); CUERR;
             
-            if(gpuReadExtender->finishedTasks.size() > std::size_t((batchsizePairs * 4) / 2)){
+            if(finishedTasks.size() > std::size_t((batchsizePairs * 4) / 2)){
                 output();
             }
 
-            //std::cerr << "Remaining: tasks " << gpuReadExtender->tasks.size() << ", finishedtasks " << gpuReadExtender->finishedTasks.size() << "\n";
+            //std::cerr << "Remaining: tasks " << tasks.size() << ", finishedtasks " << gpuReadExtender->finishedTasks->size() << "\n";
         }
 
         output();
-        assert(gpuReadExtender->finishedTasks.size() == 0);
+        assert(finishedTasks.size() == 0);
 
         std::cerr << "\nalltimetotalTaskBytes = " << gpuReadExtender->alltimetotalTaskBytes << "\n";
 
@@ -1277,20 +1289,25 @@ extend_gpu_pairedend(
             std::cerr << "thread " << ompThreadId << " will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
             isLastIteration = (fixedStepsize <= 4);
 
-            while(!(pairsWhichShouldBeRepeated.size() == 0 && gpuReadExtender->tasks.size() == 0)){
-                if(int(gpuReadExtender->tasks.size()) < (batchsizePairs * 4) / 2){
+            while(!(pairsWhichShouldBeRepeated.size() == 0 && tasks.size() == 0)){
+                if(int(tasks.size()) < (batchsizePairs * 4) / 2){
                     init();
                 }
     
-                gpuReadExtender->processOneIteration();
+                tasks.aggregateAnchorData(anchorData, stream);
+                anchorHasher.getCandidateReadIds(anchorData, anchorHashResult, stream);
+
+                gpuReadExtender->processOneIteration(tasks, anchorData, anchorHashResult, finishedTasks, stream);
+
+                cudaStreamSynchronize(stream); CUERR;
                 
-                if(gpuReadExtender->finishedTasks.size() > std::size_t((batchsizePairs * 4))){
+                if(finishedTasks.size() > std::size_t((batchsizePairs * 4))){
                     output();
                 }
             }
     
             output();
-            assert(gpuReadExtender->finishedTasks.size() == 0);
+            assert(finishedTasks.size() == 0);
 
             //std::cerr << "thread " << ompThreadId << " finished extra loop with fixedStepsize = " << fixedStepsize << "\n";
 
