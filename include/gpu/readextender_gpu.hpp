@@ -934,6 +934,8 @@ struct GpuReadExtender{
                 newsoainputmateQualityScoresReversed.destroy();
                 newsoainputAnchorQualities.destroy(); 
 
+                #if 0
+
                 soatotalDecodedAnchorsLengths.append(rhs.soatotalDecodedAnchorsLengths.data(), rhs.soatotalDecodedAnchorsLengths.data() + rhs.soatotalDecodedAnchorsLengths.size(), stream);
                 soatotalAnchorBeginInExtendedRead.append(rhs.soatotalAnchorBeginInExtendedRead.data(), rhs.soatotalAnchorBeginInExtendedRead.data() + rhs.soatotalAnchorBeginInExtendedRead.size(), stream);
 
@@ -942,6 +944,59 @@ struct GpuReadExtender{
             
                 d_usedReadIds.append(rhs.d_usedReadIds.data(), rhs.d_usedReadIds.data() + rhs.d_usedReadIds.size(), stream);
                 d_fullyUsedReadIds.append(rhs.d_fullyUsedReadIds.data(), rhs.d_fullyUsedReadIds.data() + rhs.d_fullyUsedReadIds.size(), stream);
+
+                #else 
+
+                CachedDeviceUVector<int> newsoatotalDecodedAnchorsLengths(soatotalDecodedAnchorsLengths.size() + rhs.soatotalDecodedAnchorsLengths.size(), stream, *cubAllocator);
+                CachedDeviceUVector<int> newsoatotalAnchorBeginInExtendedRead(soatotalAnchorBeginInExtendedRead.size() + rhs.soatotalAnchorBeginInExtendedRead.size(), stream, *cubAllocator);
+
+                CachedDeviceUVector<read_number> newd_usedReadIds(d_usedReadIds.size() + rhs.d_usedReadIds.size(), stream, *cubAllocator);
+                CachedDeviceUVector<read_number> newd_fullyUsedReadIds(d_fullyUsedReadIds.size() + rhs.d_fullyUsedReadIds.size(), stream, *cubAllocator);
+
+                std::size_t elements = 0;
+                elements = std::max(elements, soatotalDecodedAnchorsLengths.size());
+                elements = std::max(elements, rhs.soatotalDecodedAnchorsLengths.size());
+                elements = std::max(elements, soatotalAnchorBeginInExtendedRead.size());
+                elements = std::max(elements, rhs.soatotalAnchorBeginInExtendedRead.size());
+                elements = std::max(elements, d_usedReadIds.size());
+                elements = std::max(elements, rhs.d_usedReadIds.size());
+                elements = std::max(elements, d_fullyUsedReadIds.size());
+                elements = std::max(elements, rhs.d_fullyUsedReadIds.size());
+
+                if(elements > 0){
+
+                    using care::gpu::MemcpyParams;
+
+                    auto memcpyParams1 = cuda::std::tuple_cat(
+                        cuda::std::make_tuple(MemcpyParams(newsoatotalDecodedAnchorsLengths.data(), soatotalDecodedAnchorsLengths.data(), sizeof(int) * soatotalDecodedAnchorsLengths.size())),
+                        cuda::std::make_tuple(MemcpyParams(newsoatotalDecodedAnchorsLengths.data() + soatotalDecodedAnchorsLengths.size(), rhs.soatotalDecodedAnchorsLengths.data(), sizeof(int) * rhs.soatotalDecodedAnchorsLengths.size())),
+                        cuda::std::make_tuple(MemcpyParams(newsoatotalAnchorBeginInExtendedRead.data(), soatotalAnchorBeginInExtendedRead.data(), sizeof(int) * soatotalAnchorBeginInExtendedRead.size())),
+                        cuda::std::make_tuple(MemcpyParams(newsoatotalAnchorBeginInExtendedRead.data() + soatotalAnchorBeginInExtendedRead.size(), rhs.soatotalAnchorBeginInExtendedRead.data(), sizeof(int) * rhs.soatotalAnchorBeginInExtendedRead.size())),
+                        cuda::std::make_tuple(MemcpyParams(newd_usedReadIds.data(), d_usedReadIds.data(), sizeof(read_number) * d_usedReadIds.size())),
+                        cuda::std::make_tuple(MemcpyParams(newd_usedReadIds.data() + d_usedReadIds.size(), rhs.d_usedReadIds.data(), sizeof(read_number) * rhs.d_usedReadIds.size())),
+                        cuda::std::make_tuple(MemcpyParams(newd_fullyUsedReadIds.data(), d_fullyUsedReadIds.data(), sizeof(read_number) * d_fullyUsedReadIds.size())),
+                        cuda::std::make_tuple(MemcpyParams(newd_fullyUsedReadIds.data() + d_fullyUsedReadIds.size(), rhs.d_fullyUsedReadIds.data(), sizeof(read_number) * rhs.d_fullyUsedReadIds.size()))
+                    );
+
+                    care::gpu::memcpyKernel<int><<<SDIV(elements, 256), 256, 0, stream>>>(memcpyParams1); CUERR;
+                }
+
+                std::swap(soatotalDecodedAnchorsLengths, newsoatotalDecodedAnchorsLengths);
+                std::swap(soatotalAnchorBeginInExtendedRead, newsoatotalAnchorBeginInExtendedRead);
+                std::swap(d_usedReadIds, newd_usedReadIds);
+                std::swap(d_fullyUsedReadIds, newd_fullyUsedReadIds);
+
+                newsoatotalDecodedAnchorsLengths.destroy();
+                newsoatotalAnchorBeginInExtendedRead.destroy();
+                newd_usedReadIds.destroy();
+                newd_fullyUsedReadIds.destroy();
+
+                soatotalDecodedAnchorsFlat.append(rhs.soatotalDecodedAnchorsFlat.data(), rhs.soatotalDecodedAnchorsFlat.data() + rhs.soatotalDecodedAnchorsFlat.size(), stream);
+                soatotalAnchorQualityScoresFlat.append(rhs.soatotalAnchorQualityScoresFlat.data(), rhs.soatotalAnchorQualityScoresFlat.data() + rhs.soatotalAnchorQualityScoresFlat.size(), stream);
+
+                
+
+                #endif
             }
 
 
@@ -1176,21 +1231,21 @@ struct GpuReadExtender{
                 cudaStreamSynchronize(stream); CUERR;
 
 
-                selection.soatotalDecodedAnchorsLengths.resize(selectedNumIterationResults, stream);
-                selection.soatotalAnchorBeginInExtendedRead.resize(selectedNumIterationResults, stream);
-                selection.soatotalDecodedAnchorsFlat.resize(selectedNumIterationResults * decodedSequencePitchInBytes, stream);
-                selection.soatotalAnchorQualityScoresFlat.resize(selectedNumIterationResults * qualityPitchInBytes, stream);
+                selection.soatotalDecodedAnchorsLengths.resizeUninitialized(selectedNumIterationResults, stream);
+                selection.soatotalAnchorBeginInExtendedRead.resizeUninitialized(selectedNumIterationResults, stream);
+                selection.soatotalDecodedAnchorsFlat.resizeUninitialized(selectedNumIterationResults * decodedSequencePitchInBytes, stream);
+                selection.soatotalAnchorQualityScoresFlat.resizeUninitialized(selectedNumIterationResults * qualityPitchInBytes, stream);
 
-                selection.d_usedReadIds.resize(selectedNumUsedIds, stream);
-                selection.d_fullyUsedReadIds.resize(selectedNumFullyUsedIds, stream);
+                selection.d_usedReadIds.resizeUninitialized(selectedNumUsedIds, stream);
+                selection.d_fullyUsedReadIds.resizeUninitialized(selectedNumFullyUsedIds, stream);
             }else{
-                selection.soatotalDecodedAnchorsLengths.resize(0, stream);
-                selection.soatotalAnchorBeginInExtendedRead.resize(0, stream);
-                selection.soatotalDecodedAnchorsFlat.resize(0 * decodedSequencePitchInBytes, stream);
-                selection.soatotalAnchorQualityScoresFlat.resize(0 * qualityPitchInBytes, stream);
+                selection.soatotalDecodedAnchorsLengths.resizeUninitialized(0, stream);
+                selection.soatotalAnchorBeginInExtendedRead.resizeUninitialized(0, stream);
+                selection.soatotalDecodedAnchorsFlat.resizeUninitialized(0 * decodedSequencePitchInBytes, stream);
+                selection.soatotalAnchorQualityScoresFlat.resizeUninitialized(0 * qualityPitchInBytes, stream);
 
-                selection.d_usedReadIds.resize(0, stream);
-                selection.d_fullyUsedReadIds.resize(0, stream);
+                selection.d_usedReadIds.resizeUninitialized(0, stream);
+                selection.d_fullyUsedReadIds.resizeUninitialized(0, stream);
 
                 return;
             }
