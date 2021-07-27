@@ -112,6 +112,8 @@ struct GpuReadExtender{
         int numResults{};
         std::size_t outputpitch{};
         std::size_t decodedSequencePitchInBytes{};
+        CudaEvent event{cudaEventDisableTiming};
+        PinnedBuffer<int> h_tmp{1};
         PinnedBuffer<char> h_inputAnchorsDecoded{};
         PinnedBuffer<extension::AbortReason> h_gpuabortReasons{};
         PinnedBuffer<extension::ExtensionDirection> h_gpudirections{};
@@ -130,6 +132,11 @@ struct GpuReadExtender{
         PinnedBuffer<int> h_pairResultRead2Begins{};
         PinnedBuffer<bool> h_pairResultMateHasBeenFound{};
         PinnedBuffer<bool> h_pairResultMergedDifferentStrands{};
+    };
+
+    struct IterationConfig{
+        int maxextensionPerStep{1};
+        int minCoverageForExtension{1};
     };
 
     struct TaskData{
@@ -1657,12 +1664,9 @@ struct GpuReadExtender{
         return tasks->size() == 0;
     }
 
-    bool printTransitions = false;
-
     void setState(State newstate){      
-        if(printTransitions){
+        if(false){
             std::cerr << "batchdata " << someId << " statechange " << to_string(state) << " -> " << to_string(newstate);
-//            std::cerr << ", task: " << tasks->size() << ", finishedTasks: " << finishedTasks.size();
             std::cerr << "\n";
         }
 
@@ -1688,7 +1692,6 @@ struct GpuReadExtender{
         pairedEnd(isPairedEnd_),
         insertSize(insertSize_),
         insertSizeStddev(insertSizeStddev_),
-        maxextensionPerStep(maxextensionPerStep_),
         cubAllocator(&cubAllocator_),
         gpuReadStorage(&rs),
         correctionOptions(&coropts),
@@ -1749,19 +1752,15 @@ struct GpuReadExtender{
         return 5;
     }
 
-
-    void setMaxExtensionPerStep(int e) noexcept{
-        maxextensionPerStep = e;
-    }
-
-    void setMinCoverageForExtension(int c) noexcept{
-        minCoverageForExtension = c;
-    }
-
-
-
-    void processOneIteration(TaskData& inputTasks, AnchorData& currentAnchorData, AnchorHashResult& currentHashResults, TaskData& outputFinishedTasks, cudaStream_t stream){
-        
+    void processOneIteration(
+        TaskData& inputTasks, 
+        AnchorData& currentAnchorData, 
+        AnchorHashResult& currentHashResults, 
+        TaskData& outputFinishedTasks, 
+        const IterationConfig& iterationConfig_,
+        cudaStream_t stream
+    ){
+        std::lock_guard<std::mutex> lockguard(mutex);
 
         if(inputTasks.size() > 0){
 
@@ -1771,21 +1770,48 @@ struct GpuReadExtender{
 
             tasks = &inputTasks;
             initialNumCandidates = currentHashResults.d_candidateReadIds.size();
+            iterationConfig = &iterationConfig_;
 
             copyAnchorDataFrom(currentAnchorData, streams[0]);
             copyHashResultsFrom(currentHashResults, streams[0]);
 
             state = GpuReadExtender::State::BeforeRemoveIds;
 
+            nvtx::push_range("removeUsedIdsAndMateIds", 0);
             removeUsedIdsAndMateIds();
+            nvtx::pop_range();
+
+            nvtx::push_range("computePairFlagsGpu", 1);
             computePairFlagsGpu();
+            nvtx::pop_range();
+
+            nvtx::push_range("loadCandidateSequenceData", 2);
             loadCandidateSequenceData();
+            nvtx::pop_range();
+
+            nvtx::push_range("eraseDataOfRemovedMates", 3);
             eraseDataOfRemovedMates();
+            nvtx::pop_range();
+
+            nvtx::push_range("calculateAlignments", 4);
             calculateAlignments();
+            nvtx::pop_range();
+
+            nvtx::push_range("filterAlignments", 5);
             filterAlignments();
+            nvtx::pop_range();
+
+            nvtx::push_range("computeMSAs", 6);
             computeMSAs();
+            nvtx::pop_range();
+
+            nvtx::push_range("computeExtendedSequencesFromMSAs", 7);
             computeExtendedSequencesFromMSAs();
+            nvtx::pop_range();
+
+            nvtx::push_range("prepareNextIteration", 8);
             prepareNextIteration(inputTasks, outputFinishedTasks);
+            nvtx::pop_range();
 
 
             cudaEventRecord(events[0], streams[0]); CUERR;
@@ -2336,8 +2362,8 @@ struct GpuReadExtender{
             decodedMatesRevCPitchInBytes,
             d_outputMateHasBeenFound.data(),
             d_sizeOfGapToMate.data(),
-            minCoverageForExtension,
-            maxextensionPerStep
+            iterationConfig->minCoverageForExtension,
+            iterationConfig->maxextensionPerStep
         ); CUERR;
 
         readextendergpukernels::computeExtensionStepQualityKernel<128><<<tasks->size(), 128, 0, stream>>>(
@@ -2782,6 +2808,7 @@ struct GpuReadExtender{
     void constructRawResults(TaskData& finishedTasks, RawExtendResult& rawResults, cudaStream_t callerstream){
 
         nvtx::push_range("constructRawResults", 5);
+        std::lock_guard<std::mutex> lockguard(mutex);
 
         auto finishedTasks4 = getFinishedGpuSoaTasksOfFinishedPairsAndRemoveThem(finishedTasks);
 
@@ -2804,13 +2831,13 @@ struct GpuReadExtender{
         cudaStreamWaitEvent(stream2, events[0], 0); CUERR;
 
         cudaMemcpyAsync(
-            h_numCandidates.data(),
+            rawResults.h_tmp.data(),
             finishedTasks4.soaNumIterationResultsPerTaskPrefixSum.data() + numFinishedTasks,
             sizeof(int),
             D2H,
             stream
         ); CUERR;
-        cudaEventRecord(h_numCandidatesEvent, stream); CUERR;
+        cudaEventRecord(rawResults.event, stream); CUERR;
 
         //copy data from device to host in second stream
         
@@ -2840,9 +2867,9 @@ struct GpuReadExtender{
 
         care::gpu::memcpyKernel<int><<<SDIV(numFinishedTasks, 256), 256, 0, callerstream>>>(memcpyParams1); CUERR;
        
-        cudaEventSynchronize(h_numCandidatesEvent); CUERR;
+        cudaEventSynchronize(rawResults.event); CUERR;
 
-        const int numCandidates = *h_numCandidates;
+        const int numCandidates = *rawResults.h_tmp;
 
         assert(numCandidates >= 0);
 
@@ -3089,7 +3116,7 @@ struct GpuReadExtender{
         nvtx::pop_range();
     }
 
-    std::vector<extension::ExtendResult> convertRawExtendResults(const RawExtendResult& rawResults){
+    std::vector<extension::ExtendResult> convertRawExtendResults(const RawExtendResult& rawResults) const{
         nvtx::push_range("convertRawExtendResults", 7);
 
         std::vector<extension::ExtendResult> gpuResultVector(rawResults.numResults);
@@ -3585,8 +3612,7 @@ struct GpuReadExtender{
     int deviceId{};
     int insertSize{};
     int insertSizeStddev{};
-    int maxextensionPerStep{1};
-    int minCoverageForExtension{1};
+
     cub::CachingDeviceAllocator* cubAllocator{};
     const gpu::GpuReadStorage* gpuReadStorage{};
     const CorrectionOptions* correctionOptions{};
@@ -3603,6 +3629,8 @@ struct GpuReadExtender{
     std::size_t outputAnchorPitchInBytes = 0;
     std::size_t outputAnchorQualityPitchInBytes = 0;
     std::size_t decodedMatesRevCPitchInBytes = 0;
+
+    const IterationConfig* iterationConfig{};
 
     
     PinnedBuffer<read_number> h_candidateReadIds{};
@@ -3668,8 +3696,9 @@ struct GpuReadExtender{
     std::array<CudaEvent, 1> events{};
     std::array<cudaStream_t, 4> streams{};
 
-    TaskData* tasks;    
-
+    TaskData* tasks;
+    
+    std::mutex mutex{};
 };
 
 

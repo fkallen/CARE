@@ -22,7 +22,7 @@ HOSTLINKER=g++
 
 CXXFLAGS = -std=c++17
 
-CFLAGS_BASIC = -Wall -fopenmp -g -Iinclude -O3 -march=native -I$(THRUST_INCDIR)
+CFLAGS_BASIC = -Wall -fopenmp -g -Iinclude -O0 -march=native -I$(THRUST_INCDIR)
 CFLAGS_DEBUG_BASIC = -Wall -fopenmp -g -Iinclude -O0 -march=native -I$(THRUST_INCDIR)
 
 CFLAGS_CPU = $(CFLAGS_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_OMP
