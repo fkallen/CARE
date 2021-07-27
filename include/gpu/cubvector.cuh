@@ -52,7 +52,7 @@ namespace care{
 
             if(data_ != nullptr){
                 cudaError_t status = allocator_->DeviceFree(data_);
-                throwOnError(status);
+                throwOnError(status, "operator= DeviceFree");
             }            
 
             data_ = rhs.data_;
@@ -83,7 +83,7 @@ namespace care{
         void destroy(){
             if(data_ != nullptr){
                 cudaError_t status = allocator_->DeviceFree(data_);
-                throwOnError(status);
+                throwOnError(status, "destroy DeviceFree");
             }
             size_ = 0;
             capacity_ = 0;
@@ -107,10 +107,10 @@ namespace care{
 
                 if(data_ != nullptr){
                     status = allocator_->DeviceFree(data_);
-                    throwOnError(status);
+                    throwOnError(status, "reserveUninitialized DeviceFree");
                 }
                 status = allocator_->DeviceAllocate((void**)&data_, sizeof(T) * newcapacity, stream); CUERR;
-                throwOnError(status);
+                throwOnError(status, "reserveUninitialized DeviceAllocate");
                 capacity_ = newcapacity;
 
                 return true;
@@ -136,7 +136,7 @@ namespace care{
 
                 T* datanew = nullptr;
                 status = allocator_->DeviceAllocate((void**)&datanew, sizeof(T) * newcapacity, stream);
-                throwOnError(status);
+                throwOnError(status, "reserve DeviceAllocate");
 
                 if(data_ != nullptr){
                     cudaError_t status = cudaMemcpyAsync(
@@ -147,11 +147,11 @@ namespace care{
                         stream
                     );
 
-                    throwOnError(status);
+                    throwOnError(status, "reserve cudaMemcpyAsync");
 
-                    allocator_->DeviceFree(data_);
+                    status = allocator_->DeviceFree(data_);
 
-                    throwOnError(status);
+                    throwOnError(status, "reserve DeviceFree");
                 }
 
                 data_ = datanew;
@@ -192,7 +192,7 @@ namespace care{
                     stream
                 );
 
-                throwOnError(status);
+                throwOnError(status, "erase cudaMemcpyAsync");
             }
 
             size_ -= std::distance(first, last);
@@ -212,7 +212,7 @@ namespace care{
                     cudaMemcpyDefault,
                     stream
                 );
-                throwOnError(status);
+                throwOnError(status, "append cudaMemcpyAsync");
 
                 return realloc;
             }
@@ -252,11 +252,11 @@ namespace care{
         }
 
     private:
-        void throwOnError(cudaError_t status) const{
+        void throwOnError(cudaError_t status, const std::string& info = "") const{
             if(status != cudaSuccess){
                 
                 std::string msg = cudaGetErrorString(status);
-                std::cerr << "CUDA Error: " << msg << "\n";
+                std::cerr << "CUDA Error: " << msg << " " << info << "\n";
                 throw std::runtime_error(msg);
             }
         }

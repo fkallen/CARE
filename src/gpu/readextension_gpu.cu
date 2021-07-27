@@ -2,6 +2,7 @@
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/gpureadstorage.cuh>
 #include <gpu/readextender_gpu.hpp>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <config.hpp>
 #include <sequencehelpers.hpp>
@@ -1280,71 +1281,85 @@ extend_gpu_pairedend(
 
 #if 1
 
-    const int numDeviceIds = runtimeOptions.deviceIds.size();
+    constexpr bool isPairedEnd = true;
 
-    assert(numDeviceIds > 0);
+    assert(runtimeOptions.deviceIds.size() > 0);
 
-    const int ompThreadId = omp_get_thread_num();
-    const int deviceIdIndex = ompThreadId % numDeviceIds;
-    const int deviceId = runtimeOptions.deviceIds.at(deviceIdIndex);
-    cudaSetDevice(deviceId); CUERR;
+    //will need at least one thread per gpu
+    const int numDeviceIds = std::min(runtimeOptions.threads, int(runtimeOptions.deviceIds.size()));
 
-    std::array<CudaStream, 4> streams{};
-    std::array<cudaStream_t, 4> streamsraw{};
-    for(int i = 0; i < 4; i++){
-        streamsraw[i] = streams[i].getStream();
+    struct GpuData{
+        int deviceId;
+        std::unique_ptr<cub::CachingDeviceAllocator> extenderAllocator;
+        std::unique_ptr<cub::CachingDeviceAllocator> dataAllocator;
+        std::unique_ptr<GpuReadExtender> gpuReadExtender;
+    };
+
+    std::vector<std::array<CudaStream, 4>> gpustreams;
+
+    std::vector<GpuData> gpuDataVector;
+
+    for(int d = 0; d < numDeviceIds; d++){
+        const int deviceId = runtimeOptions.deviceIds[d];
+        CUDACHECK(cudaSetDevice(deviceId));
+
+        gpustreams.emplace_back();
+
+        GpuData gpudata;
+        gpudata.deviceId = deviceId;
+
+        gpudata.extenderAllocator = std::make_unique<cub::CachingDeviceAllocator>(
+            2, //bin_growth
+            1, //min_bin
+            cub_CachingDeviceAllocator_INVALID_BIN, //max_bin
+            cub_CachingDeviceAllocator_INVALID_SIZE, //max_cached_bytes
+            false, //skip_cleanup 
+            false //debug
+        );
+
+        gpudata.dataAllocator = std::make_unique<cub::CachingDeviceAllocator>(
+            2, //bin_growth
+            1, //min_bin
+            cub_CachingDeviceAllocator_INVALID_BIN, //max_bin
+            cub_CachingDeviceAllocator_INVALID_SIZE, //max_cached_bytes
+            false, //skip_cleanup 
+            false //debug
+        );
+
+        std::array<cudaStream_t, 4> streamsraw{};
+        for(int i = 0; i < 4; i++){
+            streamsraw[i] = gpustreams[d][i].getStream();
+        }
+
+        gpudata.gpuReadExtender = std::make_unique<GpuReadExtender>(
+            encodedSequencePitchInInts,
+            decodedSequencePitchInBytes,
+            qualityPitchInBytes,
+            msaColumnPitchInElements,
+            isPairedEnd,
+            gpuReadStorage, 
+            correctionOptions,
+            goodAlignmentProperties,
+            qualityConversion,
+            insertSize,
+            insertSizeStddev,
+            maxextensionPerStep,
+            streamsraw,
+            *gpudata.extenderAllocator
+        );
+
+        gpuDataVector.push_back(std::move(gpudata));
     }
-
-    cub::CachingDeviceAllocator extenderAllocator(
-        2, //bin_growth
-        1, //min_bin
-        cub_CachingDeviceAllocator_INVALID_BIN, //max_bin
-        cub_CachingDeviceAllocator_INVALID_SIZE, //max_cached_bytes
-        false, //skip_cleanup 
-        false //debug
-    );
-
-    const bool isPairedEnd = true;
-
-    auto gpuReadExtender = std::make_unique<GpuReadExtender>(
-        encodedSequencePitchInInts,
-        decodedSequencePitchInBytes,
-        qualityPitchInBytes,
-        msaColumnPitchInElements,
-        isPairedEnd,
-        gpuReadStorage, 
-        correctionOptions,
-        goodAlignmentProperties,
-        qualityConversion,
-        insertSize,
-        insertSizeStddev,
-        maxextensionPerStep,
-        streamsraw,
-        extenderAllocator
-    );
-    gpuReadExtender->someId = 0;
 
     std::cerr << "newmode\n";
 
-    cub::CachingDeviceAllocator myCubAllocator(
-        2, //bin_growth
-        1, //min_bin
-        cub_CachingDeviceAllocator_INVALID_BIN, //max_bin
-        cub_CachingDeviceAllocator_INVALID_SIZE, //max_cached_bytes
-        false, //skip_cleanup 
-        false //debug
-    );
 
+    auto extenderThreadFunc = [&](int gpuIndex, int threadId){
+        std::cerr << "extenderThreadFunc( " << gpuIndex << ", " << threadId << ")\n";
+        auto& gpudata = gpuDataVector[gpuIndex];
+        auto stream = gpustreams[gpuIndex].back().getStream();
 
-    #pragma omp parallel
-    {
-        cudaSetDevice(deviceId); CUERR;
-
-
-
-
-
-        //cub::CachingDeviceAllocator* myCubAllocator = cubAllocators[deviceIdIndex].get();
+        CUDACHECK(cudaSetDevice(gpudata.deviceId));
 
         std::int64_t numSuccess0 = 0;
         std::int64_t numSuccess1 = 0;
@@ -1362,8 +1377,6 @@ extend_gpu_pairedend(
         helpers::SimpleAllocationDevice<int> currentReadLengths(2 * batchsizePairs);
         helpers::SimpleAllocationDevice<char> currentQualityScores(2 * qualityPitchInBytes * batchsizePairs);
 
-        CudaStream stream;
-
         if(!correctionOptions.useQualityScores){
             helpers::call_fill_kernel_async(currentQualityScores.data(), currentQualityScores.size(), 'I', stream);
         }
@@ -1371,11 +1384,11 @@ extend_gpu_pairedend(
 
         GpuReadExtender::Hasher anchorHasher(minhasher);
 
-        GpuReadExtender::TaskData tasks(myCubAllocator, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, (cudaStream_t)0);
-        GpuReadExtender::TaskData finishedTasks(myCubAllocator, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, (cudaStream_t)0);
+        GpuReadExtender::TaskData tasks(*gpudata.dataAllocator, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, (cudaStream_t)0);
+        GpuReadExtender::TaskData finishedTasks(*gpudata.dataAllocator, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, (cudaStream_t)0);
 
-        GpuReadExtender::AnchorData anchorData(myCubAllocator);
-        GpuReadExtender::AnchorHashResult anchorHashResult(myCubAllocator);
+        GpuReadExtender::AnchorData anchorData(*gpudata.dataAllocator);
+        GpuReadExtender::AnchorHashResult anchorHashResult(*gpudata.dataAllocator);
 
         GpuReadExtender::IterationConfig iterationConfig{};
         iterationConfig.maxextensionPerStep = 20;
@@ -1459,7 +1472,7 @@ extend_gpu_pairedend(
                     );
                 }
                 
-                const int numReadPairsInBatch = numNewReadsInBatch / 2;
+                const int numReadPairsInBatch = numNewReadsInBatch / 2; 
 
                 tasks.addTasks(numReadPairsInBatch, currentIds.data(), currentReadLengths.data(), currentEncodedReads.data(), currentQualityScores.data(), stream);
 
@@ -1476,12 +1489,12 @@ extend_gpu_pairedend(
             nvtx::push_range("output", 5);
 
             nvtx::push_range("constructRawResults", 4);
-            gpuReadExtender->constructRawResults(finishedTasks, rawExtendResult, stream);
+            gpudata.gpuReadExtender->constructRawResults(finishedTasks, rawExtendResult, stream);
             nvtx::pop_range();
 
-            cudaStreamSynchronize(stream); CUERR;
+            CUDACHECK(cudaStreamSynchronize(stream));
 
-            std::vector<extension::ExtendResult> extensionResults = gpuReadExtender->convertRawExtendResults(rawExtendResult);
+            std::vector<extension::ExtendResult> extensionResults = gpudata.gpuReadExtender->convertRawExtendResults(rawExtendResult);
 
             //std::vector<extension::ExtendResult> extensionResults = gpuReadExtender->constructResults4();
             const int numresults = extensionResults.size();
@@ -1564,6 +1577,7 @@ extend_gpu_pairedend(
         };
 
         //std::cerr << "thread " << ompThreadId << " begins main loop\n";
+        CUDACHECK(cudaDeviceSynchronize());
 
         isLastIteration = false;
         while(!(readIdGenerator.empty() && tasks.size() == 0)){
@@ -1577,7 +1591,7 @@ extend_gpu_pairedend(
             anchorHasher.getCandidateReadIds(anchorData, anchorHashResult, stream);
             nvtx::pop_range();
 
-            gpuReadExtender->processOneIteration(
+            gpudata.gpuReadExtender->processOneIteration(
                 tasks, 
                 anchorData, 
                 anchorHashResult, 
@@ -1586,7 +1600,7 @@ extend_gpu_pairedend(
                 stream
             );
 
-            cudaStreamSynchronize(stream); CUERR;
+            CUDACHECK(cudaStreamSynchronize(stream));
             
             if(finishedTasks.size() > std::size_t((batchsizePairs * 4) / 2)){
                 output();
@@ -1598,7 +1612,7 @@ extend_gpu_pairedend(
         output();
         assert(finishedTasks.size() == 0);
 
-        std::cerr << "\nalltimetotalTaskBytes = " << gpuReadExtender->alltimetotalTaskBytes << "\n";
+        std::cerr << "\nalltimetotalTaskBytes = " << gpudata.gpuReadExtender->alltimetotalTaskBytes << "\n";
 
         iterationConfig.maxextensionPerStep -= 4;
 
@@ -1610,7 +1624,7 @@ extend_gpu_pairedend(
 
          while(pairsWhichShouldBeRepeated.size() > 0 && (iterationConfig.maxextensionPerStep > 0)){
 
-            std::cerr << "thread " << ompThreadId << " will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << iterationConfig.maxextensionPerStep << "\n";
+            std::cerr << "thread " << threadId << " will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << iterationConfig.maxextensionPerStep << "\n";
             isLastIteration = (iterationConfig.maxextensionPerStep <= 4);
 
             while(!(pairsWhichShouldBeRepeated.size() == 0 && tasks.size() == 0)){
@@ -1624,7 +1638,7 @@ extend_gpu_pairedend(
                 anchorHasher.getCandidateReadIds(anchorData, anchorHashResult, stream);
                 nvtx::pop_range();
 
-                gpuReadExtender->processOneIteration(
+                gpudata.gpuReadExtender->processOneIteration(
                     tasks, 
                     anchorData, 
                     anchorHashResult, 
@@ -1633,7 +1647,7 @@ extend_gpu_pairedend(
                     stream
                 );
 
-                cudaStreamSynchronize(stream); CUERR;
+                CUDACHECK(cudaStreamSynchronize(stream));
                 
                 if(finishedTasks.size() > std::size_t((batchsizePairs * 4))){
                     output();
@@ -1693,7 +1707,28 @@ extend_gpu_pairedend(
         
         gpuReadStorage.destroyHandle(readStorageHandle);
 
-    } //end omp parallel
+    };
+
+
+    std::vector<std::future<void>> futures;
+
+    const int maxNumThreads = runtimeOptions.threads;
+
+    for(int t = 0; t < maxNumThreads; t++){
+        futures.emplace_back(
+            std::async(
+                std::launch::async,
+                extenderThreadFunc,
+                t % numDeviceIds,
+                t
+            )
+        );
+    }
+
+    for(auto& f : futures){
+        f.wait();
+    }
+
 
 #else
 
