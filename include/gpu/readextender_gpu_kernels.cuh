@@ -1594,6 +1594,12 @@ namespace readextendergpukernels{
                         = d_sortedindices[runBegin + group.thread_rank()];
                 }
             }else{
+                if(size != 4){
+                    if(group.thread_rank() == 0){
+                        printf("error size %d\n", size);
+                    }
+                    group.sync(); //DEBUG
+                }
                 assert(size == 4);
 
                 if(group.thread_rank() == 0){
