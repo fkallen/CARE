@@ -85,6 +85,7 @@ namespace gpu{
             MSAColumnCount maximumMsaWidth, // upper bound for number of columns in a single msa. must be large enough to actually fit the data.
             cudaStream_t stream
         ){
+            //std::cerr << "thread " << std::this_thread::get_id() << " msa construct, stream " << stream << "\n";
             initializeBuffers(
                 maximumMsaWidth, 
                 numAnchors, 
@@ -154,6 +155,8 @@ namespace gpu{
             int numIterations,
             cudaStream_t stream
         ){
+            //std::cerr << "thread " << std::this_thread::get_id() << " msa refine, stream " << stream << "\n";
+
             CachedDeviceUVector<bool> d_temp(maxNumCandidates, stream, *cubAllocator);
 
             callMsaCandidateRefinementKernel_multiiter_async(
