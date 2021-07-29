@@ -2896,8 +2896,7 @@ struct GpuReadExtender{
         rawResults.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
         rawResults.numResults = numFinishedTasks / 4;
 
-        if(numFinishedTasks == 0){   
-            std::cerr << "finishedtask = 0. exit thread " << std::this_thread::get_id() << "\n";            
+        if(numFinishedTasks == 0){            
             return;
         }
 
@@ -3171,6 +3170,10 @@ struct GpuReadExtender{
             insertSize,
             insertSizeStddev
         ); CUDACHECKASYNC;
+
+        d_consensusQuality.destroy();
+        d_decodedConsensus.destroy();
+        d_resultLengths.destroy();
 
         rawResults.h_pairResultAnchorIsLR.resize(numResults);
         rawResults.h_pairResultSequences.resize(numResults * outputPitch);
