@@ -80,6 +80,37 @@ cudaError_t cudaStreamWaitEventWrapper(cudaStream_t stream, cudaEvent_t event, u
     return cudaStreamWaitEvent(stream, event, flags);
 }
 
+template<int N>
+struct ThrustTupleAddition;
+
+template<>
+struct ThrustTupleAddition<2>{
+
+    template<class Tuple>
+    __host__ __device__
+    Tuple operator()(const Tuple& l, const Tuple& r) const noexcept{
+        return thrust::make_tuple(
+            thrust::get<0>(l) + thrust::get<0>(r),
+            thrust::get<1>(l) + thrust::get<1>(r)
+        );
+    }
+};
+
+template<>
+struct ThrustTupleAddition<3>{
+
+    template<class Tuple>
+    __host__ __device__
+    Tuple operator()(const Tuple& l, const Tuple& r) const noexcept{
+        return thrust::make_tuple(
+            thrust::get<0>(l) + thrust::get<0>(r),
+            thrust::get<1>(l) + thrust::get<1>(r),
+            thrust::get<2>(l) + thrust::get<2>(r)
+        );
+    }
+};
+
+
 
 struct GpuReadExtender{
     template<class T>
@@ -1220,45 +1251,35 @@ struct GpuReadExtender{
                 stream
             ); CUDACHECKASYNC;
 
-            CubCallWrapper(*cubAllocator).cubInclusiveSum(
-                selection.soaNumIterationResultsPerTask.begin(),
-                selection.soaNumIterationResultsPerTaskPrefixSum.begin() + 1,
+            //Fused three scans
+            CubCallWrapper(*cubAllocator).cubInclusiveScan(
+                thrust::make_zip_iterator(thrust::make_tuple(
+                    selection.soaNumIterationResultsPerTask.begin(), 
+                    selection.d_numUsedReadIdsPerTask.begin(), 
+                    selection.d_numFullyUsedReadIdsPerTask.begin()
+                )),
+                thrust::make_zip_iterator(thrust::make_tuple(
+                    selection.soaNumIterationResultsPerTaskPrefixSum.begin() + 1, 
+                    selection.d_numUsedReadIdsPerTaskPrefixSum.begin() + 1, 
+                    selection.d_numFullyUsedReadIdsPerTaskPrefixSum.begin() + 1
+                )),
+                ThrustTupleAddition<3>{},
                 gathersize,
                 stream
             );
 
-            CubCallWrapper(*cubAllocator).cubInclusiveSum(
-                selection.d_numUsedReadIdsPerTask.begin(),
-                selection.d_numUsedReadIdsPerTaskPrefixSum.begin() + 1,
-                gathersize,
-                stream
-            );
+            //set first element of prefix sums to 0
+            helpers::lambda_kernel<<<1,1,0,stream>>>([
+                a = selection.soaNumIterationResultsPerTaskPrefixSum.begin(),
+                b = selection.d_numUsedReadIdsPerTaskPrefixSum.begin(),
+                c = selection.d_numFullyUsedReadIdsPerTaskPrefixSum.begin()
+            ] __device__(){
+                a[0] = 0;
+                b[0] = 0;
+                c[0] = 0;
+            }); CUDACHECKASYNC;
 
-            CubCallWrapper(*cubAllocator).cubInclusiveSum(
-                selection.d_numFullyUsedReadIdsPerTask.begin(),
-                selection.d_numFullyUsedReadIdsPerTaskPrefixSum.begin() + 1,
-                gathersize,
-                stream
-            );
 
-            CUDACHECK(cudaMemsetAsync(
-                selection.soaNumIterationResultsPerTaskPrefixSum.data(),
-                0, 
-                sizeof(int),
-                stream
-            ));
-            CUDACHECK(cudaMemsetAsync(
-                selection.d_numUsedReadIdsPerTaskPrefixSum.data(),
-                0, 
-                sizeof(int),
-                stream
-            ));
-            CUDACHECK(cudaMemsetAsync(
-                selection.d_numFullyUsedReadIdsPerTaskPrefixSum.data(),
-                0, 
-                sizeof(int),
-                stream
-            ));
 
             if(gathersize > 0){
 
@@ -1586,16 +1607,26 @@ struct GpuReadExtender{
             d_newFullyUsedReadIds.destroy();
             d_newNumFullyUsedreadIdsPerAnchor.destroy();
 
-            CubCallWrapper(*cubAllocator).cubInclusiveSum(
-                d_numFullyUsedReadIdsPerTask.data(), 
-                d_numFullyUsedReadIdsPerTaskPrefixSum.data() + 1, 
-                size(),
-                stream
-            );
 
-            CubCallWrapper(*cubAllocator).cubInclusiveSum(
-                d_numUsedReadIdsPerTask.data(), 
-                d_numUsedReadIdsPerTaskPrefixSum.data() + 1, 
+            //merged two prefix sums of relatively small arrays into single cub call
+
+            auto scanOp = [] __host__ __device__ (const thrust::tuple<int, int>& l, const thrust::tuple<int, int>& r){
+                return thrust::make_tuple(
+                    thrust::get<0>(l) + thrust::get<0>(r),
+                    thrust::get<1>(l) + thrust::get<1>(r)
+                );
+            };
+
+            CubCallWrapper(*cubAllocator).cubInclusiveScan(
+                thrust::make_zip_iterator(thrust::make_tuple(
+                    d_numFullyUsedReadIdsPerTask.data(), 
+                    d_numUsedReadIdsPerTask.data()
+                )),
+                thrust::make_zip_iterator(thrust::make_tuple(
+                    d_numFullyUsedReadIdsPerTaskPrefixSum.data() + 1, 
+                    d_numUsedReadIdsPerTaskPrefixSum.data() + 1
+                )),
+                ThrustTupleAddition<2>{},
                 size(),
                 stream
             );
@@ -2824,45 +2855,58 @@ struct GpuReadExtender{
         d_pairIds1.destroy();
         d_pairIds2.destroy();
 
-        //compute exclusive prefix sums + total to have stable output
-        CachedDeviceUVector<int> d_outputoffsetsPos4(finishedTasks.size(), stream, *cubAllocator);
-        CachedDeviceUVector<int> d_outputoffsetsNotPos4(finishedTasks.size(), stream, *cubAllocator);
+        //compute prefix sums to have stable output
+        CachedDeviceUVector<int> d_outputoffsetsPos4(finishedTasks.size() + 1, stream, *cubAllocator);
+        CachedDeviceUVector<int> d_outputoffsetsNotPos4(finishedTasks.size() + 1, stream, *cubAllocator);
+        CachedDeviceUVector<int> d_countsInclusivePrefixSum(finishedTasks.size(), stream, *cubAllocator);
 
-        CubCallWrapper(*cubAllocator).cubExclusiveSum(
-            thrust::make_transform_iterator(
-                d_counts_out.data(),
-                [] __host__ __device__ (int count){
-                    if(count == 4){
-                        return count;
-                    }else{
-                        return 0;
-                    }
+        //compute two exclusive prefix sums and one inclusive prefix sum. the three operations are fused into a single call
+
+        helpers::lambda_kernel<<<1,1,0,stream>>>([
+            d_outputoffsetsPos4 = d_outputoffsetsPos4.data(),
+            d_outputoffsetsNotPos4 = d_outputoffsetsNotPos4.data()
+        ] __device__ (){
+            d_outputoffsetsPos4[0] = 0;
+            d_outputoffsetsNotPos4[0] = 0;
+        }); CUDACHECKASYNC;
+
+        auto inputIterator1 = thrust::make_transform_iterator(
+            d_counts_out.data(),
+            [] __host__ __device__ (int count){
+                if(count == 4){
+                    return count;
+                }else{
+                    return 0;
                 }
-            ),
-            d_outputoffsetsPos4.data(),
-            finishedTasks.size(),
-            stream
+            }
         );
 
-        CubCallWrapper(*cubAllocator).cubExclusiveSum(
-            thrust::make_transform_iterator(
-                d_counts_out.data(),
-                [] __host__ __device__ (int count){
-                    if(count != 4){
-                        return count;
-                    }else{
-                        return 0;
-                    }
+        auto outputIterator1 = d_outputoffsetsPos4.data() + 1; // exclusive sum, so inclusive sum starts at position 1
+
+        auto inputIterator2 = thrust::make_transform_iterator(
+            d_counts_out.data(),
+            [] __host__ __device__ (int count){
+                if(count != 4){
+                    return count;
+                }else{
+                    return 0;
                 }
-            ),
-            d_outputoffsetsNotPos4.data(),
-            finishedTasks.size(),
-            stream
+            }
         );
 
-        CubCallWrapper(*cubAllocator).cubInclusiveSum(
-            d_counts_out.data(),
-            d_counts_out.data(),
+        auto outputIterator2 = d_outputoffsetsNotPos4.data() + 1; // exclusive sum, so inclusive sum starts at position 1
+
+        auto inputIterator3 = d_counts_out.data();
+        auto outputIterator3 = d_countsInclusivePrefixSum.data();
+
+        CubCallWrapper(*cubAllocator).cubInclusiveScan(
+            thrust::make_zip_iterator(thrust::make_tuple(
+                inputIterator1, inputIterator2, inputIterator3
+            )),
+            thrust::make_zip_iterator(thrust::make_tuple(
+                outputIterator1, outputIterator2, outputIterator3
+            )),
+            ThrustTupleAddition<3>{},
             finishedTasks.size(),
             stream
         );
@@ -2873,7 +2917,7 @@ struct GpuReadExtender{
             d_positionsNot4,
             d_numPositions4,
             d_numPositionsNot4,
-            d_counts_out.data(),
+            d_countsInclusivePrefixSum.data(),
             d_num_runs_out.data(),
             d_theSortedIndices,
             finishedTasks.id.data(),
