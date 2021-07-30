@@ -256,7 +256,7 @@ namespace gpu{
 
             std::vector<int> deviceIds{};
 
-            std::unique_ptr<MinhasherHandle> singlegpuMinhasherHandle;
+            std::vector<std::unique_ptr<MinhasherHandle>> singlegpuMinhasherHandles;
 
             MemoryUsage getMemoryInfo() const{
                 MemoryUsage mem{};
@@ -372,6 +372,41 @@ namespace gpu{
 
             const int numberOfAvailableHashFunctions = maxNumHashfunctions - remainingNumHashfunctions;
 
+            if(numberOfAvailableHashFunctions == maxNumHashfunctions && sgpuMinhashers.size() == 1 && usableDeviceIds.size() < deviceIds.size()){
+                //all hashtables fit into one gpu. try to replace the hash tables on all gpus
+
+                nvtx::push_range("replicate single gpu minhasher", 0);
+                std::vector<std::unique_ptr<SingleGpuMinhasher>> replicas{};
+
+                for(std::size_t i = 1; i < deviceIds.size(); i++){
+                    const int targetDeviceId = deviceIds[i];
+                    helpers::CpuTimer rtimer("make singlegpu minhasher replica");
+                    replicas.emplace_back(sgpuMinhashers[0]->makeCopy(targetDeviceId));
+                    rtimer.print();
+                }
+
+                if(std::all_of(replicas.begin(), replicas.end(), [](const auto& uniqueptr){ return bool(uniqueptr); })){
+                    std::cerr << "Replicas ok\n";
+                    sgpuMinhashers.insert(sgpuMinhashers.end(), std::make_move_iterator(replicas.begin()), std::make_move_iterator(replicas.end()));
+
+                    HostBuffer<int> h_currentHashFunctionNumbers(vec_h_currentHashFunctionNumbers[0].size());
+                    std::copy(vec_h_currentHashFunctionNumbers[0].begin(), vec_h_currentHashFunctionNumbers[0].end(), h_currentHashFunctionNumbers.begin());
+                    vec_h_currentHashFunctionNumbers.push_back(std::move(h_currentHashFunctionNumbers));
+
+                    usableDeviceIds = deviceIds;
+
+                    isReplicatedSingleGpu = true;
+                }else{
+                    std::cerr << "Replicas not ok\n";
+                }
+
+                nvtx::pop_range();
+
+            }else{
+                std::cerr << "Cannot try replication\n";
+            }
+
+
             return numberOfAvailableHashFunctions; 
         }
 
@@ -395,8 +430,8 @@ namespace gpu{
                 ptr->callerDataMap.emplace(sgpuMinhashers[i]->getDeviceId(), std::move(QueryData::CallerData{}));
             }
 
-            if(numMinhashers == 1){
-                ptr->singlegpuMinhasherHandle = std::make_unique<MinhasherHandle>(sgpuMinhashers[0]->makeMinhasherHandle());
+            for(int i = 0; i < numMinhashers; i++){
+                ptr->singlegpuMinhasherHandles.emplace_back(std::make_unique<MinhasherHandle>(sgpuMinhashers[i]->makeMinhasherHandle()));
             }
 
             CUERR;
@@ -418,8 +453,8 @@ namespace gpu{
             assert(id < int(tempdataVector.size()));
 
             const int numMinhashers = sgpuMinhashers.size();
-            if(numMinhashers == 1){
-                sgpuMinhashers[0]->destroyHandle(*tempdataVector[id]->singlegpuMinhasherHandle);
+            for(int i = 0; i < numMinhashers; i++){
+                sgpuMinhashers[i]->destroyHandle(*tempdataVector[id]->singlegpuMinhasherHandles[i]);
             }
             
             tempdataVector[id] = nullptr;
@@ -441,8 +476,19 @@ namespace gpu{
                 return;
             }
 
-            if(usableDeviceIds.size() == 1){
+            int currentDeviceId = 0;
+            cudaGetDevice(&currentDeviceId); CUERR;
+
+            auto it = usableDeviceIds.end();
+            if(isReplicatedSingleGpu || (usableDeviceIds.size() == 1)){
+                it = std::find(usableDeviceIds.begin(), usableDeviceIds.end(), currentDeviceId);
+            }
+
+            if(it != usableDeviceIds.end()){
+                int index = std::distance(usableDeviceIds.begin(), it);
+
                 determineNumValues_singlegpuimpl(
+                    index,
                     queryHandle,
                     d_sequenceData2Bit,
                     encodedSequencePitchInInts,
@@ -452,6 +498,7 @@ namespace gpu{
                     totalNumValues,
                     stream
                 );
+                
             }else{
 
                 int currentDeviceId = 0;
@@ -527,8 +574,18 @@ namespace gpu{
                 return;
             }
 
-            if(usableDeviceIds.size() == 1){
+            int currentDeviceId = 0;
+            cudaGetDevice(&currentDeviceId); CUERR;
+
+            auto it = usableDeviceIds.end();
+            if(isReplicatedSingleGpu || (usableDeviceIds.size() == 1)){
+                it = std::find(usableDeviceIds.begin(), usableDeviceIds.end(), currentDeviceId);
+            }
+
+            if(it != usableDeviceIds.end()){
+                int index = std::distance(usableDeviceIds.begin(), it);
                 retrieveValues_singlegpuimpl(
+                    index, //index for usableDeviceIds
                     queryHandle,
                     d_readIds,
                     numSequences,
@@ -539,9 +596,6 @@ namespace gpu{
                     stream
                 );
             }else{
-
-                int currentDeviceId = 0;
-                cudaGetDevice(&currentDeviceId); CUERR;
 
                 QueryData* const queryData = getQueryDataFromHandle(queryHandle);
 
@@ -619,11 +673,20 @@ namespace gpu{
         }
         
         int getNumberOfMaps() const noexcept override{
-            int num = 0;
-            for(const auto& minhasher : sgpuMinhashers){
-                num += minhasher->getNumberOfMaps();
+            
+            if(isReplicatedSingleGpu){
+                if(sgpuMinhashers.empty()){
+                    return 0;
+                }else{
+                    return sgpuMinhashers[0]->getNumberOfMaps();
+                }
+            }else{
+                int num = 0;
+                for(const auto& minhasher : sgpuMinhashers){
+                    num += minhasher->getNumberOfMaps();
+                }
+                return num;
             }
-            return num;
         }
 
         void destroy(){
@@ -642,6 +705,7 @@ namespace gpu{
 private:        
 
         void determineNumValues_singlegpuimpl(
+            int whichSinglegpu,
             MinhasherHandle& queryHandle,
             const unsigned int* d_sequenceData2Bit,
             std::size_t encodedSequencePitchInInts,
@@ -651,7 +715,7 @@ private:
             int& totalNumValues,
             cudaStream_t stream
         ) const {
-            assert(usableDeviceIds.size() == 1);
+            assert(int(usableDeviceIds.size()) > whichSinglegpu);
 
             if(numSequences == 0){
                 return;
@@ -673,16 +737,16 @@ private:
             int& pinnedtotalNumValues = myPinnedData[0];
 
             forkInternalStreams(queryData, stream);
-
-            CudaStream& myStream = queryData->streams[0];
             
             {
+                const int d = whichSinglegpu;
+                DeviceSwitcher ds(usableDeviceIds[d]);
 
-                DeviceSwitcher ds(usableDeviceIds[0]);
+                CudaStream& myStream = queryData->streams[whichSinglegpu];
 
-                const auto& minhasher = *sgpuMinhashers[0];
+                const auto& minhasher = *sgpuMinhashers[d];
                 minhasher.determineNumValues(
-                    *queryData->singlegpuMinhasherHandle,
+                    *queryData->singlegpuMinhasherHandles[d],
                     d_sequenceData2Bit,
                     encodedSequencePitchInInts,
                     d_sequenceLengths,
@@ -695,7 +759,7 @@ private:
                 cudaStreamSynchronize(myStream); CUERR;
                 totalNumValues = pinnedtotalNumValues;
 
-                queryData->events[0].record(queryData->streams[0]);
+                queryData->events[d].record(queryData->streams[d]);
 
             }
 
@@ -706,6 +770,7 @@ private:
         }
 
         void retrieveValues_singlegpuimpl(
+            int whichSinglegpu,
             MinhasherHandle& queryHandle,
             const read_number* d_readIds,
             int numSequences,
@@ -715,7 +780,7 @@ private:
             int* d_offsets, //numSequences + 1
             cudaStream_t stream
         ) const {
-            assert(usableDeviceIds.size() == 1);
+            assert(int(usableDeviceIds.size()) > whichSinglegpu);
 
             if(numSequences == 0){
                 return;
@@ -737,14 +802,14 @@ private:
             forkInternalStreams(queryData, stream);
 
             {
-                const int d = 0;
+                const int d = whichSinglegpu;
                 DeviceSwitcher ds(usableDeviceIds[d]);
                 CudaStream& myStream = queryData->streams[d];
 
                 const auto& minhasher = *sgpuMinhashers[d];
                 
                 minhasher.retrieveValues(
-                    *queryData->singlegpuMinhasherHandle,
+                    *queryData->singlegpuMinhasherHandles[whichSinglegpu],
                     d_readIds,
                     numSequences,              
                     totalNumValues,
@@ -814,6 +879,8 @@ private:
         }
 
         void resizeRemoteNumValuesInputBuffers(QueryData* queryHandle) const{
+            assert(!isReplicatedSingleGpu);
+
             const int numUsable = usableDeviceIds.size();
             const int numSequences = queryHandle->numSequences;
             const std::size_t encodedSequencePitchInInts = queryHandle->encodedSequencePitchInInts;
@@ -826,6 +893,8 @@ private:
         }
 
         void resizeRemoteRetrieveInputBuffers(QueryData* queryHandle) const{
+            assert(!isReplicatedSingleGpu);
+
             const int numUsable = usableDeviceIds.size();
             const int numSequences = queryHandle->numSequences;
 
@@ -837,23 +906,10 @@ private:
             }
         }
 
-        void resizeRemoteInputBuffers(QueryData* queryHandle) const{
-            const int numUsable = usableDeviceIds.size();
-            const int numSequences = queryHandle->numSequences;
-            const std::size_t encodedSequencePitchInInts = queryHandle->encodedSequencePitchInInts;
-
-            for(int d = 0; d < numUsable; d++){
-                DeviceSwitcher ds(usableDeviceIds[d]);
-                queryHandle->remotedataPerGpu[d].d_input_lengths.resize(numSequences);
-                queryHandle->remotedataPerGpu[d].d_input_sequences.resize(encodedSequencePitchInInts * numSequences);
-                
-                if(queryHandle->d_readIds != nullptr){
-                    queryHandle->remotedataPerGpu[d].d_readIds.resize(numSequences);
-                }
-            }
-        }
 
         void broadcastNumValuesInputToRemote(QueryData* queryHandle) const {
+            assert(!isReplicatedSingleGpu);
+
             const int numUsable = usableDeviceIds.size();
             const int numSequences = queryHandle->numSequences;
             const std::size_t encodedSequencePitchInInts = queryHandle->encodedSequencePitchInInts;
@@ -880,6 +936,8 @@ private:
         }
 
         void broadcastRetrieveInputToRemote(QueryData* queryHandle) const {
+            assert(!isReplicatedSingleGpu);
+
             const int numUsable = usableDeviceIds.size();
             const int numSequences = queryHandle->numSequences;
 
@@ -898,43 +956,9 @@ private:
             }
         }
 
-        void broadcastInputToRemote(QueryData* queryHandle) const {
-            const int numUsable = usableDeviceIds.size();
-            const int numSequences = queryHandle->numSequences;
-            const std::size_t encodedSequencePitchInInts = queryHandle->encodedSequencePitchInInts;
-
-            for(int d = 0; d < numUsable; d++){                
-                DeviceSwitcher ds(usableDeviceIds[d]);
-
-                cudaMemcpyAsync(
-                    queryHandle->remotedataPerGpu[d].d_input_lengths.data(),
-                    queryHandle->d_sequenceLengths,
-                    sizeof(int) * numSequences,
-                    D2D,
-                    queryHandle->streams[d]
-                ); CUERR;
-
-                cudaMemcpyAsync(
-                    queryHandle->remotedataPerGpu[d].d_input_sequences.data(),
-                    queryHandle->d_sequenceData2Bit,
-                    sizeof(unsigned int) * encodedSequencePitchInInts * numSequences,
-                    D2D,
-                    queryHandle->streams[d]
-                ); CUERR;
-
-                if(queryHandle->d_readIds != nullptr){
-                    cudaMemcpyAsync(
-                        queryHandle->remotedataPerGpu[d].d_readIds.data(),
-                        queryHandle->d_readIds,
-                        sizeof(read_number) * numSequences,
-                        D2D,
-                        queryHandle->streams[d]
-                    ); CUERR;
-                }
-            }
-        }
-
         void resizeRemoteNumValuesBuffers(QueryData* queryHandle) const{
+            assert(!isReplicatedSingleGpu);
+
             const int numUsable = usableDeviceIds.size();
             const int numSequences = queryHandle->numSequences;
 
@@ -947,6 +971,8 @@ private:
         }
 
         void determineNumValuesOnEachGpu(QueryData* queryHandle) const{
+            assert(!isReplicatedSingleGpu);
+
             const int numUsable = usableDeviceIds.size();
             const int numSequences = queryHandle->numSequences;
             const std::size_t encodedSequencePitchInInts = queryHandle->encodedSequencePitchInInts;
@@ -1023,6 +1049,8 @@ private:
         }
 
         void retrieveValuesOnEachGpu(QueryData* queryHandle) const{
+            assert(!isReplicatedSingleGpu);
+
             const int numUsable = usableDeviceIds.size();
             const int numSequences = queryHandle->numSequences;
 
@@ -1085,6 +1113,8 @@ private:
         }
 
         void resizeCallerDataForNumValues(QueryData* queryHandle) const{
+            assert(!isReplicatedSingleGpu);
+
             const int numUsable = usableDeviceIds.size();
             const int numSequences = queryHandle->numSequences;
 
@@ -1094,6 +1124,8 @@ private:
         }
 
         void resizeCallerDataForRetrieve(QueryData* queryHandle) const{
+            assert(!isReplicatedSingleGpu);
+
             const int numUsable = usableDeviceIds.size();
             const int numSequences = queryHandle->numSequences;
 
@@ -1124,85 +1156,11 @@ private:
 
             temp_storage_bytes = std::max(temp_storage_bytes, getRequiredCubTempSizeForResultMerging(numSequences));
             callerData.d_temp.resize(temp_storage_bytes);
-        }
-
-        void resizeCallerData(QueryData* queryHandle) const{
-            const int numUsable = usableDeviceIds.size();
-            const int numSequences = queryHandle->numSequences;
-
-            auto& callerData = queryHandle->callerDataMap[queryHandle->callerDeviceId];
-
-            callerData.d_results.resize(queryHandle->totalNumValues);
-            callerData.d_numResultsPerSequence.resize(numSequences * numUsable);
-            callerData.d_offsets.resize((numSequences + 1) * numUsable);
-            callerData.d_offsets_tmp.resize(numSequences * numUsable);
-
-            //Allocate temp storage for the remaining steps
-            std::size_t temp_storage_bytes = 0;
-
-            GpuSegmentedUnique::unique(
-                nullptr, //tempstorage
-                temp_storage_bytes,
-                (read_number*)nullptr, //input values
-                queryHandle->totalNumValues,
-                (read_number*)nullptr, //output values
-                (int*)nullptr, //output segment sizes
-                numSequences,
-                123456, //sizeOfLargestSegment, unused for dry-run
-                (int*)nullptr, //segment begin offsets
-                (int*)nullptr, //segment end offsets
-                0,
-                sizeof(read_number) * 8,
-                (cudaStream_t)0
-            );
-
-            temp_storage_bytes = std::max(temp_storage_bytes, getRequiredCubTempSizeForResultMerging(numSequences));
-            callerData.d_temp.resize(temp_storage_bytes);
-        }
-
-        void copyRemoteResultsToCaller(
-            QueryData* queryHandle, 
-            int deviceIndex,
-            read_number* d_values,
-            int* d_numValuesPerSequence,
-            int* d_offsets
-        ) const {
-            const int numUsable = usableDeviceIds.size();
-            const int numSequences = queryHandle->numSequences;
-
-            const int d = deviceIndex;
-
-            DeviceSwitcher ds(usableDeviceIds[d]);
-            const int numValues = queryHandle->pinnedData[2*d];
-
-            cudaMemcpyAsync(
-                d_values,
-                queryHandle->remotedataPerGpu[d].d_results.data(),
-                sizeof(read_number) * numValues,
-                D2D,
-                queryHandle->streams[d]
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                d_numValuesPerSequence,
-                queryHandle->remotedataPerGpu[d].d_numResultsPerSequence.data(),
-                sizeof(int) * numSequences,
-                D2D,
-                queryHandle->streams[d]
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                d_offsets,
-                queryHandle->remotedataPerGpu[d].d_offsets.data(),
-                sizeof(int) * (numSequences + 1),
-                D2D,
-                queryHandle->streams[d]
-            ); CUERR;
-
-            queryHandle->events[d].record(queryHandle->streams[d]);
         }
 
         void copyRemoteNumValuesResultsToCallerData(QueryData* queryHandle) const{
+            assert(!isReplicatedSingleGpu);
+
             const int numUsable = usableDeviceIds.size();
             const int numSequences = queryHandle->numSequences;
             auto& callerData = queryHandle->callerDataMap[queryHandle->callerDeviceId];
@@ -1227,6 +1185,8 @@ private:
         }
 
         void copyRemoteResultsToCallerData(QueryData* queryHandle) const{
+            assert(!isReplicatedSingleGpu);
+
             const int numUsable = usableDeviceIds.size();
             const int numSequences = queryHandle->numSequences;
             auto& callerData = queryHandle->callerDataMap[queryHandle->callerDeviceId];
@@ -1277,6 +1237,8 @@ private:
             int* d_numValuesPerSequence,
             cudaStream_t stream
         ) const{
+            assert(!isReplicatedSingleGpu);
+
             const int numUsable = usableDeviceIds.size();
             const int numSequences = queryHandle->numSequences;
             auto& callerData = queryHandle->callerDataMap[queryHandle->callerDeviceId];
@@ -1304,6 +1266,8 @@ private:
             int* d_offsets, 
             cudaStream_t stream
         ) const{
+            assert(!isReplicatedSingleGpu);
+
             const int numUsable = usableDeviceIds.size();
             const int numSequences = queryHandle->numSequences;
             auto& callerData = queryHandle->callerDataMap[queryHandle->callerDeviceId];
@@ -1409,6 +1373,8 @@ private:
 
         mutable int counter = 0;
         mutable SharedMutex sharedmutex{};
+
+        bool isReplicatedSingleGpu = false;
 
         int maxNumKeys{};
         int kmerSize{};
