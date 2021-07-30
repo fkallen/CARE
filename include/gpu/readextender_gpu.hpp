@@ -1834,8 +1834,8 @@ struct GpuReadExtender{
         h_minmax.resize(2);
         h_numPositions.resize(2);
 
-        d_numAnchors.resize(1, cudaStreamDefault);
-        d_numCandidates.resize(1, cudaStreamDefault);
+        d_numAnchors.resize(1, cudaStreamPerThread);
+        d_numCandidates.resize(1, cudaStreamPerThread);
 
         *h_numAnchors = 0;
         *h_numCandidates = 0;
@@ -1846,7 +1846,7 @@ struct GpuReadExtender{
         qualityPitchInBytes = qualityPitchInBytes_;
         msaColumnPitchInElements = msaColumnPitchInElements_;
 
-        CUDACHECK(cudaDeviceSynchronize());
+        CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
     }
 
     static constexpr int getNumRefinementIterations() noexcept{
