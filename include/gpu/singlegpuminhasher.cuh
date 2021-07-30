@@ -79,6 +79,7 @@ namespace gpu{
     public:
         using Key = kmer_type;
 
+
         SingleGpuMinhasher(int maxNumKeys_, int maxValuesPerKey, int k)
             : maxNumKeys(maxNumKeys_), kmerSize(k), resultsPerMapThreshold(maxValuesPerKey)
         {
@@ -97,6 +98,8 @@ namespace gpu{
             DeviceSwitcher ds(deviceId);
 
             gpuHashTables.clear();
+
+            //helpers::SimpleAllocationDevice<char,0> dummy(20ull * 1024ull * 1024ull * 1024ull);
 
 
             constexpr read_number parallelReads = 1000000;
@@ -242,6 +245,8 @@ namespace gpu{
                 remainingHashFunctions -= addedHashFunctions;
             }
 
+            d_temp.destroy();
+
             const int numberOfAvailableHashFunctions = maxNumHashfunctions - remainingHashFunctions;
 
             h_currentHashFunctionNumbers.resize(numberOfAvailableHashFunctions);
@@ -267,6 +272,55 @@ namespace gpu{
 
             return numberOfAvailableHashFunctions; 
         }
+
+        std::unique_ptr<SingleGpuMinhasher> makeCopy(int targetDeviceId) const{
+            DeviceSwitcher ds(targetDeviceId);
+
+            auto result = std::make_unique<SingleGpuMinhasher>(0,0,0);
+            if(!result) return nullptr;
+            
+            result->maxNumKeys = maxNumKeys;
+            result->kmerSize = kmerSize;
+            result->resultsPerMapThreshold = resultsPerMapThreshold;
+            result->h_currentHashFunctionNumbers.resize(h_currentHashFunctionNumbers.size());
+            std::copy(h_currentHashFunctionNumbers.begin(), h_currentHashFunctionNumbers.end(), result->h_currentHashFunctionNumbers.begin());
+
+            std::size_t requiredTempBytes = 0;
+            for(const auto& ptr : gpuHashTables){
+                std::size_t bytes = ptr->getMakeCopyTempBytes();
+                requiredTempBytes = std::max(requiredTempBytes, bytes);
+            }
+
+            helpers::SimpleAllocationDevice<char, 0> d_copytemp(requiredTempBytes);
+
+            for(const auto& ptr : gpuHashTables){
+                auto newtableptr = ptr->makeCopy(d_copytemp.data(), targetDeviceId);
+                if(newtableptr){
+                    result->gpuHashTables.push_back(std::move(newtableptr));
+                }else{
+                    return nullptr;
+                }
+            }
+
+            std::vector<GpuTable::DeviceTableView> views;
+            for(const auto& ptr : result->gpuHashTables){
+                views.emplace_back(ptr->makeDeviceView());
+            }
+
+            result->d_deviceAccessibleTableViews.resize(views.size());
+            cudaMemcpyAsync(
+                result->d_deviceAccessibleTableViews.data(),
+                views.data(),
+                sizeof(GpuTable::DeviceTableView) * views.size(),
+                H2D,
+                cudaStreamPerThread
+            ); CUERR;
+
+            cudaStreamSynchronize(cudaStreamPerThread); CUERR;
+
+            return result;
+        }
+
 
         int addHashfunctions(int numExtraFunctions){
             

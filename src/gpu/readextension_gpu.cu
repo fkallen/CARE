@@ -347,6 +347,21 @@ extend_gpu_pairedend(
         std::unique_ptr<cub::CachingDeviceAllocator> extenderAllocator;
         std::unique_ptr<cub::CachingDeviceAllocator> dataAllocator;
         std::unique_ptr<GpuReadExtender> gpuReadExtender;
+
+        GpuData() = default;
+
+        GpuData(const GpuData&) = delete;
+        GpuData& operator=(const GpuData&) = delete;
+
+        GpuData(GpuData&&) = default;
+        GpuData& operator=(GpuData&&) = default;
+
+        ~GpuData(){
+            cub::SwitchDevice ds(deviceId);
+            gpuReadExtender = nullptr;
+            dataAllocator = nullptr;
+            extenderAllocator = nullptr;
+        }
     };
 
     std::vector<std::array<CudaStream, 4>> gpustreams;

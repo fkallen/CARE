@@ -320,6 +320,7 @@ namespace gpu{
         //     return MultiValueHashTable::tombstone_key();
         // }
 
+        GpuHashtable(){}
 
         GpuHashtable(std::size_t pairs_, float load_, std::size_t maxValuesPerKey_)
             : maxPairs(pairs_), load(load_), maxValuesPerKey(maxValuesPerKey_){
@@ -834,7 +835,94 @@ namespace gpu{
             // std::copy(h_compactOffsetTmp.begin(), h_compactOffsetTmp.end(), out_offsets);
         }
 
-        
+        std::size_t getMakeCopyTempBytes() const{
+            if(!isCompact){
+                throw std::runtime_error("Cannot compute temp bytes to create a copy of non-compact GpuHashtable");
+            }
+            std::size_t numPairs = gpuKeyIndexTable->size(cudaStreamPerThread);
+            std::size_t keybytes = numPairs * sizeof(Key);
+            std::size_t indexbytes = numPairs * sizeof(int);
+            constexpr std::size_t alignment = 128;
+            return SDIV(keybytes, alignment) * alignment + SDIV(indexbytes, alignment) * alignment;
+        }
+
+        //d_temp must be device-accessible on target device id
+        std::unique_ptr<GpuHashtable> makeCopy(void* d_temp, int targetDeviceId) const{
+            if(!isCompact){
+                throw std::runtime_error("Cannot create a copy of non-compact GpuHashtable");
+            }
+
+            cub::SwitchDevice ds(targetDeviceId);
+
+            auto result = std::make_unique<GpuHashtable>();
+            result->isCompact = isCompact;
+            result->deviceId = targetDeviceId;
+            result->load = load;
+            result->numKeys = numKeys;
+            result->numValues = numValues;
+            result->maxPairs = maxPairs;
+            result->maxValuesPerKey = maxValuesPerKey;
+            result->gpuMvTable = nullptr;
+
+
+            result->d_compactOffsets.resize(d_compactOffsets.size()); CUERR;
+            cudaMemcpyAsync(result->d_compactOffsets.data(), d_compactOffsets.data(), sizeof(int) * d_compactOffsets.size(), D2D, cudaStreamPerThread); CUERR;
+
+            result->d_compactValues.resize(d_compactValues.size()); CUERR;
+            cudaMemcpyAsync(result->d_compactValues.data(), d_compactValues.data(), sizeof(Value) * d_compactValues.size(), D2D, cudaStreamPerThread); CUERR;
+
+            std::size_t capacity = gpuKeyIndexTable->capacity();
+
+            result->gpuKeyIndexTable = std::make_unique<CompactKeyIndexTable>(
+                capacity
+            );
+
+            auto status = result->gpuKeyIndexTable->pop_status(cudaStreamPerThread);
+            cudaStreamSynchronize(cudaStreamPerThread); CUERR;
+
+            if(status.has_any_errors()){
+                std::cerr << "Error creating copy of GpuHashtable. " << status << "\n";
+                return nullptr;
+            }
+
+            std::size_t numPairs = gpuKeyIndexTable->size(cudaStreamPerThread);
+            std::size_t keybytes = numPairs * sizeof(Key);
+            std::size_t indexbytes = numPairs * sizeof(int);
+            constexpr std::size_t alignment = 128;
+            keybytes = SDIV(keybytes, alignment) * alignment;
+            indexbytes = SDIV(indexbytes, alignment) * alignment;
+            
+            Key* const d_keys = reinterpret_cast<Key*>(d_temp);
+            int* const d_index = reinterpret_cast<int*>(reinterpret_cast<char*>(d_keys) + keybytes);
+
+            std::size_t numRetrieved = 0;
+            //peer access
+            gpuKeyIndexTable->retrieve_all(
+                d_keys,
+                d_index,
+                numRetrieved,
+                cudaStreamPerThread
+            );
+            cudaStreamSynchronize(cudaStreamPerThread); CUERR;
+            assert(numRetrieved == numPairs);
+
+            result->gpuKeyIndexTable->insert(
+                d_keys,
+                d_index,
+                numRetrieved,
+                cudaStreamPerThread
+            );
+
+            result->gpuKeyIndexTable->pop_status(cudaStreamPerThread);
+            cudaStreamSynchronize(cudaStreamPerThread); CUERR;
+
+            if(status.has_any_errors()){
+                std::cerr << "Error creating copy of GpuHashtable. " << status << "\n";
+                return nullptr;
+            }
+
+            return result;            
+        }
 
         bool isCompact = false;
         int deviceId{};
