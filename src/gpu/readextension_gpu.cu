@@ -60,12 +60,15 @@ void initializeExtenderInput(
 
     const int maxNumPairs = (requestedSizeOfTasks - tasks.size()) / 4;
 
-    auto readIdsEnd = readIdGenerator.next_n_into_buffer(
-        maxNumPairs * 2, 
-        currentIds
-    );
+    int numNewReadsInBatch = 0;
 
-    int numNewReadsInBatch = std::distance(currentIds, readIdsEnd);
+    readIdGenerator.process_next_n(
+        maxNumPairs * 2, 
+        [&](auto begin, auto end){
+            auto readIdsEnd = std::copy(begin, end, currentIds);
+            numNewReadsInBatch = std::distance(currentIds, readIdsEnd);
+        }
+    );
 
     if(numNewReadsInBatch % 2 == 1){
         throw std::runtime_error("Input files not properly paired. Aborting read extension.");
@@ -535,9 +538,13 @@ extend_gpu_pairedend(
     {
         std::vector<std::future<std::vector<read_number>>> futures;
 
-        //cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
-        cpu::RangeGenerator<read_number> readIdGenerator(500000);
+        const std::size_t numReadsToProcess = 500000;
+        //const std::size_t numReadsToProcess = gpuReadStorage.getNumberOfReads();
 
+        auto idGenerator = cpu::makeIteratorRangeTraversal(
+            thrust::make_counting_iterator<read_number>(0),
+            thrust::make_counting_iterator<read_number>(0) + numReadsToProcess
+        );
 
         const int maxNumThreads = runtimeOptions.threads;
 
@@ -550,7 +557,7 @@ extend_gpu_pairedend(
                     extenderThreadFunc,
                     t % numDeviceIds,
                     t,
-                    &readIdGenerator,
+                    &idGenerator,
                     isLastIteration,
                     iterationConfig
                 )
@@ -575,7 +582,7 @@ extend_gpu_pairedend(
 
         isLastIteration = (iterationConfig.maxextensionPerStep <= 4);
 
-        cpu::RangeGeneratorWrapper<read_number> generatorWrapper(
+        auto idGenerator = cpu::makeIteratorRangeTraversal(
             pairsWhichShouldBeRepeated.data(), 
             pairsWhichShouldBeRepeated.data() + pairsWhichShouldBeRepeated.size()
         );
@@ -593,7 +600,7 @@ extend_gpu_pairedend(
                     extenderThreadFunc,
                     t % numDeviceIds,
                     t,
-                    &generatorWrapper,
+                    &idGenerator,
                     isLastIteration,
                     iterationConfig
                 )

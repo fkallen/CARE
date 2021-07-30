@@ -98,25 +98,25 @@ namespace cpu{
         }
     };
 
-    template<class Count_t>
-    struct RangeGeneratorWrapper{
+    template<class Iterator>
+    struct IteratorRangeTraversal{
     private:
 
-        const Count_t* begin;
-        const Count_t* end;
-        const Count_t* current;
         bool isEmpty;
+        Iterator begin;
+        Iterator end;
+        Iterator current;
         std::mutex mutex;
 
     public:
-        RangeGeneratorWrapper(const Count_t* begin_, const Count_t* end_) : begin(begin_), end(end_), current(begin_), isEmpty(begin_ >= end_){}
+        IteratorRangeTraversal(Iterator begin_, Iterator end_) : isEmpty(std::distance(begin_, end_) <= 0), begin(begin_), end(end_), current(begin_){}
 
-        void reset(const Count_t* begin_, const Count_t* end_){
+        void reset(Iterator begin_, Iterator end_){
             std::lock_guard<std::mutex> lm(mutex);
+            isEmpty = std::distance(begin_, end_) <= 0;
             begin = begin_;
             end = end_;
             current = begin_;
-            isEmpty = (begin >= end);
         }
 
         bool empty(){
@@ -128,51 +128,39 @@ namespace cpu{
             std::lock_guard<std::mutex> lm(mutex);
             const std::size_t remaining = std::distance(current, end);
             const std::size_t resultsize = std::min(remaining, n);
-            current += resultsize;
+            std::advance(current, resultsize);
 
             if(current == end){
                 isEmpty = true;
             }
         }
 
-        std::vector<Count_t> next_n(std::size_t n){
-            std::lock_guard<std::mutex> lm(mutex);
-            if(isEmpty)
-                return {};
+        template<class Func>
+        void process_next_n(std::size_t n, Func callback){
+            std::unique_lock<std::mutex> lock(mutex);
+            if(!isEmpty){
+                const std::size_t remaining = std::distance(current, end);
+                const std::size_t resultsize = std::min(remaining, n);
+                auto callbackbegin = current;
+                std::advance(current, resultsize);
+                auto callbackend = current;
 
-            const std::size_t remaining = std::distance(current, end);
-            const std::size_t resultsize = std::min(remaining, n);
-
-            std::vector<Count_t> result(current, current + resultsize);
-            current += resultsize;
-
-            if(current == end)
-                isEmpty = true;
-
-            return result;
-        }
-
-        //buffer must point to memory location of at least n elements
-        //returns past the end iterator
-        template<class Iter>
-        Iter next_n_into_buffer(std::size_t n, Iter buffer){
-            std::lock_guard<std::mutex> lm(mutex);
-            if(isEmpty)
-                return buffer;
-
-            const std::size_t remaining = std::distance(current, end);
-            const std::size_t resultsize = std::min(remaining, n);
-
-            std::copy(current, current + resultsize, buffer);
-
-            current += resultsize;
-
-            if(current == end)
-                isEmpty = true;
-
-            return buffer + resultsize;
+                if(current == end){
+                    isEmpty = true;
+                }
+                lock.unlock();
+                callback(callbackbegin, callbackend);
+            }else{
+                lock.unlock();
+                callback(end, end);
+            }
         }
     };
+
+    template<class Iterator>
+    IteratorRangeTraversal<Iterator> makeIteratorRangeTraversal(Iterator begin, Iterator end){
+        return IteratorRangeTraversal<Iterator>(begin, end);
+    }
 
 }
 }
