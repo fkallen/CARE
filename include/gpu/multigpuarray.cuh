@@ -526,13 +526,19 @@ public:
         return handle;
     }
 
-    bool tryReplication(){
+    bool tryReplication(std::vector<std::size_t> memoryLimits){
         if(!isReplicatedSingleGpu && usedDeviceIds.size() == 1 && usedDeviceIds.size() < dataDeviceIds.size()){
             assert(gpuArrays.size() == 1);
+
+            auto memoryUsage = gpuArrays[0]->getMemoryInfo();
+            const std::size_t requiredMemory = memoryUsage.device[gpuArrays[0]->getDeviceId()];
 
             std::vector<std::unique_ptr<Gpu2dArrayManaged<T>>> replicas;
 
             for(std::size_t i = usedDeviceIds.size(); i < dataDeviceIds.size(); i++){
+                if(memoryLimits[i] < requiredMemory){
+                    return false;
+                }
                 replicas.emplace_back(gpuArrays[0]->makeCopy(dataDeviceIds[i]));
             }
 

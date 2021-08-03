@@ -654,25 +654,32 @@ namespace care{
 
         //After minhasher is constructed, remaining gpu memory can be used to store reads
 
-        std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 0);
-        for(int i = 0; i < int(runtimeOptions.deviceIds.size()); i++){
-            std::size_t total = 0;
-            cudaMemGetInfo(&gpumemorylimits[i], &total);
+        auto getGpuMemoryLimits = [&](){
+            const std::size_t numGpus = runtimeOptions.deviceIds.size();
+            std::vector<std::size_t> limits(numGpus, 0);
 
-            std::size_t safety = 1 << 30; //leave 1 GB for correction algorithm
-            if(gpumemorylimits[i] > safety){
-                gpumemorylimits[i] -= safety;
-            }else{
-                gpumemorylimits[i] = 0;
+            for(std::size_t i = 0; i < numGpus; i++){
+                std::size_t total = 0;
+                cudaMemGetInfo(&limits[i], &total);
+
+                std::size_t safety = 1 << 30; //leave 1 GB for algorithm
+                if(limits[i] > safety){
+                    limits[i] -= safety;
+                }else{
+                    limits[i] = 0;
+                }
             }
-        }
+            return limits;
+        };
+
+        gpumemorylimits = getGpuMemoryLimits();
 
         std::size_t memoryLimitHost = memoryOptions.memoryTotalLimit 
             - cpuReadStorage->getMemoryInfo().host
             - gpuMinhasher->getMemoryInfo().host;
 
         // gpumemorylimits.resize(2);
-        // std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 128000000);
+        // std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 512000000);
 
         // std::vector<int> tempids(gpumemorylimits.size(), 0);
 
@@ -685,11 +692,16 @@ namespace care{
             gpumemorylimits,
             memoryLimitHost
         );
-        if(gpuReadStorage.trySequenceReplication()){
+
+        gpumemorylimits = getGpuMemoryLimits();
+        if(gpuReadStorage.trySequenceReplication(gpumemorylimits)){
             std::cerr << "Replicated gpu read sequences to each gpu\n";
+            gpumemorylimits = getGpuMemoryLimits();
         }
-        if(gpuReadStorage.tryQualityReplication()){
+        
+        if(gpuReadStorage.tryQualityReplication(gpumemorylimits)){
             std::cerr << "Replicated gpu read qualities to each gpu\n";
+            gpumemorylimits = getGpuMemoryLimits();
         }
         cpugputimer.print();
 
