@@ -193,8 +193,10 @@ int main(int argc, char** argv){
 			"Default: " + tostring(RuntimeOptions{}.warpcore),
 		cxxopts::value<int>())
 		("pairedthreshold1", "pairedthreshold1", cxxopts::value<float>())
-		("hashloadfactor", "Load factor of hashtables. 0.0 < hashloadfactor < 1.0"
+		("hashloadfactor", "Load factor of hashtables. 0.0 < hashloadfactor < 1.0. Smaller values can improve the runtime at the expense of greater memory usage."
 			"Default: " + std::to_string(MemoryOptions{}.hashtableLoadfactor), cxxopts::value<float>())
+		("replicateGpuData", "If a GPU data structure fits into the memory of a single GPU, allow its replication to other GPUs. This can improve the runtime when multiple GPUs are used."
+			"Default: " + std::to_string(RuntimeOptions{}.replicateGpuData), cxxopts::value<bool>())
 	;
 
 	//options.parse_positional({"deviceIds"});
@@ -314,6 +316,7 @@ int main(int argc, char** argv){
 		std::cout << " ]\n";
 	}
 	std::cout << "Warpcore: " << runtimeOptions.warpcore << "\n";
+	std::cout << "Replicate GPU data: " << runtimeOptions.replicateGpuData << "\n";
 
 	std::cout << "Maximum memory for hash tables: " << memoryOptions.memoryForHashtables << "\n";
 	std::cout << "Maximum memory total: " << memoryOptions.memoryTotalLimit << "\n";

@@ -694,14 +694,17 @@ namespace care{
         );
 
         gpumemorylimits = getGpuMemoryLimits();
-        if(gpuReadStorage.trySequenceReplication(gpumemorylimits)){
-            std::cerr << "Replicated gpu read sequences to each gpu\n";
-            gpumemorylimits = getGpuMemoryLimits();
-        }
         
-        if(gpuReadStorage.tryQualityReplication(gpumemorylimits)){
-            std::cerr << "Replicated gpu read qualities to each gpu\n";
-            gpumemorylimits = getGpuMemoryLimits();
+        if(runtimeOptions.replicateGpuData){
+            if(gpuReadStorage.trySequenceReplication(gpumemorylimits)){
+                std::cerr << "Replicated gpu read sequences to each gpu\n";
+                gpumemorylimits = getGpuMemoryLimits();
+            }
+            
+            if(gpuReadStorage.tryQualityReplication(gpumemorylimits)){
+                std::cerr << "Replicated gpu read qualities to each gpu\n";
+                gpumemorylimits = getGpuMemoryLimits();
+            }
         }
         cpugputimer.print();
 

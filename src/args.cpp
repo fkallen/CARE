@@ -183,6 +183,10 @@ namespace args{
             result.warpcore = pr["warpcore"].as<int>();
         }
 
+        if(pr.count("replicateGpuData")){
+            result.replicateGpuData = pr["replicateGpuData"].as<bool>();
+        }
+
         return result;
 	}
 
@@ -415,16 +419,6 @@ namespace args{
             valid = false;
             std::cout << "Error: threads must be > 0, is " + std::to_string(opt.threads) << std::endl;
         }
-
-        // if(opt.threadsForGPUs < 0){
-        //     valid = false;
-        //     std::cout << "Error: threadsForGPUs must be >= 0, is " + std::to_string(opt.threadsForGPUs) << std::endl;
-        // }
-        //
-        // if(opt.threadsForGPUs > opt.threads){
-        //     valid = false;
-        //     std::cout << "Error: threadsForGPUs must be <= threads, is " + std::to_string(opt.threadsForGPUs) << std::endl;
-        // }
 
         return valid;
     }

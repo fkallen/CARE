@@ -39,9 +39,11 @@ namespace gpu{
                 correctionOptions.numHashFunctions
             );
 
-            bool ok = gpuMinhasher->tryReplication();
-            if(ok){
-                std::cerr << "Replicated hash tables to each gpu\n";
+            if(runtimeOptions.replicateGpuData){
+                bool ok = gpuMinhasher->tryReplication();
+                if(ok){
+                    std::cerr << "Replicated hash tables to each gpu\n";
+                }
             }
 
             return gpuMinhasher;
