@@ -685,6 +685,12 @@ namespace care{
             gpumemorylimits,
             memoryLimitHost
         );
+        if(gpuReadStorage.trySequenceReplication()){
+            std::cerr << "Replicated gpu read sequences to each gpu\n";
+        }
+        if(gpuReadStorage.tryQualityReplication()){
+            std::cerr << "Replicated gpu read qualities to each gpu\n";
+        }
         cpugputimer.print();
 
         std::cout << "constructed gpu readstorage " << std::endl;

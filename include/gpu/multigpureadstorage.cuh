@@ -485,6 +485,14 @@ public:
         return cpuReadStorage == nullptr;
     }
 
+    bool trySequenceReplication(){
+        return sequencesGpu.tryReplication();
+    }
+
+    bool tryQualityReplication(){
+        return qualitiesGpu.tryReplication();
+    }
+
 public: //inherited GPUReadStorage interface
 
     ReadStorageHandle makeHandle() const override {
