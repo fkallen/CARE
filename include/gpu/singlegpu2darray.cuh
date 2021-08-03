@@ -10,6 +10,7 @@
 #include <cassert>
 #include <iostream>
 #include <vector>
+#include <memory>
 
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
@@ -150,6 +151,34 @@ public:
         alignmentInBytes = 0;
         rowPitchInBytes = 0;
         arraydata = nullptr;
+    }
+
+    std::unique_ptr<Gpu2dArrayManaged> makeCopy(int targetDeviceid) const{
+        cub::SwitchDevice sd{targetDeviceid};
+
+        auto result = std::make_unique<Gpu2dArrayManaged>();
+
+        result->numRows = numRows;
+        result->numColumns = numColumns;
+        result->alignmentInBytes = alignmentInBytes;
+        result->rowPitchInBytes = rowPitchInBytes;
+        result->arraydata = nullptr;
+
+        cudaError_t status = cudaMalloc(&result->arraydata, numRows * rowPitchInBytes); CUERR;
+        if(status != cudaSuccess){
+            return nullptr;
+        }
+        status = cudaMemcpyAsync(result->arraydata, arraydata, numRows * rowPitchInBytes, D2D, cudaStreamPerThread);
+        if(status != cudaSuccess){
+            return nullptr;
+        }
+        status = cudaStreamSynchronize(cudaStreamPerThread);
+
+        if(status != cudaSuccess){
+            return nullptr;
+        }else{
+            return result;
+        }
     }
 
     TwoDimensionalArray<T> wrapper() const noexcept{
