@@ -372,21 +372,32 @@ namespace gpu{
 
             const int numberOfAvailableHashFunctions = maxNumHashfunctions - remainingNumHashfunctions;
 
-            if(numberOfAvailableHashFunctions == maxNumHashfunctions && sgpuMinhashers.size() == 1 && usableDeviceIds.size() < deviceIds.size()){
+            return numberOfAvailableHashFunctions; 
+        }
+
+        bool tryReplication(){
+            if(sgpuMinhashers.size() == 1 && usableDeviceIds.size() < deviceIds.size()){
                 //all hashtables fit into one gpu. try to replace the hash tables on all gpus
 
-                nvtx::push_range("replicate single gpu minhasher", 0);
                 std::vector<std::unique_ptr<SingleGpuMinhasher>> replicas{};
+                bool ok = false;
+                try{
+                    nvtx::push_range("replicate single gpu minhasher", 0);
 
-                for(std::size_t i = 1; i < deviceIds.size(); i++){
-                    const int targetDeviceId = deviceIds[i];
-                    helpers::CpuTimer rtimer("make singlegpu minhasher replica");
-                    replicas.emplace_back(sgpuMinhashers[0]->makeCopy(targetDeviceId));
-                    rtimer.print();
+                    for(std::size_t i = 1; i < deviceIds.size(); i++){
+                        const int targetDeviceId = deviceIds[i];
+                        helpers::CpuTimer rtimer("make singlegpu minhasher replica");
+                        replicas.emplace_back(sgpuMinhashers[0]->makeCopy(targetDeviceId));
+                        rtimer.print();
+                    }
+                    ok = std::all_of(replicas.begin(), replicas.end(), [](const auto& uniqueptr){ return bool(uniqueptr); });
+
+                    nvtx::pop_range();
+                }catch(...){
+                    cudaGetLastError();
+                    std::cerr << "error replicating single gpu minhasher. Skipping.\n";
                 }
-
-                if(std::all_of(replicas.begin(), replicas.end(), [](const auto& uniqueptr){ return bool(uniqueptr); })){
-                    std::cerr << "Replicas ok\n";
+                if(ok){                    
                     sgpuMinhashers.insert(sgpuMinhashers.end(), std::make_move_iterator(replicas.begin()), std::make_move_iterator(replicas.end()));
 
                     HostBuffer<int> h_currentHashFunctionNumbers(vec_h_currentHashFunctionNumbers[0].size());
@@ -396,18 +407,12 @@ namespace gpu{
                     usableDeviceIds = deviceIds;
 
                     isReplicatedSingleGpu = true;
-                }else{
-                    std::cerr << "Replicas not ok\n";
                 }
 
-                nvtx::pop_range();
-
+                return ok;
             }else{
-                std::cerr << "Cannot try replication\n";
+                return false;
             }
-
-
-            return numberOfAvailableHashFunctions; 
         }
 
         MinhasherHandle makeMinhasherHandle() const override{
