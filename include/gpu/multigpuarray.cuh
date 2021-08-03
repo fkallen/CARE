@@ -776,37 +776,56 @@ public:
             ); CUERR;
             cudaStreamSynchronize(destStream);
 
-            std::vector<std::size_t> numSelectedPrefixSum(numGpus,0);
+            std::vector<std::size_t> numSelectedPrefixSum(numDistinctGpus,0);
             std::partial_sum(
                 callerBuffers.h_numSelected.data(),
-                callerBuffers.h_numSelected.data() + numGpus - 1,
+                callerBuffers.h_numSelected.data() + numDistinctGpus - 1,
                 numSelectedPrefixSum.begin() + 1
             );
 
-            auto it = std::find(usedDeviceIds.begin(), usedDeviceIds.end(), destDeviceId);
-            if(isReplicatedSingleGpu){
-                if(it != usedDeviceIds.end()){
-                    //all data to be gathered resides on the destination device.
-                    const int position = std::distance(usedDeviceIds.begin(), it);
-                    
-                    auto indexGenerator = [d_indices = callerBuffers.d_selectedIndices.data()] __device__ (auto i){
-                        return d_indices[i];
-                    };
+            // auto it = std::find(usedDeviceIds.begin(), usedDeviceIds.end(), destDeviceId);
+            // if(isReplicatedSingleGpu){
+            //     const int num = callerBuffers.h_numSelected[0];
+            //     if(num > 0){
+            //         auto indexGenerator = [d_indices = callerBuffers.d_selectedIndices.data()] __device__ (auto i){
+            //             return d_indices[i];
+            //         };
 
-                    gpuArrays[position]->gather(d_dest, destRowPitchInBytes, indexGenerator, callerBuffers.h_numSelected[0], destStream);
-                }else{
-                    //array was not constructed on current device. use peer access from any gpu
-                    auto indexGenerator = [d_indices = callerBuffers.d_selectedIndices.data()] __device__ (auto i){
-                        return d_indices[i];
-                    };
+            //         const int position = (it != usedDeviceIds.end()) ? std::distance(usedDeviceIds.begin(), it) : 0;
 
-                    gpuArrays[0]->gather(d_dest, destRowPitchInBytes, indexGenerator, numIndices, destStream);
-                }
+            //         auto& deviceBuffers = handle->deviceBuffers[position];
+            //         resizeWithSync(deviceBuffers.d_dataCommunicationBuffer, num * destRowPitchInBytes);
 
-            }else{
+            //         gpuArrays[position]->gather(
+            //             (T*)deviceBuffers.d_dataCommunicationBuffer.data(), 
+            //             destRowPitchInBytes, 
+            //             indexGenerator, 
+            //             num, 
+            //             destStream
+            //         );
 
+            //         dim3 block(128, 1, 1);
+            //         dim3 grid(SDIV(numIndices, block.x), 1, 1);
+
+            //         MultiGpu2dArrayKernels::LinearAccessFunctor<std::size_t> scatterIndexGenerator(
+            //             callerBuffers.d_selectedPositions.get()
+            //         );
+
+            //         MultiGpu2dArrayKernels::scatterKernel<<<grid, block, 0, destStream>>>(
+            //             (const T*)(deviceBuffers.d_dataCommunicationBuffer.data()), 
+            //             destRowPitchInBytes, 
+            //             numIndices,
+            //             getNumColumns(),
+            //             d_dest, 
+            //             destRowPitchInBytes, 
+            //             scatterIndexGenerator, 
+            //             num
+            //         ); CUERR; 
+            //     }
+            // }else
+            {
                 //allocate remote buffers
-                for(int d = 0; d < numGpus; d++){
+                for(int d = 0; d < numDistinctGpus; d++){
                     const int num = callerBuffers.h_numSelected[d];
 
                     if(num > 0){
@@ -822,7 +841,7 @@ public:
                 }
 
                 //copy selected indices to remote buffer
-                for(int d = 0; d < numGpus; d++){
+                for(int d = 0; d < numDistinctGpus; d++){
                     const int num = callerBuffers.h_numSelected[d];
 
                     if(num > 0){
@@ -845,7 +864,7 @@ public:
                 }
 
                 //gather on remote gpus
-                for(int d = 0; d < numGpus; d++){
+                for(int d = 0; d < numDistinctGpus; d++){
                     const int num = callerBuffers.h_numSelected[d];
 
                     if(num > 0){
@@ -876,7 +895,7 @@ public:
                 }
 
                 //copy remote gathered data to caller
-                for(int d = 0; d < numGpus; d++){
+                for(int d = 0; d < numDistinctGpus; d++){
                     const int num = callerBuffers.h_numSelected[d];
 
                     if(num > 0){
@@ -898,7 +917,7 @@ public:
                 }
 
                 //scatter into result array
-                for(int d = 0; d < numGpus; d++){
+                for(int d = 0; d < numDistinctGpus; d++){
                     const int num = callerBuffers.h_numSelected[d];
 
                     if(num > 0){
@@ -925,7 +944,7 @@ public:
                 }
 
                 //join streams
-                for(int d = 0; d < numGpus; d++){
+                for(int d = 0; d < numDistinctGpus; d++){
                     const int num = callerBuffers.h_numSelected[d];
 
                     if(num > 0){
@@ -947,6 +966,8 @@ public:
         bool mayContainInvalidIndices,
         cudaStream_t srcStream = 0
     ) const{
+        assert(!isReplicatedSingleGpu); //not implemented
+
         if(numIndices == 0) return;
 
         int srcDeviceId = 0;
