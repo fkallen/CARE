@@ -485,12 +485,12 @@ public:
         return cpuReadStorage == nullptr;
     }
 
-    bool trySequenceReplication(){
-        return sequencesGpu.tryReplication();
+    bool trySequenceReplication(const std::vector<std::size_t>& memoryLimits){
+        return sequencesGpu.tryReplication(memoryLimits);
     }
 
-    bool tryQualityReplication(){
-        return qualitiesGpu.tryReplication();
+    bool tryQualityReplication(const std::vector<std::size_t>& memoryLimits){
+        return qualitiesGpu.tryReplication(memoryLimits);
     }
 
 public: //inherited GPUReadStorage interface
