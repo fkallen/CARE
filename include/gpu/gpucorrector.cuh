@@ -2830,7 +2830,7 @@ namespace gpu{
             multiMSA.origCoverages = d_origCoverages.get();
             multiMSA.columnProperties = d_msa_column_properties.get();
 
-            #if 1
+            #if 0
                 bool* d_excludeFlags = d_flagsCandidates.data();
                 bool* h_excludeFlags = h_flagsCandidates.data();
 
