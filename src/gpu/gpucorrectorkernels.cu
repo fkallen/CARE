@@ -125,6 +125,37 @@ namespace care{
                 d_candidateCanBeCorrected[i] = 0;
             }
         }
+
+        __global__
+        void compactEditsKernel(
+            const care::TempCorrectedSequence::EncodedEdit* __restrict__ d_inputEdits,
+            care::TempCorrectedSequence::EncodedEdit* __restrict__ d_outputEdits,
+            const int* __restrict__ d_editsOutputOffsets,
+            const int* __restrict__ d_numSequences,
+            const int* __restrict__ d_numEditsPerSequence,
+            int doNotUseEditsValue,
+            std::size_t editsPitchInBytes
+        ){
+            const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+            const int stride = blockDim.x * gridDim.x;
+
+            const int N = *d_numSequences;
+
+            for(int c = tid; c < N; c += stride){
+                const int numEdits = d_numEditsPerSequence[c];
+
+                if(numEdits != doNotUseEditsValue && numEdits > 0){
+                    const int outputOffset = d_editsOutputOffsets[c];
+
+                    auto* outputPtr = d_outputEdits + outputOffset;
+                    const auto* inputPtr = (const TempCorrectedSequence::EncodedEdit*)(((const char*)d_inputEdits) 
+                        + c * editsPitchInBytes);
+                    for(int e = 0; e < numEdits; e++){
+                        outputPtr[e] = inputPtr[e];
+                    }
+                }
+            }
+        }
         
     } //namespace gpucorrectorkernels   
 

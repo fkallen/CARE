@@ -1334,8 +1334,8 @@ namespace gpu{
             d_alignment_nOps.resize(maxCandidates);
             d_alignment_isValid.resize(maxCandidates);
             d_alignment_best_alignment_flags.resize(maxCandidates);
-            d_indices.resize(maxCandidates);
-            d_indices_tmp.resize(maxCandidates);
+            d_indices.resize(maxCandidates + 1);
+            d_indices_tmp.resize(maxCandidates + 1);
             d_corrected_candidates.resize(maxCandidates * decodedSequencePitchInBytes);
             d_corrected_candidates2.resize(maxCandidates * decodedSequencePitchInBytes);
             d_editsPerCorrectedCandidate.resize(numEditsCandidates);
@@ -1431,7 +1431,6 @@ namespace gpu{
 
             if(gpuReadStorage->isPairedEnd()){
 
-                #if 1
                 assert(currentNumAnchors % 2 == 0);
                 assert(currentNumAnchors != 0);
 
@@ -1440,160 +1439,17 @@ namespace gpu{
                 helpers::call_fill_kernel_async(d_isPairedCandidate.data(), currentNumCandidates, false, stream);                   
 
                 dim3 block = 128;
-                dim3 grid = currentNumAnchors;
+                dim3 grid = currentNumAnchors / 2;
+                constexpr int staticSmemBytes = 4096;
 
-                helpers::lambda_kernel<<<grid, block, 0, stream>>>(
-                    [
-                        numPairedAnchors = currentNumAnchors / 2,
-                        d_numCandidatesPerAnchor = d_candidates_per_anchor.data(),
-                        d_numCandidatesPerAnchorPrefixSum = d_candidates_per_anchor_prefixsum.data(),
-                        d_candidateReadIds = d_candidate_read_ids.data(),
-                        d_isPairedCandidate = d_isPairedCandidate.data()
-                    ] __device__ (){
-
-                        constexpr int numSharedElements = 1024;
-
-                        __shared__ read_number sharedElements[numSharedElements];
-
-                        //search elements of array1 in array2. if found, set output element to true
-                        //array1 and array2 must be sorted
-                        auto process = [&](
-                            const read_number* array1,
-                            int numElements1,
-                            const read_number* array2,
-                            int numElements2,
-                            bool* output
-                        ){
-                            const int numIterations = SDIV(numElements2, numSharedElements);
-
-                            for(int iteration = 0; iteration < numIterations; iteration++){
-
-                                const int begin = iteration * numSharedElements;
-                                const int end = min((iteration+1) * numSharedElements, numElements2);
-                                const int num = end - begin;
-
-                                for(int i = threadIdx.x; i < num; i += blockDim.x){
-                                    sharedElements[i] = array2[begin + i];
-                                }
-
-                                __syncthreads();
-
-                                //TODO in iteration > 0, we may skip elements at the beginning of first range
-
-                                for(int i = threadIdx.x; i < numElements1; i += blockDim.x){
-                                    if(!output[i]){
-                                        const read_number readId = array1[i];
-                                        const read_number readIdToFind = readId % 2 == 0 ? readId + 1 : readId - 1;
-
-                                        const bool found = thrust::binary_search(thrust::seq, sharedElements, sharedElements + num, readIdToFind);
-                                        if(found){
-                                            output[i] = true;
-                                        }
-                                    }
-                                }
-
-                                __syncthreads();
-                            }
-                        };
-
-                        for(int a = blockIdx.x; a < numPairedAnchors; a += gridDim.x){
-                            const int firstTask = 2*a;
-                            const int secondTask = 2*a + 1;
-
-                            //check for pairs in current candidates
-
-                            const int range1Begin = d_numCandidatesPerAnchorPrefixSum[firstTask]; 
-                            const int numElements1 = d_numCandidatesPerAnchor[firstTask];
-
-                            const int range2Begin = d_numCandidatesPerAnchorPrefixSum[secondTask]; 
-                            const int numElements2 = d_numCandidatesPerAnchor[secondTask];
-
-                            process(
-                                d_candidateReadIds + range1Begin,
-                                numElements1,
-                                d_candidateReadIds + range2Begin,
-                                numElements2,
-                                d_isPairedCandidate + range1Begin
-                            );
-
-                            process(
-                                d_candidateReadIds + range2Begin,
-                                numElements2,
-                                d_candidateReadIds + range1Begin,
-                                numElements1,
-                                d_isPairedCandidate + range2Begin
-                            );
-                        }
-                    }
-                ); CUERR;
-
-
-                #else
-
-                cudaMemcpyAsync(
-                    h_candidates_per_anchor_prefixsum.data(),
+                gpucorrectorkernels::flagPairedCandidatesKernel<128,staticSmemBytes>
+                <<<grid, block, 0, stream>>>(
+                    currentNumAnchors / 2,
+                    d_candidates_per_anchor.data(),
                     d_candidates_per_anchor_prefixsum.data(),
-                    sizeof(int) * (currentNumAnchors + 1),
-                    D2H,
-                    stream
-                );
-
-                std::fill(h_isPairedCandidate.begin(), h_isPairedCandidate.end(), false);
-
-                cudaStreamSynchronize(stream); CUERR;
-
-                for(int i = 0; i < currentNumAnchors; i++){
-                    const int num = h_candidates_per_anchor_prefixsum[i+1] - h_candidates_per_anchor_prefixsum[i];
-                    numCandidatesPerReadMap[num]++;
-                }
-
-
-                std::vector<int> numPairedPerAnchor(currentNumAnchors, 0);            
-
-                for(int ap = 0; ap < currentNumAnchors / 2; ap++){
-                    const int begin1 = h_candidates_per_anchor_prefixsum[2*ap + 0];
-                    const int end1 = h_candidates_per_anchor_prefixsum[2*ap + 1];
-                    const int begin2 = h_candidates_per_anchor_prefixsum[2*ap + 1];
-                    const int end2 = h_candidates_per_anchor_prefixsum[2*ap + 2];
-
-                    // assert(std::is_sorted(pairIds + begin1, pairIds + end1));
-                    // assert(std::is_sorted(pairIds + begin2, pairIds + end2));
-
-                    std::vector<int> pairedPositions(std::min(end1-begin1, end2-begin2));
-                    std::vector<int> pairedPositions2(std::min(end1-begin1, end2-begin2));
-
-                    auto endIters = findPositionsOfPairedReadIds(
-                        currentInput->h_candidate_read_ids.data() + begin1,
-                        currentInput->h_candidate_read_ids.data() + end1,
-                        currentInput->h_candidate_read_ids.data() + begin2,
-                        currentInput->h_candidate_read_ids.data() + end2,
-                        pairedPositions.begin(),
-                        pairedPositions2.begin()
-                    );
-
-                    pairedPositions.erase(endIters.first, pairedPositions.end());
-                    pairedPositions2.erase(endIters.second, pairedPositions2.end());
-                    for(auto i : pairedPositions){
-                        h_isPairedCandidate[begin1 + i] = true;
-                    }
-                    for(auto i : pairedPositions2){
-                        h_isPairedCandidate[begin2 + i] = true;
-                    }
-
-                    numPairedPerAnchor[2*ap + 0] = pairedPositions.size();
-                    numPairedPerAnchor[2*ap + 1] = pairedPositions2.size();                
-                }
-
-                cudaMemcpyAsync(
-                    d_isPairedCandidate.data(),
-                    h_isPairedCandidate.data(),
-                    sizeof(bool) * currentNumCandidates,
-                    H2D,
-                    stream
+                    d_candidate_read_ids.data(),
+                    d_isPairedCandidate.data()
                 ); CUERR;
-
-                #endif
-
 
                 #if 0
                     // cudaDeviceSynchronize(); CUERR;
@@ -1774,7 +1630,7 @@ namespace gpu{
                     0,
                     sizeof(bool) * currentNumCandidates,
                     stream
-                );
+                ); CUERR;
             }
         }
 
@@ -1862,41 +1718,20 @@ namespace gpu{
             assert(cubstatus == cudaSuccess);
 
             //compact edits
-            helpers::lambda_kernel<<<SDIV(currentNumAnchors, 128), 128, 0, stream>>>(
-                [
-                    d_editsPerCorrectedanchor = d_editsPerCorrectedanchor.data(),
-                    d_editsPerCorrectedanchor2 = d_editsPerCorrectedCandidate2.data(),
-                    d_editsOffsetsTmp,
-                    d_numEditsPerCorrectedanchor = d_numEditsPerCorrectedanchor.data(),
-                    doNotUseEditsValue = getDoNotUseEditsValue(),
-                    editsPitchInBytes = editsPitchInBytes,
-                    currentNumAnchors = currentNumAnchors
-                ] __device__ (){
-                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                    const int stride = blockDim.x * gridDim.x;
-
-                    const int N = currentNumAnchors;
-
-                    for(int c = tid; c < N; c += stride){
-                        const int numEdits = d_numEditsPerCorrectedanchor[c];
-
-                        if(numEdits != doNotUseEditsValue && numEdits > 0){
-                            const int outputOffset = d_editsOffsetsTmp[c];
-
-                            auto* outputPtr = d_editsPerCorrectedanchor2 + outputOffset;
-                            const auto* inputPtr = (const TempCorrectedSequence::EncodedEdit*)(((const char*)d_editsPerCorrectedanchor) 
-                                + c * editsPitchInBytes);
-                            for(int e = 0; e < numEdits; e++){
-                                outputPtr[e] = inputPtr[e];
-                            }
-                        }
-                    }
-                }
+            auto* const d_editsPerCorrectedanchor2 = d_editsPerCorrectedCandidate2.data();
+            gpucorrectorkernels::compactEditsKernel<<<SDIV(currentNumAnchors, 128), 128, 0, stream>>>(
+                d_editsPerCorrectedanchor.data(),
+                d_editsPerCorrectedanchor2,
+                d_editsOffsetsTmp,
+                d_numAnchors.data(),
+                d_numEditsPerCorrectedanchor.data(),
+                getDoNotUseEditsValue(),
+                editsPitchInBytes
             ); CUERR;
 
             //copy compacted edits to host
             helpers::call_copy_n_kernel(
-                (const int*)d_editsPerCorrectedCandidate2.data(), 
+                (const int*)d_editsPerCorrectedanchor2, 
                 thrust::make_transform_iterator(d_totalNumberOfEdits, [] __device__ (const int num){return SDIV(num * sizeof(TempCorrectedSequence::EncodedEdit), sizeof(int));}),//d_totalNumberOfEdits, 
                 (int*)currentOutput->h_editsPerCorrectedanchor.data(), 
                 currentNumAnchors, 
@@ -1951,54 +1786,24 @@ namespace gpu{
                 stream
             );
 
-            helpers::lambda_kernel<<<SDIV(currentNumAnchors, 128), 128, 0, stream>>>(
-                [
-                    d_corrected_anchors = d_corrected_anchors.data(),
-                    d_corrected_anchors2 = d_corrected_candidates2.data(),
-                    decodedSequencePitchInBytes = this->decodedSequencePitchInBytes,
-                    d_numEditsPerCorrectedanchor = d_numEditsPerCorrectedanchor.data(),
-                    doNotUseEditsValue = getDoNotUseEditsValue(),
-                    d_correctedAnchorOffsetsTmp,
-                    d_numCorrectedAnchors = d_num_indices_of_corrected_anchors.data(),
-                    d_indices_of_corrected_anchors = d_indices_of_corrected_anchors.data()
-                ] __device__ (){
+            auto* const d_corrected_anchors2 = d_corrected_candidates2.data();
 
-                    const int N = *d_numCorrectedAnchors;
-
-                    auto warp = cg::tiled_partition<32>(cg::this_thread_block());
-                    const int warpId = (threadIdx.x + blockIdx.x * blockDim.x) / 32;
-                    const int numWarps = (blockDim.x * gridDim.x) / 32;
-
-                    for(int c = warpId; c < N; c += numWarps){
-                        const int indexOfCorrectedAnchor = d_indices_of_corrected_anchors[c];
-                        const int numEdits = d_numEditsPerCorrectedanchor[c];
-
-                        if(numEdits == doNotUseEditsValue){
-                            const int outputOffset = d_correctedAnchorOffsetsTmp[c];
-
-                            char* outputPtr = d_corrected_anchors2 + outputOffset;
-                            const char* inputPtr = d_corrected_anchors + indexOfCorrectedAnchor * decodedSequencePitchInBytes;
-
-                            const int copyInts = (decodedSequencePitchInBytes) / sizeof(int);
-                            const int remainingBytes = (decodedSequencePitchInBytes) - copyInts * sizeof(int);
-                            for(int i = warp.thread_rank(); i < copyInts; i += warp.size()){
-                                ((int*)outputPtr)[i] = ((const int*)inputPtr)[i];
-                            }
-                
-                            if(warp.thread_rank() < remainingBytes){
-                                ((char*)(((int*)outputPtr) + copyInts))[warp.thread_rank()]
-                                    = ((const char*)(((const int*)inputPtr) + copyInts))[warp.thread_rank()];
-                            }
-                        }
-                    }
-                }
+            gpucorrectorkernels::compactCorrectedSequencesKernel<32><<<SDIV(currentNumAnchors, 128), 128, 0, stream>>>(
+                d_corrected_anchors.data(),
+                d_corrected_anchors2,
+                this->decodedSequencePitchInBytes,
+                d_num_indices_of_corrected_anchors.data(),
+                d_numEditsPerCorrectedanchor.data(),
+                getDoNotUseEditsValue(),
+                d_correctedAnchorOffsetsTmp,
+                d_indices_of_corrected_anchors.data()
             ); CUERR;
 
             assert(decodedSequencePitchInBytes % sizeof(int) == 0);
 
             //copy compacted anchor corrections to host
             helpers::call_copy_n_kernel(
-                (const int*)d_corrected_candidates2.data(), 
+                (const int*)d_corrected_anchors2, 
                 thrust::make_transform_iterator(d_totalCorrectedSequencesBytes, [] __device__ (const int num){return SDIV(num, sizeof(int));}),
                 (int*)currentOutput->h_corrected_anchors.data(), 
                 currentNumAnchors * decodedSequencePitchInBytes / sizeof(int),
@@ -2055,11 +1860,6 @@ namespace gpu{
                 stream
             );
 
-            
-
-            cudaEventSynchronize(events[1]); CUERR; //wait for h_numRemainingCandidatesAfterAlignment
-            if(*h_numRemainingCandidatesAfterAlignment <= 0) return;
-
             helpers::call_compact_kernel_async(
                 thrust::make_zip_iterator(thrust::make_tuple(
                     d_alignment_shifts2.data(), 
@@ -2073,7 +1873,7 @@ namespace gpu{
                 )),
                 d_indices_of_corrected_candidates.data(), 
                 d_num_total_corrected_candidates.data(), 
-                *h_numRemainingCandidatesAfterAlignment,
+                currentNumCandidates,
                 stream
             );
 
@@ -2083,13 +1883,8 @@ namespace gpu{
                 [doNotUseEditsValue = getDoNotUseEditsValue()] __device__ (const auto& num){ return num == doNotUseEditsValue ? 0 : num;}
             );
 
-            if(int(d_indices.capacity()) < (*h_numRemainingCandidatesAfterAlignment) + 1){
-                cudaStreamSynchronize(stream); CUERR;
-                d_indices.resize((*h_numRemainingCandidatesAfterAlignment)+1);
-            }
-
             int* const d_editsOffsetsTmp = d_indices.data();
-            int* const d_totalNumberOfEdits = d_editsOffsetsTmp + (*h_numRemainingCandidatesAfterAlignment);
+            int* const d_totalNumberOfEdits = d_editsOffsetsTmp + currentNumCandidates;
             helpers::call_fill_kernel_async(d_editsOffsetsTmp, 1, 0, stream); CUERR;
 
             cubstatus = cub::DeviceScan::InclusiveSum(
@@ -2097,43 +1892,22 @@ namespace gpu{
                 cubTempSize, 
                 inputIter2, 
                 d_editsOffsetsTmp + 1, 
-                *h_numRemainingCandidatesAfterAlignment,
+                currentNumCandidates,
                 stream
             );
             assert(cubstatus == cudaSuccess);
 
             //compact edits
-            helpers::lambda_kernel<<<SDIV(*h_numRemainingCandidatesAfterAlignment, 128), 128, 0, stream>>>(
-                [
-                    d_editsPerCorrectedCandidate = d_editsPerCorrectedCandidate.data(),
-                    d_editsPerCorrectedCandidate2 = d_editsPerCorrectedCandidate2.data(),
-                    d_editsOffsetsTmp,
-                    d_num_total_corrected_candidates = d_num_total_corrected_candidates.data(),
-                    d_numEditsPerCorrectedCandidate = d_numEditsPerCorrectedCandidate.data(),
-                    doNotUseEditsValue = getDoNotUseEditsValue(),
-                    editsPitchInBytes = editsPitchInBytes
-                ] __device__ (){
-                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                    const int stride = blockDim.x * gridDim.x;
-
-                    const int N = *d_num_total_corrected_candidates;
-
-                    for(int c = tid; c < N; c += stride){
-                        const int numEdits = d_numEditsPerCorrectedCandidate[c];
-
-                        if(numEdits != doNotUseEditsValue && numEdits > 0){
-                            const int outputOffset = d_editsOffsetsTmp[c];
-
-                            auto* outputPtr = d_editsPerCorrectedCandidate2 + outputOffset;
-                            const auto* inputPtr = (const TempCorrectedSequence::EncodedEdit*)(((const char*)d_editsPerCorrectedCandidate) 
-                                + c * editsPitchInBytes);
-                            for(int e = 0; e < numEdits; e++){
-                                outputPtr[e] = inputPtr[e];
-                            }
-                        }
-                    }
-                }
+            gpucorrectorkernels::compactEditsKernel<<<SDIV(currentNumCandidates, 128), 128, 0, stream>>>(
+                d_editsPerCorrectedCandidate.data(),
+                d_editsPerCorrectedCandidate2.data(),
+                d_editsOffsetsTmp,
+                d_num_total_corrected_candidates.data(),
+                d_numEditsPerCorrectedCandidate.data(),
+                getDoNotUseEditsValue(),
+                editsPitchInBytes
             ); CUERR;
+
 
             //copy compact edits to host
             helpers::call_copy_n_kernel(
@@ -2162,7 +1936,7 @@ namespace gpu{
                     currentOutput->h_candidateEditOffsets.data(),
                     currentOutput->h_numEditsPerCorrectedCandidate.data()
                 )), 
-                *h_numRemainingCandidatesAfterAlignment,
+                currentNumCandidates,
                 stream
             );
 
@@ -2173,7 +1947,7 @@ namespace gpu{
             );
 
             int* const d_correctedCandidatesOffsetsTmp = d_indices.data();
-            int* const d_totalCorrectedSequencesBytes = d_correctedCandidatesOffsetsTmp + (*h_numRemainingCandidatesAfterAlignment);
+            int* const d_totalCorrectedSequencesBytes = d_correctedCandidatesOffsetsTmp + currentNumCandidates;
             helpers::call_fill_kernel_async(d_correctedCandidatesOffsetsTmp, 1, 0, stream); CUERR;
 
             cubstatus = cub::DeviceScan::InclusiveSum(
@@ -2181,7 +1955,7 @@ namespace gpu{
                 cubTempSize, 
                 correctedCandidatesPitches, 
                 d_correctedCandidatesOffsetsTmp + 1, 
-                *h_numRemainingCandidatesAfterAlignment,
+                currentNumCandidates,
                 stream
             );
             assert(cubstatus == cudaSuccess);
@@ -2190,49 +1964,19 @@ namespace gpu{
                 d_correctedCandidatesOffsetsTmp, 
                 d_num_total_corrected_candidates.data(), 
                 currentOutput->h_correctedCandidatesOffsets.data(), 
-                *h_numRemainingCandidatesAfterAlignment, //currentNumCandidates, 
+                currentNumCandidates,
                 stream
             );
 
-            helpers::lambda_kernel<<<SDIV(*h_numRemainingCandidatesAfterAlignment, 128), 128, 0, stream>>>(
-                [
-                    d_corrected_candidates = d_corrected_candidates.data(),
-                    d_corrected_candidates2 = d_corrected_candidates2.data(),
-                    decodedSequencePitchInBytes = this->decodedSequencePitchInBytes,
-                    d_num_total_corrected_candidates = d_num_total_corrected_candidates.data(),
-                    d_numEditsPerCorrectedCandidate = d_numEditsPerCorrectedCandidate.data(),
-                    doNotUseEditsValue = getDoNotUseEditsValue(),
-                    d_correctedCandidatesOffsetsTmp
-                ] __device__ (){
-
-                    const int N = *d_num_total_corrected_candidates;
-
-                    auto warp = cg::tiled_partition<32>(cg::this_thread_block());
-                    const int warpId = (threadIdx.x + blockIdx.x * blockDim.x) / 32;
-                    const int numWarps = (blockDim.x * gridDim.x) / 32;
-
-                    for(int c = warpId; c < N; c += numWarps){
-                        const int numEdits = d_numEditsPerCorrectedCandidate[c];
-
-                        if(numEdits == doNotUseEditsValue){
-                            const int outputOffset = d_correctedCandidatesOffsetsTmp[c];
-
-                            char* outputPtr = d_corrected_candidates2 + outputOffset;
-                            const char* inputPtr = d_corrected_candidates + c * decodedSequencePitchInBytes;
-
-                            const int copyInts = (decodedSequencePitchInBytes) / sizeof(int);
-                            const int remainingBytes = (decodedSequencePitchInBytes) - copyInts * sizeof(int);
-                            for(int i = warp.thread_rank(); i < copyInts; i += warp.size()){
-                                ((int*)outputPtr)[i] = ((const int*)inputPtr)[i];
-                            }
-                
-                            if(warp.thread_rank() < remainingBytes){
-                                ((char*)(((int*)outputPtr) + copyInts))[warp.thread_rank()]
-                                    = ((const char*)(((const int*)inputPtr) + copyInts))[warp.thread_rank()];
-                            }
-                        }
-                    }
-                }
+            gpucorrectorkernels::compactCorrectedSequencesKernel<32><<<SDIV(currentNumCandidates, 128), 128, 0, stream>>>(
+                d_corrected_candidates.data(),
+                d_corrected_candidates2.data(),
+                this->decodedSequencePitchInBytes,
+                d_num_total_corrected_candidates.data(),
+                d_numEditsPerCorrectedCandidate.data(),
+                getDoNotUseEditsValue(),
+                d_correctedCandidatesOffsetsTmp,
+                thrust::make_counting_iterator(0)
             ); CUERR;
 
             assert(decodedSequencePitchInBytes % sizeof(int) == 0);
@@ -2241,7 +1985,7 @@ namespace gpu{
                 (const int*)d_corrected_candidates2.data(), 
                 thrust::make_transform_iterator(d_totalCorrectedSequencesBytes, [] __device__ (const int num){return SDIV(num, sizeof(int));}),
                 (int*)currentOutput->h_corrected_candidates.data(), 
-                (*h_numRemainingCandidatesAfterAlignment) * decodedSequencePitchInBytes / sizeof(int),
+                currentNumCandidates * decodedSequencePitchInBytes / sizeof(int),
                 stream
             );
 
@@ -3431,26 +3175,8 @@ namespace gpu{
         DeviceBuffer<int> d_candidates_per_anchor_prefixsum; 
         DeviceBuffer<int> d_candidatesBeginOffsets;
 
-        //host buffers for random forest correction
-        PinnedBuffer<char> h_consensus;
-        PinnedBuffer<int> h_coverage;
-        PinnedBuffer<int> h_counts;
-        PinnedBuffer<float> h_weights;
-        PinnedBuffer<float> h_support;
-        PinnedBuffer<MSAColumnProperties> h_msa_column_properties;
-        PinnedBuffer<unsigned int> h_anchor_sequences_data;
-        PinnedBuffer<unsigned int> h_candidate_sequences_data;
-        PinnedBuffer<int> h_segmentSizes;
-        PinnedBuffer<int> h_segmentOffsets;
-        PinnedBuffer<BestAlignment_t> h_alignment_best_alignment_flags;
-        PinnedBuffer<bool> h_anchorContainsN;
-        PinnedBuffer<bool> h_candidateContainsN;
         PinnedBuffer<int> h_candidates_per_anchor_prefixsum; 
         PinnedBuffer<int> h_indices;
-
-        PinnedBuffer<char> h_decoded_candidates;
-
-        DeviceBuffer<char> d_decoded_candidates;
 
         PinnedBuffer<bool> h_flagsCandidates;
         DeviceBuffer<bool> d_flagsCandidates;
