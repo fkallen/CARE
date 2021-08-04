@@ -6,6 +6,7 @@
 #include <gpu/gpureadstorage.cuh>
 
 #include <gpu/gpuminhasher.cuh>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <options.hpp>
 #include <readlibraryio.hpp>
@@ -435,10 +436,10 @@ public:
 
             //std::cerr << "processDataInFlight (" << inputPtr << ", " << rawOutputPtr << ")\n";
 
-            inputPtr->event.synchronize();
+            CUDACHECK(inputPtr->event.synchronize());
             freeInputsQueue.push(inputPtr);
 
-            rawOutputPtr->event.synchronize();
+            CUDACHECK(rawOutputPtr->event.synchronize());
             //std::cerr << "Synchronized output " << pointers.second << "\n";
 
             helpers::CpuTimer outputTimer;
@@ -516,7 +517,7 @@ public:
                 );
                 nvtx::pop_range();
 
-                inputPtr->event.synchronize();
+                CUDACHECK(inputPtr->event.synchronize());
 
                 globalcounter++;                
 
@@ -564,7 +565,7 @@ public:
                 );
                 nvtx::pop_range();
 
-                inputPtr->event.synchronize();
+                CUDACHECK(inputPtr->event.synchronize());
 
                 //globalcounter++;
 
@@ -659,9 +660,7 @@ public:
         BatchCompletion batchCompleted,
         ContinueCondition continueCondition
     ) const {
-        int cur = 0;
-        cudaGetDevice(&cur); CUERR;
-        cudaSetDevice(deviceId);
+        cub::SwitchDevice sd{deviceId};
 
         //constexpr int numextra = 1;
 
@@ -721,7 +720,7 @@ public:
 
             if(anchorIds.size() > 0){
 
-                input.event.synchronize();
+                CUDACHECK(input.event.synchronize());
 
                 //std::cerr << "globalcounter " << globalcounter << "\n";
         
@@ -734,7 +733,7 @@ public:
                 );
                 nvtx::pop_range();
 
-                input.event.synchronize();
+                CUDACHECK(input.event.synchronize());
 
                 //globalcounter++;
 
@@ -750,7 +749,7 @@ public:
                 gpuErrorCorrector.correct(input, rawOutput, stream);
                 nvtx::pop_range();
 
-                rawOutput.event.synchronize();
+                CUDACHECK(rawOutput.event.synchronize());
 
                 correctionTimer.stop();
                 //elapsedCorrectionTimes.emplace_back(correctionTimer.elapsed());
@@ -779,8 +778,6 @@ public:
 
             iterations++;
         }
-
-        cudaSetDevice(cur); CUERR;
 
         const int timediterations = std::max(1, iterations - 10);
 
@@ -860,9 +857,7 @@ public:
         ResultProcessor processResults,
         BatchCompletion batchCompleted
     ){
-        int curDevice = 0;
-        cudaGetDevice(&curDevice); CUERR;
-        cudaSetDevice(deviceId); CUERR;
+        cub::SwitchDevice sd{deviceId};
 
         noMoreInputs = false;
         activeHasherThreads = config.numHashers;
@@ -1008,7 +1003,6 @@ public:
         //     std::cerr << "\n";
         // }
 
-        cudaSetDevice(curDevice); CUERR;
     }
     
 
@@ -1030,7 +1024,7 @@ public:
 
 
         while(!readIdGenerator.empty()){
-            cudaStreamSynchronize(hasherStream);
+            CUDACHECK(cudaStreamSynchronize(hasherStream));
 
             std::vector<read_number> anchorIds(correctionOptions.batchsize);
 
@@ -1052,7 +1046,7 @@ public:
             );
             nvtx::pop_range();
 
-            inputPtr->event.synchronize();
+            CUDACHECK(inputPtr->event.synchronize());
 
             unprocessedInputs.push(inputPtr);
             
@@ -1067,7 +1061,7 @@ public:
             }
         }
 
-        cudaStreamSynchronize(hasherStream);
+        CUDACHECK(cudaStreamSynchronize(hasherStream));
 
         // std::cerr << "Hasher memory usage\n";
         // {
@@ -1127,7 +1121,7 @@ public:
                 assert(false);
             }
 
-            cudaStreamSynchronize(stream); CUERR;
+            CUDACHECK(cudaStreamSynchronize(stream));
 
             // assert(cudaSuccess == inputPtr->event.query());
             // assert(cudaSuccess == rawOutputPtr->event.query());
@@ -1136,12 +1130,11 @@ public:
             gpuErrorCorrector.correct(*inputPtr, *rawOutputPtr, stream);
             nvtx::pop_range();
 
-            inputPtr->event.synchronize();
+            CUDACHECK(inputPtr->event.synchronize());
             freeInputs.push(inputPtr);
 
-            //cudaStreamSynchronize(stream);
             
-            rawOutputPtr->event.synchronize();
+            CUDACHECK(rawOutputPtr->event.synchronize());
             //std::cerr << "Synchronized output " << rawOutputPtr << "\n";
             unprocessedRawOutputs.push(rawOutputPtr);
         
@@ -1166,7 +1159,7 @@ public:
             }
         }
 
-        cudaStreamSynchronize(stream); CUERR;
+        CUDACHECK(cudaStreamSynchronize(stream));
     };
 
     static constexpr int getNumExtraBuffers() noexcept{
@@ -1283,7 +1276,7 @@ public:
                 assert(false);
             }
 
-            cudaStreamSynchronize(stream); CUERR;
+            CUDACHECK(cudaStreamSynchronize(stream));
 
             // assert(cudaSuccess == inputPtr->event.query());
             // assert(cudaSuccess == rawOutputPtr->event.query());
@@ -1298,10 +1291,10 @@ public:
                 auto pointers = dataInFlight.front();
                 dataInFlight.pop();
 
-                pointers.first->event.synchronize();
+                CUDACHECK(pointers.first->event.synchronize());
                 freeInputs.push(pointers.first);
 
-                pointers.second->event.synchronize();
+                CUDACHECK(pointers.second->event.synchronize());
                 //std::cerr << "Synchronized output " << pointers.second << "\n";
                 constructOutput(pointers.second);
             }            
@@ -1323,10 +1316,10 @@ public:
             auto pointers = dataInFlight.front();
             dataInFlight.pop();
 
-            pointers.first->event.synchronize();
+            CUDACHECK(pointers.first->event.synchronize());
             freeInputs.push(pointers.first);
 
-            pointers.second->event.synchronize();
+            CUDACHECK(pointers.second->event.synchronize());
             constructOutput(pointers.second);
         }
 
@@ -1339,7 +1332,7 @@ public:
             }
         }
 
-        cudaStreamSynchronize(stream); CUERR;
+        CUDACHECK(cudaStreamSynchronize(stream));
     };
 
 

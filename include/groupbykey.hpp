@@ -487,7 +487,7 @@ namespace care{
                 assert(std::numeric_limits<Offset_t>::max() >= keys.size()); //total number of keys must fit into Offset_t
 
                 int deviceId = 0;
-                cudaGetDevice(&deviceId); CUERR;
+                CUDACHECK(cudaGetDevice(&deviceId));
                 int canUseHostPointerForRegister = 0;
                 cudaDeviceGetAttribute(&canUseHostPointerForRegister, cudaDevAttrCanUseHostPointerForRegisteredMem, deviceId); CUERR;
                 if(0 == canUseHostPointerForRegister){

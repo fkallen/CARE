@@ -1,6 +1,7 @@
 #include <dispatch_care.hpp>
 #include <gpu/gpuminhasherconstruction.cuh>
 #include <gpu/fakegpuminhasher.cuh>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <config.hpp>
 #include <options.hpp>
@@ -34,7 +35,7 @@ namespace care{
     std::vector<int> getUsableDeviceIds(std::vector<int> deviceIds){
         int nDevices;
 
-        cudaGetDeviceCount(&nDevices); CUERR;
+        CUDACHECK(cudaGetDeviceCount(&nDevices));
 
         std::vector<int> invalidIds;
 
@@ -49,7 +50,7 @@ namespace care{
             std::cout << "Available GPUs on your machine:" << std::endl;
             for(int j = 0; j < nDevices; j++) {
                 cudaDeviceProp prop;
-                cudaGetDeviceProperties(&prop, j); CUERR;
+                CUDACHECK(cudaGetDeviceProperties(&prop, j));
                 std::cout << "Id " << j << " : " << prop.name << std::endl;
             }
 
@@ -198,7 +199,7 @@ namespace care{
             return;
         }
 
-        cudaSetDevice(runtimeOptions.deviceIds[0]); CUERR;
+        CUDACHECK(cudaSetDevice(runtimeOptions.deviceIds[0]));
 
         helpers::PeerAccessDebug peerAccess(runtimeOptions.deviceIds, true);
         peerAccess.enableAllPeerAccesses();
@@ -530,7 +531,7 @@ namespace care{
             return;
         }
 
-        cudaSetDevice(runtimeOptions.deviceIds[0]); CUERR;
+        CUDACHECK(cudaSetDevice(runtimeOptions.deviceIds[0]));
 
         helpers::PeerAccessDebug peerAccess(runtimeOptions.deviceIds, true);
         peerAccess.enableAllPeerAccesses();
