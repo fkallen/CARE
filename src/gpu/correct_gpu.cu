@@ -255,6 +255,8 @@ public:
         BatchCompletion batchCompleted
     ) const {
 
+        constexpr bool useThreadForOutputConstruction = false;
+
         auto continueCondition = [&](){ return !readIdGenerator.empty(); };
 
         return runDoubleBuffered_impl(
@@ -263,6 +265,35 @@ public:
             correctionOptions,
             goodAlignmentProperties,
             correctionFlags,
+            useThreadForOutputConstruction,
+            processResults,
+            batchCompleted,
+            continueCondition
+        );
+    }
+
+    template<class ResultProcessor, class BatchCompletion>
+    RunStatistics runToCompletionDoubleBufferedWithExtraThread(
+        int deviceId,
+        cpu::RangeGenerator<read_number>& readIdGenerator,
+        const CorrectionOptions& correctionOptions,
+        const GoodAlignmentProperties& goodAlignmentProperties,
+        ReadCorrectionFlags& correctionFlags,
+        ResultProcessor processResults,
+        BatchCompletion batchCompleted
+    ) const {
+
+        constexpr bool useThreadForOutputConstruction = true;
+
+        auto continueCondition = [&](){ return !readIdGenerator.empty(); };
+
+        return runDoubleBuffered_impl(
+            deviceId,
+            readIdGenerator,
+            correctionOptions,
+            goodAlignmentProperties,
+            correctionFlags,
+            useThreadForOutputConstruction,
             processResults,
             batchCompleted,
             continueCondition
@@ -281,6 +312,8 @@ public:
         int numBatches
     ) const {
 
+        constexpr bool useThreadForOutputConstruction = false;
+
         auto continueCondition = [&](){ bool success = !readIdGenerator.empty() && numBatches > 0; numBatches--; return success;};
 
         return runDoubleBuffered_impl(
@@ -289,6 +322,36 @@ public:
             correctionOptions,
             goodAlignmentProperties,
             correctionFlags,
+            useThreadForOutputConstruction,
+            processResults,
+            batchCompleted,
+            continueCondition
+        );
+    }
+
+    template<class ResultProcessor, class BatchCompletion>
+    RunStatistics runSomeBatchesDoubleBufferedWithExtraThread(
+        int deviceId,
+        cpu::RangeGenerator<read_number>& readIdGenerator,
+        const CorrectionOptions& correctionOptions,
+        const GoodAlignmentProperties& goodAlignmentProperties,
+        ReadCorrectionFlags& correctionFlags,
+        ResultProcessor processResults,
+        BatchCompletion batchCompleted,
+        int numBatches
+    ) const {
+
+        constexpr bool useThreadForOutputConstruction = true;
+
+        auto continueCondition = [&](){ bool success = !readIdGenerator.empty() && numBatches > 0; numBatches--; return success;};
+
+        return runDoubleBuffered_impl(
+            deviceId,
+            readIdGenerator,
+            correctionOptions,
+            goodAlignmentProperties,
+            correctionFlags,
+            useThreadForOutputConstruction,
             processResults,
             batchCompleted,
             continueCondition
@@ -302,6 +365,7 @@ public:
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
         ReadCorrectionFlags& correctionFlags,
+        bool useThreadForOutputConstruction,
         ResultProcessor processResults,
         BatchCompletion batchCompleted,
         ContinueCondition continueCondition
@@ -309,7 +373,7 @@ public:
         cub::SwitchDevice sd{deviceId};
 
         constexpr int numextra = 1;
-        constexpr int numStreams = 4;
+        constexpr int numStreams = 1 + numextra;
 
         std::array<CudaStream, numStreams> streams{};
         int streamIndex = 0;
@@ -322,7 +386,7 @@ public:
         }
 
 
-        std::array<GpuErrorCorrectorRawOutput, 1 + numextra + 2> rawOutputArray;
+        std::array<GpuErrorCorrectorRawOutput, 1 + numextra> rawOutputArray;
         SingleProducerSingleConsumerQueue<GpuErrorCorrectorRawOutput*> freeRawOutputQueue;
 
         for(auto& a : rawOutputArray){
@@ -394,19 +458,23 @@ public:
             );
         };
 
-        auto outputConstructorThreadFunc = [&](){
-            std::pair<GpuErrorCorrectorInput*, GpuErrorCorrectorRawOutput*> pointers;
-            
-            pointers = dataInFlight.pop();
+        std::future<void> outputConstructorFuture{};
 
-            while(pointers.first != nullptr){
-                processDataInFlight(pointers);
-
+        if(useThreadForOutputConstruction){
+            auto outputConstructorThreadFunc = [&](){
+                std::pair<GpuErrorCorrectorInput*, GpuErrorCorrectorRawOutput*> pointers;
+                
                 pointers = dataInFlight.pop();
-            }
-        };
 
-        auto outputConstructorFuture = std::async(std::launch::async, outputConstructorThreadFunc);
+                while(pointers.first != nullptr){
+                    processDataInFlight(pointers);
+
+                    pointers = dataInFlight.pop();
+                }
+            };
+
+            outputConstructorFuture = std::async(std::launch::async, outputConstructorThreadFunc);
+        }
 
         RunStatistics runStatistics;
 
@@ -512,6 +580,11 @@ public:
 
                 dataInFlight.push(std::make_pair(inputPtr, rawOutputPtr));
                 //std::cerr << "Submitted (" << inputPtr << ", " << rawOutputPtr << ")\n";
+
+                if(!useThreadForOutputConstruction){
+                    auto pointers = dataInFlight.pop();
+                    processDataInFlight(pointers);
+                }
             }
 
             // if(!dataInFlight.empty()){
@@ -526,13 +599,19 @@ public:
         //signal output constructor thread
         dataInFlight.push(std::make_pair(nullptr, nullptr));
 
-        outputConstructorFuture.wait();
+        if(!useThreadForOutputConstruction){
+            //process remaining cached results
+            auto pointers = dataInFlight.pop();
+            while(pointers.first != nullptr){
+                processDataInFlight(pointers);
+                pointers = dataInFlight.pop();
+            }
 
-        //process remaining cached results
-        // while(!dataInFlight.empty()){
-        //     processDataInFlight();
-        // }
+        }else{
+            outputConstructorFuture.wait();
+        }
 
+        
         runStatistics.hasherTimeAverage = elapsedHashingTime / iterations;
         runStatistics.correctorTimeAverage = elapsedCorrectionTime / iterations;
         runStatistics.outputconstructorTimeAverage = elapsedOutputTime / iterations;
@@ -1566,26 +1645,6 @@ correct_gpu_impl(
         const int numHashersPerCorrectorByTime = std::ceil(runStatistics.hasherTimeAverage / runStatistics.correctorTimeAverage);
         //std::cerr << runStatistics.hasherTimeAverage << " " << runStatistics.correctorTimeAverage << "\n";
 
-        // auto runSimpleCpuPipeline = [&](int deviceId){
-        //     // cudaSetDevice(deviceId); CUERR;
-
-        //     // SimpleCpuCorrectionPipeline pipeline;
-
-        //     // std::unique_ptr<ReadProvider> readProvider = std::make_unique<GpuReadStorageReadProvider>(readStorage);
-        //     // std::unique_ptr<CandidateIdsProvider> candidateIdsProvider = std::make_unique<GpuMinhasherCandidateIdsProvider>(minhasher);
-
-        //     // pipeline.runToCompletion(
-        //     //     readIdGenerator,
-        //     //     correctionOptions,
-        //     //     goodAlignmentProperties,
-        //     //     correctionFlags,
-        //     //     readProvider.get(),
-        //     //     candidateIdsProvider.get(),
-        //     //     processResults,
-        //     //     batchCompleted
-        //     // ); 
-        // };
-
         auto runSimpleGpuPipeline = [&](int deviceId,
             const GpuForest* gpuForestAnchor, 
             const GpuForest* gpuForestCandidate
@@ -1608,6 +1667,29 @@ correct_gpu_impl(
                 batchCompleted
             );  
         };
+
+        // auto runSimpleGpuPipelineWithExtraThread = [&](int deviceId,
+        //     const GpuForest* gpuForestAnchor, 
+        //     const GpuForest* gpuForestCandidate
+        // ){
+        //     SimpleGpuCorrectionPipeline<Minhasher> pipeline(
+        //         readStorage,
+        //         minhasher,
+        //         nullptr, //&threadPool
+        //         gpuForestAnchor,
+        //         gpuForestCandidate
+        //     );
+
+        //     pipeline.runToCompletionDoubleBufferedWithExtraThread(
+        //         deviceIds[0],
+        //         readIdGenerator,
+        //         correctionOptions,
+        //         goodAlignmentProperties,
+        //         correctionFlags,
+        //         processResults,
+        //         batchCompleted
+        //     );  
+        // };
 
         auto runComplexGpuPipeline = [&](int deviceId, typename ComplexGpuCorrectionPipeline<Minhasher>::Config config,
             const GpuForest* gpuForestAnchor, 
@@ -1639,39 +1721,6 @@ correct_gpu_impl(
         const int numDevices = deviceIds.size();
         const int requiredNumThreadsForComplex = numHashersPerCorrectorByTime + (2 + 1 + 1);
         int availableThreads = runtimeOptions.threads;
-
-        //std::cerr << "numDevice " << numDevices << ", requiredNumThreadsForComplex " << requiredNumThreadsForComplex << ", availableThreads " << availableThreads << "\n";
-
-        // auto launchSimplePipelines = [&](int firstIdIndex, int lastIdIndex){
-        //     constexpr int maxNumThreadsPerDevice = 3;
-        //     assert(lastIdIndex <= numDevices);
-
-        //     std::vector<int> numThreadsPerDevice(numDevices, 0);
-
-        //     for(int i = 0; i < maxNumThreadsPerDevice; i++){
-        //         for(int d = firstIdIndex; d < lastIdIndex; d++){
-        //             if(availableThreads > 0){
-        //                 futures.emplace_back(std::async(
-        //                     std::launch::async,
-        //                     runSimpleGpuPipeline,
-        //                     deviceIds[d]
-        //                 ));
-
-        //                 availableThreads--;
-
-        //                 numThreadsPerDevice[d]++;
-        //             }
-        //         }
-        //     }
-
-        //     for(int d = firstIdIndex; d < lastIdIndex; d++){
-        //         if(numThreadsPerDevice[d] > 0){
-        //             std::cerr << "Use " << numThreadsPerDevice[d] << " simple threads on device " << deviceIds[d] << "\n";
-        //         }else{
-        //             std::cerr << "Device " << deviceIds[d] << " will be unused. (Not enough threads available.)\n";
-        //         }
-        //     }
-        // };
 
         for(int i = 0; i < numDevices; i++){ 
             const int deviceId = deviceIds[i];
@@ -1754,72 +1803,9 @@ correct_gpu_impl(
             }
         }
 
-        //if there are not enough threads to run one complex pipeline on any device, only use simple pipelines
-        // if(requiredNumThreadsForComplex > availableThreads){
-        //     launchSimplePipelines(0, numDevices);
-        // }else{
-
-            // std::vector<bool> useComplexPipeline(numDevices, false);
-            // int numSimple = 0;
-            // int firstSimpleDevice = numDevices;
-
-            // for(int i = 0; i < numDevices; i++){            
-
-            //     if(availableThreads >= requiredNumThreadsForComplex){  
-            //         availableThreads -= requiredNumThreadsForComplex;
-            //     }else{
-            //         numSimple++;
-
-            //         if(firstSimpleDevice == numDevices){
-            //             firstSimpleDevice = i;
-            //         }
-            //     }
-            // }
-
-            // for(int i = 0; i < firstSimpleDevice; i++){
-            //     const int deviceId = deviceIds[i];
-
-            //     typename ComplexGpuCorrectionPipeline<Minhasher>::Config pipelineConfig;
-            //     pipelineConfig.numHashers = numHashersPerCorrectorByTime + 2;
-            //     pipelineConfig.numCorrectors = 1 + 1;
-            //     pipelineConfig.numOutputConstructors = 0;
-
-            //     // std::cerr << "\nWill use " << pipelineConfig.numHashers << " hasher(s), " 
-            //     // << pipelineConfig.numCorrectors << " corrector(s), " 
-            //     // << pipelineConfig.numOutputConstructors << " output constructor(s) "
-            //     // << "on device " << deviceId << "\n";                
-
-            //     futures.emplace_back(
-            //         std::async(
-            //             std::launch::async,
-            //             runComplexGpuPipeline,
-            //             deviceId, pipelineConfig
-            //         )
-            //     );
-            // }
-
-            // launchSimplePipelines(firstSimpleDevice, numDevices);
-        //}
-
-        //std::cerr << "Remaing threads after launching gpu pipelines: " << availableThreads << "\n";
-
-        //use remaining threads to correct on the host
-        // for(int i = 0; i < availableThreads; i++){
-        //     futures.emplace_back(
-        //         std::async(
-        //             std::launch::async,
-        //             runSimpleCpuPipeline,
-        //             deviceIds[i % deviceIds.size()]
-        //         )
-        //     );                
-        // }
-
         for(auto& f : futures){
             f.wait();
-        }
-
-
-        
+        }        
     }
 
 #if 0
