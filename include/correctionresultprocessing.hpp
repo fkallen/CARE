@@ -101,7 +101,7 @@ namespace care{
             explicit EncodedEdit(int p, char b){
                 data = p;
                 data = data << 2;
-                std::uint16_t enc = SequenceHelpers::convertDNACharToIntNoIf(b);
+                std::uint16_t enc = SequenceHelpers::encodeBase(b);
                 data |= enc;
 
                 // this->p = p;
@@ -137,7 +137,7 @@ namespace care{
             HOSTDEVICEQUALIFIER
             char base() const{
                 std::uint8_t enc = data & 0x03;
-                return SequenceHelpers::convertIntToDNACharNoIf(enc);
+                return SequenceHelpers::decodeBase(enc);
                 //return b;
             }
 
@@ -206,6 +206,8 @@ namespace care{
             Edit() = default;
             HOSTDEVICEQUALIFIER
             Edit(int p, char b) : base(b), pos(p){}
+
+            Edit(const EncodedEdit& rhs) : base(rhs.base()), pos(rhs.pos()){}
 
             HOSTDEVICEQUALIFIER
             bool operator==(const Edit& rhs) const{

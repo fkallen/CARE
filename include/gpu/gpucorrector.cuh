@@ -535,7 +535,7 @@ namespace gpu{
             }
 
             auto unpackAnchors = [&](int begin, int end){
-                nvtx::push_range("Anchor unpacking", 3);
+                nvtx::push_range("Anchor unpacking " + std::to_string(end - begin), 3);
 
                 //Edits and numEdits are stored compact, only for corrected anchors.
                 //they are indexed by positionInVector instead of anchor_index
@@ -550,19 +550,16 @@ namespace gpu{
                     tmp.hq = currentOutput.h_is_high_quality_anchor[anchor_index].hq();                    
                     tmp.type = TempCorrectedSequence::Type::Anchor;
                     tmp.readId = readId;
+                    tmp.edits.clear();
                     
                     const int numEdits = currentOutput.h_numEditsPerCorrectedanchor[positionInVector];
                     if(numEdits != currentOutput.doNotUseEditsValue){
                         const int editOffset = currentOutput.h_anchorEditOffsets[positionInVector];
-                        tmp.edits.resize(numEdits);
-                        // const TempCorrectedSequence::EncodedEdit* const gpuedits 
-                        //     = (const TempCorrectedSequence::EncodedEdit*)(((const char*)currentOutput.h_editsPerCorrectedanchor.get()) 
-                        //         + positionInVector * currentOutput.editsPitchInBytes);
                         const auto* myedits = currentOutput.h_editsPerCorrectedanchor + editOffset;
-                        std::copy_n(myedits, numEdits, tmp.edits.begin());
+                        tmp.edits.insert(tmp.edits.end(), myedits, myedits + numEdits);
                         tmp.useEdits = true;
                     }else{
-                        tmp.edits.clear();
+                        
                         tmp.useEdits = false;
 
                         const int sequenceOffset = currentOutput.h_correctedAnchorsOffsets[positionInVector];
@@ -581,7 +578,7 @@ namespace gpu{
             };
 
             auto unpackcandidates = [&](int begin, int end){
-                nvtx::push_range("candidate unpacking", 3);
+                nvtx::push_range("candidate unpacking " + std::to_string(end - begin), 3);
 
                 //buffers are stored compact. offsets for each anchor are given by h_num_corrected_candidates_per_anchor_prefixsum
                 //Edits, numEdits, h_candidate_read_ids, h_candidate_sequences_lengths, h_alignment_shifts are stored compact, only for corrected candidates.
@@ -614,21 +611,21 @@ namespace gpu{
                     tmp.type = TempCorrectedSequence::Type::Candidate;
                     tmp.shift = candidate_shift;
                     tmp.readId = candidate_read_id;
+                    tmp.edits.clear();
                     
                     const int numEdits = currentOutput.h_numEditsPerCorrectedCandidate[offsetForCorrectedCandidateData + candidateIndex];
                     const int editsOffset = currentOutput.h_candidateEditOffsets[offsetForCorrectedCandidateData + candidateIndex];
 
                     if(numEdits != currentOutput.doNotUseEditsValue){
-                        tmp.edits.resize(numEdits);
                         const auto* myEdits = &currentOutput.h_editsPerCorrectedCandidate[editsOffset];
-                        std::copy_n(myEdits, numEdits, tmp.edits.begin());
+                        tmp.edits.insert(tmp.edits.end(), myEdits, myEdits + numEdits);
                         tmp.useEdits = true;
                     }else{
                         const int correctionOffset = currentOutput.h_correctedCandidatesOffsets[candidateIndex];
                         const int candidate_length = currentOutput.h_candidate_sequences_lengths[candidateIndex];
                         const char* const candidate_data = currentOutput.h_corrected_candidates + correctionOffset * currentOutput.decodedSequencePitchInBytes;
                         tmp.sequence.assign(candidate_data, candidate_length);
-                        tmp.edits.clear();
+                        
                         tmp.useEdits = false;
                     }
 
@@ -659,9 +656,9 @@ namespace gpu{
                 );         
             }
 
-            std::sort(correctionOutput.candidateCorrections.begin(), correctionOutput.candidateCorrections.end(), [](const auto& l, const auto& r){
-                return l.readId < r.readId;
-            });
+            // std::sort(correctionOutput.candidateCorrections.begin(), correctionOutput.candidateCorrections.end(), [](const auto& l, const auto& r){
+            //     return l.readId < r.readId;
+            // });
 
             return correctionOutput;
         }
