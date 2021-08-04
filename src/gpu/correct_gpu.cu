@@ -379,24 +379,18 @@ public:
 
             helpers::CpuTimer outputTimer;
 
-            nvtx::push_range("constructResults", 2);
-            auto correctionOutput = outputConstructor.constructResults(*rawOutputPtr, forLoopExecutor);
+            nvtx::push_range("constructEncodedResults", 2);
+            EncodedCorrectionOutput encodedCorrectionOutput = outputConstructor.constructEncodedResults(*rawOutputPtr, forLoopExecutor);
             nvtx::pop_range();
 
             freeRawOutputQueue.push(rawOutputPtr);
-
-            nvtx::push_range("encodeResults", 3);
-
-            correctionOutput.encode();
-
-            nvtx::pop_range();
-
+            
             outputTimer.stop();
             //elapsedOutputTimes.emplace_back(outputTimer.elapsed());
             elapsedOutputTime += outputTimer.elapsed();
 
             processResults(
-                std::move(correctionOutput)
+                std::move(encodedCorrectionOutput)
             );
         };
 
@@ -687,14 +681,8 @@ public:
 
                 helpers::CpuTimer outputTimer;
 
-                nvtx::push_range("constructResults", 2);
-                auto correctionOutput = outputConstructor.constructResults(rawOutput, forLoopExecutor);
-                nvtx::pop_range();
-
-                nvtx::push_range("encodeResults", 3);
-
-                correctionOutput.encode();
-
+                nvtx::push_range("constructEncodedResults", 2);
+                EncodedCorrectionOutput encodedCorrectionOutput = outputConstructor.constructEncodedResults(rawOutput, forLoopExecutor);
                 nvtx::pop_range();
 
                 outputTimer.stop();
@@ -704,7 +692,7 @@ public:
                 }
 
                 processResults(
-                    std::move(correctionOutput)
+                    std::move(encodedCorrectionOutput)
                 );
             }
 
@@ -1145,17 +1133,12 @@ public:
         }
 
         auto constructOutput = [&](GpuErrorCorrectorRawOutput* rawOutputPtr){
-            nvtx::push_range("constructResults", 0);
-            auto correctionOutput = outputConstructor.constructResults(*rawOutputPtr, forLoopExecutor);
-            nvtx::pop_range();
-
-            nvtx::push_range("encodeResults", 1);
-            correctionOutput.encode();
-
+            nvtx::push_range("constructEncodedResults", 2);
+            EncodedCorrectionOutput encodedCorrectionOutput = outputConstructor.constructEncodedResults(*rawOutputPtr, forLoopExecutor);
             nvtx::pop_range();
 
             processResults(
-                std::move(correctionOutput)
+                std::move(encodedCorrectionOutput)
             );
 
             batchCompleted(rawOutputPtr->numAnchors); 
@@ -1308,48 +1291,12 @@ public:
         GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputs.pop();
 
         while(rawOutputPtr != nullptr){
-            nvtx::push_range("constructResults", 0);
-            auto correctionOutput = outputConstructor.constructResults(*rawOutputPtr, forLoopExecutor);
-            nvtx::pop_range();
-
-            nvtx::push_range("encodeResults", 1);
-            correctionOutput.encode();
-
-            // std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
-            // std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
-
-            // if(correctionOutput.anchorCorrections.size() > 0){
-            //     encodedAnchorCorrections.resize(correctionOutput.anchorCorrections.size());
-
-            //     forLoopExecutor(std::size_t(0), correctionOutput.anchorCorrections.size(), 
-            //         [&](auto begin, auto end, auto /*threadId*/){
-            //             for(auto i = begin; i < end; i++){
-            //                 correctionOutput.anchorCorrections[i].encodeInto(encodedAnchorCorrections[i]);
-            //             }
-            //         }
-            //     );
-            // }
-
-            // if(correctionOutput.candidateCorrections.size() > 0){
-            //     encodedCandidateCorrections.resize(correctionOutput.candidateCorrections.size());
-
-            //     forLoopExecutor(std::size_t(0), correctionOutput.candidateCorrections.size(), 
-            //         [&](auto begin, auto end, auto /*threadId*/){
-            //             for(auto i = begin; i < end; i++){
-            //                 correctionOutput.candidateCorrections[i].encodeInto(encodedCandidateCorrections[i]);
-            //             }
-            //         }
-            //     );
-            // }
-
+            nvtx::push_range("constructEncodedResults", 2);
+            EncodedCorrectionOutput encodedCorrectionOutput = outputConstructor.constructEncodedResults(*rawOutputPtr, forLoopExecutor);
             nvtx::pop_range();
 
             processResults(
-                std::move(correctionOutput)
-                // std::move(correctionOutput.anchorCorrections),
-                // std::move(correctionOutput.candidateCorrections),
-                // std::move(encodedAnchorCorrections),
-                // std::move(encodedCandidateCorrections)
+                std::move(encodedCorrectionOutput)
             );
 
             batchCompleted(rawOutputPtr->numAnchors); 
@@ -1456,53 +1403,34 @@ correct_gpu_impl(
 
     BackgroundThread outputThread;
 
-    auto saveCorrectedSequence = [&](const TempCorrectedSequence* tmp, const EncodedTempCorrectedSequence* encoded){
-        // if(tmp->readId == 38851){
-        // std::cerr << *tmp << "\n";
-        // }
-        //useEditsCountMap[tmp.useEdits]++;
-        //std::unique_lock<std::mutex> l(outputstreammutex);
-        if(!(tmp->hq && tmp->useEdits && tmp->edits.empty())){
-            //outputstream << tmp << '\n';
+    auto saveEncodedCorrectedSequence = [&](const EncodedTempCorrectedSequence* encoded){
+        if(!(encoded->isHQ() && encoded->useEdits() && encoded->getNumEdits() == 0)){
             partialResults.storeElement(encoded);
-            //useEditsSavedCountMap[tmp.useEdits]++;
-            //numEditsHistogram[tmp.edits.size()]++;
-
-            // std::cerr << tmp.edits.size() << " " << encoded.data.capacity() << "\n";
         }
     };
 
     auto processResults = [&](
-        CorrectionOutput&& correctionOutput
+        EncodedCorrectionOutput&& encodedCorrectionOutput
     ){
-        assert(correctionOutput.anchorCorrections.size() == correctionOutput.encodedAnchorCorrections.size());
-        assert(correctionOutput.candidateCorrections.size() == correctionOutput.encodedCandidateCorrections.size());
 
-        const int numA = correctionOutput.encodedAnchorCorrections.size();
-        const int numC = correctionOutput.encodedCandidateCorrections.size();
-
-        // std::stable_sort(correctionOutput.encodedCandidateCorrections.begin(), correctionOutput.encodedCandidateCorrections.end(), [](const auto& l, const auto& r){ return l.readId < r.readId;});
-        // std::stable_sort(correctionOutput.candidateCorrections.begin(), correctionOutput.candidateCorrections.end(), [](const auto& l, const auto& r){ return l.readId < r.readId;});
+        const std::size_t numA = encodedCorrectionOutput.encodedAnchorCorrections.size();
+        const std::size_t numC = encodedCorrectionOutput.encodedCandidateCorrections.size();
 
         auto outputFunction = [
             &,
-            correctionOutput = std::move(correctionOutput)
+            encodedCorrectionOutput = std::move(encodedCorrectionOutput),
+            numA,
+            numC
         ](){
-
-            const int numA = correctionOutput.encodedAnchorCorrections.size();
-            const int numC = correctionOutput.encodedCandidateCorrections.size();
-
-            for(int i = 0; i < numA; i++){
-                saveCorrectedSequence(
-                    &correctionOutput.anchorCorrections[i], 
-                    &correctionOutput.encodedAnchorCorrections[i]
+            for(std::size_t i = 0; i < numA; i++){
+                saveEncodedCorrectedSequence(
+                    &encodedCorrectionOutput.encodedAnchorCorrections[i]
                 );
             }
 
-            for(int i = 0; i < numC; i++){
-                saveCorrectedSequence(
-                    &correctionOutput.candidateCorrections[i], 
-                    &correctionOutput.encodedCandidateCorrections[i]
+            for(std::size_t i = 0; i < numC; i++){
+                saveEncodedCorrectedSequence(
+                    &encodedCorrectionOutput.encodedCandidateCorrections[i]
                 );
             }
         };

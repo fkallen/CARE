@@ -456,21 +456,9 @@ namespace gpu{
 
         }
 
-        template<class ForLoop>
-        CorrectionOutput constructResults(const GpuErrorCorrectorRawOutput& currentOutput, ForLoop loopExecutor) const{
-            //assert(cudaSuccess == currentOutput.event.query());
-
-            if(currentOutput.nothingToDo){
-                return CorrectionOutput{};
-            }
-
+        std::vector<int> getAnchorIndicesToProcessAndUpdateCorrectionFlags(const GpuErrorCorrectorRawOutput& currentOutput) const{
             std::vector<int> anchorIndicesToProcess;
-            std::vector<std::pair<int,int>> candidateIndicesToProcess;
-
             anchorIndicesToProcess.reserve(currentOutput.numAnchors);
-            if(correctionOptions->correctCandidates){
-                candidateIndicesToProcess.reserve(16 * currentOutput.numAnchors);
-            }
 
             nvtx::push_range("preprocess anchor results",0);
 
@@ -493,6 +481,16 @@ namespace gpu{
             }
 
             nvtx::pop_range();
+
+            return anchorIndicesToProcess;
+        }
+
+        std::vector<std::pair<int,int>> getCandidateIndicesToProcess(const GpuErrorCorrectorRawOutput& currentOutput) const{
+            std::vector<std::pair<int,int>> candidateIndicesToProcess;
+
+            if(correctionOptions->correctCandidates){
+                candidateIndicesToProcess.reserve(16 * currentOutput.numAnchors);
+            }
 
             if(correctionOptions->correctCandidates){
 
@@ -521,6 +519,20 @@ namespace gpu{
 
             }
 
+            return candidateIndicesToProcess;
+        }
+
+        template<class ForLoop>
+        CorrectionOutput constructResults(const GpuErrorCorrectorRawOutput& currentOutput, ForLoop loopExecutor) const{
+            //assert(cudaSuccess == currentOutput.event.query());
+
+            if(currentOutput.nothingToDo){
+                return CorrectionOutput{};
+            }
+
+            const std::vector<int> anchorIndicesToProcess = getAnchorIndicesToProcessAndUpdateCorrectionFlags(currentOutput);
+            const std::vector<std::pair<int,int>> candidateIndicesToProcess = getCandidateIndicesToProcess(currentOutput);
+
             const int numCorrectedAnchors = anchorIndicesToProcess.size();
             const int numCorrectedCandidates = candidateIndicesToProcess.size();
 
@@ -548,7 +560,7 @@ namespace gpu{
                     const read_number readId = currentOutput.h_anchorReadIds[anchor_index];
 
                     tmp.hq = currentOutput.h_is_high_quality_anchor[anchor_index].hq();                    
-                    tmp.type = TempCorrectedSequence::Type::Anchor;
+                    tmp.type = TempCorrectedSequenceType::Anchor;
                     tmp.readId = readId;
                     tmp.edits.clear();
                     
@@ -608,7 +620,7 @@ namespace gpu{
                         assert(correctionOptions->new_columns_to_correct >= candidate_shift);
                     }                
                     
-                    tmp.type = TempCorrectedSequence::Type::Candidate;
+                    tmp.type = TempCorrectedSequenceType::Candidate;
                     tmp.shift = candidate_shift;
                     tmp.readId = candidate_read_id;
                     tmp.edits.clear();
@@ -639,28 +651,208 @@ namespace gpu{
 
 
             if(!correctionOptions->correctCandidates){
-                loopExecutor(0, numCorrectedAnchors, [=](auto begin, auto end, auto /*threadId*/){
-                    unpackAnchors(begin, end);
-                });
+                loopExecutor(
+                    0, 
+                    numCorrectedAnchors, 
+                    [=](auto begin, auto end, auto /*threadId*/){
+                        unpackAnchors(begin, end);
+                    }
+                );
             }else{
         
   
-                loopExecutor(0, numCorrectedAnchors, [=](auto begin, auto end, auto /*threadId*/){
-                    unpackAnchors(begin, end);
-                });
-           
+                loopExecutor(
+                    0, 
+                    numCorrectedAnchors, 
+                    [=](auto begin, auto end, auto /*threadId*/){
+                        unpackAnchors(begin, end);
+                    }
+                );
 
-                loopExecutor(0, numCorrectedCandidates, [=](auto begin, auto end, auto /*threadId*/){
+                loopExecutor(
+                    0, 
+                    numCorrectedCandidates, 
+                    [=](auto begin, auto end, auto /*threadId*/){
                         unpackcandidates(begin, end);
-                    } //,  threadPool->getConcurrency() * 4
-                );         
+                    }
+                );      
             }
 
-            // std::sort(correctionOutput.candidateCorrections.begin(), correctionOutput.candidateCorrections.end(), [](const auto& l, const auto& r){
-            //     return l.readId < r.readId;
-            // });
-
             return correctionOutput;
+        }
+
+        template<class ForLoop>
+        EncodedCorrectionOutput constructEncodedResults(const GpuErrorCorrectorRawOutput& currentOutput, ForLoop loopExecutor) const{
+            //assert(cudaSuccess == currentOutput.event.query());
+
+            if(currentOutput.nothingToDo){
+                return EncodedCorrectionOutput{};
+            }
+
+            const std::vector<int> anchorIndicesToProcess = getAnchorIndicesToProcessAndUpdateCorrectionFlags(currentOutput);
+            const std::vector<std::pair<int,int>> candidateIndicesToProcess = getCandidateIndicesToProcess(currentOutput);
+
+            const int numCorrectedAnchors = anchorIndicesToProcess.size();
+            const int numCorrectedCandidates = candidateIndicesToProcess.size();
+
+            // std::cerr << "numCorrectedAnchors: " << numCorrectedAnchors << 
+            //     ", numCorrectedCandidates: " << numCorrectedCandidates << "\n";
+
+            EncodedCorrectionOutput encodedCorrectionOutput;
+            encodedCorrectionOutput.encodedAnchorCorrections.resize(numCorrectedAnchors);
+
+            if(correctionOptions->correctCandidates){
+                encodedCorrectionOutput.encodedCandidateCorrections.resize(numCorrectedCandidates);
+            }
+
+            auto unpackAnchors = [&](int begin, int end){
+                nvtx::push_range("Anchor unpacking " + std::to_string(end - begin), 3);
+
+                //Edits and numEdits are stored compact, only for corrected anchors.
+                //they are indexed by positionInVector instead of anchor_index
+
+                std::vector<TempCorrectedSequence::Edit> edits;
+                            
+                for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
+                    const int anchor_index = anchorIndicesToProcess[positionInVector];
+                    
+                    const read_number readId = currentOutput.h_anchorReadIds[anchor_index];
+
+                    edits.clear();
+                    bool useEdits = false;
+                    const char* sequence = nullptr;
+                    int sequenceLength = 0;
+                    
+                    const int numEdits = currentOutput.h_numEditsPerCorrectedanchor[positionInVector];
+                    if(numEdits != currentOutput.doNotUseEditsValue){
+                        const int editOffset = currentOutput.h_anchorEditOffsets[positionInVector];
+                        const auto* myEdits = currentOutput.h_editsPerCorrectedanchor + editOffset;
+                        edits.insert(edits.end(), myEdits, myEdits + numEdits);
+                        useEdits = true;
+                    }else{                        
+                        const int sequenceOffset = currentOutput.h_correctedAnchorsOffsets[positionInVector];
+                        const char* const my_corrected_anchor_data = currentOutput.h_corrected_anchors + sequenceOffset;
+                        const int anchor_length = currentOutput.h_anchor_sequences_lengths[anchor_index];
+ 
+                        sequenceLength = anchor_length;
+                        sequence = my_corrected_anchor_data;
+                    }
+
+                    encodeDataIntoEncodedCorrectedSequence(
+                        encodedCorrectionOutput.encodedAnchorCorrections[positionInVector],
+                        readId,
+                        currentOutput.h_is_high_quality_anchor[anchor_index].hq(),
+                        useEdits,
+                        TempCorrectedSequenceType::Anchor,
+                        0,
+                        edits.size(),
+                        edits.data(),
+                        sequenceLength,
+                        sequence
+                    );
+                }
+
+                nvtx::pop_range();
+            };
+
+            auto unpackcandidates = [&](int begin, int end){
+                nvtx::push_range("candidate unpacking " + std::to_string(end - begin), 3);
+
+                //buffers are stored compact. offsets for each anchor are given by h_num_corrected_candidates_per_anchor_prefixsum
+                //Edits, numEdits, h_candidate_read_ids, h_candidate_sequences_lengths, h_alignment_shifts are stored compact, only for corrected candidates.
+                //edits are only present for candidates which use edits and have numEdits > 0
+                //offsets to the edits of candidates are stored in h_candidateEditOffsets
+
+                std::vector<TempCorrectedSequence::Edit> edits;          
+
+                for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
+                    
+
+                    const int anchor_index = candidateIndicesToProcess[positionInVector].first;
+                    const int candidateIndex = candidateIndicesToProcess[positionInVector].second;
+                    const read_number anchorReadId = currentOutput.h_anchorReadIds[anchor_index];
+
+                    const size_t offsetForCorrectedCandidateData = currentOutput.h_num_corrected_candidates_per_anchor_prefixsum[anchor_index];
+
+                    const read_number candidate_read_id = currentOutput.h_candidate_read_ids[offsetForCorrectedCandidateData + candidateIndex];
+                    const int candidate_shift = currentOutput.h_alignment_shifts[offsetForCorrectedCandidateData + candidateIndex];
+
+                    if(correctionOptions->new_columns_to_correct < candidate_shift){
+                        std::cerr << "readid " << anchorReadId << " candidate readid " << candidate_read_id << " : "
+                        << candidate_shift << " " << correctionOptions->new_columns_to_correct <<"\n";
+
+                        assert(correctionOptions->new_columns_to_correct >= candidate_shift);
+                    }
+
+                    edits.clear();
+                    
+                    const int numEdits = currentOutput.h_numEditsPerCorrectedCandidate[offsetForCorrectedCandidateData + candidateIndex];
+                    const int editsOffset = currentOutput.h_candidateEditOffsets[offsetForCorrectedCandidateData + candidateIndex];
+
+                    bool useEdits = false;
+                    const char* sequence = nullptr;
+                    int sequenceLength = 0;
+
+                    if(numEdits != currentOutput.doNotUseEditsValue){
+                        const auto* myEdits = &currentOutput.h_editsPerCorrectedCandidate[editsOffset];
+                        edits.insert(edits.end(), myEdits, myEdits + numEdits);
+                        useEdits = true;
+                    }else{
+                        const int correctionOffset = currentOutput.h_correctedCandidatesOffsets[candidateIndex];
+                        const int candidate_length = currentOutput.h_candidate_sequences_lengths[candidateIndex];
+                        const char* const candidate_data = currentOutput.h_corrected_candidates + correctionOffset * currentOutput.decodedSequencePitchInBytes;
+
+                        sequenceLength = candidate_length;
+                        sequence = candidate_data;
+                    }
+
+                    encodeDataIntoEncodedCorrectedSequence(
+                        encodedCorrectionOutput.encodedCandidateCorrections[positionInVector],
+                        candidate_read_id,
+                        false,
+                        useEdits,
+                        TempCorrectedSequenceType::Candidate,
+                        candidate_shift,
+                        edits.size(),
+                        edits.data(),
+                        sequenceLength,
+                        sequence
+                    );
+                }
+
+                nvtx::pop_range();
+            };
+
+
+            if(!correctionOptions->correctCandidates){
+                loopExecutor(
+                    0, 
+                    numCorrectedAnchors, 
+                    [=](auto begin, auto end, auto /*threadId*/){
+                        unpackAnchors(begin, end);
+                    }
+                );
+            }else{
+        
+  
+                loopExecutor(
+                    0, 
+                    numCorrectedAnchors, 
+                    [=](auto begin, auto end, auto /*threadId*/){
+                        unpackAnchors(begin, end);
+                    }
+                );
+
+                loopExecutor(
+                    0, 
+                    numCorrectedCandidates, 
+                    [=](auto begin, auto end, auto /*threadId*/){
+                        unpackcandidates(begin, end);
+                    }
+                );      
+            }
+
+            return encodedCorrectionOutput;
         }
 
         MemoryUsage getMemoryInfo() const{

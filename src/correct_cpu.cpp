@@ -102,12 +102,9 @@ correct_cpu(
     cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
     //cpu::RangeGenerator<read_number> readIdGenerator(1000000); 
     
-    auto saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
-        //std::unique_lock<std::mutex> l(outputstreammutex);
-        //std::cerr << tmp.readId  << " hq " << tmp.hq << " " << "useedits " << tmp.useEdits << " emptyedits " << tmp.edits.empty() << "\n";
-        if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
-            //std::cerr << tmp.readId << " " << tmp << '\n';
-            partialResults.storeElement(std::move(encoded));
+    auto saveEncodedCorrectedSequence = [&](const EncodedTempCorrectedSequence* encoded){
+        if(!(encoded->isHQ() && encoded->useEdits() && encoded->getNumEdits() == 0)){
+            partialResults.storeElement(encoded);
         }
     };
 
@@ -231,12 +228,10 @@ correct_cpu(
                 for(auto& output : outputs){
 
                     if(output.hasAnchorCorrection){
-                        correctionOutput.encodedAnchorCorrections.emplace_back(output.anchorCorrection.encode());
                         correctionOutput.anchorCorrections.emplace_back(std::move(output.anchorCorrection));
                     }
 
                     for(auto& tmp : output.candidateCorrections){
-                        correctionOutput.encodedCandidateCorrections.emplace_back(tmp.encode());
                         correctionOutput.candidateCorrections.emplace_back(std::move(tmp));
                     }
                 }
@@ -255,35 +250,33 @@ correct_cpu(
                     auto output = errorCorrector.process(input);
 
                     if(output.hasAnchorCorrection){
-                        correctionOutput.encodedAnchorCorrections.emplace_back(output.anchorCorrection.encode());
                         correctionOutput.anchorCorrections.emplace_back(std::move(output.anchorCorrection));
                     }
 
                     for(auto& tmp : output.candidateCorrections){
-                        correctionOutput.encodedCandidateCorrections.emplace_back(tmp.encode());
                         correctionOutput.candidateCorrections.emplace_back(std::move(tmp));
                     }
                 }
             }
 
+            EncodedCorrectionOutput encodedCorrectionOutput = correctionOutput;
+
             auto outputfunction = [
                 &, 
-                correctionOutput = std::move(correctionOutput)
+                encodedCorrectionOutput = std::move(encodedCorrectionOutput)
             ](){
-                const int numA = correctionOutput.anchorCorrections.size();
-                const int numC = correctionOutput.candidateCorrections.size();
+                const int numA = encodedCorrectionOutput.encodedAnchorCorrections.size();
+                const int numC = encodedCorrectionOutput.encodedCandidateCorrections.size();
 
                 for(int i = 0; i < numA; i++){
-                    saveCorrectedSequence(
-                        std::move(correctionOutput.anchorCorrections[i]), 
-                        std::move(correctionOutput.encodedAnchorCorrections[i])
+                    saveEncodedCorrectedSequence(
+                        &encodedCorrectionOutput.encodedAnchorCorrections[i]
                     );
                 }
 
                 for(int i = 0; i < numC; i++){
-                    saveCorrectedSequence(
-                        std::move(correctionOutput.candidateCorrections[i]), 
-                        std::move(correctionOutput.encodedCandidateCorrections[i])
+                    saveEncodedCorrectedSequence(
+                        &encodedCorrectionOutput.encodedCandidateCorrections[i]
                     );
                 }
             };

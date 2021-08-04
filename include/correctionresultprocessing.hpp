@@ -15,6 +15,8 @@
 
 namespace care{
 
+    enum class TempCorrectedSequenceType : int {Anchor, Candidate};
+
     struct TempCorrectedSequence; //forward declaration
 
     struct EncodedTempCorrectedSequence{
@@ -83,13 +85,37 @@ namespace care{
         read_number getReadId() const noexcept{
             return readId;
         }
+
+        bool isHQ() const noexcept{
+            return (encodedflags >> 31) & std::uint32_t(1);
+        }
+
+        bool useEdits() const noexcept{
+            return (encodedflags >> 30) & std::uint32_t(1);
+        }
+
+        int getNumEdits() const noexcept{
+            if(useEdits()){
+                //num edits is stored in the first int of encoded data
+                int num;
+                std::memcpy(&num, data.get(), sizeof(int));
+
+                return num;
+            }else{
+                return 0;
+            }
+        }
+
+        TempCorrectedSequenceType getType() const noexcept{
+            return TempCorrectedSequenceType((encodedflags >> 29) & std::uint32_t(1));
+        }
     };
 
     // represents a sequence produced by the correction of a read.
     // Will be saved to file during correction.
     // Will be loaded from file during mergeResultFiles
     struct TempCorrectedSequence{
-        enum class Type : int {Anchor, Candidate};
+        
         struct EncodedEdit{
             // char b;
             // int p;
@@ -163,55 +189,20 @@ namespace care{
                 //this->b = convertIntToDNACharNoIf(b);
             }
         };
-
-        // struct EncodedEdit{
-        //     char b;
-        //     int p;
-
-        //     EncodedEdit() = default;
-        //     HOSTDEVICEQUALIFIER
-        //     EncodedEdit(int p, char b) : b(b), p(p){}
-
-        //     HOSTDEVICEQUALIFIER
-        //     bool operator==(const EncodedEdit& rhs) const{
-        //         return b == rhs.b && p == rhs.p;
-        //     }
-
-        //     HOSTDEVICEQUALIFIER
-        //     bool operator!=(const EncodedEdit& rhs) const{
-        //         return !(operator==(rhs));
-        //     }
-
-        //     int pos() const{
-        //         return p;
-        //     }
-
-        //     char base() const{
-        //         return b;
-        //     }
-
-        //     void pos(int i){
-        //         p = i;
-        //     }
-
-        //     void base(char c){
-        //         b = c;
-        //     }
-        // };
-
         struct Edit{
-            char base;
-            int pos;
+            char base_;
+            int pos_;
 
             Edit() = default;
             HOSTDEVICEQUALIFIER
-            Edit(int p, char b) : base(b), pos(p){}
+            Edit(int p, char b) : base_(b), pos_(p){}
 
-            Edit(const EncodedEdit& rhs) : base(rhs.base()), pos(rhs.pos()){}
+            HOSTDEVICEQUALIFIER
+            Edit(const EncodedEdit& rhs) : base_(rhs.base()), pos_(rhs.pos()){}
 
             HOSTDEVICEQUALIFIER
             bool operator==(const Edit& rhs) const{
-                return base == rhs.base && pos == rhs.pos;
+                return base() == rhs.base() && pos() == rhs.pos();
             }
 
             HOSTDEVICEQUALIFIER
@@ -220,10 +211,32 @@ namespace care{
             }
 
             Edit& operator=(const Edit& rhs) = default;
+
+            HOSTDEVICEQUALIFIER
             Edit& operator=(const EncodedEdit& rhs){
-                base = rhs.base();
-                pos = rhs.pos();
+                base(rhs.base());
+                pos(rhs.pos());
                 return *this;
+            }
+
+            HOSTDEVICEQUALIFIER
+            char base() const noexcept{
+                return base_;
+            }
+
+            HOSTDEVICEQUALIFIER
+            int pos() const noexcept{
+                return pos_;
+            }
+
+            HOSTDEVICEQUALIFIER
+            void base(char b) noexcept{
+                base_ = b;
+            }
+
+            HOSTDEVICEQUALIFIER
+            void pos(int i) noexcept{
+                pos_ = i;
             }
         };
 
@@ -248,7 +261,7 @@ namespace care{
 
         bool hq = false; //if anchor
         bool useEdits = false;
-        Type type = Type::Anchor;
+        TempCorrectedSequenceType type = TempCorrectedSequenceType::Anchor;
         int shift = 0; //if candidate
         read_number readId = 0;
 
@@ -266,6 +279,19 @@ namespace care{
 
         
     };
+
+    void encodeDataIntoEncodedCorrectedSequence(
+        EncodedTempCorrectedSequence& target,
+        read_number readId,
+        bool hq,
+        bool useEdits,
+        TempCorrectedSequenceType type,
+        int shift,
+        int numEdits,
+        const TempCorrectedSequence::Edit* edits,
+        int sequenceLength,
+        const char* sequence
+    );
 
 
 
