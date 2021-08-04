@@ -2,6 +2,7 @@
 
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <bestalignment.hpp>
 
@@ -1732,12 +1733,12 @@ namespace gpu{
             std::map<KernelLaunchConfig, KernelProperties> mymap;
 
             KernelProperties kernelProperties;
-            cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
                 &kernelProperties.max_blocks_per_SM,
                 popcount_shifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>,
                 kernelLaunchConfig.threads_per_block, 
                 kernelLaunchConfig.smem
-            ); CUERR;
+            ));
 
             mymap[kernelLaunchConfig] = kernelProperties;
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
@@ -1777,7 +1778,7 @@ namespace gpu{
                 maxErrorRate,
                 min_overlap_ratio,
                 estimatedNucleotideErrorRate
-        ); CUERR;
+        ); CUDACHECKASYNC;
 
     }
 
@@ -1814,29 +1815,7 @@ namespace gpu{
         cudaStream_t stream,
         KernelLaunchHandle& handle){
 
-        const int intsPerSequence2BitHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLength);
-
-        // cudaDeviceSynchronize(); CUERR;
-        // int h_numAnchors = 0;
-        // cudaMemcpyAsync(&h_numAnchors, d_numAnchors, sizeof(int), D2H, stream); CUERR;
-        // cudaDeviceSynchronize(); CUERR;
-
-        // std::cerr << "call_popcount_rightshifted_hamming_distance_reg_kernel_async\n";
-        // std::cerr << "h_numAnchors = " << h_numAnchors << "\n";
-        // std::cerr << "maximumSequenceLength = " << maximumSequenceLength << "\n";
-        // std::cerr << "encodedSequencePitchInInts2Bit = " << encodedSequencePitchInInts2Bit << "\n";
-        // std::cerr << "intsPerSequence2BitHiLo = " << intsPerSequence2BitHiLo << "\n";
-
-        // std::vector<unsigned int> h_anchors(maxNumAnchors * encodedSequencePitchInInts2Bit);
-        // cudaMemcpyAsync(h_anchors.data(), d_subjectSequencesData, maxNumAnchors * encodedSequencePitchInInts2Bit, D2H, stream); CUERR;
-        // cudaStreamSynchronize(stream); CUERR; //DEBUG
-
-        // std::cerr << "first anchor 2bit\n";
-        // for(int i = 0; i < encodedSequencePitchInInts2Bit; i++){
-        //     std::cerr << h_anchors[i] << " ";
-        // }
-        // std::cerr << "\n";
-        
+        const int intsPerSequence2BitHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLength);       
         
         const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumCandidates, 512) * 512;
         const std::size_t d_subjectDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumAnchors, 512) * 512;
@@ -1885,18 +1864,7 @@ namespace gpu{
             maxNumAnchors,
             stream,
             handle
-        );
-
-        // std::vector<unsigned int> h_anchorshilotransposed(maxNumAnchors * intsPerSequence2BitHiLo);
-        // cudaMemcpyAsync(h_anchorshilotransposed.data(), d_subjectSequencesData, maxNumAnchors * intsPerSequence2BitHiLo, D2H, stream); CUERR;
-        // cudaStreamSynchronize(stream); CUERR; //DEBUG
-
-        // std::cerr << "first anchor hilo transposed\n";
-        // for(int i = 0; i < intsPerSequence2BitHiLo; i++){
-        //     std::cerr << h_anchorshilotransposed[i * h_numAnchors] << " ";
-        // }
-        // std::cerr << "\n";
-        
+        );       
 
         constexpr int blocksize = 128;
         int max_blocks_per_device = 1;
@@ -1911,12 +1879,12 @@ namespace gpu{
             std::map<KernelLaunchConfig, KernelProperties> mymap;
 
             KernelProperties kernelProperties;
-            cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
                 &kernelProperties.max_blocks_per_SM,
                 popcount_rightshifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>,
                 kernelLaunchConfig.threads_per_block, 
                 kernelLaunchConfig.smem
-            ); CUERR;
+            ));
 
             mymap[kernelLaunchConfig] = kernelProperties;
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
@@ -1956,7 +1924,7 @@ namespace gpu{
                 maxErrorRate,
                 min_overlap_ratio,
                 estimatedNucleotideErrorRate
-        ); CUERR;
+        ); CUDACHECKASYNC;
 
     }
 
@@ -2011,14 +1979,14 @@ namespace gpu{
         const std::size_t d_tiles_per_subject_prefixsumBytes = SDIV(sizeof(int) * (maxNumAnchors+1), 512) * 512;
         std::size_t cubBytes = 0;
         
-        // cub::DeviceScan::InclusiveSum(
+        // CUDACHECK(cub::DeviceScan::InclusiveSum(
         //     nullptr,
         //     cubBytes,
         //     d_tiles_per_subject,
         //     (int*) nullptr,
         //     maxNumAnchors,
         //     stream
-        // );
+        // ));
         
         {
 
@@ -2118,26 +2086,7 @@ namespace gpu{
 
                 __syncthreads();
             }
-
-            
-
-            // cub::LoadDirectBlocked(
-            //     threadIdx.x,
-            //     d_tiles_per_subject,
-            //     thread_data,
-            //     numItems,
-            //     0
-            // )    
-
-            // BlockScan(temp_storage).InclusiveSum(thread_data, thread_data, T &block_aggregate)
-
-            // cub::StoreDirectBlocked(
-            //         int     linear_tid,
-            //     OutputIteratorT     block_itr,
-            //     T(&)     items[ITEMS_PER_THREAD],
-            //     int     valid_items 
-            //     )    
-        }); CUERR;
+        }); CUDACHECKASYNC;
 
 
         constexpr int blocksize = 128;
@@ -2161,9 +2110,9 @@ namespace gpu{
                     kernelLaunchConfig.threads_per_block = (blocksize); \
                     kernelLaunchConfig.smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2); \
                     KernelProperties kernelProperties; \
-                    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
                         popcount_shifted_hamming_distance_smem_kernel<tilesize>, \
-                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem)); \
                     mymap[kernelLaunchConfig] = kernelProperties; \
             }
             getProp(1, tilesize);
@@ -2211,7 +2160,7 @@ namespace gpu{
                                             min_overlap, \
                                             maxErrorRate, \
                                             min_overlap_ratio, \
-                                            estimatedNucleotideErrorRate); CUERR;
+                                            estimatedNucleotideErrorRate); CUDACHECKASYNC;
 
         dim3 block(blocksize, 1, 1);
         //dim3 grid(std::min(requiredBlocks, max_blocks_per_device), 1, 1);
@@ -2273,14 +2222,14 @@ namespace gpu{
         const std::size_t d_tiles_per_subject_prefixsumBytes = SDIV(sizeof(int) * (maxNumAnchors+1), 512) * 512;
         std::size_t cubBytes = 0;
         
-        // cub::DeviceScan::InclusiveSum(
+        // CUDACHECK(cub::DeviceScan::InclusiveSum(
         //     nullptr,
         //     cubBytes,
         //     d_tiles_per_subject,
         //     (int*) nullptr,
         //     maxNumAnchors,
         //     stream
-        // );
+        // ));
         
         {
 
@@ -2379,27 +2328,8 @@ namespace gpu{
                 aggregate += block_aggregate;
 
                 __syncthreads();
-            }
-
-            
-
-            // cub::LoadDirectBlocked(
-            //     threadIdx.x,
-            //     d_tiles_per_subject,
-            //     thread_data,
-            //     numItems,
-            //     0
-            // )    
-
-            // BlockScan(temp_storage).InclusiveSum(thread_data, thread_data, T &block_aggregate)
-
-            // cub::StoreDirectBlocked(
-            //         int     linear_tid,
-            //     OutputIteratorT     block_itr,
-            //     T(&)     items[ITEMS_PER_THREAD],
-            //     int     valid_items 
-            //     )    
-        }); CUERR;
+            } 
+        }); CUDACHECKASYNC;
 
 
         constexpr int blocksize = 128;
@@ -2423,9 +2353,9 @@ namespace gpu{
                     kernelLaunchConfig.threads_per_block = (blocksize); \
                     kernelLaunchConfig.smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2); \
                     KernelProperties kernelProperties; \
-                    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
                         popcount_rightshifted_hamming_distance_smem_kernel<tilesize>, \
-                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem)); \
                     mymap[kernelLaunchConfig] = kernelProperties; \
             }
             getProp(1, tilesize);
@@ -2473,7 +2403,7 @@ namespace gpu{
                                             min_overlap, \
                                             maxErrorRate, \
                                             min_overlap_ratio, \
-                                            estimatedNucleotideErrorRate); CUERR;
+                                            estimatedNucleotideErrorRate); CUDACHECKASYNC;
 
         dim3 block(blocksize, 1, 1);
         //dim3 grid(std::min(requiredBlocks, max_blocks_per_device), 1, 1);
@@ -2910,9 +2840,9 @@ namespace gpu{
                     klc.threads_per_block = (blocksize); \
                     klc.smem = 0; \
                     KernelProperties kernelProperties; \
-                    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
                                 cuda_filter_alignments_by_mismatchratio_kernel<(blocksize)>, \
-                                klc.threads_per_block, klc.smem); CUERR; \
+                                klc.threads_per_block, klc.smem)); \
                     mymap[klc] = kernelProperties; \
             }
 
@@ -2958,7 +2888,7 @@ namespace gpu{
             d_numAnchors, \
             d_numCandidates, \
             mismatchratioBaseFactor, \
-            goodAlignmentsCountThreshold); CUERR;
+            goodAlignmentsCountThreshold); CUDACHECKASYNC;
 
         switch(requestedBlocksize) {
         case 32: mycall(32); break;
@@ -3012,9 +2942,9 @@ namespace gpu{
                 kernelLaunchConfig.threads_per_block = (blocksize); \
                 kernelLaunchConfig.smem = 0; \
                 KernelProperties kernelProperties; \
-                cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
                     selectIndicesOfGoodCandidatesKernel<(blocksize), tilesize>, \
-                                                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+                                                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem)); \
                 mymap[kernelLaunchConfig] = kernelProperties; \
             }
 
@@ -3039,8 +2969,6 @@ namespace gpu{
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
         }
 
-        // cudaMemsetAsync(d_numIndicesPerAnchor, 0, maxNumAnchors * sizeof(int), stream); CUERR;
-        // cudaMemsetAsync(d_totalNumIndices, 0, sizeof(int), stream); CUERR;
         helpers::lambda_kernel<<<4, 256, 0, stream>>>([=] __device__(){
             const int tid = threadIdx.x + blockIdx.x * blockDim.x;
             const int stride = blockDim.x * gridDim.x;
@@ -3052,7 +2980,7 @@ namespace gpu{
             if(tid == 0){
                 *d_totalNumIndices = 0;
             }
-        }); CUERR;
+        }); CUDACHECKASYNC;
 
         dim3 block(blocksize, 1, 1);
         //dim3 grid(std::min(SDIV(maxNumCandidates, blocksize), max_blocks_per_device));
@@ -3068,7 +2996,7 @@ namespace gpu{
             d_anchorIndicesOfCandidates,
             d_numAnchors,
             d_numCandidates
-        ); CUERR;
+        ); CUDACHECKASYNC;
     }
 
 

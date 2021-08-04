@@ -9,6 +9,7 @@
 #include <cpuhashtable.hpp>
 #include <gpu/gpuminhasher.cuh>
 #include <groupbykey.hpp>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include "minhashing.hpp"
 
@@ -191,9 +192,7 @@ namespace gpu{
             }
 
             void destroy(){
-                int cur = 0;
-                cudaGetDevice(&cur); CUERR;
-                cudaSetDevice(deviceId); CUERR;
+                cub::SwitchDevice sd{deviceId};
 
                 d_minhashSignatures.destroy();
                 d_minhashSignatures_transposed.destroy();
@@ -224,7 +223,6 @@ namespace gpu{
                     h = nullptr;
                 }
 
-                cudaSetDevice(cur); CUERR;
                 isInitialized = false;
             }
         };
@@ -375,7 +373,7 @@ namespace gpu{
 
                 std::iota(h_indices.get(), h_indices.get() + curBatchsize, readIdBegin);
 
-                cudaMemcpyAsync(d_indices, h_indices, sizeof(read_number) * curBatchsize, H2D, stream); CUERR;
+                CUDACHECK(cudaMemcpyAsync(d_indices, h_indices, sizeof(read_number) * curBatchsize, H2D, stream));
 
                 gpuReadStorage.gatherSequences(
                     sequencehandle,
@@ -415,7 +413,7 @@ namespace gpu{
                     stream
                 );
 
-                cudaStreamSynchronize(stream); CUERR;
+                CUDACHECK(cudaStreamSynchronize(stream));
             }
 
             d_temp.destroy();
@@ -442,7 +440,7 @@ namespace gpu{
         MinhasherHandle makeMinhasherHandle() const override {
             auto data = std::make_unique<QueryData>();
             data->segmentedUniqueHandle = GpuSegmentedUnique::makeHandle();
-            cudaGetDevice(&data->deviceId); CUERR;
+            CUDACHECK(cudaGetDevice(&data->deviceId));
             data->isInitialized = true;
 
             //std::unique_lock<std::shared_mutex> lock(sharedmutex);
@@ -543,7 +541,7 @@ namespace gpu{
 
         void compact(cudaStream_t stream) {
             int id;
-            cudaGetDevice(&id); CUERR;
+            CUDACHECK(cudaGetDevice(&id));
 
             auto groupByKey = [&](auto& keys, auto& values, auto& countsPrefixSum){
                 constexpr bool valuesOfSameKeyMustBeSorted = false;
@@ -760,13 +758,13 @@ namespace gpu{
             std::uint64_t* const d_signatures_transposed = static_cast<std::uint64_t*>(d_temp_allocations[1]);
             int* const d_hashFunctionNumbers = static_cast<int*>(d_temp_allocations[2]);
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 d_hashFunctionNumbers, 
                 h_hashFunctionNumbers, 
                 sizeof(int) * numHashfunctions, 
                 H2D, 
                 stream
-            ); CUERR;
+            ));
 
             callMinhashSignaturesKernel(
                 d_signatures,
@@ -779,7 +777,7 @@ namespace gpu{
                 numHashfunctions,
                 d_hashFunctionNumbers,
                 stream
-            ); CUERR;
+            );
 
             helpers::call_transpose_kernel(
                 d_signatures_transposed, 
@@ -792,15 +790,15 @@ namespace gpu{
 
             std::uint64_t* const h_signatures_transposed = static_cast<std::uint64_t*>(h_temp_allocations[0]);
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 h_signatures_transposed, 
                 d_signatures_transposed, 
                 sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences, 
                 D2H, 
                 stream
-            ); CUERR;
+            ));
 
-            cudaStreamSynchronize(stream); CUERR;
+            CUDACHECK(cudaStreamSynchronize(stream));
 
             auto loopbody = [&](auto begin, auto end, int /*threadid*/){
                 for(int h = begin; h < end; h++){
@@ -964,13 +962,13 @@ namespace gpu{
 
             copyHitsToPinnedMemory();
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 d_values_dblbuf.Current(),
                 queryData->h_candidate_read_ids_tmp.data(),
                 sizeof(read_number) * totalNumValues,
                 H2D,
                 stream
-            ); CUERR;
+            ));
 
             //copy h_endoffsets to d_endoffsets.
             //Then copy d_endoffsets to d_begin_offsets shifted to the right by 1.
@@ -1036,16 +1034,16 @@ namespace gpu{
             int* d_newOffsets = d_offsets;
             void* d_cubTemp = queryData->d_minhashSignatures.data();
 
-            cudaMemsetAsync(d_newOffsets, 0, sizeof(int), stream); CUERR;
+            CUDACHECK(cudaMemsetAsync(d_newOffsets, 0, sizeof(int), stream));
 
-            cub::DeviceScan::InclusiveSum(
+            CUDACHECK(cub::DeviceScan::InclusiveSum(
                 d_cubTemp,
                 cubtempbytes,
                 d_numValuesPerSequence,
                 d_newOffsets + 1,
                 numSequences,
                 stream
-            );
+            ));
 
             //copy final remaining values into contiguous range
             helpers::lambda_kernel<<<numSequences, 128, 0, stream>>>(
@@ -1068,7 +1066,7 @@ namespace gpu{
                         }
                     }
                 }
-            ); CUERR;
+            ); CUDACHECKASYNC;
 
             queryData->previousStage = QueryData::Stage::Retrieve;
         }
@@ -1093,15 +1091,15 @@ namespace gpu{
             if(d_readIds != nullptr){
                 h_readIds.resize(numSequences);
 
-                cudaMemcpyAsync(
+                CUDACHECK(cudaMemcpyAsync(
                     h_readIds.data(),
                     d_readIds,
                     sizeof(read_number) * numSequences,
                     D2H,
                     stream
-                ); CUERR;
+                ));
 
-                cudaStreamSynchronize(stream); CUERR;
+                CUDACHECK(cudaStreamSynchronize(stream));
             }
 
             std::vector<int> h_numValuesPerSequence(numSequences);
@@ -1131,31 +1129,31 @@ namespace gpu{
                 first = end;
             }
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 d_values,
                 h_values.data(),
                 sizeof(read_number) * std::distance(h_values.data(), first),
                 H2D,
                 stream
-            ); CUERR;
+            ));
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 d_numValuesPerSequence,
                 h_numValuesPerSequence.data(),
                 sizeof(int) * numSequences,
                 H2D,
                 stream
-            ); CUERR;
+            ));
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 d_offsets,
                 h_offsets.data(),
                 sizeof(int) * (numSequences + 1),
                 H2D,
                 stream
-            ); CUERR;
+            ));
 
-            cudaStreamSynchronize(stream); CUERR;
+            CUDACHECK(cudaStreamSynchronize(stream));
 
             queryData->previousStage = QueryData::Stage::Retrieve;
         }
@@ -1232,15 +1230,15 @@ namespace gpu{
                 stream
             );
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 queryData->h_minhashSignatures.get(),
                 queryData->d_minhashSignatures_transposed.get(),
                 queryData->h_minhashSignatures.sizeInBytes(),
                 H2D,
                 stream
-            ); CUERR;
+            ));
     
-            cudaStreamSynchronize(stream); CUERR; //wait for D2H transfers of signatures
+            CUDACHECK(cudaStreamSynchronize(stream)); //wait for D2H transfers of signatures
 
             nvtx::push_range("queryPrecalculatedSignatures", 6);
             totalNumValues = 0;
@@ -1283,7 +1281,7 @@ namespace gpu{
             // }
             nvtx::pop_range();
 
-            cudaMemcpyAsync(d_numValuesPerSequence, h_numValuesPerSequence, sizeof(int) * numSequences, H2D, stream); CUERR;
+            CUDACHECK(cudaMemcpyAsync(d_numValuesPerSequence, h_numValuesPerSequence, sizeof(int) * numSequences, H2D, stream));
 
             // std::vector<int> numValuesPerSequence(numSequences);
 
@@ -1302,7 +1300,7 @@ namespace gpu{
             //     numValuesPerSequence[sequenceIndex] = num;
             // }
 
-            //cudaMemcpyAsync(d_numValuesPerSequence, numValuesPerSequence.data(), sizeof(int) * numSequences, H2D, stream); CUERR;
+            //CUDACHECK(cudaMemcpyAsync(d_numValuesPerSequence, numValuesPerSequence.data(), sizeof(int) * numSequences, H2D, stream));
 
             queryData->previousStage = QueryData::Stage::NumValues;
         }
@@ -1325,25 +1323,25 @@ namespace gpu{
             std::vector<int> h_sequenceLengths(numSequences);
             std::vector<int> h_numValuesPerSequence(numSequences);
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 h_sequenceData2Bit.data(),
                 d_sequenceData2Bit,
                 sizeof(unsigned int) * encodedSequencePitchInInts * numSequences,
                 D2H,
                 stream
-            ); CUERR;
+            ));
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 h_sequenceLengths.data(),
                 d_sequenceLengths,
                 sizeof(int) * numSequences,
                 D2H,
                 stream
-            ); CUERR;
+            ));
 
             queryData->ranges.clear();
 
-            cudaStreamSynchronize(stream); CUERR;
+            CUDACHECK(cudaStreamSynchronize(stream));
 
             totalNumValues = 0;
 
@@ -1385,15 +1383,15 @@ namespace gpu{
                 }
             }
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 d_numValuesPerSequence,
                 h_numValuesPerSequence.data(),
                 sizeof(int) * numSequences,
                 H2D,
                 stream
-            ); CUERR;
+            ));
 
-            cudaStreamSynchronize(stream); CUERR;
+            CUDACHECK(cudaStreamSynchronize(stream));
 
             queryData->previousStage = QueryData::Stage::NumValues;
         }

@@ -7,9 +7,11 @@
 #include <gpu/distributedarray.hpp>
 #include <gpu/gpulengthstorage.hpp>
 #include <gpu/gpubitarray.cuh>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <memorymanagement.hpp>
 #include <cub/util_allocator.cuh>
+#include <cub/cub.cuh>
 
 #include <config.hpp>
 #include <options.hpp>
@@ -79,7 +81,7 @@ public:
         std::vector<char> qualityData;
 
         ReadInserterHandle(){
-            cudaGetDevice(&deviceId); CUERR;
+            CUDACHECK(cudaGetDevice(&deviceId));
             create();
         }
 
@@ -88,12 +90,9 @@ public:
         }
 
         ~ReadInserterHandle(){
-            int cur = 0;
-            cudaGetDevice(&cur); CUERR;
-            cudaSetDevice(deviceId); CUERR;
-            cudaStreamDestroy(stream1); CUERR;
-            cudaStreamDestroy(stream2); CUERR;
-            cudaSetDevice(cur); CUERR;
+            cub::SwitchDevice sd{deviceId};
+            CUDACHECK(cudaStreamDestroy(stream1));
+            CUDACHECK(cudaStreamDestroy(stream2));
         }
 
         ReadInserterHandle(const ReadInserterHandle&) = delete;
@@ -121,12 +120,9 @@ public:
         }
         
         void create(){
-            int cur = 0;
-            cudaGetDevice(&cur); CUERR;
-            cudaSetDevice(deviceId); CUERR;
-            cudaStreamCreate(&stream1); CUERR;
-            cudaStreamCreate(&stream2); CUERR;
-            cudaSetDevice(cur); CUERR;
+            cub::SwitchDevice sd{deviceId};
+            CUDACHECK(cudaStreamCreate(&stream1));
+            CUDACHECK(cudaStreamCreate(&stream2));
         }    
     };
     
@@ -346,7 +342,7 @@ public:
             if(numSequences == 0) return;
 
             int deviceId = 0;
-            cudaGetDevice(&deviceId); CUERR;
+            CUDACHECK(cudaGetDevice(&deviceId));
 
             readsContainN_async(
                 deviceId,
@@ -369,7 +365,7 @@ public:
             if(numSequences == 0) return;
 
             int deviceId = 0;
-            cudaGetDevice(&deviceId); CUERR;
+            CUDACHECK(cudaGetDevice(&deviceId));
 
             TempData* tempData = getTempDataFromHandle(handle);
             auto& callerData = tempData->getCallerData(deviceId);
@@ -405,7 +401,7 @@ public:
             if(numSequences == 0) return;
 
             int deviceId = 0;
-            cudaGetDevice(&deviceId); CUERR;
+            CUDACHECK(cudaGetDevice(&deviceId));
 
             TempData* tempData = getTempDataFromHandle(handle);
             auto& callerData = tempData->getCallerData(deviceId);
@@ -439,7 +435,7 @@ public:
             if(numSequences == 0) return;
             
             int deviceId = 0;
-            cudaGetDevice(&deviceId); CUERR;
+            CUDACHECK(cudaGetDevice(&deviceId));
 
             gatherSequenceLengthsToGpuBufferAsync(
                 d_lengths,
@@ -458,7 +454,7 @@ public:
 
         MemoryUsage getMemoryInfo(const ReadStorageHandle& handle) const noexcept{
             int deviceId = 0;
-            cudaGetDevice(&deviceId); CUERR;
+            CUDACHECK(cudaGetDevice(&deviceId));
 
             TempData* tempData = getTempDataFromHandle(handle);
             auto& callerData = tempData->getCallerData(deviceId);

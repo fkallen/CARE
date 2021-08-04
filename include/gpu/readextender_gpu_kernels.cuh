@@ -1,6 +1,7 @@
 #ifndef CARE_READEXTENDER_GPU_KERNELS_CUH
 #define CARE_READEXTENDER_GPU_KERNELS_CUH
 
+#include <gpu/cudaerrorcheck.cuh>
 #include <cassert>
 
 #include <thrust/binary_search.h>
@@ -3572,26 +3573,26 @@ namespace readextendergpukernels{
 
         ComputeTaskSplitGatherIndicesSmallInput(){
             std::size_t* d_output;
-            cudaMalloc(&d_output, sizeof(std::size_t));
+            CUDACHECK(cudaMalloc(&d_output, sizeof(std::size_t)));
 
-            readextendergpukernels::computeTaskSplitGatherIndicesSmallInputGetStaticSmemSizeKernel<256,16><<<1, 1, 0, cudaStreamPerThread>>>(d_output); CUERR;
+            readextendergpukernels::computeTaskSplitGatherIndicesSmallInputGetStaticSmemSizeKernel<256,16><<<1, 1, 0, cudaStreamPerThread>>>(d_output); CUDACHECKASYNC;
 
-            cudaMemcpyAsync(&staticSharedMemory, d_output, sizeof(std::size_t), D2H, cudaStreamPerThread); CUERR;
-            cudaStreamSynchronize(cudaStreamPerThread); CUERR;
+            CUDACHECK(cudaMemcpyAsync(&staticSharedMemory, d_output, sizeof(std::size_t), D2H, cudaStreamPerThread));
+            CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
 
-            cudaFree(d_output); CUERR;
+            CUDACHECK(cudaFree(d_output));
 
             int device = 0;
-            cudaGetDevice(&device); CUERR;
+            CUDACHECK(cudaGetDevice(&device));
 
             int smemoptin = 0;
-            cudaDeviceGetAttribute(&smemoptin, cudaDevAttrMaxSharedMemoryPerBlockOptin, device); CUERR;
+            CUDACHECK(cudaDeviceGetAttribute(&smemoptin, cudaDevAttrMaxSharedMemoryPerBlockOptin, device));
             
-            cudaFuncSetAttribute(
+            CUDACHECK(cudaFuncSetAttribute(
                 readextendergpukernels::computeTaskSplitGatherIndicesSmallInputKernel<256,16>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize, 
                 smemoptin - staticSharedMemory
-            ); CUERR;
+            ));
 
             maxDynamicSharedMemory = smemoptin - staticSharedMemory;
         }
@@ -3626,7 +3627,7 @@ namespace readextendergpukernels{
                 task_pairIds,
                 task_ids,
                 d_minmax_pairId
-            ); CUERR;
+            ); CUDACHECKASYNC;
         }
     };
 

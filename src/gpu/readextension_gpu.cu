@@ -320,7 +320,7 @@ extend_gpu_pairedend(
 
     //omp_set_num_threads(1);
 
-    cudaSetDevice(runtimeOptions.deviceIds[0]); CUERR;
+    CUDACHECK(cudaSetDevice(runtimeOptions.deviceIds[0]));
 
     const int batchsizePairs = correctionOptions.batchsize;
 
@@ -785,7 +785,7 @@ extend_gpu_singleend(
 
         const int ompThreadId = omp_get_thread_num();
         const int deviceId = runtimeOptions.deviceIds.at(ompThreadId % numDeviceIds);
-        cudaSetDevice(deviceId); CUERR;
+        CUDACHECK(cudaSetDevice(deviceId));
 
         GoodAlignmentProperties goodAlignmentProperties2 = goodAlignmentProperties;
         //goodAlignmentProperties2.maxErrorRate = 0.05;
@@ -822,7 +822,7 @@ extend_gpu_singleend(
         helpers::SimpleAllocationPinnedHost<int> currentReadLengths(batchsize);
 
         cudaStream_t stream;
-        cudaStreamCreate(&stream); CUERR;
+        CUDACHECK(cudaStreamCreate(&stream));
         
 
         while(!(readIdGenerator.empty())){
@@ -856,7 +856,7 @@ extend_gpu_singleend(
                 stream
             );
     
-            cudaStreamSynchronizeWrapper(stream); CUERR;
+            CUDACHECK(cudaStreamSynchronizeWrapper(stream));
 
             std::vector<ExtendInput> inputs(numReadsInBatch); 
 
@@ -918,7 +918,7 @@ extend_gpu_singleend(
         }
 
 
-        cudaStreamDestroy(stream); CUERR;
+        CUDACHECK(cudaStreamDestroy(stream));
 
         //#pragma omp critical
         {

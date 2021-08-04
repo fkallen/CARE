@@ -4,7 +4,7 @@
 #include <gpu/kernellaunch.hpp>
 #include <hostdevicefunctions.cuh>
 #include <gpu/gpumsa.cuh>
-
+#include <gpu/cudaerrorcheck.cuh>
 #include <bestalignment.hpp>
 
 #include <sequencehelpers.hpp>
@@ -2042,7 +2042,7 @@ namespace gpu{
             decodedSequencePitchInBytes
         );
 
-        // cudaMemsetAsync(d_numForestOperations, 0, sizeof(int)); CUERR;
+        // CUDACHECK(cudaMemsetAsync(d_numForestOperations, 0, sizeof(int)));
 
         // countNumberOfForestPositionsForCorrectedCandidates<<<numCandidates, 128, 0, stream>>>(
         //     d_numForestOperationsPerCandidate,
@@ -2058,14 +2058,14 @@ namespace gpu{
         // );
 
         // int numForestOperations = 0;
-        // cudaMemcpyAsync(
+        // CUDACHECK(cudaMemcpyAsync(
         //     &numForestOperations,
         //     d_numForestOperations,
         //     sizeof(int),
         //     D2H,
         //     stream
-        // ); CUERR;
-        // cudaStreamSynchronize(stream); CUERR;
+        // ));;
+        // CUDACHECK(cudaStreamSynchronize(stream));;
         // std::cerr << numForestOperations << "\n";
 
         dim3 block = blocksize;
@@ -3015,9 +3015,9 @@ namespace gpu{
                 kernelLaunchConfig.threads_per_block = (blocksize); \
                 kernelLaunchConfig.smem = 0; \
                 KernelProperties kernelProperties; \
-                cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
                     msaCorrectAnchorsKernel<(blocksize)>, \
-                                                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+                    kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem)); \
                 mymap[kernelLaunchConfig] = kernelProperties; \
             }
 
@@ -3041,8 +3041,6 @@ namespace gpu{
             const KernelProperties& kernelProperties = map[kernelLaunchConfig];
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
         }
-
-        //cudaMemsetAsync(d_correctionResultPointers.isHighQualitySubject, 0, n_subjects * sizeof(AnchorHighQualityFlag), stream); CUERR;
 
         dim3 block(blocksize, 1, 1);
         //dim3 grid(std::min(maxNumAnchors, max_blocks_per_device));
@@ -3069,7 +3067,7 @@ namespace gpu{
                                     min_coverage_threshold, \
                                     max_coverage_threshold, \
                                     k_region \
-                                ); CUERR;
+                                ); CUDACHECKASYNC;
 
         assert(blocksize > 0 && blocksize <= max_block_size);
 
@@ -3125,12 +3123,12 @@ namespace gpu{
 
             KernelProperties kernelProperties;
 
-            cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
                 &kernelProperties.max_blocks_per_SM,
                 flagCandidatesToBeCorrectedKernel,
                 kernelLaunchConfig.threads_per_block, 
                 kernelLaunchConfig.smem
-            ); CUERR;
+            ));
 
             mymap[kernelLaunchConfig] = kernelProperties;
 
@@ -3170,7 +3168,7 @@ namespace gpu{
             new_columns_to_correct
         );
 
-        CUERR;
+        CUDACHECKASYNC;
 
     }
 
@@ -3214,12 +3212,12 @@ namespace gpu{
 
             KernelProperties kernelProperties;
 
-            cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
                 &kernelProperties.max_blocks_per_SM,
                 flagCandidatesToBeCorrectedWithExcludeFlagsKernel,
                 kernelLaunchConfig.threads_per_block, 
                 kernelLaunchConfig.smem
-            ); CUERR;
+            ));
 
             mymap[kernelLaunchConfig] = kernelProperties;
 
@@ -3260,7 +3258,7 @@ namespace gpu{
             new_columns_to_correct
         );
 
-        CUERR;
+        CUDACHECKASYNC;
 
     }
 
@@ -3323,9 +3321,9 @@ namespace gpu{
                 kernelLaunchConfig.threads_per_block = (blocksize); \
                 kernelLaunchConfig.smem = calculateSmemUsage((blocksize)); \
                 KernelProperties kernelProperties; \
-                cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
                     msa_correct_candidates_with_group_kernel<(blocksize), groupsize>, \
-                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem)); \
                 mymap[kernelLaunchConfig] = kernelProperties; \
             }
 
@@ -3382,7 +3380,7 @@ namespace gpu{
                     decodedSequencePitchInBytes, \
                     editsPitchInBytes, \
                     dynamicsmemPitchInInts \
-                ); CUERR;
+                ); CUDACHECKASYNC;
 
 
     	switch(blocksize) {
@@ -3422,12 +3420,12 @@ namespace gpu{
     ){
         if(numCorrectedSequencesUpperBound == 0) return;
 
-        cudaMemsetAsync(
+        CUDACHECK(cudaMemsetAsync(
             d_edits, 
             0, 
             editsPitchInBytes * numCorrectedSequencesUpperBound, 
             stream
-        ); CUERR;
+        ));
 
         constexpr int groupsize = 16;
 
@@ -3452,7 +3450,7 @@ namespace gpu{
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
                 editsPitchInBytes
-            ); CUERR;
+            ); CUDACHECKASYNC;
         }else{
             constructSequenceCorrectionResultsKernel<false, groupsize><<<grid, block, smem, stream>>>(
                 d_edits,
@@ -3468,7 +3466,7 @@ namespace gpu{
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
                 editsPitchInBytes
-            ); CUERR;
+            ); CUDACHECKASYNC;
         }
     }
 

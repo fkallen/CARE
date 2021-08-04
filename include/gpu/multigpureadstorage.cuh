@@ -3,7 +3,7 @@
 
 #include <cpureadstorage.hpp>
 #include <gpu/gpureadstorage.cuh>
-
+#include <gpu/cudaerrorcheck.cuh>
 #include <gpu/multigpuarray.cuh>
 #include <sequencehelpers.hpp>
 #include <lengthstorage.hpp>
@@ -38,7 +38,7 @@ public:
     struct TempData{
 
         TempData() : event{cudaEventDisableTiming}{
-            cudaGetDevice(&deviceId); CUERR;
+            CUDACHECK(cudaGetDevice(&deviceId));
         }
 
         ~TempData(){
@@ -160,7 +160,7 @@ public:
 
         for(int d = 0; d < numGpus; d++){
             const int deviceId = deviceIds[d];
-            cub::SwitchDevice sd(deviceId); CUERR;
+            cub::SwitchDevice sd(deviceId);
 
             bitArraysUndeterminedBase[deviceId] = makeGpuBitArray<read_number>(numReads);
 
@@ -184,7 +184,7 @@ public:
                 const int numBatches = SDIV(numAmbiguous, batchsize);
 
                 DeviceBuffer<bool> d_values(batchsize);
-                cudaMemset(d_values, 1, sizeof(bool) * batchsize); CUERR;
+                CUDACHECK(cudaMemset(d_values, 1, sizeof(bool) * batchsize));
 
                 DeviceBuffer<read_number> d_positions(batchsize);
 
@@ -193,21 +193,21 @@ public:
                     size_t end = std::min((i+1) * batchsize, numAmbiguous);
                     size_t elements = end - begin;
 
-                    cudaMemcpy(
+                    CUDACHECK(cudaMemcpy(
                         d_positions.data(), 
                         h_positions.data() + begin, 
                         sizeof(read_number) * elements, 
                         H2D
-                    ); CUERR;
+                    ));
 
                     setBitarray<<<SDIV(elements, 128), 128>>>(
                         bitArraysUndeterminedBase[deviceId], 
                         d_values.data(), 
                         d_positions.data(), 
                         elements
-                    ); CUERR;
+                    ); CUDACHECKASYNC;
 
-                    cudaDeviceSynchronize(); CUERR;
+                    CUDACHECK(cudaDeviceSynchronize());
                 }
 
                 ambigReadIds.clear();
@@ -267,18 +267,18 @@ public:
             for(std::size_t i = 0, iteration = 0; i < sequencesGpu.getNumRows(); i += batchsize, iteration++){
                 const int bufferIndex = iteration % numbuffers;
 
-                cudaStreamSynchronize(streams[bufferIndex]); CUERR;
+                CUDACHECK(cudaStreamSynchronize(streams[bufferIndex]));
 
                 const std::size_t currentBatchsize = std::min(batchsize, sequencesGpu.getNumRows() - i);
                 std::iota(indexarray[bufferIndex], indexarray[bufferIndex] + currentBatchsize, i);
 
-                cudaMemcpyAsync(
+                CUDACHECK(cudaMemcpyAsync(
                     deviceindexarray[bufferIndex],
                     indexarray[bufferIndex],
                     sizeof(IndexType) * currentBatchsize,
                     H2D,
                     streams[bufferIndex]
-                );
+                ));
 
                 cpuReadStorage->gatherSequences(
                     hostdataarray[bufferIndex],
@@ -287,13 +287,13 @@ public:
                     currentBatchsize
                 );
 
-                cudaMemcpyAsync(
+                CUDACHECK(cudaMemcpyAsync(
                     dataarray[bufferIndex],
                     hostdataarray[bufferIndex],
                     numColumnsSequences * currentBatchsize * sizeof(unsigned int),
                     H2D,
                     streams[bufferIndex]
-                ); CUERR;
+                ));
 
                 sequencesGpu.scatter(
                     arrayhandle, 
@@ -308,7 +308,7 @@ public:
             }
 
             for(auto& stream : streams){
-                cudaStreamSynchronize(stream); CUERR;
+                CUDACHECK(cudaStreamSynchronize(stream));
             }
         }
 
@@ -368,18 +368,18 @@ public:
 
                 for(std::size_t i = 0, iteration = 0; i < qualitiesGpu.getNumRows(); i += batchsize, iteration++){
                     const int bufferIndex = iteration % numbuffers;
-                    cudaStreamSynchronize(streams[bufferIndex]); CUERR;
+                    CUDACHECK(cudaStreamSynchronize(streams[bufferIndex]));
 
                     const std::size_t currentBatchsize = std::min(batchsize, qualitiesGpu.getNumRows() - i);
                     std::iota(indexarray[bufferIndex], indexarray[bufferIndex] + currentBatchsize, i);
 
-                    cudaMemcpyAsync(
+                    CUDACHECK(cudaMemcpyAsync(
                         deviceindexarray[bufferIndex],
                         indexarray[bufferIndex],
                         sizeof(IndexType) * currentBatchsize,
                         H2D,
                         streams[bufferIndex]
-                    );
+                    ));
 
                     cpuReadStorage->gatherQualities(
                         (char*)hostdataarray[bufferIndex],
@@ -388,13 +388,13 @@ public:
                         currentBatchsize
                     );
 
-                    cudaMemcpyAsync(
+                    CUDACHECK(cudaMemcpyAsync(
                         dataarray[bufferIndex],
                         hostdataarray[bufferIndex],
                         numColumnsQualitiesInts * currentBatchsize * sizeof(unsigned int),
                         H2D,
                         streams[bufferIndex]
-                    ); CUERR;
+                    ));
 
                     qualitiesGpu.scatter(
                         arrayhandle, 
@@ -407,7 +407,7 @@ public:
                 }
 
                 for(auto& stream : streams){
-                    cudaStreamSynchronize(stream); CUERR;
+                    CUDACHECK(cudaStreamSynchronize(stream));
                 }
             }
 
@@ -532,7 +532,7 @@ public: //inherited GPUReadStorage interface
             if(getNumberOfReadsWithN() > 0){
 
                 int deviceId = 0;
-                cudaGetDevice(&deviceId); CUERR;
+                CUDACHECK(cudaGetDevice(&deviceId));
 
                 dim3 block = 256;
                 dim3 grid = SDIV(numSequences, block.x);
@@ -542,10 +542,10 @@ public: //inherited GPUReadStorage interface
                     bitArraysUndeterminedBase.at(deviceId), 
                     d_readIds, 
                     numSequences
-                ); CUERR;
+                ); CUDACHECKASYNC;
             }else{
                 // if there are no stored reads with ambiguous bases, simply fill output with false
-                helpers::call_fill_kernel_async(d_result, numSequences, false, stream);
+                helpers::call_fill_kernel_async(d_result, numSequences, false, stream); CUDACHECKASYNC;
             }
         }else{
             //output buffer is empty
@@ -566,7 +566,7 @@ public: //inherited GPUReadStorage interface
         nvtx::push_range("multigpureadstorage::gatherSequences", 4);
 
         int deviceId = 0;
-        cudaGetDevice(&deviceId); CUERR;
+        CUDACHECK(cudaGetDevice(&deviceId));
 
         TempData* tempData = getTempDataFromHandle(handle);
         assert(tempData->deviceId == deviceId);
@@ -633,32 +633,29 @@ public: //inherited GPUReadStorage interface
                 temp_allocation_sizes[3] = sizeof(int) * batchsize; // output positions 2
 
                 std::size_t temp_storage_bytes = 0;
-                cudaError_t cubstatus = cub::AliasTemporaries(
+                CUDACHECK(cub::AliasTemporaries(
                     nullptr,
                     temp_storage_bytes,
                     temp_allocations_device,
                     temp_allocation_sizes
-                );
-                assert(cubstatus == cudaSuccess);
+                ));
 
                 resizeWithSync(tempData->tempbuffer, temp_storage_bytes);
                 resizeWithSync(tempData->pinnedBuffer, temp_storage_bytes);
 
-                cubstatus = cub::AliasTemporaries(
+                CUDACHECK(cub::AliasTemporaries(
                     tempData->tempbuffer.data(),
                     temp_storage_bytes,
                     temp_allocations_device,
                     temp_allocation_sizes
-                );
-                assert(cubstatus == cudaSuccess);
+                ));
 
-                cubstatus = cub::AliasTemporaries(
+                CUDACHECK(cub::AliasTemporaries(
                     tempData->pinnedBuffer.data(),
                     temp_storage_bytes,
                     temp_allocations_host,
                     temp_allocation_sizes
-                );
-                assert(cubstatus == cudaSuccess);
+                ));
 
                 std::array<std::vector<read_number>, 2> hostindicesarray{};
                 hostindicesarray[0].resize(numSequences);
@@ -673,7 +670,7 @@ public: //inherited GPUReadStorage interface
 
                     if(isHostElementSequence(h_readIds[i])){
                         if(k == 0){
-                            cudaStreamSynchronize(tempData->streams[bufferIndex]); CUERR; // protect pinned buffer
+                            CUDACHECK(cudaStreamSynchronize(tempData->streams[bufferIndex])); // protect pinned buffer
                         }
                         h_outputpositionsArr[bufferIndex][k] = i;
                         hostindicesarray[bufferIndex][k] = h_readIds[i];
@@ -681,13 +678,13 @@ public: //inherited GPUReadStorage interface
                     }
 
                     if(k == batchsize || ((i == numSequences - 1) && k > 0)){
-                        cudaMemcpyAsync(
+                        CUDACHECK(cudaMemcpyAsync(
                             d_outputpositionsArr[bufferIndex],
                             h_outputpositionsArr[bufferIndex],
                             sizeof(int) * k,
                             H2D,
                             tempData->streams[bufferIndex]
-                        ); CUERR;
+                        ));
 
                         gatherHostSequences(
                             tempData,
@@ -697,13 +694,13 @@ public: //inherited GPUReadStorage interface
                             outSequencePitchInInts
                         );
 
-                        cudaMemcpyAsync(
+                        CUDACHECK(cudaMemcpyAsync(
                             d_hostdataArr[bufferIndex],
                             h_hostdataArr[bufferIndex],
                             sequencepitch * k,
                             H2D,
                             tempData->streams[bufferIndex]
-                        ); CUERR;
+                        ));
 
                         const int intsToProcess = k * outSequencePitchInInts;
 
@@ -725,17 +722,17 @@ public: //inherited GPUReadStorage interface
                                     d_sequence_data[outputrow * outSequencePitchInInts + outputcol] = d_gatheredhost[inputrow * outSequencePitchInInts + inputcol];
                                 }
                             }
-                        ); CUERR;
+                        ); CUDACHECKASYNC;
 
                         bufferIndex = (bufferIndex + 1) % 2;
                         k = 0;
                     }
                 }
 
-                cudaEventRecord(tempData->event, tempData->streams[0]); CUERR;
-                cudaStreamWaitEvent(stream, tempData->event, 0); CUERR;
-                cudaEventRecord(tempData->event, tempData->streams[1]); CUERR;
-                cudaStreamWaitEvent(stream, tempData->event, 0); CUERR;
+                CUDACHECK(cudaEventRecord(tempData->event, tempData->streams[0]));
+                CUDACHECK(cudaStreamWaitEvent(stream, tempData->event, 0));
+                CUDACHECK(cudaEventRecord(tempData->event, tempData->streams[1]));
+                CUDACHECK(cudaStreamWaitEvent(stream, tempData->event, 0));
 
                 
             }else{
@@ -757,7 +754,7 @@ public: //inherited GPUReadStorage interface
                     const int end = std::min(numSequences, (b+1) * batchsize);
                     const int sizeOfCurrentBatch = end - begin;
 
-                    cudaStreamSynchronize(tempData->streams[bufferIndex]); CUERR; // protect pinned buffer
+                    CUDACHECK(cudaStreamSynchronize(tempData->streams[bufferIndex])); // protect pinned buffer
 
                     gatherHostSequences(
                         tempData,
@@ -767,33 +764,19 @@ public: //inherited GPUReadStorage interface
                         outSequencePitchInInts
                     );
 
-                    cudaError_t status = cudaMemcpyAsync(
+                    CUDACHECK(cudaMemcpyAsync(
                         (char*)(d_sequence_data) + sequencepitch * begin,
                         hostpointers[bufferIndex],
                         sequencepitch * sizeOfCurrentBatch,
                         H2D,
                         tempData->streams[bufferIndex]
-                    );
-
-                    if(status != cudaSuccess){
-                        std::cerr << "gatherSequences("
-                            << " d_sequence_data = " << d_sequence_data 
-                            << ", outSequencePitchInInts = " << outSequencePitchInInts
-                            << ", numSequences\n";
-
-                        std::cerr << "batchsize = " << batchsize << "\n";
-                        std::cerr << "bufferIndex = " << bufferIndex << "\n";
-                        std::cerr << "sizeOfCurrentBatch = " << sizeOfCurrentBatch << "\n";
-                        std::cerr << "hostpointers[bufferIndex] = " << hostpointers[bufferIndex] << "\n";
-
-                        CUERR;
-                    }
+                    ));
                 }
 
-                cudaEventRecord(tempData->event, tempData->streams[0]); CUERR;
-                cudaStreamWaitEvent(stream, tempData->event, 0); CUERR;
-                cudaEventRecord(tempData->event, tempData->streams[1]); CUERR;
-                cudaStreamWaitEvent(stream, tempData->event, 0); CUERR;
+                CUDACHECK(cudaEventRecord(tempData->event, tempData->streams[0]));
+                CUDACHECK(cudaStreamWaitEvent(stream, tempData->event, 0));
+                CUDACHECK(cudaEventRecord(tempData->event, tempData->streams[1]));
+                CUDACHECK(cudaStreamWaitEvent(stream, tempData->event, 0));
 
             }
         };
@@ -811,7 +794,7 @@ public: //inherited GPUReadStorage interface
             hostGather();
         }
 
-        cudaEventRecord(tempData->event, stream); CUERR;
+        CUDACHECK(cudaEventRecord(tempData->event, stream));
 
         nvtx::pop_range();
     }
@@ -830,7 +813,7 @@ public: //inherited GPUReadStorage interface
         nvtx::push_range("multigpureadstorage::gatherQualities", 4);
 
         int deviceId = 0;
-        cudaGetDevice(&deviceId); CUERR;
+        CUDACHECK(cudaGetDevice(&deviceId));
 
         TempData* tempData = getTempDataFromHandle(handle);
         assert(tempData->deviceId == deviceId);        
@@ -894,32 +877,29 @@ public: //inherited GPUReadStorage interface
                 temp_allocation_sizes[3] = sizeof(int) * batchsize; // output positions 2
 
                 std::size_t temp_storage_bytes = 0;
-                cudaError_t cubstatus = cub::AliasTemporaries(
+                CUDACHECK(cub::AliasTemporaries(
                     nullptr,
                     temp_storage_bytes,
                     temp_allocations_device,
                     temp_allocation_sizes
-                );
-                assert(cubstatus == cudaSuccess);
+                ));
 
                 resizeWithSync(tempData->tempbuffer, temp_storage_bytes);
                 resizeWithSync(tempData->pinnedBuffer, temp_storage_bytes);
 
-                cubstatus = cub::AliasTemporaries(
+                CUDACHECK(cub::AliasTemporaries(
                     tempData->tempbuffer.data(),
                     temp_storage_bytes,
                     temp_allocations_device,
                     temp_allocation_sizes
-                );
-                assert(cubstatus == cudaSuccess);
+                ));
 
-                cubstatus = cub::AliasTemporaries(
+                CUDACHECK(cub::AliasTemporaries(
                     tempData->pinnedBuffer.data(),
                     temp_storage_bytes,
                     temp_allocations_host,
                     temp_allocation_sizes
-                );
-                assert(cubstatus == cudaSuccess);
+                ));
 
                 std::array<std::vector<read_number>, 2> hostindicesarray{};
                 hostindicesarray[0].resize(numSequences);
@@ -934,7 +914,7 @@ public: //inherited GPUReadStorage interface
 
                     if(isHostElementQualityScore(h_readIds[i])){
                         if(k == 0){
-                            cudaStreamSynchronize(tempData->streams[bufferIndex]); CUERR; // protect pinned buffer
+                            CUDACHECK(cudaStreamSynchronize(tempData->streams[bufferIndex])); // protect pinned buffer
                         }
                         h_outputpositionsArr[bufferIndex][k] = i;
                         hostindicesarray[bufferIndex][k] = h_readIds[i];
@@ -942,13 +922,13 @@ public: //inherited GPUReadStorage interface
                     }
 
                     if(k == batchsize || ((i == numSequences - 1) && k > 0)){
-                        cudaMemcpyAsync(
+                        CUDACHECK(cudaMemcpyAsync(
                             d_outputpositionsArr[bufferIndex],
                             h_outputpositionsArr[bufferIndex],
                             sizeof(int) * k,
                             H2D,
                             tempData->streams[bufferIndex]
-                        ); CUERR;
+                        ));
 
                         gatherHostQualities(
                             tempData,
@@ -958,13 +938,13 @@ public: //inherited GPUReadStorage interface
                             out_quality_pitch
                         );
 
-                        cudaMemcpyAsync(
+                        CUDACHECK(cudaMemcpyAsync(
                             d_hostdataArr[bufferIndex],
                             h_hostdataArr[bufferIndex],
                             sizeof(char) * out_quality_pitch * k,
                             H2D,
                             tempData->streams[bufferIndex]
-                        ); CUERR;
+                        ));
 
                         const int charsToProcess = k * out_quality_pitch;
 
@@ -986,17 +966,17 @@ public: //inherited GPUReadStorage interface
                                     d_quality_data[outputrow * out_quality_pitch + outputcol] = d_gatheredhost[inputrow * out_quality_pitch + inputcol];
                                 }
                             }
-                        ); CUERR;
+                        ); CUDACHECKASYNC;
 
                         bufferIndex = (bufferIndex + 1) % 2;
                         k = 0;
                     }
                 }
 
-                cudaEventRecord(tempData->event, tempData->streams[0]); CUERR;
-                cudaStreamWaitEvent(stream, tempData->event, 0); CUERR;
-                cudaEventRecord(tempData->event, tempData->streams[1]); CUERR;
-                cudaStreamWaitEvent(stream, tempData->event, 0); CUERR;
+                CUDACHECK(cudaEventRecord(tempData->event, tempData->streams[0]));
+                CUDACHECK(cudaStreamWaitEvent(stream, tempData->event, 0));
+                CUDACHECK(cudaEventRecord(tempData->event, tempData->streams[1]));
+                CUDACHECK(cudaStreamWaitEvent(stream, tempData->event, 0));
 
                 
             }else{
@@ -1018,7 +998,7 @@ public: //inherited GPUReadStorage interface
                     const int end = std::min(numSequences, (b+1) * batchsize);
                     const int sizeOfCurrentBatch = end - begin;
 
-                    cudaStreamSynchronize(tempData->streams[bufferIndex]); CUERR; // protect pinned buffer
+                    CUDACHECK(cudaStreamSynchronize(tempData->streams[bufferIndex])); // protect pinned buffer
 
                     gatherHostQualities(
                         tempData,
@@ -1028,19 +1008,19 @@ public: //inherited GPUReadStorage interface
                         out_quality_pitch
                     );
 
-                    cudaMemcpyAsync(
+                    CUDACHECK(cudaMemcpyAsync(
                         d_quality_data + out_quality_pitch * begin,
                         hostpointers[bufferIndex],
                         sizeof(char) * out_quality_pitch * sizeOfCurrentBatch,
                         H2D,
                         tempData->streams[bufferIndex]
-                    ); CUERR;
+                    ));
                 }
 
-                cudaEventRecord(tempData->event, tempData->streams[0]); CUERR;
-                cudaStreamWaitEvent(stream, tempData->event, 0); CUERR;
-                cudaEventRecord(tempData->event, tempData->streams[1]); CUERR;
-                cudaStreamWaitEvent(stream, tempData->event, 0); CUERR;
+                CUDACHECK(cudaEventRecord(tempData->event, tempData->streams[0]));
+                CUDACHECK(cudaStreamWaitEvent(stream, tempData->event, 0));
+                CUDACHECK(cudaEventRecord(tempData->event, tempData->streams[1]));
+                CUDACHECK(cudaStreamWaitEvent(stream, tempData->event, 0));
             }
 
         };
@@ -1058,7 +1038,7 @@ public: //inherited GPUReadStorage interface
             hostGather();
         }
 
-        cudaEventRecord(tempData->event, stream); CUERR;
+        CUDACHECK(cudaEventRecord(tempData->event, stream));
 
         nvtx::pop_range();
     }
@@ -1114,9 +1094,6 @@ public: //inherited GPUReadStorage interface
     }
 
     MemoryUsage getMemoryInfo(const ReadStorageHandle& handle) const override{
-        int deviceId = 0;
-        cudaGetDevice(&deviceId); CUERR;
-
         TempData* tempData = getTempDataFromHandle(handle);
  
         return tempData->getMemoryInfo();
@@ -1302,7 +1279,7 @@ private:
             gpuLengthStorage.destroy();
 
             for(auto& pair : bitArraysUndeterminedBase){
-                cub::SwitchDevice sd(pair.first); CUERR;
+                cub::SwitchDevice sd(pair.first);
                 destroyGpuBitArray(pair.second);
             }
             bitArraysUndeterminedBase.clear();

@@ -94,21 +94,21 @@ public:
         int* const d_sequenceLengths = static_cast<int*>(temp_allocations[1]);
         int* const d_numValuesPerSequence = static_cast<int*>(temp_allocations[2]);
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             d_sequenceData2Bit, 
             h_sequenceData2Bit, 
             sizeof(unsigned int) * encodedSequencePitchInInts * numSequences,
             H2D,
             gpuData->stream
-        ); CUERR;
+        ));
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             d_sequenceLengths, 
             h_sequenceLengths, 
             sizeof(int) * numSequences,
             H2D,
             gpuData->stream
-        ); CUERR;
+        ));
 
         gpuMinhasher->determineNumValues(
             *gpuData->gpuQueryHandle,
@@ -121,15 +121,15 @@ public:
             gpuData->stream
         );
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             h_numValuesPerSequence, 
             d_numValuesPerSequence, 
             sizeof(int) * numSequences,
             D2H,
             gpuData->stream
-        ); CUERR;
+        ));
 
-        cudaStreamSynchronize(gpuData->stream); CUERR;
+        CUDACHECK(cudaStreamSynchronize(gpuData->stream));
     }
 
     void retrieveValues(
@@ -178,13 +178,13 @@ public:
         if(h_readIds != nullptr){
             d_readIds = static_cast<read_number*>(temp_allocations[0]);
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 d_readIds, 
                 h_readIds, 
                 sizeof(read_number) * numSequences,
                 H2D,
                 gpuData->stream
-            ); CUERR;
+            ));
         }
 
         gpuMinhasher->retrieveValues(
@@ -198,38 +198,38 @@ public:
             gpuData->stream
         );
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             h_numValuesPerSequence, 
             d_numValuesPerSequence, 
             sizeof(int) * numSequences,
             D2H,
             gpuData->stream
-        ); CUERR;
+        ));
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             h_offsets, 
             d_offsets, 
             sizeof(int) * (numSequences + 1),
             D2H,
             gpuData->stream
-        ); CUERR;
+        ));
 
-        cudaStreamSynchronize(gpuData->stream); CUERR;
+        CUDACHECK(cudaStreamSynchronize(gpuData->stream));
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             h_values, 
             d_values, 
             sizeof(read_number) * (h_offsets[numSequences]),
             D2H,
             gpuData->stream
-        ); CUERR;
+        ));
 
-        cudaStreamSynchronize(gpuData->stream); CUERR;
+        CUDACHECK(cudaStreamSynchronize(gpuData->stream));
     }
 
     void compact() override{
         gpuMinhasher->compact(cudaStreamPerThread);
-        cudaStreamSynchronize(cudaStreamPerThread); CUERR;
+        CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
     }
 
     MemoryUsage getMemoryInfo() const noexcept override{

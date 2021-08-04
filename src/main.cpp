@@ -358,7 +358,7 @@ int main(int argc, char** argv){
 
 	omp_set_num_threads(numThreads);
 
-#if 1
+#if 0
     care::performCorrection(
 		correctionOptions,
 		runtimeOptions,

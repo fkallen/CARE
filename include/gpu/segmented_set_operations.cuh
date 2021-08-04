@@ -1,7 +1,7 @@
 #ifndef SEGMENTED_SET_OPERATIONS_CUH
 #define SEGMENTED_SET_OPERATIONS_CUH
 
-
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <thrust/set_operations.h>
 #include <thrust/iterator/zip_iterator.h>
@@ -51,7 +51,7 @@ void callFillSegmentIdsKernel(
         d_segmentBeginOffsets,
         numSegments,
         d_output
-    ); CUERR;
+    ); CUDACHECKASYNC;
 }
 
 template<class dummy=void>
@@ -479,7 +479,6 @@ private:
         auto d_outputSegmentIdsPtr = allocator.allocate(sizeof(int) * maxOutputElements);
         int* const d_outputSegmentIds = (int*)thrust::raw_pointer_cast(d_outputSegmentIdsPtr);
 
-
         auto first1 = thrust::make_zip_iterator(thrust::make_tuple(d_segmentIds1, d_input1));
         auto last1 = thrust::make_zip_iterator(thrust::make_tuple(d_segmentIds1 + numElements1, d_input1 + numElements1));
 
@@ -492,12 +491,9 @@ private:
 
         int outputsize = thrust::distance(outputZip, outputZipEnd);
 
-    
-
-
         std::size_t cubbytes = 0;
 
-        cudaError_t cubstatus = cub::DeviceRunLengthEncode::Encode(
+        CUDACHECK(cub::DeviceRunLengthEncode::Encode(
             nullptr,
             cubbytes,
             (int*) nullptr,
@@ -506,8 +502,7 @@ private:
             (int*) nullptr,
             outputsize,
             stream
-        );
-        assert(cubstatus == cudaSuccess);
+        ));
 
         void* temp_allocations[4];
         std::size_t temp_allocation_sizes[4];
@@ -518,30 +513,27 @@ private:
         temp_allocation_sizes[3] = cubbytes;
 
         std::size_t temp_storage_bytes = 0;
-        cubstatus = cub::AliasTemporaries(
+        CUDACHECK(cub::AliasTemporaries(
             nullptr,
             temp_storage_bytes,
             temp_allocations,
             temp_allocation_sizes
-        );
-        assert(cubstatus == cudaSuccess);
+        ));
 
         auto tempPtr = allocator.allocate(sizeof(char) * temp_storage_bytes);
-        cubstatus = cub::AliasTemporaries(
+        CUDACHECK(cub::AliasTemporaries(
             (void*)thrust::raw_pointer_cast(tempPtr),
             temp_storage_bytes,
             temp_allocations,
             temp_allocation_sizes
-        );
-        assert(cubstatus == cudaSuccess);
-
+        ));
 
         int* const uniqueIds = (int*)temp_allocations[0];
         int* const reducedCounts = (int*)temp_allocations[1];        
         int* const numRuns = (int*)temp_allocations[2];
         void* const cubtemp = (void*)temp_allocations[3];
         
-        cubstatus = cub::DeviceRunLengthEncode::Encode(
+        CUDACHECK(cub::DeviceRunLengthEncode::Encode(
             cubtemp,
             cubbytes,
             d_outputSegmentIds,
@@ -550,8 +542,7 @@ private:
             numRuns,
             outputsize,
             stream
-        );
-        assert(cubstatus == cudaSuccess);
+        ));
 
         if(numOutputSegments <= 4096){
 
@@ -561,23 +552,23 @@ private:
                 numRuns,
                 d_outputSegmentSizes,
                 numOutputSegments
-            );
+            ); CUDACHECKASYNC;
 
         }else{
 
-            cudaMemsetAsync(
+            CUDACHECK(cudaMemsetAsync(
                 d_outputSegmentSizes,
                 0,
                 sizeof(int) * numOutputSegments,
                 stream
-            );
+            ));
 
             gpusegmentedsetoperationkernels::setOutputSegmentSizesKernel<<<SDIV(numOutputSegments, 256), 256, 0, stream>>>(
                 uniqueIds,
                 reducedCounts,
                 numRuns,
                 d_outputSegmentSizes
-            );
+            ); CUDACHECKASYNC;
 
         }
 
@@ -599,19 +590,18 @@ private:
         const int* d_numElementsPerSegmentPrefixSum,
         cudaStream_t stream
     ){
-        cudaMemsetAsync(d_segmentIds, 0, sizeof(int) * maxNumElements, stream); CUERR;
+        CUDACHECK(cudaMemsetAsync(d_segmentIds, 0, sizeof(int) * maxNumElements, stream));
         
         gpusegmentedsetoperationkernels::setFirstSegmentIdsKernel<<<SDIV(numSegments, 256), 256, 0, stream>>>(
             d_numElementsPerSegment,
             d_segmentIds,
             d_numElementsPerSegmentPrefixSum,
             numSegments
-        ); CUERR;
+        ); CUDACHECKASYNC;
 
         std::size_t bytes = 0;
-        cudaError_t status = cudaSuccess;
 
-        status = cub::DeviceScan::InclusiveScan(
+        CUDACHECK(cub::DeviceScan::InclusiveScan(
             nullptr,
             bytes,
             d_segmentIds, 
@@ -619,12 +609,11 @@ private:
             cub::Max{},
             maxNumElements, 
             stream
-        );
-        assert(status == cudaSuccess);
+        ));
 
         auto tempPtr = allocator.allocate(sizeof(char) * bytes);
 
-        status = cub::DeviceScan::InclusiveScan(
+        CUDACHECK(cub::DeviceScan::InclusiveScan(
             (void*)thrust::raw_pointer_cast(tempPtr),
             bytes,
             d_segmentIds, 
@@ -632,8 +621,7 @@ private:
             cub::Max{},
             maxNumElements, 
             stream
-        );
-        assert(status == cudaSuccess);
+        ));
 
         allocator.deallocate(tempPtr, sizeof(char) * bytes);
     }

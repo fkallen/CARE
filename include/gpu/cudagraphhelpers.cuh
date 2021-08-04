@@ -1,6 +1,8 @@
 #ifndef CUDAGRAPHHELPERS_CUH
 #define CUDAGRAPHHELPERS_CUH
 
+#include <gpu/cudaerrorcheck.cuh>
+
 #include <utility>
 #include <memory>
 #include <algorithm>
@@ -33,7 +35,7 @@ struct CudaGraph{
 
     void destroy(){
         if(execgraph != nullptr){
-            cudaGraphExecDestroy(execgraph); CUERR;
+            CUDACHECK(cudaGraphExecDestroy(execgraph));
         }
         execgraph = nullptr;
         valid = false;
@@ -42,18 +44,18 @@ struct CudaGraph{
     template<class Func>
     void capture(Func&& func){
         if(execgraph != nullptr){
-            cudaGraphExecDestroy(execgraph); CUERR;
+            CUDACHECK(cudaGraphExecDestroy(execgraph));
         }
 
         cudaStream_t stream;
-        cudaStreamCreate(&stream); CUERR;
+        CUDACHECK(cudaStreamCreate(&stream));
         
-        cudaStreamBeginCapture(stream, cudaStreamCaptureModeRelaxed); CUERR;
+        CUDACHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeRelaxed));
 
         func(stream);
 
         cudaGraph_t graph;
-        cudaStreamEndCapture(stream, &graph); CUERR;
+        CUDACHECK(cudaStreamEndCapture(stream, &graph));
         
         cudaGraphExec_t execGraph;
         cudaGraphNode_t errorNode;
@@ -69,22 +71,23 @@ struct CudaGraph{
                 std::cerr << "cudaGraphInstantiate: error message: ";
                 std::cerr << logBuffer.get();
                 std::cerr << "\n";
-            }
-            CUERR;
-        }            
+            }            
+        }
 
-        cudaGraphDestroy(graph); CUERR;
+        CUDACHECK(status);
+
+        CUDACHECK(cudaGraphDestroy(graph));
 
         execgraph = execGraph;
         valid = true;
 
-        cudaStreamDestroy(stream); CUERR;
+        CUDACHECK(cudaStreamDestroy(stream));
     }
 
     void execute(cudaStream_t stream){
         assert(valid);
         
-        cudaGraphLaunch(execgraph, stream); CUERR;
+        CUDACHECK(cudaGraphLaunch(execgraph, stream));
     }
 };
 

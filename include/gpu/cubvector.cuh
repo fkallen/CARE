@@ -114,7 +114,7 @@ namespace care{
                     status = allocator_->DeviceFree(data_);
                     throwOnError(status, "reserveUninitialized DeviceFree");
                 }
-                status = allocator_->DeviceAllocate((void**)&data_, sizeof(T) * newcapacity, workstream); CUERR;
+                status = allocator_->DeviceAllocate((void**)&data_, sizeof(T) * newcapacity, workstream);
                 throwOnError(status, "reserveUninitialized DeviceAllocate");
                 capacity_ = newcapacity;
 

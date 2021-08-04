@@ -9,6 +9,8 @@
 //#include <util.hpp>
 #include <memorymanagement.hpp>
 
+#include <gpu/cudaerrorcheck.cuh>
+
 #include <cub/cub.cuh>
 #include <cub/iterator/discard_output_iterator.cuh>
 
@@ -589,7 +591,7 @@ public:
 
         if(numRows > 0 && numColumns > 0){
 
-            int oldId; cudaGetDevice(&oldId); CUERR;
+            int oldId; CUDACHECK(cudaGetDevice(&oldId));
 
             size_t totalRequiredMemory = numRows * sizeOfElement;
 
@@ -602,15 +604,15 @@ public:
             }
 
             if(preferedLocationIsSufficient){
-                wrapperCudaSetDevice(deviceIds[preferedLocation]); CUERR;
+                CUDACHECK(wrapperCudaSetDevice(deviceIds[preferedLocation]));
                 elementsPerLocation[preferedLocation] = numRows;
-                cudaMalloc(&dataPtrPerLocation[preferedLocation], totalRequiredMemory); CUERR;
+                CUDACHECK(cudaMalloc(&dataPtrPerLocation[preferedLocation], totalRequiredMemory));
             }else{
 
                 size_t remainingElements = numRows;
                 if(layout == DistributedArrayLayout::GPUBlock){
                     for(int gpu = 0; gpu < numGpus && remainingElements > 0; gpu++){
-                        wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
+                        CUDACHECK(wrapperCudaSetDevice(deviceIds[gpu]));
 
                         size_t rows = std::min(remainingElements, memoryLimitBytesPerGPU[gpu] / sizeOfElement);
                         elementsPerLocation[gpu] = rows;
@@ -618,7 +620,7 @@ public:
                             continue;
                         }
 
-                        cudaMalloc(&(dataPtrPerLocation[gpu]), rows * sizeOfElement); CUERR;
+                        CUDACHECK(cudaMalloc(&(dataPtrPerLocation[gpu]), rows * sizeOfElement));
 
                         remainingElements -= rows;
                     }
@@ -639,8 +641,8 @@ public:
                     }
 
                     for(int gpu = 0; gpu < numGpus; gpu++){
-                        wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
-                        cudaMalloc(&(dataPtrPerLocation[gpu]), elementsPerLocation[gpu] * sizeOfElement); CUERR;
+                        CUDACHECK(wrapperCudaSetDevice(deviceIds[gpu]));
+                        CUDACHECK(cudaMalloc(&(dataPtrPerLocation[gpu]), elementsPerLocation[gpu] * sizeOfElement));
                     }
 
                     if(std::size_t(numRows) > totalPossibleElementsPerGpu){
@@ -674,7 +676,7 @@ public:
                 std::cerr << "]\n";
             }
 
-            wrapperCudaSetDevice(oldId); CUERR;
+            CUDACHECK(wrapperCudaSetDevice(oldId));
         }
     }
 
@@ -727,10 +729,10 @@ public:
     inline
     cudaError_t wrapperCudaSetDevice(int newId) const{
         // int currentId = -1;
-        // cudaGetDevice(&currentId); CUERR;
+        // cudaGetDevice(&currentId);
 
         // std::cerr << "cudaSetDevice " << currentId << " -> " << newId << '\n';
-        cudaError_t res = cudaSetDevice(newId); CUERR;
+        cudaError_t res = cudaSetDevice(newId);
         return res;
     }
 
@@ -773,10 +775,10 @@ public:
         if(location == hostLocation){
             std::copy_n(data, numColumns, destPtr);
         }else{
-            int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-            wrapperCudaSetDevice(deviceIds[location]); CUERR;
-            cudaMemcpy(destPtr, data, sizeOfElement, H2D); CUERR;
-            wrapperCudaSetDevice(oldDevice); CUERR;
+            int oldDevice; CUDACHECK(cudaGetDevice(&oldDevice));
+            CUDACHECK(wrapperCudaSetDevice(deviceIds[location]));
+            CUDACHECK(cudaMemcpy(destPtr, data, sizeOfElement, H2D));
+            CUDACHECK(wrapperCudaSetDevice(oldDevice));
         }
     }
 
@@ -810,7 +812,7 @@ public:
                 setSafe(indices, data);
             }
         }
-        int oldDevice; cudaGetDevice(&oldDevice); CUERR;
+        int oldDevice; CUDACHECK(cudaGetDevice(&oldDevice));
 
         std::vector<int> firstLocalIndices(numLocations, -1);
         std::vector<int> hitsPerLocation(numLocations, 0);
@@ -848,13 +850,13 @@ public:
                 if(location == hostLocation){
                     std::copy_n(srcPtr, numColumns * numHits, destPtr);
                 }else{
-                    wrapperCudaSetDevice(deviceIds[location]); CUERR;
-                    cudaMemcpy(destPtr, srcPtr, sizeOfElement * numHits, H2D); CUERR;
+                    CUDACHECK(wrapperCudaSetDevice(deviceIds[location]));
+                    CUDACHECK(cudaMemcpy(destPtr, srcPtr, sizeOfElement * numHits, H2D));
                 }
             }
         }
 
-        wrapperCudaSetDevice(oldDevice); CUERR;
+        CUDACHECK(wrapperCudaSetDevice(oldDevice));
     }
 
     void setSafe(const Index_t* indices, const Value_t* data, std::size_t n){
@@ -868,7 +870,7 @@ public:
             return;
         }
 
-        int oldDevice; cudaGetDevice(&oldDevice); CUERR;
+        int oldDevice; CUDACHECK(cudaGetDevice(&oldDevice));
 
 
 
@@ -896,9 +898,9 @@ public:
                 }else{
                     Index_t start = indices[0];
                     Value_t* destPtr = offsetPtr(dataPtrPerLocation[locationId], start);
-                    wrapperCudaSetDevice(deviceIds[locationId]); CUERR;
-                    cudaMemcpy(destPtr, data, n * sizeOfElement, H2D); CUERR;
-                    wrapperCudaSetDevice(oldDevice); CUERR;
+                    CUDACHECK(wrapperCudaSetDevice(deviceIds[locationId]));
+                    CUDACHECK(cudaMemcpy(destPtr, data, n * sizeOfElement, H2D));
+                    CUDACHECK(wrapperCudaSetDevice(oldDevice));
                     return;
                 }
             }
@@ -938,8 +940,8 @@ public:
                     if(location == hostLocation){
                         std::copy_n(srcPtr, size_t(numColumns) * (to-from), destPtr);
                     }else{
-                        wrapperCudaSetDevice(deviceIds[location]); CUERR;
-                        cudaMemcpy(destPtr, srcPtr, sizeOfElement * (to-from), H2D); CUERR;
+                        CUDACHECK(wrapperCudaSetDevice(deviceIds[location]));
+                        CUDACHECK(cudaMemcpy(destPtr, srcPtr, sizeOfElement * (to-from), H2D));
                     }
 
                     num = to;
@@ -947,7 +949,7 @@ public:
             }
         }
 
-        wrapperCudaSetDevice(oldDevice); CUERR;
+        CUDACHECK(wrapperCudaSetDevice(oldDevice));
     }
 
 
@@ -960,10 +962,10 @@ public:
         if(location == hostLocation){
             std::copy_n(srcPtr, numColumns, result);
         }else{
-            int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-            wrapperCudaSetDevice(deviceIds[location]); CUERR;
-            cudaMemcpy(result, srcPtr, sizeOfElement, D2H); CUERR;
-            wrapperCudaSetDevice(oldDevice); CUERR;
+            int oldDevice; CUDACHECK(cudaGetDevice(&oldDevice));
+            CUDACHECK(wrapperCudaSetDevice(deviceIds[location]));
+            CUDACHECK(cudaMemcpy(result, srcPtr, sizeOfElement, D2H));
+            CUDACHECK(wrapperCudaSetDevice(oldDevice));
         }
     }
 
@@ -971,8 +973,8 @@ public:
         auto handle = std::make_unique<GatherHandleStruct>();
 
         int oldDevice;
-        cudaGetDevice(&oldDevice); CUERR;
-        //wrapperCudaSetDevice(oldDevice); CUERR;
+        CUDACHECK(cudaGetDevice(&oldDevice));
+        //CUDACHECK(wrapperCudaSetDevice(oldDevice));
 
         handle->d_gatheredElementsOfGpuLocation.resize(numGpus);
         
@@ -998,12 +1000,12 @@ public:
         for(int gpu = 0; gpu < numGpus; gpu++){
             registerDeviceIdForHandlenew(handle, deviceIds[gpu]);
 
-            wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
-            cudaStreamCreate(&(handle->streamsPerGpuLocation[gpu])); CUERR;
-            cudaEventCreateWithFlags(&(handle->eventsPerGpuLocation[gpu]), cudaEventDisableTiming); CUERR;
+            CUDACHECK(wrapperCudaSetDevice(deviceIds[gpu]));
+            CUDACHECK(cudaStreamCreate(&(handle->streamsPerGpuLocation[gpu])));
+            CUDACHECK(cudaEventCreateWithFlags(&(handle->eventsPerGpuLocation[gpu]), cudaEventDisableTiming));
         }
 
-        wrapperCudaSetDevice(oldDevice); CUERR;
+        CUDACHECK(wrapperCudaSetDevice(oldDevice));
 
         return handle;
     }
@@ -1017,19 +1019,19 @@ public:
 
         if(it == handle->registeredDeviceIds.end()){
             int oldId = 0;
-            cudaGetDevice(&oldId); CUERR;
-            wrapperCudaSetDevice(deviceId); CUERR;
+            CUDACHECK(cudaGetDevice(&oldId));
+            CUDACHECK(wrapperCudaSetDevice(deviceId));
 
             cudaStream_t stream;
-            cudaStreamCreate(&stream); CUERR;
+            CUDACHECK(cudaStreamCreate(&stream));
             handle->map_streams[deviceId] = std::move(stream);
 
             cudaEvent_t event;
-            cudaEventCreateWithFlags(&event, cudaEventDisableTiming); CUERR;
+            CUDACHECK(cudaEventCreateWithFlags(&event, cudaEventDisableTiming));
             handle->map_events[deviceId] = std::move(event); 
 
             cudaEvent_t event2;
-            cudaEventCreateWithFlags(&event2, cudaEventDisableTiming); CUERR;
+            CUDACHECK(cudaEventCreateWithFlags(&event2, cudaEventDisableTiming));
             handle->map_d2hevents[deviceId] = std::move(event2); 
              
 
@@ -1047,14 +1049,14 @@ public:
             std::vector<helpers::SimpleAllocationDevice<Index_t>> vec2(numLocations + 1);
             handle->map_d_destinationPositionsForLocationsVector.emplace(deviceId, std::move(vec2));
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 handle->map_d_elementsPerLocationPS[deviceId].get(),
                 elementsPerLocationPS.data(),
                 sizeof(Index_t) * (numLocations+1),
                 H2D,
                 handle->map_streams[deviceId]
-            ); CUERR; 
-            cudaStreamSynchronize(handle->map_streams[deviceId]); CUERR;
+            )); 
+            CUDACHECK(cudaStreamSynchronize(handle->map_streams[deviceId]));
 
             handle->map_d_splitkernelparams.emplace(deviceId, helpers::SimpleAllocationDevice<distarraykernels::PartitionSplitKernelParams<Index_t>>(1));
             handle->map_h_splitkernelparams.emplace(deviceId, helpers::SimpleAllocationPinnedHost<distarraykernels::PartitionSplitKernelParams<Index_t>>(1));
@@ -1089,7 +1091,7 @@ public:
 
             handle->registeredDeviceIds.push_back(deviceId);
 
-            wrapperCudaSetDevice(oldId); CUERR;
+            CUDACHECK(wrapperCudaSetDevice(oldId));
         }
     }
 
@@ -1102,8 +1104,8 @@ public:
 
         if(it != handle->registeredDeviceIds.end()){
             int oldId = 0;
-            cudaGetDevice(&oldId); CUERR;
-            wrapperCudaSetDevice(deviceId); CUERR;
+            CUDACHECK(cudaGetDevice(&oldId));
+            CUDACHECK(wrapperCudaSetDevice(deviceId));
 
             handle->map_d_tmpResults[deviceId].destroy();
             handle->map_d_destinationPositionsOfGpu[deviceId].destroy();
@@ -1131,40 +1133,40 @@ public:
 
             auto git = handle->map_nohostExecutionGraph.find(deviceId);
             if(git != handle->map_nohostExecutionGraph.end()){
-                cudaGraphExecDestroy(git->second); CUERR;
+                CUDACHECK(cudaGraphExecDestroy(git->second));
             }
             
-            cudaStreamDestroy(handle->map_streams[deviceId]); CUERR;
-            cudaEventDestroy(handle->map_events[deviceId]); CUERR;
-            cudaEventDestroy(handle->map_d2hevents[deviceId]); CUERR;
+            CUDACHECK(cudaStreamDestroy(handle->map_streams[deviceId]));
+            CUDACHECK(cudaEventDestroy(handle->map_events[deviceId]));
+            CUDACHECK(cudaEventDestroy(handle->map_d2hevents[deviceId]));
 
             handle->registeredDeviceIds.erase(it);
 
-            wrapperCudaSetDevice(oldId); CUERR;
+            CUDACHECK(wrapperCudaSetDevice(oldId));
         }
     }
 
     void destroyGatherHandleStruct(const GatherHandle& handle) const{
-        int oldDevice; cudaGetDevice(&oldDevice); CUERR;
+        int oldDevice; CUDACHECK(cudaGetDevice(&oldDevice));
 
         handle->pinnedDestinationPositionsOfHostLocation.destroy();
         handle->h_packedpointersAndNumIndicesArg.destroy();
         handle->h_packedKernelParamsPartPref.destroy();
 
         for(int gpu = 0; gpu < numGpus; gpu++){
-            wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
+            CUDACHECK(wrapperCudaSetDevice(deviceIds[gpu]));
 
             handle->d_gatheredElementsOfGpuLocation[gpu].destroy();
 
-            cudaStreamDestroy(handle->streamsPerGpuLocation[gpu]);
-            cudaEventDestroy(handle->eventsPerGpuLocation[gpu]);
+            CUDACHECK(cudaStreamDestroy(handle->streamsPerGpuLocation[gpu]));
+            CUDACHECK(cudaEventDestroy(handle->eventsPerGpuLocation[gpu]));
         }
 
         while(handle->registeredDeviceIds.size() > 0){
             unregisterDeviceIdForHandlenew(handle, handle->registeredDeviceIds[0]);
         }
 
-        wrapperCudaSetDevice(oldDevice); CUERR;
+        CUDACHECK(wrapperCudaSetDevice(oldDevice));
     }
 
 
@@ -1264,8 +1266,8 @@ public:
 
             Value_t* const myResult = handle->pinnedGatheredElementsOfHostLocation.get();
 
-            int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-            wrapperCudaSetDevice(resultDeviceId); CUERR;
+            int oldDevice; CUDACHECK(cudaGetDevice(&oldDevice));
+            CUDACHECK(wrapperCudaSetDevice(resultDeviceId));
 
             auto gather = [&](Index_t begin, Index_t end, int /*threadId*/){
                 #if 0
@@ -1298,13 +1300,13 @@ public:
                         std::copy_n(srcPtr, numColumns, destPtr);
                     }
 
-                    cudaMemcpyAsync(
+                    CUDACHECK(cudaMemcpyAsync(
                         (((char*)(d_result)) + resultPitch * size_t(batchbegin)),
                         (((const char*)(myResult)) + resultPitch * size_t(batchbegin)),
                         currentBatchsize * resultPitch,
                         H2D,
                         syncstream
-                    ); CUERR;
+                    ));
                 }
                 #endif
             };
@@ -1315,15 +1317,15 @@ public:
                 gather
             );
 
-            wrapperCudaSetDevice(oldDevice); CUERR;
+            CUDACHECK(wrapperCudaSetDevice(oldDevice));
 
-            // int oldDevice; cudaGetDevice(&oldDevice); CUERR;
+            // int oldDevice; CUDACHECK(cudaGetDevice(&oldDevice));
 
-            // wrapperCudaSetDevice(resultDeviceId); CUERR;
+            // CUDACHECK(wrapperCudaSetDevice(resultDeviceId));
 
-            // cudaMemcpyAsync(d_result, myResult, numIds * resultPitch, H2D, syncstream); CUERR;
+            // CUDACHECK(cudaMemcpyAsync(d_result, myResult, numIds * resultPitch, H2D, syncstream));
 
-            // wrapperCudaSetDevice(oldDevice); CUERR;
+            // CUDACHECK(wrapperCudaSetDevice(oldDevice));
         }else{
             //if(debug) std::cerr << "single location array fast path on partition " << singlePartitionInfo.locationId << "\n";
 
@@ -1333,11 +1335,11 @@ public:
             cudaStream_t mystream = handle->streamsPerGpuLocation[gpu];
             cudaEvent_t myevent = handle->eventsPerGpuLocation[gpu];
 
-            int oldDevice; cudaGetDevice(&oldDevice); CUERR;
+            int oldDevice; CUDACHECK(cudaGetDevice(&oldDevice));
             
             
             if(mydeviceId == resultDeviceId){
-                wrapperCudaSetDevice(resultDeviceId); CUERR;
+                CUDACHECK(wrapperCudaSetDevice(resultDeviceId));
 
                 distarraykernels::gatherKernel<<<640, 128, 0, syncstream>>>(
                     d_result, 
@@ -1347,19 +1349,19 @@ public:
                     -elementsPerLocationPS[gpu], 
                     resultPitch / sizeof(Value_t),
                     numColumns
-                ); CUERR;
+                ); CUDACHECKASYNC;
             }else{
                 registerDeviceIdForHandlenew(handle, resultDeviceId);
 
-                wrapperCudaSetDevice(resultDeviceId);
-                cudaEventRecord(handle->map_events[resultDeviceId], syncstream); CUERR;
+                CUDACHECK(wrapperCudaSetDevice(resultDeviceId));
+                CUDACHECK(cudaEventRecord(handle->map_events[resultDeviceId], syncstream));
 
-                wrapperCudaSetDevice(mydeviceId); CUERR;
+                CUDACHECK(wrapperCudaSetDevice(mydeviceId));
 
                 auto& myGatherResult = handle->d_gatheredElementsOfGpuLocation[gpu];
                 myGatherResult.resize(numIds * numColumns);
 
-                cudaStreamWaitEvent(mystream, handle->map_events[resultDeviceId], 0); CUERR;
+                CUDACHECK(cudaStreamWaitEvent(mystream, handle->map_events[resultDeviceId], 0));
 
                 distarraykernels::gatherKernel<<<640, 128, 0, mystream>>>(
                     myGatherResult.get(), 
@@ -1369,7 +1371,7 @@ public:
                     -elementsPerLocationPS[gpu], 
                     numColumns,
                     numColumns
-                ); CUERR;
+                ); CUDACHECKASYNC;
 
                 distarraykernels::copy2Dkernel<Index_t, Value_t><<<640, 128, 0, mystream>>>(
                     d_result,
@@ -1378,69 +1380,69 @@ public:
                     numColumns,
                     numColumns,
                     resultPitch / sizeof(Value_t)
-                ); CUERR;
+                ); CUDACHECKASYNC;
 
-                cudaEventRecord(myevent, mystream); CUERR;
-                cudaStreamWaitEvent(syncstream, myevent, 0); CUERR;
+                CUDACHECK(cudaEventRecord(myevent, mystream));
+                CUDACHECK(cudaStreamWaitEvent(syncstream, myevent, 0));
             }
 
-            wrapperCudaSetDevice(oldDevice); CUERR;            
+            CUDACHECK(wrapperCudaSetDevice(oldDevice));            
         }
     }  
 
     cudaGraphExec_t buildNoHostExecutionGraphByCapture(const GatherHandle& handle, int deviceId) const{
         int oldDeviceId = 0;
-        cudaGetDevice(&oldDeviceId); CUERR;
-        cudaSetDevice(deviceId); CUERR;
+        CUDACHECK(cudaGetDevice(&oldDeviceId));
+        CUDACHECK(cudaSetDevice(deviceId));
 
         cudaStream_t capturestream;
-        cudaStreamCreate(&capturestream); CUERR;
+        CUDACHECK(cudaStreamCreate(&capturestream));
 
-        cudaStreamBeginCapture(capturestream, cudaStreamCaptureModeRelaxed);
+        CUDACHECK(cudaStreamBeginCapture(capturestream, cudaStreamCaptureModeRelaxed));
 
         auto& destination_event = handle->map_events[deviceId];
         auto& destination_stream = handle->map_streams[deviceId];
         
-        cudaEventRecord(destination_event, capturestream); CUERR;
+        CUDACHECK(cudaEventRecord(destination_event, capturestream));
 
         for(int gpu = 0; gpu < numGpus; gpu++){
             const int location = gpu;
             if(elementsPerLocation[location] > 0){
                 const int gpuDeviceId = deviceIds[gpu];
                 cudaStream_t gpuStream = handle->streamsPerGpuLocation[location];
-                cudaSetDevice(gpuDeviceId); CUERR;
-                cudaStreamWaitEvent(gpuStream, destination_event, 0); CUERR;
+                CUDACHECK(cudaSetDevice(gpuDeviceId));
+                CUDACHECK(cudaStreamWaitEvent(gpuStream, destination_event, 0));
 
-                cudaMemcpyAsync(
+                CUDACHECK(cudaMemcpyAsync(
                     handle->map_d_gatherkernelparams[gpu].get(),
                     handle->map_h_gatherkernelparams[gpu].get(),
                     handle->map_h_gatherkernelparams[gpu].sizeInBytes(),
                     H2D,
                     gpuStream
-                ); CUERR;
+                ));
             }
         }
 
-        cudaSetDevice(deviceId); CUERR;
+        CUDACHECK(cudaSetDevice(deviceId));
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             handle->map_d_packedKernelParamsPartPref[deviceId].get(),
             handle->h_packedKernelParamsPartPref.get(),
             handle->h_packedKernelParamsPartPref.sizeInBytes(),
             H2D,
             capturestream
-        ); CUERR;
+        ));
 
         for(int gpu = 0; gpu < numGpus; gpu++){
             const int location = gpu;
             if(elementsPerLocation[location] > 0){
-                cudaMemcpyAsync(
+                CUDACHECK(cudaMemcpyAsync(
                     handle->map_d_scatterkernelparams[deviceId][gpu].get(),
                     handle->map_h_scatterkernelparams[deviceId][gpu].get(),
                     handle->map_h_scatterkernelparams[deviceId][gpu].sizeInBytes(),
                     H2D,
                     capturestream
-                ); CUERR;
+                ));
             }
         }
 
@@ -1461,18 +1463,18 @@ public:
             numLocations, 
             Index_t(0), 
             capturestream
-        ); CUERR;
+        ); CUDACHECKASYNC;
 
 
         distarraykernels::partitionSplitKernel<Index_t, 32><<<1000, 256, 0, capturestream>>>(
             d_partitionsplitkernelParams
-        ); CUERR;
+        ); CUDACHECKASYNC;
 
         distarraykernels::exclPrefixSumSingleThreadKernel<Index_t><<<1,1,0,capturestream>>>(
             d_pskernelParams
-        ); CUERR;
+        ); CUDACHECKASYNC;
 
-        cudaEventRecord(destination_event, capturestream); CUERR;
+        CUDACHECK(cudaEventRecord(destination_event, capturestream));
 
         //gather data from gpu partitions into memory of the respective gpu, 
         for(int gpu = 0; gpu < numGpus; gpu++){
@@ -1482,36 +1484,36 @@ public:
                 cudaStream_t gpuStream = handle->streamsPerGpuLocation[location];
                 cudaEvent_t gpuEvent = handle->eventsPerGpuLocation[location];
 
-                wrapperCudaSetDevice(gpuDeviceId);
-                cudaStreamWaitEvent(gpuStream, destination_event, 0); CUERR;
+                CUDACHECK(wrapperCudaSetDevice(gpuDeviceId));
+                CUDACHECK(cudaStreamWaitEvent(gpuStream, destination_event, 0));
 
                 distarraykernels::gatherKernel<Index_t, Value_t><<<1000, 256, 0, gpuStream>>>(
                     handle->map_d_gatherkernelparams[gpu].get()
-                ); CUERR;
+                ); CUDACHECKASYNC;
 
-                cudaEventRecord(gpuEvent, gpuStream); CUERR;
+                CUDACHECK(cudaEventRecord(gpuEvent, gpuStream));
             }
         }
         // then scatter its gathered data to destination array via peer access
-        wrapperCudaSetDevice(deviceId); CUERR;
+        CUDACHECK(wrapperCudaSetDevice(deviceId));
 
         for(int gpu = 0; gpu < numGpus; gpu++){
             const int location = gpu;
             if(elementsPerLocation[location] > 0){
                 cudaEvent_t gpuEvent = handle->eventsPerGpuLocation[location];
 
-                wrapperCudaSetDevice(deviceId); CUERR;
+                CUDACHECK(wrapperCudaSetDevice(deviceId));
 
-                cudaStreamWaitEvent(capturestream, gpuEvent, 0); CUERR;
+                CUDACHECK(cudaStreamWaitEvent(capturestream, gpuEvent, 0));
 
                 distarraykernels::scatterKernel<Index_t, Value_t><<<1000, 256, 0, capturestream>>>(
                     handle->map_d_scatterkernelparams[deviceId][gpu].get()
-                ); CUERR;
+                ); CUDACHECKASYNC;
             }
         }
 
         cudaGraph_t graph;
-        cudaStreamEndCapture(capturestream, &graph); CUERR;
+        CUDACHECK(cudaStreamEndCapture(capturestream, &graph));
         
         cudaGraphExec_t execGraph;
         cudaGraphNode_t errorNode;
@@ -1528,14 +1530,12 @@ public:
                 std::cerr << logBuffer.get();
                 std::cerr << "\n";
             }
-            CUERR;
-        }            
+        }
+        CUDACHECK(status);
 
-        cudaGraphDestroy(graph); CUERR;
-
-        cudaStreamDestroy(capturestream); CUERR;
-
-        cudaSetDevice(oldDeviceId); CUERR;
+        CUDACHECK(cudaGraphDestroy(graph));
+        CUDACHECK(cudaStreamDestroy(capturestream));
+        CUDACHECK(cudaSetDevice(oldDeviceId));
 
         return execGraph;
     }
@@ -1573,7 +1573,7 @@ public:
         // assert(!singlePartitionInfo.isSinglePartition); //there is a dedicated function for this case
 
         int oldId = 0;
-        cudaGetDevice(&oldId); CUERR;
+        CUDACHECK(cudaGetDevice(&oldId));
 
         registerDeviceIdForHandlenew(handle, resultDeviceId);
 
@@ -1592,8 +1592,8 @@ public:
         auto& destination_event = handle->map_events[resultDeviceId];
         auto& destination_stream = handle->map_streams[resultDeviceId];
 
-        wrapperCudaSetDevice(resultDeviceId);
-        cudaEventRecord(destination_event, syncstream); CUERR;
+        CUDACHECK(wrapperCudaSetDevice(resultDeviceId));
+        CUDACHECK(cudaEventRecord(destination_event, syncstream));
 
         for(int i = 0; i < numLocations; i++){
             d_indicesForLocationsVector[i].resize(numIds);
@@ -1621,13 +1621,13 @@ public:
 
         *pinnedNumIndices = numIds;
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             handle->map_d_packedpointersAndNumIndicesArg[resultDeviceId].get(),
             handle->h_packedpointersAndNumIndicesArg.get(),
             handle->h_packedpointersAndNumIndicesArg.sizeInBytes(),
             H2D,
             syncstream
-        ); CUERR;
+        ));
 
         constexpr size_t paramsoffset = std::max(
             sizeof(distarraykernels::PartitionSplitKernelParams<Index_t>),
@@ -1699,7 +1699,7 @@ public:
         #if 1
 
         cudaGraphExec_t execGraph = getNoHostExecutionGraph(handle, resultDeviceId);
-        cudaGraphLaunch(execGraph, syncstream); CUERR;
+        CUDACHECK(cudaGraphLaunch(execGraph, syncstream));
 
         #else 
 
@@ -1708,39 +1708,39 @@ public:
             if(elementsPerLocation[location] > 0){
                 const int gpuDeviceId = deviceIds[gpu];
                 cudaStream_t gpuStream = handle->streamsPerGpuLocation[location];
-                cudaSetDevice(gpuDeviceId); CUERR;
-                cudaStreamWaitEvent(gpuStream, destination_event, 0); CUERR;
+                CUDACHECK(cudaSetDevice(gpuDeviceId));
+                CUDACHECK(cudaStreamWaitEvent(gpuStream, destination_event, 0));
 
-                cudaMemcpyAsync(
+                CUDACHECK(cudaMemcpyAsync(
                     handle->map_d_gatherkernelparams[gpu].get(),
                     handle->map_h_gatherkernelparams[gpu].get(),
                     handle->map_h_gatherkernelparams[gpu].sizeInBytes(),
                     H2D,
                     gpuStream
-                ); CUERR;
+                ));
             }
         }
 
-        cudaSetDevice(resultDeviceId); CUERR;
+        CUDACHECK(cudaSetDevice(resultDeviceId));
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             handle->map_d_packedKernelParamsPartPref[resultDeviceId].get(),
             handle->h_packedKernelParamsPartPref.get(),
             handle->h_packedKernelParamsPartPref.sizeInBytes(),
             H2D,
             syncstream
-        ); CUERR;
+        ));
 
         for(int gpu = 0; gpu < numGpus; gpu++){
             const int location = gpu;
             if(elementsPerLocation[location] > 0){
-                cudaMemcpyAsync(
+                CUDACHECK(cudaMemcpyAsync(
                     handle->map_d_scatterkernelparams[resultDeviceId][gpu].get(),
                     handle->map_h_scatterkernelparams[resultDeviceId][gpu].get(),
                     handle->map_h_scatterkernelparams[resultDeviceId][gpu].sizeInBytes(),
                     H2D,
                     syncstream
-                ); CUERR;
+                ));
             }
         }
 
@@ -1761,18 +1761,18 @@ public:
             numLocations, 
             Index_t(0), 
             syncstream
-        ); CUERR;
+        ); CUDACHECKASYNC;
 
 
         distarraykernels::partitionSplitKernel<Index_t, 32><<<1000, 256, 0, syncstream>>>(
             d_partitionsplitkernelParams
-        ); CUERR;
+        ); CUDACHECKASYNC;
 
         distarraykernels::exclPrefixSumSingleThreadKernel<Index_t><<<1,1,0,syncstream>>>(
             d_pskernelParams
-        ); CUERR;
+        ); CUDACHECKASYNC;
 
-        cudaEventRecord(destination_event, syncstream); CUERR;
+        CUDACHECK(cudaEventRecord(destination_event, syncstream));
 
         //gather data from gpu partitions into memory of the respective gpu, 
         for(int gpu = 0; gpu < numGpus; gpu++){
@@ -1782,36 +1782,36 @@ public:
                 cudaStream_t gpuStream = handle->streamsPerGpuLocation[location];
                 cudaEvent_t gpuEvent = handle->eventsPerGpuLocation[location];
 
-                wrapperCudaSetDevice(gpuDeviceId);
-                cudaStreamWaitEvent(gpuStream, destination_event, 0); CUERR;
+                CUDACHECK(wrapperCudaSetDevice(gpuDeviceId));
+                CUDACHECK(cudaStreamWaitEvent(gpuStream, destination_event, 0));
 
                 distarraykernels::gatherKernel<Index_t, Value_t><<<1000, 256, 0, gpuStream>>>(
                     handle->map_d_gatherkernelparams[gpu].get()
-                ); CUERR;
+                ); CUDACHECKASYNC;
 
-                cudaEventRecord(gpuEvent, gpuStream); CUERR;
+                CUDACHECK(cudaEventRecord(gpuEvent, gpuStream));
             }
         }
         // then scatter its gathered data to destination array via peer access
-        wrapperCudaSetDevice(resultDeviceId); CUERR;
+        CUDACHECK(wrapperCudaSetDevice(resultDeviceId));
 
         for(int gpu = 0; gpu < numGpus; gpu++){
             const int location = gpu;
             if(elementsPerLocation[location] > 0){
                 cudaEvent_t gpuEvent = handle->eventsPerGpuLocation[location];
 
-                wrapperCudaSetDevice(resultDeviceId); CUERR;
+                CUDACHECK(wrapperCudaSetDevice(resultDeviceId));
 
-                cudaStreamWaitEvent(syncstream, gpuEvent, 0); CUERR;
+                CUDACHECK(cudaStreamWaitEvent(syncstream, gpuEvent, 0));
 
                 distarraykernels::scatterKernel<Index_t, Value_t><<<1000, 256, 0, syncstream>>>(
                     handle->map_d_scatterkernelparams[resultDeviceId][gpu].get()
-                ); CUERR;
+                ); CUDACHECKASYNC;
             }
         }
 
         #endif
-        cudaSetDevice(oldId); CUERR;
+        CUDACHECK(cudaSetDevice(oldId));
 
     }    
 
@@ -1849,8 +1849,8 @@ public:
         auto& destination_event = handle->map_events[resultDeviceId];
         auto& destination_stream = handle->map_streams[resultDeviceId];
 
-        wrapperCudaSetDevice(resultDeviceId);
-        cudaEventRecord(destination_event, syncstream); CUERR;
+        CUDACHECK(wrapperCudaSetDevice(resultDeviceId));
+        CUDACHECK(cudaEventRecord(destination_event, syncstream));
 
         for(int i = 0; i < numLocations; i++){
             d_indicesForLocationsVector[i].resize(numIds);
@@ -1883,13 +1883,13 @@ public:
 
         *pinnedNumIndices = numIds;
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             handle->map_d_packedpointersAndNumIndicesArg[resultDeviceId].get(),
             handle->h_packedpointersAndNumIndicesArg.get(),
             handle->h_packedpointersAndNumIndicesArg.sizeInBytes(),
             H2D,
             syncstream
-        ); CUERR;
+        ));
 
         constexpr size_t paramsoffset = std::max(
             sizeof(distarraykernels::PartitionSplitKernelParams<Index_t>),
@@ -1944,39 +1944,39 @@ public:
             if(elementsPerLocation[location] > 0){
                 const int gpuDeviceId = deviceIds[gpu];
                 cudaStream_t gpuStream = handle->streamsPerGpuLocation[location];
-                cudaSetDevice(gpuDeviceId); CUERR;
-                cudaStreamWaitEvent(gpuStream, destination_event, 0); CUERR;
+                CUDACHECK(cudaSetDevice(gpuDeviceId));
+                CUDACHECK(cudaStreamWaitEvent(gpuStream, destination_event, 0));
 
-                cudaMemcpyAsync(
+                CUDACHECK(cudaMemcpyAsync(
                     handle->map_d_gatherkernelparams[gpu].get(),
                     handle->map_h_gatherkernelparams[gpu].get(),
                     handle->map_h_gatherkernelparams[gpu].sizeInBytes(),
                     H2D,
                     gpuStream
-                ); CUERR;
+                ));
             }
         }
 
-        cudaSetDevice(resultDeviceId); CUERR;
+        CUDACHECK(cudaSetDevice(resultDeviceId));
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             handle->map_d_packedKernelParamsPartPref[resultDeviceId].get(),
             handle->h_packedKernelParamsPartPref.get(),
             handle->h_packedKernelParamsPartPref.sizeInBytes(),
             H2D,
             syncstream
-        ); CUERR;
+        ));
 
         for(int gpu = 0; gpu < numGpus; gpu++){
             const int location = gpu;
             if(elementsPerLocation[location] > 0){
-                cudaMemcpyAsync(
+                CUDACHECK(cudaMemcpyAsync(
                     handle->map_d_scatterkernelparams[resultDeviceId][gpu].get(),
                     handle->map_h_scatterkernelparams[resultDeviceId][gpu].get(),
                     handle->map_h_scatterkernelparams[resultDeviceId][gpu].sizeInBytes(),
                     H2D,
                     syncstream
-                ); CUERR;
+                ));
             }
         }
 
@@ -1997,29 +1997,29 @@ public:
             numLocations, 
             Index_t(0), 
             syncstream
-        ); CUERR;
+        ); CUDACHECKASYNC;
 
 
         distarraykernels::partitionSplitKernel<Index_t, 32><<<1000, 256, 0, syncstream>>>(
             d_partitionsplitkernelParams
-        ); CUERR;
+        ); CUDACHECKASYNC;
 
         distarraykernels::exclPrefixSumSingleThreadKernel<Index_t><<<1,1,0,syncstream>>>(
             d_pskernelParams
-        ); CUERR;
+        ); CUDACHECKASYNC;
 
-        cudaEventRecord(destination_event, syncstream); CUERR;
+        CUDACHECK(cudaEventRecord(destination_event, syncstream));
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             handle->numIndicesOfHostLocation.get(),
             d_destination_numIndicesPerLocation.get() + hostLocation,
             sizeof(Index_t),
             D2H,
             syncstream
-        );
+        ));
 
         //event record d2h
-        cudaEventRecord(handle->map_d2hevents[resultDeviceId], syncstream); CUERR;
+        CUDACHECK(cudaEventRecord(handle->map_d2hevents[resultDeviceId], syncstream));
 
         //gather data from gpu partitions into memory of the respective gpu, 
         for(int gpu = 0; gpu < numGpus; gpu++){
@@ -2029,40 +2029,40 @@ public:
                 cudaStream_t gpuStream = handle->streamsPerGpuLocation[location];
                 cudaEvent_t gpuEvent = handle->eventsPerGpuLocation[location];
 
-                wrapperCudaSetDevice(gpuDeviceId);
-                cudaStreamWaitEvent(gpuStream, destination_event, 0); CUERR;
+                CUDACHECK(wrapperCudaSetDevice(gpuDeviceId));
+                CUDACHECK(cudaStreamWaitEvent(gpuStream, destination_event, 0));
 
                 distarraykernels::gatherKernel<Index_t, Value_t><<<1000, 256, 0, gpuStream>>>(
                     handle->map_d_gatherkernelparams[gpu].get()
-                ); CUERR;
+                ); CUDACHECKASYNC;
 
-                cudaEventRecord(gpuEvent, gpuStream); CUERR;
+                CUDACHECK(cudaEventRecord(gpuEvent, gpuStream));
             }
         }
         // then scatter its gathered data to destination array via peer access
-        wrapperCudaSetDevice(resultDeviceId); CUERR;
+        CUDACHECK(wrapperCudaSetDevice(resultDeviceId));
 
         for(int gpu = 0; gpu < numGpus; gpu++){
             const int location = gpu;
             if(elementsPerLocation[location] > 0){
                 cudaEvent_t gpuEvent = handle->eventsPerGpuLocation[location];
 
-                wrapperCudaSetDevice(resultDeviceId); CUERR;
+                CUDACHECK(wrapperCudaSetDevice(resultDeviceId));
 
-                cudaStreamWaitEvent(syncstream, gpuEvent, 0); CUERR;
+                CUDACHECK(cudaStreamWaitEvent(syncstream, gpuEvent, 0));
 
                 distarraykernels::scatterKernel<Index_t, Value_t><<<1000, 256, 0, syncstream>>>(
                     handle->map_d_scatterkernelparams[resultDeviceId][gpu].get()
-                ); CUERR;
+                ); CUDACHECKASYNC;
             }
         }
 
-        cudaEventSynchronize(handle->map_d2hevents[resultDeviceId]); CUERR;
+        CUDACHECK(cudaEventSynchronize(handle->map_d2hevents[resultDeviceId]));
 
         const Index_t numIndicesForHost = *handle->numIndicesOfHostLocation.get();
         //std::cerr << "array type " << sizeof(Value_t) << ": numIndicesForHost = " << numIndicesForHost << "\n";
         if(numIndicesForHost > 0){
-            wrapperCudaSetDevice(resultDeviceId); CUERR;
+            CUDACHECK(wrapperCudaSetDevice(resultDeviceId));
 
             
 
@@ -2125,17 +2125,17 @@ public:
             h_destination_scatterKernelParams.resultPitchValueTs = resultPitch / sizeof(Value_t);
             h_destination_scatterKernelParams.numCols = numColumns;
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 handle->map_d_scatterkernelparams[resultDeviceId][0].get(),
                 handle->map_h_scatterkernelparams[resultDeviceId][0].get(),
                 handle->map_h_scatterkernelparams[resultDeviceId][0].sizeInBytes(),
                 H2D,
                 syncstream
-            ); CUERR;
+            ));
 
             distarraykernels::scatterKernel<Index_t, Value_t><<<1000, 256, 0, syncstream>>>(
                 handle->map_d_scatterkernelparams[resultDeviceId][0].get()
-            ); CUERR;
+            ); CUDACHECKASYNC;
         }
     }
 
@@ -2189,7 +2189,7 @@ public:
         }
 
         if(numIndicesForHost > 0){
-            wrapperCudaSetDevice(resultDeviceId); CUERR;
+            CUDACHECK(wrapperCudaSetDevice(resultDeviceId));
 
             handle->pinnedGatheredElementsOfHostLocation.resize(numIndicesForHost * numColumns);
             handle->map_d_tmpResults[resultDeviceId].resize(numIndicesForHost * numColumns);
@@ -2197,21 +2197,21 @@ public:
 
             *handle->numIndicesOfHostLocation.get() = numIndicesForHost;
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 handle->map_d_numIndicesPerLocation[resultDeviceId].get() + hostLocation,
                 handle->numIndicesOfHostLocation.get(),
                 sizeof(Index_t),
                 H2D,
                 syncstream
-            ); CUERR;
+            ));
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 handle->map_d_destinationPositionsOfGpu[resultDeviceId].get(),
                 handle->pinnedDestinationPositionsOfHostLocation.get(),
                 sizeof(Index_t) * numIndicesForHost,
                 H2D,
                 syncstream
-            ); CUERR;
+            ));
 
             Value_t* const myResult = handle->pinnedGatheredElementsOfHostLocation.get();
             const Index_t* const myIndices = handle->pinnedIndicesOfHostLocation.get();
@@ -2238,13 +2238,13 @@ public:
                         std::copy_n(srcPtr, numColumns, destPtr);
                     }
 
-                    cudaMemcpyAsync(
+                    CUDACHECK(cudaMemcpyAsync(
                         handle->map_d_tmpResults[resultDeviceId].get() + size_t(batchbegin) * numColumns,
                         myResult + size_t(batchbegin) * numColumns,
                         sizeof(Value_t) * currentBatchsize * numColumns,
                         H2D,
                         syncstream
-                    ); CUERR;
+                    ));
                 }
 
                 // for(Index_t k = begin; k < end; k++){
@@ -2264,13 +2264,13 @@ public:
                 gather
             );
 
-            // cudaMemcpyAsync(
+            // CUDACHECK(cudaMemcpyAsync(
             //     handle->map_d_tmpResults[resultDeviceId].get(),
             //     myResult,
             //     sizeof(Value_t) * numIndicesForHost * numColumns,
             //     H2D,
             //     syncstream
-            // ); CUERR;
+            // ));
 
             distarraykernels::scatterKernel<Index_t, Value_t><<<1000, 256, 0, syncstream>>>(
                 d_result, 
@@ -2280,7 +2280,7 @@ public:
                 0, 
                 resultPitch / sizeof(Value_t),
                 numColumns
-            ); CUERR;
+            ); CUDACHECKASYNC;
         }
     }
 
@@ -2313,9 +2313,9 @@ public:
         constexpr std::int64_t maxBytes = std::int64_t(64) * MB;
 
         int currentId;
-        cudaGetDevice(&currentId); CUERR;
+        CUDACHECK(cudaGetDevice(&currentId));
 
-        wrapperCudaSetDevice(deviceIds[partition]); CUERR;
+        CUDACHECK(wrapperCudaSetDevice(deviceIds[partition]));
 
 
         std::int64_t availableBytes = getAvailableMemoryInKB() * 1024;
@@ -2327,7 +2327,7 @@ public:
         const std::int64_t buffersize = std::max(bytesPerElement, std::min(availableBytes, maxBytes));
         
         Value_t* buffer = nullptr;
-        cudaMallocHost(&buffer, buffersize); CUERR;
+        CUDACHECK(cudaMallocHost(&buffer, buffersize));
 
         std::size_t writtenBytes = 0;
 
@@ -2340,7 +2340,7 @@ public:
 
             const Value_t* src = offsetPtr(dataPtrPerLocation[partition], begin);
             //TIMERSTARTCPU(writeGpuPartitionToStream_memcpy);
-            cudaMemcpy(buffer, src, sizeOfElement * numElements, D2H); CUERR;
+            CUDACHECK(cudaMemcpy(buffer, src, sizeOfElement * numElements, D2H));
             //TIMERSTOPCPU(writeGpuPartitionToStream_memcpy);
 
             //TIMERSTARTCPU(writeGpuPartitionToStream_file);
@@ -2350,9 +2350,9 @@ public:
             writtenBytes += sizeOfElement * numElements;
         }
 
-        cudaFreeHost(buffer); CUERR;
+        CUDACHECK(cudaFreeHost(buffer));
 
-        wrapperCudaSetDevice(currentId); CUERR;
+        CUDACHECK(wrapperCudaSetDevice(currentId));
 
         return writtenBytes;
     }
@@ -2374,16 +2374,16 @@ public:
         assert(buffersize > 4);
 
         std::array<Value_t*, 2> buffers;
-        cudaMallocHost(&buffers[0], buffersize); CUERR;
-        cudaMallocHost(&buffers[1], buffersize); CUERR;
+        CUDACHECK(cudaMallocHost(&buffers[0], buffersize));
+        CUDACHECK(cudaMallocHost(&buffers[1], buffersize));
         
         int currentId;
-        cudaGetDevice(&currentId); CUERR;
-        wrapperCudaSetDevice(deviceIds[partition]); CUERR;
+        CUDACHECK(cudaGetDevice(&currentId));
+        CUDACHECK(wrapperCudaSetDevice(deviceIds[partition]));
 
         std::array<cudaStream_t, 2> streams;
-        cudaStreamCreate(&streams[0]); CUERR;
-        cudaStreamCreate(&streams[1]); CUERR;
+        CUDACHECK(cudaStreamCreate(&streams[0]));
+        CUDACHECK(cudaStreamCreate(&streams[1]));
 
         const std::int64_t batchsize = buffersize / bytesPerElement;
         const std::int64_t numBatches = SDIV(elementsPerLocation[partition], batchsize);
@@ -2395,7 +2395,7 @@ public:
             std::int64_t end = std::min(std::int64_t(elementsPerLocation[partition]), (batch + 1) * batchsize);
             const std::int64_t numElements = end-begin;
 
-            cudaStreamSynchronize(streams[bufferindex]); CUERR;
+            CUDACHECK(cudaStreamSynchronize(streams[bufferindex]));
 
             //TIMERSTARTCPU(readGpuPartitionFromStream_file);
             stream.read(reinterpret_cast<char*>(buffers[bufferindex]), sizeOfElement * numElements);
@@ -2404,58 +2404,44 @@ public:
             
             Value_t* dest = offsetPtr(dataPtrPerLocation[partition], begin);
             //TIMERSTARTCPU(readGpuPartitionFromStream_memcpy);
-            cudaMemcpyAsync(dest, buffers[bufferindex], sizeOfElement * numElements, H2D, streams[bufferindex]); CUERR; 
+            CUDACHECK(cudaMemcpyAsync(dest, buffers[bufferindex], sizeOfElement * numElements, H2D, streams[bufferindex])); 
             //TIMERSTOPCPU(readGpuPartitionFromStream_memcpy);       
 
             bufferindex = bufferindex == 0 ? 1 : 0;        
         }
 
-        cudaStreamSynchronize(streams[0]); CUERR;
-        cudaStreamSynchronize(streams[1]); CUERR;
+        CUDACHECK(cudaStreamSynchronize(streams[0]));
+        CUDACHECK(cudaStreamSynchronize(streams[1]));
 
-        cudaStreamDestroy(streams[0]); CUERR;
-        cudaStreamDestroy(streams[1]); CUERR;
+        CUDACHECK(cudaStreamDestroy(streams[0]));
+        CUDACHECK(cudaStreamDestroy(streams[1]));
 
-        cudaFreeHost(buffers[0]); CUERR;
-        cudaFreeHost(buffers[1]); CUERR;
+        CUDACHECK(cudaFreeHost(buffers[0]));
+        CUDACHECK(cudaFreeHost(buffers[1]));
 
-        wrapperCudaSetDevice(currentId); CUERR;
+        CUDACHECK(wrapperCudaSetDevice(currentId));
     }
 
     std::vector<char> writeGpuPartitionToMemory(int partition) const{
         assert(0 <= partition);
         assert(partition < numGpus);
 
-        int currentId;
-        cudaGetDevice(&currentId); CUERR;
-
-        wrapperCudaSetDevice(deviceIds[partition]); CUERR;
+        cub::SwitchDevice sd{deviceIds[partition]};
 
         std::size_t bytes = getPartitionSizeInBytes(partition);
         std::vector<char> vec(bytes);
 
-        //TIMERSTARTCPU(writeGpuPartitionToMemory_memcpy);
-        cudaMemcpy(vec.data(), dataPtrPerLocation[partition], bytes, D2H); CUERR;
-        //TIMERSTOPCPU(writeGpuPartitionToMemory_memcpy);
-
-        wrapperCudaSetDevice(currentId); CUERR;
+        CUDACHECK(cudaMemcpy(vec.data(), dataPtrPerLocation[partition], bytes, D2H));
 
         return vec;
     }
 
     void readGpuPartitionFromMemory(int partition, const std::vector<char>& savedpartition){
 
-        int currentId;
-        cudaGetDevice(&currentId); CUERR;
-
-        wrapperCudaSetDevice(deviceIds[partition]); CUERR;
+        cub::SwitchDevice sd{deviceIds[partition]};
 
         std::size_t bytes = savedpartition.size();
-        //TIMERSTARTCPU(readGpuPartitionFromMemory_memcpy);
-        cudaMemcpy(dataPtrPerLocation[partition], savedpartition.data(), bytes, H2D); CUERR;
-        //TIMERSTOPCPU(readGpuPartitionFromMemory_memcpy);
-
-        wrapperCudaSetDevice(currentId); CUERR;
+        CUDACHECK(cudaMemcpy(dataPtrPerLocation[partition], savedpartition.data(), bytes, H2D));
     }
 
     std::size_t writeGpuPartitionsToStream(std::ostream& stream) const{
@@ -2535,26 +2521,17 @@ public:
         assert(0 <= partition);
         assert(partition < numGpus);
 
-        int currentId;
-        cudaGetDevice(&currentId); CUERR;
+        cub::SwitchDevice sd{deviceIds[partition]};
 
-        wrapperCudaSetDevice(deviceIds[partition]); CUERR;
-        cudaFree(dataPtrPerLocation[partition]); CUERR;
-
-        wrapperCudaSetDevice(currentId); CUERR;
+        CUDACHECK(cudaFree(dataPtrPerLocation[partition]));
     }
 
     void allocateGpuPartition(int partition){
         assert(0 <= partition);
         assert(partition < numGpus);
 
-        int currentId;
-        cudaGetDevice(&currentId); CUERR;
-
-        wrapperCudaSetDevice(deviceIds[partition]); CUERR;
-        cudaMalloc(&dataPtrPerLocation[partition], sizeOfElement * elementsPerLocation[partition]); CUERR;
-
-        wrapperCudaSetDevice(currentId); CUERR;
+        cub::SwitchDevice sd{deviceIds[partition]};
+        CUDACHECK(cudaMalloc(&dataPtrPerLocation[partition], sizeOfElement * elementsPerLocation[partition]));
     }
 
     void deallocateGpuPartitions(){
@@ -2571,21 +2548,21 @@ public:
 
 private:
     void destroy(){
-        int oldDevice; cudaGetDevice(&oldDevice); CUERR;
+        int oldDevice; CUDACHECK(cudaGetDevice(&oldDevice));
 
         if(dataPtrPerLocation.size() > 0){
 
             for(int gpu = 0; gpu < numGpus; gpu++){
-                wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
+                CUDACHECK(wrapperCudaSetDevice(deviceIds[gpu]));
                 if(debug) std::cerr << "DistributedArray::destroy device " << deviceIds[gpu] << " cudaFree(" << static_cast<void*>(dataPtrPerLocation[gpu]) << ")\n";
-                cudaFree(dataPtrPerLocation[gpu]); CUERR;
+                CUDACHECK(cudaFree(dataPtrPerLocation[gpu]));
             }
 
             if(debug) std::cerr << "DistributedArray::destroy delete [](" << static_cast<void*>(dataPtrPerLocation[hostLocation]) << ")\n";
             delete [] dataPtrPerLocation[hostLocation];
         }
 
-        wrapperCudaSetDevice(oldDevice); CUERR;
+        CUDACHECK(wrapperCudaSetDevice(oldDevice));
     }
 };
 

@@ -2,6 +2,7 @@
 #define CARE_GROUP_BY_KEY_HPP
 
 #include <hpc_helpers.cuh>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <thrust/system/omp/execution_policy.h>
 #include <thrust/iterator/constant_iterator.h>
@@ -489,7 +490,7 @@ namespace care{
                 int deviceId = 0;
                 CUDACHECK(cudaGetDevice(&deviceId));
                 int canUseHostPointerForRegister = 0;
-                cudaDeviceGetAttribute(&canUseHostPointerForRegister, cudaDevAttrCanUseHostPointerForRegisteredMem, deviceId); CUERR;
+                CUDACHECK(cudaDeviceGetAttribute(&canUseHostPointerForRegister, cudaDevAttrCanUseHostPointerForRegisteredMem, deviceId));
                 if(0 == canUseHostPointerForRegister){
                     return false;
                 }
@@ -520,7 +521,7 @@ namespace care{
                 );
 
                 warpcore::Status tablestatus = gpuTable.pop_status((cudaStream_t)0);
-                cudaStreamSynchronize((cudaStream_t)0); CUERR;
+                CUDACHECK(cudaStreamSynchronize((cudaStream_t)0));
 
                 if(tablestatus.has_any_errors()){
                     std::cerr << "groupByKeyWarpcore init status" << tablestatus << "\n";
@@ -548,17 +549,17 @@ namespace care{
                 for(std::size_t i = 0; i < size; i += buffersize){
                     std::size_t currentbatchsize = std::min(buffersize, size - i);
                     
-                    cudaStreamSynchronize(streams[bufferindex]); CUERR; //protect pinned buffer
+                    CUDACHECK(cudaStreamSynchronize(streams[bufferindex])); //protect pinned buffer
 
                     std::copy_n(keys.begin() + i, currentbatchsize, h_keysarray[bufferindex].data());
 
-                    cudaMemcpyAsync(
+                    CUDACHECK(cudaMemcpyAsync(
                         d_keysarray[bufferindex].data(),
                         h_keysarray[bufferindex].data(),
                         sizeof(Key_t) * currentbatchsize,
                         H2D,
                         streams[bufferindex]
-                    ); CUERR;
+                    ));
 
                     //iota values can be generated on the device instead of transfer -> iota kernel
                     helpers::lambda_kernel<<<SDIV(currentbatchsize, 128), 128, 0, streams[bufferindex]>>>(
@@ -571,7 +572,7 @@ namespace care{
                                 values[tid] = offset + tid;
                             }
                         }
-                    ); CUERR;
+                    ); CUDACHECKASYNC;
 
                     gpuTable.insert(
                         d_keysarray[bufferindex],
@@ -585,11 +586,11 @@ namespace care{
                 }
 
                 for(int i = 0; i < numbuf; i++){
-                    cudaStreamSynchronize(streams[i]); CUERR;
+                    CUDACHECK(cudaStreamSynchronize(streams[i]));
                 }
 
                 tablestatus = gpuTable.pop_status((cudaStream_t)0);
-                cudaStreamSynchronize((cudaStream_t)0); CUERR;
+                CUDACHECK(cudaStreamSynchronize((cudaStream_t)0));
 
                 if(tablestatus.has_any_errors()){
                     std::cerr << "groupByKeyWarpcore insert status" << tablestatus << "\n";
@@ -604,20 +605,20 @@ namespace care{
                 }
 
                 std::size_t numUniqueKeys = gpuTable.num_keys((cudaStream_t)0);
-                cudaStreamSynchronize((cudaStream_t)0); CUERR;
+                CUDACHECK(cudaStreamSynchronize((cudaStream_t)0));
 
                 if(numUniqueKeys > std::size_t(std::numeric_limits<int>::max())){
                     return false;
                 }
 
                 Key_t* d_unique_keys{};
-                cudaMalloc(&d_unique_keys, sizeof(Key_t) * numUniqueKeys); CUERR;
+                CUDACHECK(cudaMalloc(&d_unique_keys, sizeof(Key_t) * numUniqueKeys));
                 std::size_t* d_numbers{};
-                cudaMalloc(&d_numbers, sizeof(std::size_t) * (numUniqueKeys + 1)); CUERR;
+                CUDACHECK(cudaMalloc(&d_numbers, sizeof(std::size_t) * (numUniqueKeys + 1)));
 
                 // keys.resize(numUniqueKeys);
                 // //treat vector memory as pinned memory to allow direct retrieval from hashtable
-                // cudaHostRegister(keys.data(), numUniqueKeys * sizeof(Key_t), cudaHostRegisterMapped); CUERR;
+                // CUDACHECK(cudaHostRegister(keys.data(), numUniqueKeys * sizeof(Key_t), cudaHostRegisterMapped));
 
 
 
@@ -625,7 +626,7 @@ namespace care{
                     d_unique_keys,
                     numUniqueKeys,
                     (cudaStream_t)0
-                ); CUERR;
+                ); CUDACHECKASYNC;
 
                 dim3 block(512, 1, 1);
                 dim3 grid(SDIV(numUniqueKeys, block.x / cggroupsize), 1, 1);
@@ -671,38 +672,38 @@ namespace care{
 
                         }
                     }
-                ); CUERR;
+                ); CUDACHECKASYNC;
 
                 std::size_t cubbytes = 0;
-                cub::DeviceScan::InclusiveSum(
+                CUDACHECK(cub::DeviceScan::InclusiveSum(
                     nullptr,
                     cubbytes,
                     d_numbers,
                     d_numbers,
                     numUniqueKeys + 1,
                     (cudaStream_t)0	
-                );
+                ));
 
                 void* cubtemp{};
-                cudaMalloc(&cubtemp, cubbytes); CUERR;
+                CUDACHECK(cudaMalloc(&cubtemp, cubbytes));
 
-                cub::DeviceScan::InclusiveSum(
+                CUDACHECK(cub::DeviceScan::InclusiveSum(
                     cubtemp,
                     cubbytes,
                     d_numbers,
                     d_numbers,
                     numUniqueKeys + 1,
                     (cudaStream_t)0	
-                );
+                ));
 
                 std::size_t numRemainingValues = 0;
-                cudaMemcpyAsync(&numRemainingValues, d_numbers + numUniqueKeys, sizeof(std::size_t), D2H, (cudaStream_t)0); CUERR;
-                cudaStreamSynchronize((cudaStream_t)0); CUERR;
+                CUDACHECK(cudaMemcpyAsync(&numRemainingValues, d_numbers + numUniqueKeys, sizeof(std::size_t), D2H, (cudaStream_t)0));
+                CUDACHECK(cudaStreamSynchronize((cudaStream_t)0));
 
                 cudaFree(cubtemp);
 
                 Value_t* d_values;
-                cudaMalloc(&d_values, sizeof(Value_t) * numRemainingValues); CUERR;
+                CUDACHECK(cudaMalloc(&d_values, sizeof(Value_t) * numRemainingValues));
 
                 helpers::lambda_kernel<<<grid, block, 0, (cudaStream_t)0>>>(
                     [
@@ -743,15 +744,15 @@ namespace care{
                             }
                         }
                     }
-                ); CUERR;
+                ); CUDACHECKASYNC;
 
                 deallocVector(values);
                 values.resize(numRemainingValues);
-                cudaMemcpyAsync(values.data(), d_values, sizeof(Value_t) * numRemainingValues, D2H, (cudaStream_t)0); CUERR
+                CUDACHECK(cudaMemcpyAsync(values.data(), d_values, sizeof(Value_t) * numRemainingValues, D2H, (cudaStream_t)0));
 
                 deallocVector(keys);
                 keys.resize(numUniqueKeys);
-                cudaMemcpyAsync(keys.data(), d_unique_keys, sizeof(Key_t) * numUniqueKeys, D2H, (cudaStream_t)0); CUERR
+                CUDACHECK(cudaMemcpyAsync(keys.data(), d_unique_keys, sizeof(Key_t) * numUniqueKeys, D2H, (cudaStream_t)0));
 
                 deallocVector(offsets);
                 offsets.resize(numUniqueKeys+1);
@@ -765,16 +766,16 @@ namespace care{
                 for(std::size_t i = 0; i < numUniqueKeys+1; i += buffersize){
                     std::size_t currentbatchsize = std::min(buffersize, numUniqueKeys+1 - i);                    
 
-                    cudaMemcpyAsync(h_offsetsarray[bufferindex].data(), d_numbers + i, sizeof(Key_t) * currentbatchsize, D2H, streams[bufferindex]); CUERR
+                    CUDACHECK(cudaMemcpyAsync(h_offsetsarray[bufferindex].data(), d_numbers + i, sizeof(Key_t) * currentbatchsize, D2H, streams[bufferindex]));
 
-                    cudaStreamSynchronize(streams[bufferindex]); CUERR;
+                    CUDACHECK(cudaStreamSynchronize(streams[bufferindex]));
 
                     std::copy_n(h_offsetsarray[bufferindex].data(), currentbatchsize, offsets.begin() + i);
                 }
 
-                cudaFree(d_numbers); CUERR;
-                cudaFree(d_values); CUERR;
-                cudaFree(d_unique_keys); CUERR;            
+                CUDACHECK(cudaFree(d_numbers));
+                CUDACHECK(cudaFree(d_values));
+                CUDACHECK(cudaFree(d_unique_keys));            
                 
                 return true;
             }
@@ -828,7 +829,7 @@ namespace care{
                 );
 
                 warpcore::Status tablestatus = gputable->pop_status(stream);
-                cudaStreamSynchronize(stream); CUERR;
+                CUDACHECK(cudaStreamSynchronize(stream));
                 if(tablestatus.has_any_errors()){
                     Result res;
                     res.success = false;
@@ -867,10 +868,10 @@ namespace care{
                 //     const int which = i % numstreams;
 
                 //     std::copy_n(keys.begin() + begin, num, h_keys_array[which].begin());
-                //     cudaMemcpyAsync(d_keys_array[which].data(), h_keys_array[which].data(), sizeof(Key) * num, H2D, stream_array[which]); CUERR;
+                //     CUDACHECK(cudaMemcpyAsync(d_keys_array[which].data(), h_keys_array[which].data(), sizeof(Key) * num, H2D, stream_array[which]));
                 //     care::gpu::fixKeysForGpuHashTable(d_keys_array[which].data(), num, stream_array[which]);
                 //     std::copy_n(values.begin() + begin, num, h_values_array[which].begin());
-                //     cudaMemcpyAsync(d_values_array[which].data(), h_values_array[which].data(), sizeof(Value) * num, H2D, stream_array[which]); CUERR;
+                //     CUDACHECK(cudaMemcpyAsync(d_values_array[which].data(), h_values_array[which].data(), sizeof(Value) * num, H2D, stream_array[which]));
                     
                 //     gputable->insert(
                 //         d_keys_array[which].data(),
@@ -887,13 +888,13 @@ namespace care{
                     const std::size_t num = end - begin;
 
                     const int which = i % numstreams;
-                    cudaStreamSynchronize(stream_array[which]); CUERR;
+                    CUDACHECK(cudaStreamSynchronize(stream_array[which]));
 
                     std::copy_n(keys.begin() + begin, num, h_keys_array[which].begin());
-                    cudaMemcpyAsync(d_keys_array[which].data(), h_keys_array[which].data(), sizeof(Key) * num, H2D, stream_array[which]); CUERR;
+                    CUDACHECK(cudaMemcpyAsync(d_keys_array[which].data(), h_keys_array[which].data(), sizeof(Key) * num, H2D, stream_array[which]));
                     care::gpu::fixKeysForGpuHashTable(d_keys_array[which].data(), num, stream_array[which]);
                     std::copy_n(values.begin() + begin, num, h_values_array[which].begin());
-                    cudaMemcpyAsync(d_values_array[which].data(), h_values_array[which].data(), sizeof(Value) * num, H2D, stream_array[which]); CUERR;
+                    CUDACHECK(cudaMemcpyAsync(d_values_array[which].data(), h_values_array[which].data(), sizeof(Value) * num, H2D, stream_array[which]));
                     
                     gputable->insert(
                         d_keys_array[which].data(),
@@ -905,7 +906,7 @@ namespace care{
                 }
 
                 for(int i = 0; i < numstreams; i++){
-                    cudaStreamSynchronize(stream_array[i]); CUERR;
+                    CUDACHECK(cudaStreamSynchronize(stream_array[i]));
                 }
 
             #else
@@ -915,13 +916,13 @@ namespace care{
                     const std::size_t num = end - begin;
 
                     const int which = i % 2;
-                    cudaStreamSynchronize(stream_array[which]); CUERR;
+                    CUDACHECK(cudaStreamSynchronize(stream_array[which]));
 
                     std::copy_n(keys.begin() + begin, num, h_keys_array[which].begin());
-                    cudaMemcpyAsync(d_keys_array[which].data(), h_keys_array[which].data(), sizeof(Key) * num, H2D, stream_array[which]); CUERR;
+                    CUDACHECK(cudaMemcpyAsync(d_keys_array[which].data(), h_keys_array[which].data(), sizeof(Key) * num, H2D, stream_array[which]));
                     care::gpu::fixKeysForGpuHashTable(d_keys_array[which].data(), num, stream_array[which]);
                     std::copy_n(values.begin() + begin, num, h_values_array[which].begin());
-                    cudaMemcpyAsync(d_values_array[which].data(), h_values_array[which].data(), sizeof(Value) * num, H2D, stream_array[which]); CUERR;
+                    CUDACHECK(cudaMemcpyAsync(d_values_array[which].data(), h_values_array[which].data(), sizeof(Value) * num, H2D, stream_array[which]));
                     
                     gputable->insert(
                         d_keys_array[which].data(),
@@ -938,13 +939,13 @@ namespace care{
                     const std::size_t num = end - begin;
 
                     const int which = i % 2;
-                    cudaStreamSynchronize(stream_array[which]); CUERR;
+                    CUDACHECK(cudaStreamSynchronize(stream_array[which]));
 
                     std::copy_n(keys.begin() + begin, num, h_keys_array[which].begin());
-                    cudaMemcpyAsync(d_keys_array[which].data(), h_keys_array[which].data(), sizeof(Key) * num, H2D, stream_array[which]); CUERR;
+                    CUDACHECK(cudaMemcpyAsync(d_keys_array[which].data(), h_keys_array[which].data(), sizeof(Key) * num, H2D, stream_array[which]));
                     care::gpu::fixKeysForGpuHashTable(d_keys_array[which].data(), num, stream_array[which]);
                     std::copy_n(values.begin() + begin, num, h_values_array[which].begin());
-                    cudaMemcpyAsync(d_values_array[which].data(), h_values_array[which].data(), sizeof(Value) * num, H2D, stream_array[which]); CUERR;
+                    CUDACHECK(cudaMemcpyAsync(d_values_array[which].data(), h_values_array[which].data(), sizeof(Value) * num, H2D, stream_array[which]));
                     
                     gputable->insert(
                         d_keys_array[which].data(),
@@ -955,12 +956,12 @@ namespace care{
                     );
                 }
 
-                cudaStreamSynchronize(stream_array[0]); CUERR;
-                cudaStreamSynchronize(stream_array[1]); CUERR;
+                CUDACHECK(cudaStreamSynchronize(stream_array[0]));
+                CUDACHECK(cudaStreamSynchronize(stream_array[1]));
             #endif                
 
                 tablestatus = gputable->pop_status(stream);
-                cudaStreamSynchronize(stream); CUERR;
+                CUDACHECK(cudaStreamSynchronize(stream));
                 if(tablestatus.has_any_errors()){
                     Result res;
                     res.success = false;

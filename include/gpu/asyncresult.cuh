@@ -2,6 +2,7 @@
 #define CARE_ASYNC_RESULT_CUH
 
 #include <hpc_helpers.cuh>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <cassert>
 
@@ -14,7 +15,7 @@ struct AsyncConstBufferWrapper{
 
     void wait() const{
         if(readyEvent != nullptr){
-            cudaEventSynchronize(readyEvent); CUERR;
+            CUDACHECK(cudaEventSynchronize(readyEvent));
         }
     }
 
@@ -31,7 +32,7 @@ struct AsyncConstBufferWrapper{
     //work submitted to stream after linkStream will not be processed until buffer is ready
     void linkStream(cudaStream_t stream) const {
         if(readyEvent != nullptr){
-            cudaStreamWaitEvent(stream, readyEvent, 0); CUERR;
+            CUDACHECK(cudaStreamWaitEvent(stream, readyEvent, 0));
         }
     }
 

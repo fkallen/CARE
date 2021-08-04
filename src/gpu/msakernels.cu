@@ -2,7 +2,7 @@
 
 #include <gpu/kernels.hpp>
 #include <hostdevicefunctions.cuh>
-
+#include <gpu/cudaerrorcheck.cuh>
 #include <bestalignment.hpp>
 
 #include <sequencehelpers.hpp>
@@ -992,7 +992,7 @@ namespace gpu{
             d_consensusQuality,
             consensusQualityPitchInBytes,
             multiMSA
-        ); CUERR;
+        ); CUDACHECKASYNC;
     }
 
     void callComputeDecodedMsaConsensusKernel(
@@ -1007,7 +1007,7 @@ namespace gpu{
             d_consensus,
             consensusPitchInBytes,
             multiMSA
-        ); CUERR;
+        ); CUDACHECKASYNC;
     }
 
     void callComputeMsaSizesKernel(
@@ -1021,7 +1021,7 @@ namespace gpu{
         computeMsaSizesKernel<<<grid, block, 0, stream>>>(
             d_sizes,
             multiMSA
-        ); CUERR;
+        ); CUDACHECKASYNC;
     }
     
     void callMsaCandidateRefinementKernel_multiiter_async(
@@ -1092,12 +1092,12 @@ namespace gpu{
             std::map<KernelLaunchConfig, KernelProperties> mymap;
 
             KernelProperties kernelProperties;
-            cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
                 &kernelProperties.max_blocks_per_SM,
                 msaCandidateRefinement_multiiter_kernel<blocksize, memType>,
                 kernelLaunchConfig.threads_per_block, 
                 kernelLaunchConfig.smem
-            ); CUERR;
+            ));
 
             mymap[kernelLaunchConfig] = kernelProperties;
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
@@ -1144,7 +1144,7 @@ namespace gpu{
             numIterations
         );
 
-        CUERR;
+        CUDACHECKASYNC;
     }
 
 
@@ -1220,12 +1220,12 @@ namespace gpu{
             std::map<KernelLaunchConfig, KernelProperties> mymap;
 
             KernelProperties kernelProperties;
-            cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
                 &kernelProperties.max_blocks_per_SM,
                 msaCandidateRefinement_singleiter_kernel<blocksize, memoryType>,
                 kernelLaunchConfig.threads_per_block, 
                 kernelLaunchConfig.smem
-            ); CUERR;
+            ));
 
             mymap[kernelLaunchConfig] = kernelProperties;
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
@@ -1272,7 +1272,7 @@ namespace gpu{
             d_anchorIsFinished
         );
 
-        CUERR;
+        CUDACHECKASYNC;
     }
 
 
@@ -1336,12 +1336,12 @@ namespace gpu{
         std::map<KernelLaunchConfig, KernelProperties> mymap;
 
         KernelProperties kernelProperties;
-        cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
             &kernelProperties.max_blocks_per_SM,
             constructMultipleSequenceAlignmentsKernel<BLOCKSIZE, memoryType>,
             kernelLaunchConfig.threads_per_block, 
             kernelLaunchConfig.smem
-        ); CUERR;
+        ));
 
         mymap[kernelLaunchConfig] = kernelProperties;
         max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
@@ -1378,7 +1378,7 @@ namespace gpu{
         canUseQualityScores,
         encodedSequencePitchInInts,
         qualityPitchInBytes
-    ); CUERR;
+    ); CUDACHECKASYNC;
 
 
 

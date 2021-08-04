@@ -3,7 +3,7 @@
 
 
 #include <hpc_helpers.cuh>
-
+#include <gpu/cudaerrorcheck.cuh>
 #include <gpu/singlegpu2darray.cuh>
 
 #include <memorymanagement.hpp>
@@ -402,7 +402,7 @@ public:
         };
 
         HandleStruct() : syncevent{cudaEventDisableTiming}{
-            cudaGetDevice(&deviceId); CUERR;            
+            CUDACHECK(cudaGetDevice(&deviceId));            
         }
 
         HandleStruct(HandleStruct&&) = default;
@@ -476,19 +476,19 @@ public:
             deviceBuffers.d_multigpuarrayOffsets.resize(h_numRowsPerGpu.size());
             deviceBuffers.d_multigpuarrayOffsetsPrefixSum.resize(h_numRowsPerGpuPrefixSum.size());
 
-            cudaMemcpy(
+            CUDACHECK(cudaMemcpy(
                 deviceBuffers.d_multigpuarrayOffsets.get(),
                 h_numRowsPerGpu.get(),
                 h_numRowsPerGpu.size() * sizeof(std::size_t),
                 H2D
-            ); CUERR;
+            ));
 
-            cudaMemcpy(
+            CUDACHECK(cudaMemcpy(
                 deviceBuffers.d_multigpuarrayOffsetsPrefixSum.get(),
                 h_numRowsPerGpuPrefixSum.get(),
                 h_numRowsPerGpuPrefixSum.size() * sizeof(std::size_t),
                 H2D
-            ); CUERR;
+            ));
 
             handle->deviceBuffers.emplace_back(std::move(deviceBuffers));
         }
@@ -501,25 +501,25 @@ public:
             for(int i = 0; i < int(h_numRowsPerGpu.size()); i++){
                 callerBuffers.events.emplace_back(cudaEventDisableTiming);
             }
+            CUDACHECKASYNC;
+            callerBuffers.d_multigpuarrayOffsets.resize(h_numRowsPerGpu.size());
+            callerBuffers.d_multigpuarrayOffsetsPrefixSum.resize(h_numRowsPerGpuPrefixSum.size());
+            callerBuffers.d_numSelected.resize(h_numRowsPerGpu.size());
+            callerBuffers.h_numSelected.resize(h_numRowsPerGpu.size());
 
-            callerBuffers.d_multigpuarrayOffsets.resize(h_numRowsPerGpu.size()); CUERR;
-            callerBuffers.d_multigpuarrayOffsetsPrefixSum.resize(h_numRowsPerGpuPrefixSum.size()); CUERR;
-            callerBuffers.d_numSelected.resize(h_numRowsPerGpu.size()); CUERR;
-            callerBuffers.h_numSelected.resize(h_numRowsPerGpu.size()); CUERR;
-
-            cudaMemcpy(
+            CUDACHECK(cudaMemcpy(
                 callerBuffers.d_multigpuarrayOffsets.get(),
                 h_numRowsPerGpu.get(),
                 h_numRowsPerGpu.size() * sizeof(std::size_t),
                 H2D
-            ); CUERR;
+            ));
 
-            cudaMemcpy(
+            CUDACHECK(cudaMemcpy(
                 callerBuffers.d_multigpuarrayOffsetsPrefixSum.get(),
                 h_numRowsPerGpuPrefixSum.get(),
                 h_numRowsPerGpuPrefixSum.size() * sizeof(std::size_t),
                 H2D
-            ); CUERR;  
+            ));  
 
         } 
 
@@ -704,7 +704,7 @@ public:
         if(numIndices == 0) return;
 
         int destDeviceId = 0;
-        cudaGetDevice(&destDeviceId); CUERR;
+        CUDACHECK(cudaGetDevice(&destDeviceId));
 
         if((isSingleGpu() || isReplicatedSingleGpu) && !mayContainInvalidIndices){
             auto it = std::find(usedDeviceIds.begin(), usedDeviceIds.end(), destDeviceId);
@@ -759,7 +759,7 @@ public:
             resizeWithSync(callerBuffers.d_selectedPositions, numIndices * gpuArrays.size());
             resizeWithSync(callerBuffers.d_dataCommunicationBuffer, numIndices * destRowPitchInBytes);
 
-            cudaMemsetAsync(callerBuffers.d_numSelected.get(), 0, callerBuffers.d_numSelected.sizeInBytes(), destStream); CUERR;
+            CUDACHECK(cudaMemsetAsync(callerBuffers.d_numSelected.get(), 0, callerBuffers.d_numSelected.sizeInBytes(), destStream));
 
             //helpers::GpuTimer gpuTimer(destStream, "partitionsplit");
 
@@ -773,14 +773,14 @@ public:
                 d_indices
             );
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 callerBuffers.h_numSelected.data(), 
                 callerBuffers.d_numSelected.data(), 
                 sizeof(std::size_t) * numDistinctGpus, 
                 D2H, 
                 destStream
-            ); CUERR;
-            cudaStreamSynchronize(destStream);
+            ));
+            CUDACHECK(cudaStreamSynchronize(destStream));
 
             std::vector<std::size_t> numSelectedPrefixSum(numDistinctGpus,0);
             std::partial_sum(
@@ -826,7 +826,7 @@ public:
             //             destRowPitchInBytes, 
             //             scatterIndexGenerator, 
             //             num
-            //         ); CUERR; 
+            //         ); CUDACHECKASYNC; 
             //     }
             // }else
             {
@@ -896,7 +896,7 @@ public:
                             deviceBuffers.stream
                         );
 
-                        cudaEventRecord(deviceBuffers.event, deviceBuffers.stream); CUERR;
+                        CUDACHECK(cudaEventRecord(deviceBuffers.event, deviceBuffers.stream));
                     }
                 }
 
@@ -909,7 +909,7 @@ public:
                         auto& deviceBuffers = handle->deviceBuffers[d];
                         const int deviceId = gpuArray->getDeviceId();
 
-                        cudaStreamWaitEvent(callerBuffers.streams[d], deviceBuffers.event, 0); CUERR;
+                        CUDACHECK(cudaStreamWaitEvent(callerBuffers.streams[d], deviceBuffers.event, 0));
     
                         copy(
                             callerBuffers.d_dataCommunicationBuffer.data() + destRowPitchInBytes * numSelectedPrefixSum[d], 
@@ -943,9 +943,9 @@ public:
                             destRowPitchInBytes, 
                             scatterIndexGenerator, 
                             num
-                        ); CUERR; 
+                        ); CUDACHECKASYNC; 
 
-                        cudaEventRecord(callerBuffers.events[d], callerBuffers.streams[d]); CUERR;
+                        CUDACHECK(cudaEventRecord(callerBuffers.events[d], callerBuffers.streams[d]));
                     }
                 }
 
@@ -954,7 +954,7 @@ public:
                     const int num = callerBuffers.h_numSelected[d];
 
                     if(num > 0){
-                        cudaStreamWaitEvent(destStream, callerBuffers.events[d], 0); CUERR;
+                        CUDACHECK(cudaStreamWaitEvent(destStream, callerBuffers.events[d], 0));
                     }                
                 }
             }
@@ -977,7 +977,7 @@ public:
         if(numIndices == 0) return;
 
         int srcDeviceId = 0;
-        cudaGetDevice(&srcDeviceId); CUERR;
+        CUDACHECK(cudaGetDevice(&srcDeviceId));
 
         if(isSingleGpu() && !mayContainInvalidIndices && gpuArrays[0]->getDeviceId() == srcDeviceId){ //if all data should be scattered to same device
             auto indexGenerator = [d_indices] __device__ (auto i){
@@ -1020,7 +1020,7 @@ public:
                     return (ps[d] <= indexPositionPair.value && indexPositionPair.value < ps[d+1]);
                 };
 
-                cub::DeviceSelect::If(
+                CUDACHECK(cub::DeviceSelect::If(
                     nullptr, 
                     temp_storage_bytes, 
                     d_indicesWithPosition, 
@@ -1029,7 +1029,7 @@ public:
                     numIndices, 
                     selectOp, 
                     srcStream
-                );
+                ));
             }
 
             resizeWithSync(callerBuffers.d_cubTemp, temp_storage_bytes);
@@ -1060,7 +1060,7 @@ public:
                 };
 
                 //select indices for gpuArray
-                cub::DeviceSelect::If(
+                CUDACHECK(cub::DeviceSelect::If(
                     callerBuffers.d_cubTemp.get(), 
                     temp_storage_bytes, 
                     d_indicesWithPosition, 
@@ -1069,9 +1069,7 @@ public:
                     numIndices, 
                     selectOp, 
                     srcStream
-                );
-
-                //cudaDeviceSynchronize(); CUERR;
+                ));
 
                 auto gatherIndexGenerator = [
                     d_selectedIndicesWithPositions = callerBuffers.d_selectedIndicesWithPositions.get(), 
@@ -1094,9 +1092,7 @@ public:
                     srcRowPitchInBytes, 
                     gatherIndexGenerator, 
                     callerBuffers.d_numSelected.get()
-                ); CUERR;
-
-                //cudaDeviceSynchronize(); CUERR;
+                ); CUDACHECKASYNC;
 
                 copy(
                     targetDeviceBuffers.d_numSelected.get(), 
@@ -1125,16 +1121,12 @@ public:
                     srcStream
                 );
 
-                //cudaDeviceSynchronize(); CUERR;
-
-                cudaEventRecord(callerBuffers.event, srcStream); CUERR;
-
-                //cudaDeviceSynchronize(); CUERR;
+                CUDACHECK(cudaEventRecord(callerBuffers.event, srcStream));
 
                 //scatter into target gpuArray
                 cub::SwitchDevice sd(deviceId);
 
-                cudaStreamWaitEvent(targetDeviceBuffers.stream, callerBuffers.event, 0); CUERR;
+                CUDACHECK(cudaStreamWaitEvent(targetDeviceBuffers.stream, callerBuffers.event, 0));
 
                 auto scatterIndexGenerator = [
                     d,
@@ -1154,9 +1146,7 @@ public:
                     targetDeviceBuffers.stream
                 );
 
-                cudaEventRecord(targetDeviceBuffers.event, targetDeviceBuffers.stream); CUERR;
-
-                //cudaDeviceSynchronize(); CUERR;
+                CUDACHECK(cudaEventRecord(targetDeviceBuffers.event, targetDeviceBuffers.stream));
 
                 //gpuArray->print();
             }
@@ -1166,10 +1156,10 @@ public:
                 const auto& gpuArray = gpuArrays[d];
                 const int deviceId = gpuArray->getDeviceId();
 
-                cudaStreamWaitEvent(srcStream, handle->deviceBuffers[d].event, 0); CUERR;
+                CUDACHECK(cudaStreamWaitEvent(srcStream, handle->deviceBuffers[d].event, 0));
             }
 
-            handle->syncevent.record(srcStream);
+            CUDACHECK(handle->syncevent.record(srcStream));
         }
     }
 
@@ -1199,7 +1189,7 @@ private:
         }else{
             //std::cerr << "copy from device " << srcDevice << " to device " << dstDevice << "\n";
         }
-        CUERR;
+
         cudaError_t status = cudaMemcpyPeerAsync(dst, dstDevice, src, srcDevice, count, stream);
         if(status != cudaSuccess){
             cudaGetLastError();
@@ -1208,9 +1198,8 @@ private:
             << "src=" << src << ", "
             << "srcDevice=" << srcDevice << ", "
             << "count=" << count << "\n";
-
-            assert(false);
         }
+        CUDACHECK(status);
     }
 
     void init(

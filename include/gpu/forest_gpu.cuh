@@ -5,8 +5,11 @@
 #include <hpc_helpers.cuh>
 #include <classification.hpp>
 #include <memorymanagement.hpp>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <utility>
+
+#include <cub/cub.cuh>
 
 //#include <forest.hpp>
 
@@ -104,9 +107,7 @@ public:
     GpuForest(const CpuForest& clf, int gpuId)
         : deviceId(gpuId) {
 
-        int curgpu;
-        cudaGetDevice(&curgpu); CUERR;
-        cudaSetDevice(deviceId); CUERR;
+        cub::SwitchDevice sd{deviceId};
 
         numTrees = clf.forest_.size();
 
@@ -132,25 +133,23 @@ public:
                 nodes[n] = node;
             }
 
-            cudaMalloc(&devicePointers[t], sizeof(Node) * numNodes); CUERR;
-            cudaMemcpy(
+            CUDACHECK(cudaMalloc(&devicePointers[t], sizeof(Node) * numNodes));
+            CUDACHECK(cudaMemcpy(
                 devicePointers[t],
                 nodes.data(),
                 sizeof(Node) * numNodes,
                 H2D
-            );CUERR;
+            ));
         }
 
-        cudaMalloc(&d_data, sizeof(Node*) * numTrees);
+        CUDACHECK(cudaMalloc(&d_data, sizeof(Node*) * numTrees));
 
-        cudaMemcpy(
+        CUDACHECK(cudaMemcpy(
             d_data,
             devicePointers.data(),
             sizeof(Node*) * numTrees,
             H2D
-        );CUERR;
-
-        cudaSetDevice(curgpu); CUERR;
+        ));
     }
 
     GpuForest(GpuForest&& rhs){
@@ -171,25 +170,20 @@ public:
     GpuForest& operator=(const GpuForest& rhs) = delete;
 
     ~GpuForest(){
-        int curgpu;
-        cudaGetDevice(&curgpu); CUERR;
-        cudaSetDevice(deviceId); CUERR;
+        cub::SwitchDevice sd{deviceId};
 
         std::vector<Node*> devicePointers(numTrees);
-        cudaMemcpy(
+        CUDACHECK(cudaMemcpy(
             devicePointers.data(),
             d_data,
             sizeof(Node*) * numTrees,
             D2H
-        );CUERR;
+        ));
 
         for(int t = 0; t < numTrees; t++){
-            cudaFree(devicePointers[t]); CUERR;
+            CUDACHECK(cudaFree(devicePointers[t]));
         }
-        cudaFree(d_data); CUERR;
-
-
-        cudaSetDevice(curgpu); CUERR;
+        CUDACHECK(cudaFree(d_data));
     }
 
     operator Clf() const{

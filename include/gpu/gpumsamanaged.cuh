@@ -6,6 +6,7 @@
 #include <gpu/kernellaunch.hpp>
 #include <gpu/kernels.hpp>
 #include <hpc_helpers.cuh>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <cub/cub.cuh>
 
@@ -54,7 +55,7 @@ namespace gpu{
             d_columnProperties(alloc){
 
             int deviceId;
-            cudaGetDevice(&deviceId); CUERR;
+            CUDACHECK(cudaGetDevice(&deviceId));
             kernelLaunchHandle = gpu::make_kernel_launch_handle(deviceId);
 
             pinnedValue.resize(1);
@@ -287,15 +288,15 @@ namespace gpu{
                     stream
                 );
 
-                cudaMemcpyAsync(
+                CUDACHECK(cudaMemcpyAsync(
                     pinnedValue.data(),
                     d_maxMsaWidth.data(),
                     sizeof(int),
                     D2H,
                     stream
-                ); CUERR;
+                ));
 
-                cudaStreamSynchronize(stream); CUERR;
+                CUDACHECK(cudaStreamSynchronize(stream));
 
                 columnPitchInElements = *pinnedValue;
             }else{
