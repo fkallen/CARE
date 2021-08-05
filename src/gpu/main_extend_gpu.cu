@@ -34,7 +34,7 @@ bool checkMandatoryArguments(const cxxopts::ParseResult& parseresults){
 
 	const std::vector<std::string> mandatory = {
 		"inputfiles", "outdir", "outputfilenames", "coverage",
-		"insertsize", "insertsizedev", "pairmode"
+		"insertsize", "insertsizedev", "pairmode" , "eo", "gpu"
 	};
 
 	bool success = true;
@@ -97,9 +97,7 @@ int main(int argc, char** argv){
 			cxxopts::value<std::string>())
 		("eo", 
 			"The name of the output file containing extended reads",
-			cxxopts::value<std::string>());
-
-	options.add_options("Mandatory GPU")
+			cxxopts::value<std::string>())
 		("g,gpu", "One or more GPU device ids to be used for correction. ", cxxopts::value<std::vector<int>>());
 
 	options.add_options("Additional")
@@ -117,8 +115,7 @@ int main(int argc, char** argv){
 			cxxopts::value<bool>()->implicit_value("true")
 		)
 		("t,threads", "Maximum number of thread to use. Must be greater than 0", cxxopts::value<int>())
-		("batchsize", "Number of reads to correct in a single batch. Must be greater than 0. "
-			"In CARE CPU, one batch per thread is used. In CARE GPU, two batches per GPU are used. "
+		("batchsize", "Number of reads in a single batch. Must be greater than 0. "
 			"Default: " + tostring(CorrectionOptions{}.batchsize),
 		cxxopts::value<int>())
 		("q,useQualityScores", "If set, quality scores (if any) are considered during read correction. "
@@ -128,12 +125,6 @@ int main(int argc, char** argv){
 			"If set, reads which contain at least one ambiguous nucleotide will not be corrected. "
 			"Default: " + tostring(CorrectionOptions{}.excludeAmbiguousReads),
 		cxxopts::value<bool>()->implicit_value("true"))
-		("candidateCorrection", "If set, candidate reads will be corrected,too. "
-			"Default: " + tostring(CorrectionOptions{}.correctCandidates),
-		cxxopts::value<bool>()->implicit_value("true"))
-        ("candidateCorrectionNewColumns", "If candidateCorrection is set, a candidates with an absolute shift of candidateCorrectionNewColumns compared to anchor are corrected. "
-			"Default: " + tostring(CorrectionOptions{}.new_columns_to_correct),
-		cxxopts::value<int>())
 		("maxmismatchratio", "Overlap between anchor and candidate must contain at "
 			"most (maxmismatchratio * overlapsize) mismatches. "
 			"Default: " + tostring(GoodAlignmentProperties{}.maxErrorRate),
@@ -151,48 +142,24 @@ int main(int argc, char** argv){
 		("coveragefactortuning", "coveragefactortuning. "
 			"Default: " + tostring(CorrectionOptions{}.m_coverage),
 		cxxopts::value<float>())
-		("nReads", "Upper bound for number of reads in the inputfile. If missing or set 0, the input file is parsed to find the exact number of reads before any work is done.",
-		cxxopts::value<std::uint64_t>())
-		("min_length", "Lower bound for read length in file. If missing or set 0, the input file is parsed to find the exact minimum length before any work is done.",
-		cxxopts::value<int>())
-		("max_length", "Upper bound for read length in file. If missing or set 0, the input file is parsed to find the exact maximum length before any work is done.",
-		cxxopts::value<int>())
 		("p,showProgress", "If set, progress bar is shown during correction",
 		cxxopts::value<bool>()->implicit_value("true"))
 		("save-preprocessedreads-to", "Save binary dump of data structure which stores input reads to disk",
 		cxxopts::value<std::string>())
 		("load-preprocessedreads-from", "Load binary dump of read data structure from disk",
 		cxxopts::value<std::string>())
-		("save-hashtables-to", "Save binary dump of hash tables to disk",
+		("save-hashtables-to", "Save binary dump of hash tables to disk. Ignored for GPU hashtables.",
 		cxxopts::value<std::string>())
-		("load-hashtables-from", "Load binary dump of hash tables from disk",
+		("load-hashtables-from", "Load binary dump of hash tables from disk. Ignored for GPU hashtables.",
 		cxxopts::value<std::string>())
 		("memHashtables", "Memory limit in bytes for hash tables and hash table construction. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: A bit less than memTotal.",
 		cxxopts::value<std::string>())
 		("m,memTotal", "Total memory limit in bytes. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: All free memory.",
 		cxxopts::value<std::string>())
 		("mergedoutput", "extension results will not be split into _extended and _remaining", cxxopts::value<bool>()->implicit_value("true"))
-		
-		("correctionType", "0: Classic, 1: Forest, 2: Print",
-			cxxopts::value<int>()->default_value("0"))
-		("correctionTypeCands", "0: Classic, 1: Forest, 2: Print",
-			cxxopts::value<int>()->default_value("0"))
-		("ml-forestfile", "The file for interfaceing with the scikit-learn classifier (Anchor correction)",
-			cxxopts::value<std::string>())
-		("ml-cands-forestfile", "The file for interfaceing with the scikit-learn classifier (Candidate correction)",
-			cxxopts::value<std::string>())
-		("thresholdAnchor", "Classification threshold for anchor classifier (\"Forest\") mode",
-			cxxopts::value<float>())
-		("thresholdCands", "Classification threshold for candidates classifier (\"Forest\") mode",
-			cxxopts::value<float>())
-		("samplingRateAnchor", "sampling rate for anchor features (print mode)",
-			cxxopts::value<float>())
-		("samplingRateCands", "sampling rate for candidates features (print mode)",
-			cxxopts::value<float>())
 		("warpcore", "Enable warpcore hash tables. 0: Disabled, 1: Enabled. "
 			"Default: " + tostring(RuntimeOptions{}.warpcore),
 		cxxopts::value<int>())
-		("pairedthreshold1", "pairedthreshold1", cxxopts::value<float>())
 		("hashloadfactor", "Load factor of hashtables. 0.0 < hashloadfactor < 1.0. Smaller values can improve the runtime at the expense of greater memory usage."
 			"Default: " + std::to_string(MemoryOptions{}.hashtableLoadfactor), cxxopts::value<float>())
 		("replicateGpuData", "If a GPU data structure fits into the memory of a single GPU, allow its replication to other GPUs. This can improve the runtime when multiple GPUs are used."
@@ -204,7 +171,7 @@ int main(int argc, char** argv){
 	auto parseresults = options.parse(argc, argv);
 
 	if(help) {
-		std::cout << options.help({"", "Mandatory", "Mandatory GPU", "Additional"}) << std::endl;
+		std::cout << options.help({"", "Mandatory", "Additional"}) << std::endl;
 		std::exit(0);
 	}
 
@@ -272,7 +239,7 @@ int main(int argc, char** argv){
 
 	//print all options that will be used
 	std::cout << std::boolalpha;
-	std::cout << "CARE will be started with the following parameters:\n";
+	std::cout << "CARE EXTEND GPU will be started with the following parameters:\n";
 
 	std::cout << "----------------------------------------\n";
 
@@ -288,23 +255,16 @@ int main(int argc, char** argv){
 		std::cout << "K-mer size for hashing: " << correctionOptions.kmerlength << "\n";
 	}
 	
-	std::cout << "Exclude ambigious reads from correction: " << correctionOptions.excludeAmbiguousReads << "\n";
-	std::cout << "Correct candidate reads: " << correctionOptions.correctCandidates << "\n";
-	std::cout << "Max shift for candidate correction: " << correctionOptions.new_columns_to_correct << "\n";
+	std::cout << "Exclude ambigious reads: " << correctionOptions.excludeAmbiguousReads << "\n";
 	std::cout << "Use quality scores: " << correctionOptions.useQualityScores << "\n";
 	std::cout << "Estimated dataset coverage: " << correctionOptions.estimatedCoverage << "\n";
 	std::cout << "errorfactortuning: " << correctionOptions.estimatedErrorrate << "\n";
 	std::cout << "coveragefactortuning: " << correctionOptions.m_coverage << "\n";
 	std::cout << "Batch size: " << correctionOptions.batchsize << "\n";
-	std::cout << "Correction type (anchor): " << int(correctionOptions.correctionType) 
-		<< " (" << to_string(correctionOptions.correctionType) << ")\n";
-	std::cout << "Correction type (cands): " << int(correctionOptions.correctionTypeCands) 
-		<< " (" << to_string(correctionOptions.correctionTypeCands) << ")\n";
 
 	std::cout << "Insert size: " << extensionOptions.insertSize << "\n";
 	std::cout << "Insert size deviation: " << extensionOptions.insertSizeStddev << "\n";
 
-	std::cout << "pairedthreshold1 " << correctionOptions.pairedthreshold1 << "\n";
 	std::cout << "Threads: " << runtimeOptions.threads << "\n";
 	std::cout << "Show progress bar: " << runtimeOptions.showProgress << "\n";
 	std::cout << "Can use GPU(s): " << runtimeOptions.canUseGpu << "\n";
@@ -322,10 +282,6 @@ int main(int argc, char** argv){
 	std::cout << "Maximum memory total: " << memoryOptions.memoryTotalLimit << "\n";
 	std::cout << "Hashtable load factor: " << memoryOptions.hashtableLoadfactor << "\n";
 
-
-	std::cout << "Minimum read length: " << fileOptions.minimum_sequence_length << "\n";
-	std::cout << "Maximum read length: " << fileOptions.maximum_sequence_length << "\n";
-	std::cout << "Maximum number of reads: " << fileOptions.nReads << "\n";
 	std::cout << "Paired mode: " << to_string(fileOptions.pairType) << "\n";
 	std::cout << "Output directory: " << fileOptions.outputdirectory << "\n";
 	std::cout << "Temporary directory: " << fileOptions.tempdirectory << "\n";
@@ -345,14 +301,18 @@ int main(int argc, char** argv){
 	}
 	std::cout << "\n";
 	std::cout << "Merged output: " << fileOptions.mergedoutput << "\n";
-	std::cout << "ml-forestfile: " << fileOptions.mlForestfileAnchor << "\n";
-	std::cout << "ml-cands-forestfile: " << fileOptions.mlForestfileCands << "\n";
-	std::cout << "anchor sampling rate: " << correctionOptions.sampleRateAnchor << "\n";
-	std::cout << "cands sampling rate: " << correctionOptions.sampleRateCands << "\n";
-	std::cout << "classification thresholds: " << correctionOptions.thresholdAnchor << " | " << correctionOptions.thresholdCands << "\n";
 	std::cout << "----------------------------------------\n";
 	std::cout << std::noboolalpha;
 
+	if(fileOptions.pairType == SequencePairType::SingleEnd || fileOptions.pairType == SequencePairType::Invalid){
+		std::cout << "Only paired-end extension is supported. Abort.\n";
+		return 0;
+	}
+
+	if(!runtimeOptions.canUseGpu){
+		std::cout << "No valid GPUs selected. Abort\n";
+		return 0;
+	}
 
     const int numThreads = runtimeOptions.threads;
 
