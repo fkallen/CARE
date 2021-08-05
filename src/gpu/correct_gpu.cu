@@ -1651,7 +1651,7 @@ correct_gpu_impl(
             );
 
             pipeline.runToCompletionDoubleBuffered(
-                deviceIds[0],
+                deviceId,
                 readIdGenerator,
                 correctionOptions,
                 goodAlignmentProperties,
@@ -1674,7 +1674,7 @@ correct_gpu_impl(
         //     );
 
         //     pipeline.runToCompletionDoubleBufferedWithExtraThread(
-        //         deviceIds[0],
+        //         deviceId,
         //         readIdGenerator,
         //         correctionOptions,
         //         goodAlignmentProperties,

@@ -173,7 +173,7 @@ extend_cpu_pairedend(
     const int insertSizeStddev = extensionOptions.insertSizeStddev;
     const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
     const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
-    const std::size_t decodedSequencePitchInBytes = maximumSequenceLength;
+    //const std::size_t decodedSequencePitchInBytes = maximumSequenceLength;
     const std::size_t qualityPitchInBytes = 4 * SDIV(maximumSequenceLength, 4);
 
     std::mutex verboseMutex;

@@ -486,7 +486,7 @@ namespace gpu{
         float min_coverage_threshold,
         float max_coverage_threshold,
         cudaStream_t stream,
-        KernelLaunchHandle& handle
+        KernelLaunchHandle& /*handle*/
     ){
         if(numAnchors == 0) return;
 
@@ -1982,10 +1982,10 @@ namespace gpu{
 
 
     void callMsaCorrectCandidatesWithForestKernel(
-        int* d_forestOpCandidateIndices,
-        int* d_forestOpPositionsInCandidates,
-        int* d_numForestOperationsPerCandidate,
-        int* d_numForestOperations,
+        int* /*d_forestOpCandidateIndices*/,
+        int* /*d_forestOpPositionsInCandidates*/,
+        int* /*d_numForestOperationsPerCandidate*/,
+        int* /*d_numForestOperations*/,
         char* d_correctedCandidates,
         TempCorrectedSequence::EncodedEdit* d_editsPerCorrectedCandidate,
         int* d_numEditsPerCorrectedCandidate,
@@ -2001,7 +2001,7 @@ namespace gpu{
         const int* d_candidateIndicesOfCandidatesToBeCorrected,
         const int* d_numCandidatesToBeCorrected,
         const int* d_anchorIndicesOfCandidates,
-        const int numCandidates,
+        const int /*numCandidates*/,
         int doNotUseEditsValue,
         int numEditsThreshold,            
         int encodedSequencePitchInInts,
@@ -2009,7 +2009,7 @@ namespace gpu{
         size_t editsPitchInBytes,
         int maximum_sequence_length,
         cudaStream_t stream,
-        KernelLaunchHandle& handle,
+        KernelLaunchHandle& /*handle*/,
         const read_number* candidateReadIds
     ){
 
@@ -2979,7 +2979,7 @@ namespace gpu{
         const int* d_candidateSequencesLength,
         const int* d_indices_per_subject,
         const int* d_numAnchors,
-        int maxNumAnchors,
+        int /*maxNumAnchors*/,
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
         int maximumSequenceLength,
@@ -3416,7 +3416,7 @@ namespace gpu{
         size_t decodedSequencePitchInBytes,
         size_t editsPitchInBytes,        
         cudaStream_t stream,
-        KernelLaunchHandle& handle
+        KernelLaunchHandle& /*handle*/
     ){
         if(numCorrectedSequencesUpperBound == 0) return;
 

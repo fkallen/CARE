@@ -18,7 +18,7 @@ namespace care{
     			bool fwd_alignment_isvalid,
     			bool revc_alignment_isvalid,
     			int subjectlength,
-    			int querylength,
+    			int /*querylength*/,
     			float min_overlap_ratio,
     			int min_overlap,
     			float maxErrorRate){

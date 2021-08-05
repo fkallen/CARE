@@ -381,7 +381,7 @@ CorrectionResult MultipleSequenceAlignment::getCorrectedSubject(
     float estimatedErrorrate,
     float estimatedCoverage,
     float m_coverage,
-    int neighborRegionSize,
+    int /*neighborRegionSize*/,
     read_number /* readId*/
 ) const {
 
@@ -1122,7 +1122,8 @@ std::vector<MultipleSequenceAlignment::PossibleSplitColumn> computePossibleSplit
 MultipleSequenceAlignment::PossibleMsaSplits inspectColumnsRegionSplit(
     const MultipleSequenceAlignment::PossibleSplitColumn* possibleColumns,
     int numPossibleColumns,
-    int firstColumn, int lastColumnExcl,
+    int /*firstColumn*/, 
+    int /*lastColumnExcl*/,
     int subjectColumnsBegin_incl,
     int numCandidates,
     const char* candidates,

@@ -424,7 +424,7 @@ namespace args{
     }
 
     template<>
-    bool isValid<MemoryOptions>(const MemoryOptions& opt){
+    bool isValid<MemoryOptions>(const MemoryOptions& /*opt*/){
         bool valid = true;
 
         return valid;

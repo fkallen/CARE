@@ -195,7 +195,7 @@ namespace care{
         HD_WARNING_DISABLE
         template<class IndexTransformation>
         HOSTDEVICEQUALIFIER INLINEQUALIFIER
-        static constexpr std::uint8_t getEncodedNuc2Bit(const unsigned int* data, int sequenceLength, int i, IndexTransformation indextrafo) noexcept{
+        static constexpr std::uint8_t getEncodedNuc2Bit(const unsigned int* data, int /*sequenceLength*/, int i, IndexTransformation indextrafo) noexcept{
             const int intIndex = i / basesPerInt2Bit();
             const int pos = i % basesPerInt2Bit();
             return ((data[indextrafo(intIndex)] >> (30 - 2*pos)) & 3u);

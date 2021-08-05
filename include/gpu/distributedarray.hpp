@@ -1555,9 +1555,9 @@ public:
 
     template<class ParallelFor>
     void gatherElementsInGpuMemAsyncNoHostPartition(
-            ParallelFor&& forLoop,
+            ParallelFor&& /*forLoop*/,
             const GatherHandle& handle,
-            const Index_t* indices,
+            const Index_t* /*indices*/,
             const Index_t* d_indices,
             Index_t numIds,
             int resultDeviceId,

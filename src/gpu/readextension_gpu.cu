@@ -305,8 +305,6 @@ extend_gpu_pairedend(
     //round up to 32 elements
     const std::size_t msaColumnPitchInElements = SDIV(msa_max_column_count, 32) * 32;
 
-    constexpr int maxextensionPerStep = 20;
-
     std::mutex ompCriticalMutex;
 
     std::int64_t totalNumSuccess0 = 0;
@@ -407,14 +405,13 @@ extend_gpu_pairedend(
             qualityConversion,
             insertSize,
             insertSizeStddev,
-            maxextensionPerStep,
             *gpudata.extenderAllocator
         );
 
         gpuDataVector.push_back(std::move(gpudata));
     }
 
-    auto extenderThreadFunc = [&](int gpuIndex, int threadId, auto* idGenerator, bool isLastIteration, GpuReadExtender::IterationConfig iterationConfig){
+    auto extenderThreadFunc = [&](int gpuIndex, int /*threadId*/, auto* idGenerator, bool isLastIteration, GpuReadExtender::IterationConfig iterationConfig){
         //std::cerr << "extenderThreadFunc( " << gpuIndex << ", " << threadId << ")\n";
         auto& gpudata = gpuDataVector[gpuIndex];
         //auto stream = gpustreams[gpuIndex].back().getStream();
@@ -668,7 +665,7 @@ extend_gpu_pairedend(
 }
 
 
-
+#if 0
 
 MemoryFileFixedSize<ExtendedRead> 
 //std::vector<ExtendedRead>
@@ -976,7 +973,7 @@ extend_gpu_singleend(
     //return resultExtendedReads;
     #endif
 }
-
+#endif
 
 MemoryFileFixedSize<ExtendedRead> 
 //std::vector<ExtendedRead>
@@ -990,18 +987,18 @@ extend_gpu(
     const GpuMinhasher& gpumMinhasher,
     const GpuReadStorage& gpuReadStorage
 ){
-    if(fileOptions.pairType == SequencePairType::SingleEnd){
-        return extend_gpu_singleend(
-            goodAlignmentProperties,
-            correctionOptions,
-            extensionOptions,
-            runtimeOptions,
-            fileOptions,
-            memoryOptions,
-            gpumMinhasher,
-            gpuReadStorage
-        );
-    }else{
+    // if(fileOptions.pairType == SequencePairType::SingleEnd){
+    //     return extend_gpu_singleend(
+    //         goodAlignmentProperties,
+    //         correctionOptions,
+    //         extensionOptions,
+    //         runtimeOptions,
+    //         fileOptions,
+    //         memoryOptions,
+    //         gpumMinhasher,
+    //         gpuReadStorage
+    //     );
+    // }else{
         return extend_gpu_pairedend(
             goodAlignmentProperties,
             correctionOptions,
@@ -1012,7 +1009,7 @@ extend_gpu(
             gpumMinhasher,
             gpuReadStorage
         );
-    }
+    //}
 }
 
 

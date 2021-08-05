@@ -1795,7 +1795,6 @@ struct GpuReadExtender{
         const cpu::QualityScoreConversion& qualityConversion_,
         int insertSize_,
         int insertSizeStddev_,
-        int maxextensionPerStep_,
         cub::CachingDeviceAllocator& cubAllocator_
     ) : 
         pairedEnd(isPairedEnd_),

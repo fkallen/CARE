@@ -246,10 +246,10 @@ namespace gpu{
 
 
     void constructFromReadStorage(
-        const FileOptions &fileOptions,
+        const FileOptions &/*fileOptions*/,
         const RuntimeOptions &runtimeOptions,
         const MemoryOptions& memoryOptions,
-        std::uint64_t nReads,
+        std::uint64_t /*nReads*/,
         const CorrectionOptions& correctionOptions,
         const GpuReadStorage& gpuReadStorage
     ){
@@ -539,7 +539,7 @@ namespace gpu{
         #undef FAKEGPUMINHASHER_RUN_ON_GPU
         #endif
 
-        void compact(cudaStream_t stream) {
+        void compact(cudaStream_t /*stream*/) {
             int id;
             CUDACHECK(cudaGetDevice(&id));
 
@@ -709,7 +709,7 @@ namespace gpu{
             int numSequences,
             const int* d_sequenceLengths,
             std::size_t encodedSequencePitchInInts,
-            const read_number* d_readIds,
+            const read_number* /*d_readIds*/, //unused???
             const read_number* h_readIds,
             int firstHashfunction,
             int numHashfunctions,

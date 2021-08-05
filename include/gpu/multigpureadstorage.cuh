@@ -521,7 +521,7 @@ public: //inherited GPUReadStorage interface
     }
 
     void areSequencesAmbiguous(
-        ReadStorageHandle& handle,
+        ReadStorageHandle& /*handle*/,
         bool* d_result, 
         const read_number* d_readIds, 
         int numSequences, 
@@ -1044,7 +1044,7 @@ public: //inherited GPUReadStorage interface
     }
 
     void gatherSequenceLengths(
-        ReadStorageHandle& handle,
+        ReadStorageHandle& /*handle*/,
         int* d_lengths,
         const read_number* d_readIds,
         int numSequences,    
@@ -1168,7 +1168,7 @@ private:
     }
     
     void gatherHostSequences(
-        TempData* tempData,
+        TempData* /*tempData*/,
         const read_number* readIds,
         int numSequences,
         unsigned int* outputarray,
@@ -1202,7 +1202,7 @@ private:
     }
 
     void gatherHostQualities(
-        TempData* tempData,
+        TempData* /*tempData*/,
         const read_number* readIds,
         int numSequences,
         char* outputarray,

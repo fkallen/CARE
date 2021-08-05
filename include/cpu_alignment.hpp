@@ -242,7 +242,7 @@ namespace shd{
 
         auto handle_zero_shift = [&](int overlapsize,
                                 const unsigned int* ptr_hi, const unsigned int* ptr_lo, auto transfunc1,
-                                int ptr_size,
+                                int /*ptr_size*/,
                                 const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
                                 auto transfunc2){
 

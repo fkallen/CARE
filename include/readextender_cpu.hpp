@@ -434,7 +434,7 @@ private:
         const unsigned int* encodedRead, 
         int readLength, 
         read_number readId,
-        int beginPos = 0 // only positions [beginPos, readLength] are hashed
+        int /*beginPos*/ = 0 // only positions [beginPos, readLength] are hashed
     ) const{
 
         result.clear();

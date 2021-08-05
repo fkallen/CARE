@@ -450,7 +450,7 @@ std::vector<int> DistributedReadStorage::getDeviceIds() const{
 
 void DistributedReadStorage::setReads(
     ReadInserterHandle& handle,
-    ThreadPool* threadPool, 
+    ThreadPool* /*threadPool*/, 
     const read_number* indices, 
     const Read* reads, 
     int numReads

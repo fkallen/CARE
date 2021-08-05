@@ -635,7 +635,7 @@ void constructOutputFileFromExtensionResults(
 
         std::map<ExtendedReadStatus, std::int64_t> statusHistogram;
 
-        auto combine = [&](std::vector<ExtendedRead>& tmpresults, const ReadWithId& readWithId, ReadWithId* mate){
+        auto combine = [&](std::vector<ExtendedRead>& tmpresults, const ReadWithId& readWithId, ReadWithId* /*mate*/){
             //statusHistogram[tmpresults[0].status]++;
 
             return combineExtendedReadWithOriginalRead(tmpresults, readWithId);

@@ -333,7 +333,7 @@ public:
         }
 
         void areSequencesAmbiguous(
-            ReadStorageHandle& handle,
+            ReadStorageHandle& /*handle*/,
             bool* d_result, 
             const read_number* d_readIds, 
             int numSequences, 
@@ -426,7 +426,7 @@ public:
         }
 
         virtual void gatherSequenceLengths(
-            ReadStorageHandle& handle,
+            ReadStorageHandle& /*handle*/,
             int* d_lengths,
             const read_number* d_readIds,
             int numSequences,    

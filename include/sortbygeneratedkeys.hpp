@@ -101,7 +101,7 @@ bool sortValuesByGeneratedKeysViaSortByKeyHost(
     ValueType* values,
     IndexType numValues,
     KeyGenerator keyGenerator,
-    KeyComparator keyComparator
+    KeyComparator /*keyComparator*/
 ){
     using KeyType = decltype(keyGenerator(IndexType{0}));
 
@@ -155,7 +155,7 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     ValueType* values,
     IndexType numValues,
     KeyGenerator keyGenerator,
-    KeyComparator keyComparator
+    KeyComparator /*keyComparator*/
 ){
     using KeyType = decltype(keyGenerator(IndexType{0}));
 

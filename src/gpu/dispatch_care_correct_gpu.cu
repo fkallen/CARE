@@ -107,11 +107,11 @@ namespace care{
 
 
     void loadPartialResultsAndConstructOutput(
-        CorrectionOptions correctionOptions,
+        CorrectionOptions /*correctionOptions*/,
         RuntimeOptions runtimeOptions,
         MemoryOptions memoryOptions,
         FileOptions fileOptions,
-        GoodAlignmentProperties goodAlignmentProperties,
+        GoodAlignmentProperties /*goodAlignmentProperties*/,
         std::string filename
     ){
         std::cerr << "loadPartialResultsAndConstructOutput\n";

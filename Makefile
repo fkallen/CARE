@@ -22,7 +22,7 @@ HOSTLINKER=g++
 
 CXXFLAGS = 
 
-CFLAGS_BASIC = -Wall -Wno-terminate -fopenmp -Iinclude -O3 -march=native -I$(THRUST_INCDIR)
+CFLAGS_BASIC = -Wall -Wextra -Wno-terminate -fopenmp -Iinclude -O3 -march=native -I$(THRUST_INCDIR)
 CFLAGS_DEBUG_BASIC = -Wall Wno-terminate -fopenmp -g -Iinclude -O0 -march=native -I$(THRUST_INCDIR)
 
 CFLAGS_CPU = $(CFLAGS_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_OMP
@@ -174,7 +174,7 @@ extend_gpu_release_dummy: $(BUILDDIR_EXTEND_GPU) $(OBJECTS_EXTEND_GPU)
 
 
 COMPILE = @echo "Compiling $< to $@" ; $(CXX) $(CXXFLAGS) $(CFLAGS_CPU) -c $< -o $@
-CUDA_COMPILE = @echo "Compiling $< to $@" ; $(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS_BASIC)" -c $< -o $@
+CUDA_COMPILE = echo "Compiling $< to $@" ; $(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS_BASIC)" -c $< -o $@
 
 
 
