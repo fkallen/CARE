@@ -4,7 +4,7 @@
 #include <cxxopts/cxxopts.hpp>
 #include <args.hpp>
 #include <options.hpp>
-#include <dispatch_care.hpp>
+#include <gpu/dispatch_care_correct_gpu.cuh>
 
 #include <threadpool.hpp>
 
@@ -230,7 +230,7 @@ int main(int argc, char** argv){
 	if(!args::isValid(memoryOptions)) throw std::runtime_error("Invalid memoryOptions!");
 	if(!args::isValid(fileOptions)) throw std::runtime_error("Invalid fileOptions!");
 
-    runtimeOptions.deviceIds = getUsableDeviceIds(runtimeOptions.deviceIds);
+    runtimeOptions.deviceIds = correction::getUsableDeviceIds(runtimeOptions.deviceIds);
     runtimeOptions.canUseGpu = runtimeOptions.deviceIds.size() > 0;
 
 	if(correctionOptions.useQualityScores){
@@ -358,7 +358,6 @@ int main(int argc, char** argv){
 
 	omp_set_num_threads(numThreads);
 
-#if 0
     care::performCorrection(
 		correctionOptions,
 		runtimeOptions,
@@ -366,15 +365,6 @@ int main(int argc, char** argv){
 		fileOptions,
 		goodAlignmentProperties
 	);
-#else
-	care::performExtension(
-		correctionOptions,
-		extensionOptions,
-		runtimeOptions,
-		memoryOptions,
-		fileOptions,
-		goodAlignmentProperties
-	);
-#endif
+
 	return 0;
 }

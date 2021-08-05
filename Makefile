@@ -20,9 +20,9 @@ CXX=g++
 CUDACC=$(CUDA_DIR)/bin/nvcc
 HOSTLINKER=g++
 
-CXXFLAGS = -std=c++17
+CXXFLAGS = 
 
-CFLAGS_BASIC = -Wall -Wno-terminate -fopenmp -g -Iinclude -O3 -march=native -I$(THRUST_INCDIR)
+CFLAGS_BASIC = -Wall -Wno-terminate -fopenmp -Iinclude -O3 -march=native -I$(THRUST_INCDIR)
 CFLAGS_DEBUG_BASIC = -Wall Wno-terminate -fopenmp -g -Iinclude -O0 -march=native -I$(THRUST_INCDIR)
 
 CFLAGS_CPU = $(CFLAGS_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_OMP
@@ -41,126 +41,259 @@ CUDA_ARCH = -gencode=arch=compute_86,code=sm_86
 LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt -lz -ldl
 LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -lz -ldl
 
-# sources which are used by gpu version exclusively
-SOURCES_ONLY_GPU = $(wildcard src/gpu/*.cu)
+#sources for correct_cpu
+SOURCES_CORRECT_CPU = \
+    src/args.cpp \
+    src/correct_cpu.cpp \
+    src/correctionresultprocessing.cpp \
+    src/cpu_alignment.cpp \
+    src/cpuminhasherconstruction.cpp \
+    src/dispatch_care_correct_cpu.cpp \
+    src/main_correct_cpu.cpp \
+    src/msa.cpp \
+    src/readlibraryio.cpp \
+    src/threadpool.cpp
 
-# sources which are used by cpu version exclusively
-# src/correct_cpu.cpp 
-SOURCES_ONLY_CPU = src/dispatch_care_cpu.cpp src/correctionresultprocessing.cpp src/extensionresultprocessing.cpp src/readextension.cpp
+#sources for correct_gpu
+SOURCES_CORRECT_GPU = \
+    src/args.cpp \
+    src/readlibraryio.cpp \
+    src/threadpool.cpp \
+    src/gpu/alignmentkernels.cu \
+    src/gpu/correct_gpu.cu \
+    src/gpu/correctionkernels.cu \
+    src/gpu/correctionresultprocessing_gpu.cu \
+    src/gpu/dispatch_care_correct_gpu.cu \
+    src/gpu/distributedreadstorage.cu \
+    src/gpu/fakegpuminhasherconstruction.cu \
+    src/gpu/gpucorrectorkernels.cu \
+    src/gpu/gpuminhasherconstruction.cu \
+    src/gpu/main_correct_gpu.cu \
+    src/gpu/minhashingkernels.cu \
+    src/gpu/msakernels.cu \
+    src/gpu/multigpuminhasherconstruction.cu \
+    src/gpu/sequenceconversionkernels.cu \
+    src/gpu/singlegpuminhasherconstruction.cu
 
-# sources which are used by both cpu version and gpu version
-SOURCES_CPU_AND_GPU_ = $(wildcard src/*.cpp)
-SOURCES_CPU_AND_GPU = $(filter-out $(SOURCES_ONLY_CPU), $(SOURCES_CPU_AND_GPU_))
+#sources for extend_cpu
+SOURCES_EXTEND_CPU = \
+    src/args.cpp \
+    src/cpu_alignment.cpp \
+    src/cpuminhasherconstruction.cpp \
+    src/dispatch_care_extend_cpu.cpp \
+    src/extensionresultprocessing.cpp \
+    src/main_extend_cpu.cpp \
+    src/msa.cpp \
+    src/readextension.cpp \
+    src/readlibraryio.cpp \
+    src/threadpool.cpp
 
-# sources of ML forests
-SOURCES_FORESTS = $(wildcard forests/*.cpp)
-
-
-OBJECTS_CPU_AND_GPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_CPU_AND_GPU))
-OBJECTS_CPU_AND_GPU_DEBUG = $(patsubst src/%.cpp, buildcpu/%.dbg.o, $(SOURCES_CPU_AND_GPU))
-
-OBJECTS_ONLY_GPU = $(patsubst src/gpu/%.cu, buildgpu/%.o, $(SOURCES_ONLY_GPU))
-OBJECTS_ONLY_GPU_DEBUG = $(patsubst src/gpu/%.cu, buildgpu/%.dbg.o, $(SOURCES_ONLY_GPU))
-
-OBJECTS_ONLY_CPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_ONLY_CPU))
-OBJECTS_ONLY_CPU_DEBUG = $(patsubst src/%.cpp, buildcpu/%.dbg.o, $(SOURCES_ONLY_CPU))
-
-OBJECTS_FORESTS = $(patsubst forests/%.cpp, forests/%.so, $(SOURCES_FORESTS))
-OBJECTS_FORESTS_DEBUG = $(patsubst forests/%.cpp, forests/%.dbg.so, $(SOURCES_FORESTS))
-
-
-GPU_VERSION = care-gpu
-CPU_VERSION = care-cpu
-GPU_VERSION_DEBUG = care-gpu-debug
-CPU_VERSION_DEBUG = care-cpu-debug
-
-
-all: cpu
-
-cpu:	$(CPU_VERSION)
-gpu:	$(GPU_VERSION)
-cpud:	$(CPU_VERSION_DEBUG)
-gpud:	$(GPU_VERSION_DEBUG)
-
-forests:	$(OBJECTS_FORESTS) 
-#$(OBJECTS_FORESTS_DEBUG)
-
-
-$(GPU_VERSION) : $(OBJECTS_ONLY_GPU) $(OBJECTS_CPU_AND_GPU)
-	@echo Linking $(GPU_VERSION)
-	@$(CUDACC) $(CUDA_ARCH) $(OBJECTS_ONLY_GPU) $(OBJECTS_CPU_AND_GPU) $(LDFLAGSGPU) -o $(GPU_VERSION)
-	@echo Linked $(GPU_VERSION)
-
-$(CPU_VERSION) : $(OBJECTS_ONLY_CPU) $(OBJECTS_CPU_AND_GPU)
-	@echo Linking $(CPU_VERSION)
-	@$(HOSTLINKER) $(OBJECTS_ONLY_CPU) $(OBJECTS_CPU_AND_GPU) $(LDFLAGSCPU) -o $(CPU_VERSION)
-	@echo Linked $(CPU_VERSION)
-
-$(GPU_VERSION_DEBUG) : $(OBJECTS_ONLY_GPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG)
-	@echo Linking $(GPU_VERSION_DEBUG)
-	@$(CUDACC) $(CUDA_ARCH) $(OBJECTS_ONLY_GPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG) $(LDFLAGSGPU) -o $(GPU_VERSION_DEBUG)
-	@echo Linked $(GPU_VERSION_DEBUG)
-
-$(CPU_VERSION_DEBUG) : $(OBJECTS_ONLY_CPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG)
-	@echo Linking $(CPU_VERSION_DEBUG)
-	@$(HOSTLINKER) $(OBJECTS_ONLY_CPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG) $(LDFLAGSCPU) -o $(CPU_VERSION_DEBUG)
-	@echo Linked $(CPU_VERSION_DEBUG)
-
-buildcpu/%.o : src/%.cpp | makedir
-	@echo Compiling $< to $@
-	@$(CXX) $(CXXFLAGS) $(CFLAGS_CPU) -c $< -o $@
-
-buildcpu/%.dbg.o : src/%.cpp | makedir
-	@echo Compiling $< to $@
-	@$(CXX) $(CXXFLAGS) $(CFLAGS_CPU_DEBUG) -c $< -o $@
-
-buildgpu/%.o : src/gpu/%.cu | makedir
-	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS_BASIC)" -c $< -o $@
-
-buildgpu/%.dbg.o : src/gpu/%.cu | makedir
-	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG_BASIC)" -c $< -o $@
+#sources for correct_gpu
+SOURCES_EXTEND_GPU = \
+    src/args.cpp \
+    src/readlibraryio.cpp \
+    src/threadpool.cpp \
+    src/gpu/alignmentkernels.cu \
+    src/gpu/dispatch_care_extend_gpu.cu \
+    src/gpu/distributedreadstorage.cu \
+    src/gpu/extensionresultprocessing_gpu.cu \
+    src/gpu/fakegpuminhasherconstruction.cu \
+    src/gpu/gpuminhasherconstruction.cu \
+    src/gpu/main_extend_gpu.cu \
+    src/gpu/minhashingkernels.cu \
+    src/gpu/msakernels.cu \
+    src/gpu/multigpuminhasherconstruction.cu \
+    src/gpu/readextension_gpu.cu \
+    src/gpu/sequenceconversionkernels.cu \
+    src/gpu/singlegpuminhasherconstruction.cu
 
 
-forests/%.so : forests/%.cpp | makedir
-	@echo Compiling $< to $@
-	@$(CXX) $(CXXFLAGS) $(CFLAGS) -shared -fPIC $< -o $@
+EXECUTABLE_CORRECT_CPU = care-cpu
+EXECUTABLE_CORRECT_GPU = care-gpu
+EXECUTABLE_EXTEND_CPU = care-extend-cpu
+EXECUTABLE_EXTEND_GPU = care-extend-gpu
 
-forests/%.dbg.so : forests/%.cpp | makedir
-	@echo Compiling $< to $@
-	@$(CXX) $(CXXFLAGS) $(CFLAGS_DEBUG) -shared -fPIC $< -o $@
+BUILDDIR_CORRECT_CPU = build_correct_cpu
+BUILDDIR_CORRECT_GPU = build_correct_gpu
+BUILDDIR_EXTEND_CPU = build_extend_cpu
+BUILDDIR_EXTEND_GPU = build_extend_gpu
+
+SOURCES_CORRECT_CPU_NODIR = $(notdir $(SOURCES_CORRECT_CPU))
+SOURCES_CORRECT_GPU_NODIR = $(notdir $(SOURCES_CORRECT_GPU))
+SOURCES_EXTEND_CPU_NODIR = $(notdir $(SOURCES_EXTEND_CPU))
+SOURCES_EXTEND_GPU_NODIR = $(notdir $(SOURCES_EXTEND_GPU))
+
+OBJECTS_CORRECT_CPU_NODIR = $(SOURCES_CORRECT_CPU_NODIR:%.cpp=%.o)
+OBJECTS_CORRECT_GPU_NODIR_TMP = $(SOURCES_CORRECT_GPU_NODIR:%.cpp=%.o)
+OBJECTS_CORRECT_GPU_NODIR = $(OBJECTS_CORRECT_GPU_NODIR_TMP:%.cu=%.o)
+OBJECTS_EXTEND_CPU_NODIR = $(SOURCES_EXTEND_CPU_NODIR:%.cpp=%.o)
+OBJECTS_EXTEND_GPU_NODIR_TMP = $(SOURCES_EXTEND_GPU_NODIR:%.cpp=%.o)
+OBJECTS_EXTEND_GPU_NODIR = $(OBJECTS_EXTEND_GPU_NODIR_TMP:%.cu=%.o)
+
+OBJECTS_CORRECT_CPU = $(OBJECTS_CORRECT_CPU_NODIR:%=$(BUILDDIR_CORRECT_CPU)/%)
+OBJECTS_CORRECT_GPU = $(OBJECTS_CORRECT_GPU_NODIR:%=$(BUILDDIR_CORRECT_GPU)/%)
+OBJECTS_EXTEND_CPU = $(OBJECTS_EXTEND_CPU_NODIR:%=$(BUILDDIR_EXTEND_CPU)/%)
+OBJECTS_EXTEND_GPU = $(OBJECTS_EXTEND_GPU_NODIR:%=$(BUILDDIR_EXTEND_GPU)/%)
 
 
 
-install: 
-	mkdir -p $(PREFIX)/bin
-ifneq ("$(wildcard $(CPU_VERSION))","")
-	cp $(CPU_VERSION) $(PREFIX)/bin/$(CPU_VERSION)
-endif	
-ifneq ("$(wildcard $(GPU_VERSION))","")
-	cp $(GPU_VERSION) $(PREFIX)/bin/$(GPU_VERSION)
-endif
+correct_cpu_release:
+	@$(MAKE) correct_cpu_release_dummy DIR=$(BUILDDIR_CORRECT_CPU) CXXFLAGS="-std=c++14"
 
-clean:
-	@rm -f $(GPU_VERSION) $(CPU_VERSION) $(GPU_VERSION_DEBUG) $(CPU_VERSION_DEBUG)\
-			$(OBJECTS_CPU_AND_GPU) $(OBJECTS_ONLY_GPU) $(OBJECTS_ONLY_CPU) \
-			$(OBJECTS_CPU_AND_GPU_DEBUG) $(OBJECTS_ONLY_GPU_DEBUG) $(OBJECTS_ONLY_CPU_DEBUG) \
-			$(OBJECTS_FORESTS) $(OBJECTS_FORESTS_DEBUG)
-cleancpu:
-	@rm -f $(CPU_VERSION) $(OBJECTS_ONLY_CPU) $(OBJECTS_CPU_AND_GPU)
-cleangpu:
-	@rm -f $(GPU_VERSION) $(OBJECTS_ONLY_GPU) $(OBJECTS_CPU_AND_GPU)
-cleancpud:
-	@rm -f $(CPU_VERSION_DEBUG) $(OBJECTS_ONLY_CPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG)
-cleangpud:
-	@rm -f $(GPU_VERSION_DEBUG) $(OBJECTS_ONLY_GPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG)
-cleanforests:
-	@rm -f $(OBJECTS_FORESTS) $(OBJECTS_FORESTS_DEBUG)
+correct_gpu_release:
+	@$(MAKE) correct_gpu_release_dummy DIR=$(BUILDDIR_CORRECT_GPU) CXXFLAGS="-std=c++14"
 
-makedir:
-	@mkdir -p buildcpu
-	@mkdir -p buildgpu
-	@mkdir -p forests
+extend_cpu_release:
+	@$(MAKE) extend_cpu_release_dummy DIR=$(BUILDDIR_EXTEND_CPU) CXXFLAGS="-std=c++17"
 
-.PHONY: makedir
+extend_gpu_release:
+	@$(MAKE) extend_gpu_release_dummy DIR=$(BUILDDIR_EXTEND_GPU) CXXFLAGS="-std=c++17"
+
+
+
+
+correct_cpu_release_dummy: $(BUILDDIR_CORRECT_CPU) $(OBJECTS_CORRECT_CPU) 
+	@echo Linking $(EXECUTABLE_CORRECT_CPU)
+	@$(HOSTLINKER) $(OBJECTS_CORRECT_CPU) $(LDFLAGSCPU) -o $(EXECUTABLE_CORRECT_CPU)
+	@echo Linked $(EXECUTABLE_CORRECT_CPU)
+
+correct_gpu_release_dummy: $(BUILDDIR_CORRECT_GPU) $(OBJECTS_CORRECT_GPU) 
+	@echo Linking $(EXECUTABLE_CORRECT_GPU)
+	@$(CUDACC) $(CUDA_ARCH) $(OBJECTS_CORRECT_GPU) $(LDFLAGSGPU) -o $(EXECUTABLE_CORRECT_GPU)
+	@echo Linked $(EXECUTABLE_CORRECT_GPU)
+
+extend_cpu_release_dummy: $(BUILDDIR_EXTEND_CPU) $(OBJECTS_EXTEND_CPU) 
+	@echo Linking $(EXECUTABLE_EXTEND_CPU)
+	@$(HOSTLINKER) $(OBJECTS_EXTEND_CPU) $(LDFLAGSCPU) -o $(EXECUTABLE_EXTEND_CPU)
+	@echo Linked $(EXECUTABLE_EXTEND_CPU)
+
+extend_gpu_release_dummy: $(BUILDDIR_EXTEND_GPU) $(OBJECTS_EXTEND_GPU) 
+	@echo Linking $(EXECUTABLE_EXTEND_GPU)
+	@$(CUDACC) $(CUDA_ARCH) $(OBJECTS_EXTEND_GPU) $(LDFLAGSGPU) -o $(EXECUTABLE_EXTEND_GPU)
+	@echo Linked $(EXECUTABLE_EXTEND_GPU)
+
+
+COMPILE = @echo "Compiling $< to $@" ; $(CXX) $(CXXFLAGS) $(CFLAGS_CPU) -c $< -o $@
+CUDA_COMPILE = @echo "Compiling $< to $@" ; $(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS_BASIC)" -c $< -o $@
+
+
+
+.PHONY: cpu gpu extendcpu extendgpu clean
+cpu: correct_cpu_release
+gpu: correct_gpu_release
+extendcpu: extend_cpu_release
+extendgpu: extend_gpu_release
+
+clean : 
+	@rm -rf build_*
+	@rm -f $(EXECUTABLE_CORRECT_CPU) 
+	@rm -f $(EXECUTABLE_CORRECT_GPU)
+	@rm -f $(EXECUTABLE_EXTEND_CPU)
+	@rm -f $(EXECUTABLE_EXTEND_GPU)
+
+$(DIR):
+	mkdir $(DIR)
+
+$(DIR)/args.o : src/args.cpp
+	$(COMPILE)
+
+$(DIR)/correct_cpu.o : src/correct_cpu.cpp
+	$(COMPILE)
+
+$(DIR)/correctionresultprocessing.o : src/correctionresultprocessing.cpp
+	$(COMPILE)
+
+$(DIR)/cpu_alignment.o : src/cpu_alignment.cpp
+	$(COMPILE)
+
+$(DIR)/cpuminhasherconstruction.o : src/cpuminhasherconstruction.cpp
+	$(COMPILE)
+
+$(DIR)/dispatch_care_correct_cpu.o : src/dispatch_care_correct_cpu.cpp
+	$(COMPILE)
+
+$(DIR)/dispatch_care_extend_cpu.o : src/dispatch_care_extend_cpu.cpp
+	$(COMPILE)
+
+$(DIR)/extensionresultprocessing.o : src/extensionresultprocessing.cpp
+	$(COMPILE)
+
+$(DIR)/main_correct_cpu.o : src/main_correct_cpu.cpp
+	$(COMPILE)
+
+$(DIR)/main_extend_cpu.o : src/main_extend_cpu.cpp
+	$(COMPILE)
+
+$(DIR)/msa.o : src/msa.cpp
+	$(COMPILE)
+
+$(DIR)/readextension.o : src/readextension.cpp
+	$(COMPILE)
+
+$(DIR)/readlibraryio.o : src/readlibraryio.cpp
+	$(COMPILE)
+
+$(DIR)/semi_global_alignment.o : src/semi_global_alignment.cpp
+	$(COMPILE)
+
+$(DIR)/threadpool.o : src/threadpool.cpp
+	$(COMPILE)
+
+$(DIR)/alignmentkernels.o : src/gpu/alignmentkernels.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/correct_gpu.o : src/gpu/correct_gpu.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/correctionkernels.o : src/gpu/correctionkernels.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/correctionresultprocessing_gpu.o : src/gpu/correctionresultprocessing_gpu.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/dispatch_care_correct_gpu.o : src/gpu/dispatch_care_correct_gpu.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/dispatch_care_extend_gpu.o : src/gpu/dispatch_care_extend_gpu.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/distributedreadstorage.o : src/gpu/distributedreadstorage.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/extensionresultprocessing_gpu.o : src/gpu/extensionresultprocessing_gpu.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/fakegpuminhasherconstruction.o : src/gpu/fakegpuminhasherconstruction.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/gpucorrectorkernels.o : src/gpu/gpucorrectorkernels.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/gpuminhasherconstruction.o : src/gpu/gpuminhasherconstruction.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/main_correct_gpu.o : src/gpu/main_correct_gpu.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/main_extend_gpu.o : src/gpu/main_extend_gpu.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/minhashingkernels.o : src/gpu/minhashingkernels.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/msakernels.o : src/gpu/msakernels.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/multigpuminhasherconstruction.o : src/gpu/multigpuminhasherconstruction.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/readextension_gpu.o : src/gpu/readextension_gpu.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/sequenceconversionkernels.o : src/gpu/sequenceconversionkernels.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/singlegpuminhasherconstruction.o : src/gpu/singlegpuminhasherconstruction.cu
+	$(CUDA_COMPILE)
+
+
