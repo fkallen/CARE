@@ -1616,6 +1616,7 @@ private:
             case CorrectionType::Forest:
                 correctCandidatesClf(task);
                 break;
+            case CorrectionType::Classic:
             default:
                 correctCandidatesClassic(task);
         }

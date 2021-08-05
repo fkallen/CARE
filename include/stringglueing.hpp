@@ -300,7 +300,7 @@ public:
 
                 const float w1 = getweight(g.s1, positionInS1);
                 const float w2 = getweight(g.s2, positionInS2);
-                assert((w1 != 0.0f) || (w2 != 0.0f));
+                assert(!feq(w1, 0.0f) || !feq(w2, 0.0f));
 
                 if(fgeq(w1, w2)){
                     assert(positionInS1 < int(g.s1.size()));
@@ -396,7 +396,7 @@ public:
 
                 const float w1 = getweight(g.s1, originalReadLength1, g.q1, positionInS1);
                 const float w2 = getweight(g.s2, originalReadLength2, g.q2, positionInS2);
-                assert((w1 != 0.0f) || (w2 != 0.0f));
+                assert(!feq(w1, 0.0f) || !feq(w2, 0.0f));
 
                 if(fgeq(w1, w2)){
                     assert(positionInS1 < int(g.s1.size()));

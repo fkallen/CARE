@@ -199,7 +199,7 @@ namespace care{
         result += popcount(bits & mask);
 
         return result;
-    };
+    }
 
 }
 

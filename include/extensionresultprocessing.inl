@@ -531,9 +531,9 @@ void writeExtensionResultsToFile(
     for(const auto& pair : statusHistogram){
         switch(pair.first){
             case ExtendedReadStatus::FoundMate: std::cout << "Found Mate: " << pair.second << "\n"; break;
-            // case ExtendedReadStatus::LengthAbort: std::cout << "Too long: " << pair.second << "\n"; break;
-            // case ExtendedReadStatus::CandidateAbort: std::cout << "Empty candidate list: " << pair.second << "\n"; break;
-            // case ExtendedReadStatus::MSANoExtension: std::cout << "Did not grow: " << pair.second << "\n"; break;
+            case ExtendedReadStatus::LengthAbort: 
+            case ExtendedReadStatus::CandidateAbort: 
+            case ExtendedReadStatus::MSANoExtension: 
             default: break;
         }
     }

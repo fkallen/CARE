@@ -203,6 +203,7 @@ void GZipWriter::writeImpl(const std::string& data){
         case FileFormat::FASTAGZ:
         case FileFormat::FASTQGZ:
             return std::make_unique<GZipWriter>(filename, fileFormat);
+        case FileFormat::NONE:
     	default:
     		throw std::runtime_error("makeSequenceWriter: invalid format.");
     	}

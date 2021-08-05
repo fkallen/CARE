@@ -2,6 +2,7 @@
 #define CARE_READEXTENDER_COMMON_HPP
 
 #include <stringglueing.hpp>
+#include <hostdevicefunctions.cuh>
 #include <cassert>
 
 namespace care{
@@ -64,7 +65,7 @@ namespace extension{
             if(originalMateLength != rhs.originalMateLength){ std::cerr << "error originalMateLength\n"; return false;}
             if(read1begin != rhs.read1begin){ std::cerr << "error read1begin\n"; return false;}
             if(read2begin != rhs.read2begin){ std::cerr << "error read2begin\n"; return false;}
-            if(goodscore != rhs.goodscore){ std::cerr << "error goodscore\n"; return false;}
+            if(!feq(goodscore,rhs.goodscore)){ std::cerr << "error goodscore\n"; return false;}
             if(direction != rhs.direction){ std::cerr << "error direction\n"; return false;}
             if(abortReason != rhs.abortReason){ std::cerr << "error abortReason\n"; return false;}
             if(readId1 != rhs.readId1){ std::cerr << "error readId1\n"; return false;}
@@ -336,6 +337,7 @@ namespace extension{
             case ar::NoPairedCandidatesAfterAlignment: return "NoPairedCandidatesAfterAlignment";
             case ar::PairedAnchorFinished: return "PairedAnchorFinished";
             case ar::OtherStrandFoundMate: return "OtherStrandFoundMate";
+            case ar::None:
             default: return "None";
         }
     }

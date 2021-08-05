@@ -565,7 +565,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1(
 
     }
 
-};
+}
 
 //same as combineMultipleCorrectionResults1, but edits have not been applied in the tcs
 CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs(
@@ -710,7 +710,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs(
 
     }
 
-};
+}
 
 
 CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
@@ -953,7 +953,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
 
     }
 
-};
+}
 
 
 
