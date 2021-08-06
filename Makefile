@@ -1,24 +1,16 @@
 
-PREFIX=$(shell cat .PREFIX)
-CUDA_DIR=$(shell cat .CUDA_DIR)
-CUB_INCDIR=$(shell cat .CUB_INCDIR)
-THRUST_INCDIR=$(shell cat .THRUST_INCDIR)
-
-BUILD_WITH_WARPCORE = 1
-
-ifeq ($(BUILD_WITH_WARPCORE), 1)
-	WARPCORE_INCDIR = $(shell cat .WARPCORE_INCDIR)
-	WARPCORE_INCLUDE_FLAGS = -I$(WARPCORE_INCDIR)
-	WARPCORE_CFLAGS = -DCARE_HAS_WARPCORE
-else
-	WARPCORE_INCDIR = 
-	WARPCORE_INCLUDE_FLAGS = 
-	WARPCORE_CFLAGS = 
-endif
-
 CXX=g++
-CUDACC=$(CUDA_DIR)/bin/nvcc
+CUDACC=nvcc
 HOSTLINKER=g++
+
+CUB_INCDIR = ./dependencies/cub-cuda-11.2
+THRUST_INCDIR = ./dependencies/thrust-cuda-11.2
+WARPCORE_INCDIR = ./dependencies/warpcore/include
+
+
+WARPCORE_FLAGS = -DCARE_HAS_WARPCORE -I$(WARPCORE_INCDIR)
+
+
 
 CXXFLAGS = 
 
@@ -31,8 +23,8 @@ CFLAGS_DEBUG_BASIC = $(COMPILER_WARNINGS) $(COMPILER_DISABLED_WARNING) -fopenmp 
 CFLAGS_CPU = $(CFLAGS_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_OMP
 CFLAGS_CPU_DEBUG = $(CFLAGS_DEBUG_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_OMP
 
-NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_INCLUDE_FLAGS) $(WARPCORE_CFLAGS)
-NVCCFLAGS_DEBUG = -x cu -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_INCLUDE_FLAGS) $(WARPCORE_CFLAGS)
+NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_FLAGS)
+NVCCFLAGS_DEBUG = -x cu -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_FLAGS)
 
 # This could be modified to compile only for a single architecture to reduce compilation time
 CUDA_ARCH = -gencode=arch=compute_86,code=sm_86 
