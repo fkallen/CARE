@@ -3,6 +3,8 @@ CXX=g++
 CUDACC=nvcc
 HOSTLINKER=g++
 
+PREFIX = /usr/local
+
 CUB_INCDIR = ./dependencies/cub-cuda-11.2
 THRUST_INCDIR = ./dependencies/thrust-cuda-11.2
 WARPCORE_INCDIR = ./dependencies/warpcore/include
@@ -27,7 +29,7 @@ NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-cons
 NVCCFLAGS_DEBUG = -x cu -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_FLAGS)
 
 # This could be modified to compile only for a single architecture to reduce compilation time
-CUDA_ARCH = -gencode=arch=compute_86,code=sm_86 
+CUDA_ARCH = -gencode=arch=compute_86,code=sm_86
 #\
 #		-gencode=arch=compute_70,code=sm_70 \
 #		-gencode=arch=compute_80,code=sm_80 \
@@ -173,11 +175,22 @@ CUDA_COMPILE = @echo "Compiling $< to $@" ; $(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $
 
 
 
-.PHONY: cpu gpu extendcpu extendgpu clean
+.PHONY: cpu gpu extendcpu extendgpu install clean
 cpu: correct_cpu_release
 gpu: correct_gpu_release
 extendcpu: extend_cpu_release
 extendgpu: extend_gpu_release
+
+install: 
+	@echo "Installing to directory $(PREFIX)/bin"
+	mkdir -p $(PREFIX)/bin
+ifneq ("$(wildcard $(EXECUTABLE_CORRECT_CPU))","")
+	cp $(EXECUTABLE_CORRECT_CPU) $(PREFIX)/bin/$(EXECUTABLE_CORRECT_CPU)
+endif	
+ifneq ("$(wildcard $(EXECUTABLE_CORRECT_GPU))","")
+	cp $(EXECUTABLE_CORRECT_GPU) $(PREFIX)/bin/$(EXECUTABLE_CORRECT_GPU)
+endif
+
 
 clean : 
 	@rm -rf build_*
