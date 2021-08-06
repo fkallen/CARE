@@ -73,7 +73,7 @@ int main(int argc, char** argv){
 			"The file(s) to correct. "
 			"Fasta or Fastq format. May be gzip'ed. "
 			"Repeat this option for each input file (e.g. -i file1.fastq -i file2.fastq). "
-			"Must not mix fasta and fastq files. Input files are treated as unpaired. "
+			"Must not mix fasta and fastq files. "
 			"The collection of input files is treated as a single read library",
 			cxxopts::value<std::vector<std::string>>())
 		("o,outputfilenames", 
