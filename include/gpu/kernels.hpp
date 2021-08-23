@@ -163,6 +163,26 @@ void callComputeMaximumMsaWidthKernel(
     cudaStream_t stream
 );
 
+void callComputeMsaConsensusQualityKernel(
+    char* d_consensusQuality,
+    int consensusQualityPitchInBytes,
+    GPUMultiMSA multiMSA,
+    cudaStream_t stream
+);
+
+void callComputeDecodedMsaConsensusKernel(
+    char* d_consensus,
+    int consensusPitchInBytes,
+    GPUMultiMSA multiMSA,
+    cudaStream_t stream
+);
+
+void callComputeMsaSizesKernel(
+    int* d_sizes,
+    GPUMultiMSA multiMSA,
+    cudaStream_t stream
+);
+
 void callConstructMultipleSequenceAlignmentsKernel_async(
         GPUMultiMSA multiMSA,
         const int* d_overlaps,

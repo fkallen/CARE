@@ -21,6 +21,9 @@ namespace args{
 	template<>
 	CorrectionOptions to<CorrectionOptions>(const cxxopts::ParseResult& pr);
 
+    template<>
+	ExtensionOptions to<ExtensionOptions>(const cxxopts::ParseResult& pr);
+
 	template<>
 	RuntimeOptions to<RuntimeOptions>(const cxxopts::ParseResult& pr);
 
@@ -38,6 +41,9 @@ namespace args{
 
     template<>
     bool isValid<CorrectionOptions>(const CorrectionOptions& opt);
+
+    template<>
+    bool isValid<ExtensionOptions>(const ExtensionOptions& opt);
 
     template<>
     bool isValid<RuntimeOptions>(const RuntimeOptions& opt);

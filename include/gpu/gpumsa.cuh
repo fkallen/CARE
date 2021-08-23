@@ -17,6 +17,8 @@
 #include <type_traits>
 
 #include <cub/cub.cuh>
+#include <thrust/iterator/transform_iterator.h>
+#include <thrust/iterator/counting_iterator.h>
 
 #include <cooperative_groups.h>
 
@@ -1177,10 +1179,16 @@ namespace gpu{
                                 }
                             }
 
-                            if(notAffected || (!(keepMatching ^ (base == foundBase)))){
-                                myShouldBeKept[k] = true; //same region
+                            if(notAffected){
+                                myShouldBeKept[k] = true;
+                            }else if(keepMatching && (base == foundBase)){
+                                //keep candidates which match the found base
+                                myShouldBeKept[k] = true;
+                            }else if(!keepMatching && (base != foundBase)){
+                                //keep candidates which do not match the found base
+                                myShouldBeKept[k] = true;
                             }else{
-                                myShouldBeKept[k] = false; //different region
+                                myShouldBeKept[k] = false;
                             }
                         }
                         #if 1
@@ -1304,6 +1312,105 @@ namespace gpu{
                 }
             }
         }
+
+        __device__ __forceinline__
+        auto getConsensusQualityIterator() const{
+            return thrust::make_transform_iterator(
+                thrust::make_counting_iterator(0),
+                [this](int pos){
+                    return getConsensusQualityOfPosition(pos);
+                }
+            );
+        }
+
+        __device__ __forceinline__
+        auto getDecodedConsensusIterator() const{
+            return thrust::make_transform_iterator(
+                thrust::make_counting_iterator(0),
+                [this](int pos){
+                    return getDecodedConsensusOfPosition(pos);
+                }
+            );
+        }
+
+
+        template<class ThreadGroup>
+        __device__ __forceinline__
+        void computeConsensusQuality(
+            ThreadGroup& group,
+            char* quality,
+            int maxlength
+        ) const {
+            const int begin = columnProperties->firstColumn_incl;
+            const int end = columnProperties->lastColumn_excl;
+
+            auto consensusQualityIterator = getConsensusQualityIterator();
+
+            for(int i = begin + group.thread_rank(); i < end; i += group.size()){
+                if(i - begin < maxlength){
+                    const int outpos = i - begin;
+                    quality[outpos] = consensusQualityIterator[i];
+                }
+            }
+        }
+
+        template<class ThreadGroup>
+        __device__ __forceinline__
+        void computeDecodedConsensus(
+            ThreadGroup& group,
+            char* decodedConsensus,
+            int maxlength
+        ) const {
+            const int begin = columnProperties->firstColumn_incl;
+            const int end = columnProperties->lastColumn_excl;
+
+            auto decodedConsensusIterator = getDecodedConsensusIterator();
+
+            for(int i = begin + group.thread_rank(); i < end; i += group.size()){
+                if(i - begin < maxlength){
+                    const int outpos = i - begin;
+                    decodedConsensus[outpos] = decodedConsensusIterator[i];
+                }
+            }
+        }
+
+        __device__ __forceinline__
+        int computeSize() const {
+            const int begin = columnProperties->firstColumn_incl;
+            const int end = columnProperties->lastColumn_excl;
+
+            return end - begin;
+        }
+
+    private:
+        __device__ __forceinline__
+        char getConsensusQualityOfPosition(int pos) const{
+            const float sup = support[pos];
+            //const float cov = coverages[pos];
+
+            //char q = getQualityChar(sup);
+
+            //scale down quality depending on coverage
+            //q = char(float(q) * min(1.0f, cov * 1.0f / 5.0f));
+
+            return getQualityChar(sup);
+        }
+
+        __device__ __forceinline__
+        char getDecodedConsensusOfPosition(int pos) const{
+            const std::uint8_t encoded = consensus[pos];
+            char decoded = 'F';
+            if(encoded == std::uint8_t{0}){
+                decoded = 'A';
+            }else if(encoded == std::uint8_t{1}){
+                decoded = 'C';
+            }else if(encoded == std::uint8_t{2}){
+                decoded = 'G';
+            }else if(encoded == std::uint8_t{3}){
+                decoded = 'T';
+            }
+            return decoded;
+        };
 
     public:
         int columnPitchInElements;

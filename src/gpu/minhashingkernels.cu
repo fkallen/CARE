@@ -4,6 +4,7 @@
 
 #include <config.hpp>
 #include <hpc_helpers.cuh>
+#include <gpu/cudaerrorcheck.cuh>
 #include <sequencehelpers.hpp>
 
 
@@ -167,7 +168,7 @@ void callMinhashSignaturesKernel(
         k,
         numHashFuncs,
         firstHashFunc
-    ); CUERR;
+    ); CUDACHECKASYNC;
 }
 
 
@@ -329,7 +330,7 @@ void callMinhashSignaturesKernel(
         k,
         numHashFuncs,
         hashFunctionNumbers
-    ); CUERR;
+    ); CUDACHECKASYNC;
 }
 
 

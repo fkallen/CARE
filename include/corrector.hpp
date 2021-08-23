@@ -1616,6 +1616,7 @@ private:
             case CorrectionType::Forest:
                 correctCandidatesClf(task);
                 break;
+            case CorrectionType::Classic:
             default:
                 correctCandidatesClassic(task);
         }
@@ -1649,7 +1650,7 @@ private:
             }
             
             tmp.hq = task.msaProperties.isHQ;
-            tmp.type = TempCorrectedSequence::Type::Anchor;
+            tmp.type = TempCorrectedSequenceType::Anchor;
             tmp.readId = task.input.anchorReadId;
             tmp.sequence = std::move(correctedSequenceString); 
             
@@ -1668,7 +1669,7 @@ private:
                 
                 TempCorrectedSequence tmp;
                 
-                tmp.type = TempCorrectedSequence::Type::Candidate;
+                tmp.type = TempCorrectedSequenceType::Candidate;
                 tmp.readId = candidateId;
                 tmp.shift = correctedCandidate.shift;
 

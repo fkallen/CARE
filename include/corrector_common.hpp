@@ -13,21 +13,40 @@ namespace care{
 
     class CorrectionOutput{
     public:
-        void encode(){
-            encodedAnchorCorrections.resize(anchorCorrections.size());
-            encodedCandidateCorrections.resize(candidateCorrections.size());
+        std::vector<TempCorrectedSequence> anchorCorrections;
+        std::vector<TempCorrectedSequence> candidateCorrections;
+    };
 
-            for(std::size_t i = 0; i < anchorCorrections.size(); i++){
-                anchorCorrections[i].encodeInto(encodedAnchorCorrections[i]);
+    class EncodedCorrectionOutput{
+    public:
+        EncodedCorrectionOutput() = default;
+        EncodedCorrectionOutput(const EncodedCorrectionOutput&) = default;
+        EncodedCorrectionOutput(EncodedCorrectionOutput&&) = default;
+
+        EncodedCorrectionOutput(const CorrectionOutput& rhs){
+            encodedAnchorCorrections.resize(rhs.anchorCorrections.size());
+            encodedCandidateCorrections.resize(rhs.candidateCorrections.size());
+
+            for(std::size_t i = 0; i < rhs.anchorCorrections.size(); i++){
+                rhs.anchorCorrections[i].encodeInto(encodedAnchorCorrections[i]);
             }
 
-            for(std::size_t i = 0; i < candidateCorrections.size(); i++){
-                candidateCorrections[i].encodeInto(encodedCandidateCorrections[i]);
+            for(std::size_t i = 0; i < rhs.candidateCorrections.size(); i++){
+                rhs.candidateCorrections[i].encodeInto(encodedCandidateCorrections[i]);
             }
         }
 
-        std::vector<TempCorrectedSequence> anchorCorrections;
-        std::vector<TempCorrectedSequence> candidateCorrections;
+        EncodedCorrectionOutput& operator=(EncodedCorrectionOutput rhs){
+            std::swap(*this, rhs);
+            return *this;
+        }
+
+        EncodedCorrectionOutput& operator=(const CorrectionOutput& rhs){
+            EncodedCorrectionOutput tmp(rhs);
+            std::swap(*this, tmp);
+            return *this;
+        }
+
         std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
         std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
     };

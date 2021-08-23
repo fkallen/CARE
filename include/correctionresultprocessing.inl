@@ -4,7 +4,6 @@
 */
 
 #include <correctionresultprocessing.hpp>
-#include <programoutputprocessing.hpp>
 
 #include <config.hpp>
 #include <hpc_helpers.cuh>
@@ -28,6 +27,408 @@
 #include <future>
 
 namespace care{
+
+template<class ResultType, class MemoryFile_t, class Combiner, class ReadIdComparator, class ProgressFunction>
+void mergeResultsWithOriginalReads_multithreaded(
+    const std::string& tempdir,
+    const std::vector<std::string>& originalReadFiles,
+    MemoryFile_t& partialResults, 
+    std::size_t memoryForSorting,
+    FileFormat outputFormat,
+    const std::vector<std::string>& outputfiles,
+    bool isSorted,
+    Combiner combineResultsWithRead, /* combineResultsWithRead(std::vector<ResultType>& in, ReadWithId& in_out) */
+    ReadIdComparator origIdResultIdLessThan,
+    ProgressFunction addProgress
+){
+
+    assert(outputfiles.size() == 1 || originalReadFiles.size() == outputfiles.size());
+
+    if(partialResults.getNumElements() == 0){
+        if(outputfiles.size() == 1){
+            std::ofstream outstream(outputfiles[0], std::ios::binary);
+            if(!bool(outstream)){
+                throw std::runtime_error("Cannot open output file " + outputfiles[0]);
+            }
+
+            for(const auto& ifname : originalReadFiles){
+                std::ifstream instream(ifname, std::ios::binary);
+                outstream << instream.rdbuf();
+            }
+        }else{
+            const int numFiles = outputfiles.size();
+            for(int i = 0; i < numFiles; i++){
+                std::ofstream outstream(outputfiles[i], std::ios::binary);
+                if(!bool(outstream)){
+                    throw std::runtime_error("Cannot open output file " + outputfiles[0]);
+                }
+
+                std::ifstream instream(originalReadFiles[i], std::ios::binary);
+                outstream << instream.rdbuf();
+            }
+        }
+
+        return;
+    }
+
+    if(!isSorted){
+
+        auto elementcomparator = [](const auto& l, const auto& r){
+            return l.getReadId() < r.getReadId();
+        };
+
+        auto extractKey = [](const std::uint8_t* ptr){
+            using ValueType = typename MemoryFile_t::ValueType;
+
+            const read_number id = ValueType::parseReadId(ptr);
+            
+            return id;
+        };
+
+        auto keyComparator = std::less<read_number>{};
+
+        helpers::CpuTimer timer("sort_results_by_read_id");
+
+        bool fastSuccess = false; //partialResults.template trySortByKeyFast<read_number>(extractKey, keyComparator, memoryForSorting);
+
+        if(!fastSuccess){            
+            partialResults.sort(tempdir, memoryForSorting, extractKey, keyComparator, elementcomparator);
+        }else{
+            std::cerr << "fast sort worked!\n";
+        }
+
+        timer.print();
+    }
+
+    helpers::CpuTimer mergetimer("merging");
+
+    struct ResultTypeBatch{
+        int validItems = 0;
+        int processedItems = 0;
+        std::vector<ResultType> items;
+    };
+
+    std::array<ResultTypeBatch, 4> tcsBatches;
+
+    SimpleSingleProducerSingleConsumerQueue<ResultTypeBatch*> freeTcsBatches;
+    SimpleSingleProducerSingleConsumerQueue<ResultTypeBatch*> unprocessedTcsBatches;
+
+    std::atomic<bool> noMoreTcsBatches{false};
+
+    for(auto& batch : tcsBatches){
+        freeTcsBatches.push(&batch);
+    }
+
+    constexpr int decoder_maxbatchsize = 100000;
+
+    auto decoderFuture = std::async(std::launch::async,
+        [&](){
+            
+
+            auto partialResultsReader = partialResults.makeReader();
+
+            // std::chrono::time_point<std::chrono::system_clock> abegin, aend;
+            // std::chrono::duration<double> adelta{0};
+
+            // TIMERSTARTCPU(tcsparsing);
+
+            read_number previousId = 0;
+            std::size_t itemnumber = 0;
+
+            while(partialResultsReader.hasNext()){
+                ResultTypeBatch* batch = freeTcsBatches.pop();
+
+                //abegin = std::chrono::system_clock::now();
+
+                batch->items.resize(decoder_maxbatchsize);
+
+                int batchsize = 0;
+                while(batchsize < decoder_maxbatchsize && partialResultsReader.hasNext()){
+                    batch->items[batchsize] = *(partialResultsReader.next());
+                    if(batch->items[batchsize].readId < previousId){
+                        std::cerr << "Error, results not sorted. itemnumber = " << itemnumber << ", previousId = " << previousId << ", currentId = " << batch->items[batchsize].readId << "\n";
+                        assert(false);
+                    }
+                    batchsize++;
+                    itemnumber++;
+                    previousId = batch->items[batchsize].readId;
+                }
+
+                // aend = std::chrono::system_clock::now();
+                // adelta += aend - abegin;
+
+                batch->processedItems = 0;
+                batch->validItems = batchsize;
+
+                unprocessedTcsBatches.push(batch);
+            }
+
+            //std::cout << "# elapsed time ("<< "tcsparsing without queues" <<"): " << adelta.count()  << " s" << std::endl;
+
+            // TIMERSTOPCPU(tcsparsing);
+
+            noMoreTcsBatches = true;
+        }
+    );
+
+
+    struct ReadBatch{
+        int validItems = 0;
+        int processedItems = 0;
+        std::vector<ReadWithId> items;
+    };
+
+    std::array<ReadBatch, 4> readBatches;
+
+    // free -> unprocessed input -> unprocessed output -> free -> ...
+    SimpleSingleProducerSingleConsumerQueue<ReadBatch*> freeReadBatches;
+    SimpleSingleProducerSingleConsumerQueue<ReadBatch*> unprocessedInputreadBatches;
+    SimpleSingleProducerSingleConsumerQueue<ReadBatch*> unprocessedOutputreadBatches;
+
+    std::atomic<bool> noMoreInputreadBatches{false};
+
+    constexpr int inputreader_maxbatchsize = 200000;
+
+    for(auto& batch : readBatches){
+        freeReadBatches.push(&batch);
+    }
+
+    auto inputReaderFuture = std::async(std::launch::async,
+        [&](){
+
+            MultiInputReader multiInputReader(originalReadFiles);
+
+            // TIMERSTARTCPU(inputparsing);
+
+            // std::chrono::time_point<std::chrono::system_clock> abegin, aend;
+            // std::chrono::duration<double> adelta{0};
+
+            while(multiInputReader.next() >= 0){
+
+                ReadBatch* batch = freeReadBatches.pop();
+
+                // abegin = std::chrono::system_clock::now();
+
+                batch->items.resize(inputreader_maxbatchsize);
+
+                std::swap(batch->items[0], multiInputReader.getCurrent()); //process element from outer loop next() call
+                int batchsize = 1;
+
+                while(batchsize < inputreader_maxbatchsize && multiInputReader.next() >= 0){
+                    std::swap(batch->items[batchsize], multiInputReader.getCurrent());
+                    
+                    batchsize++;
+                }
+
+                // aend = std::chrono::system_clock::now();
+                // adelta += aend - abegin;
+
+                batch->processedItems = 0;
+                batch->validItems = batchsize;
+
+                unprocessedInputreadBatches.push(batch);                
+            }
+
+            // std::cout << "# elapsed time ("<< "inputparsing without queues" <<"): " << adelta.count()  << " s" << std::endl;
+
+            // TIMERSTOPCPU(inputparsing);
+
+            noMoreInputreadBatches = true;
+        }
+    );
+
+    std::atomic<bool> noMoreOutputreadBatches{false};
+
+    auto outputWriterFuture = std::async(std::launch::async,
+        [&](){
+            //no gz output
+            auto format = outputFormat;
+
+            if(format == FileFormat::FASTQGZ)
+                format = FileFormat::FASTQ;
+            if(format == FileFormat::FASTAGZ)
+                format = FileFormat::FASTA;
+
+            std::vector<std::unique_ptr<SequenceFileWriter>> writerVector;
+
+            assert(originalReadFiles.size() == outputfiles.size() || outputfiles.size() == 1);
+
+            for(const auto& outputfile : outputfiles){
+                writerVector.emplace_back(makeSequenceWriter(outputfile, format));
+            }
+
+            const int numOutputfiles = outputfiles.size();
+
+            // TIMERSTARTCPU(outputwriting);
+
+            // std::chrono::time_point<std::chrono::system_clock> abegin, aend;
+            // std::chrono::duration<double> adelta{0};
+
+            ReadBatch* outputBatch = unprocessedOutputreadBatches.pop();
+
+            while(outputBatch != nullptr){                
+
+                // abegin = std::chrono::system_clock::now();
+                
+                int processed = outputBatch->processedItems;
+                const int valid = outputBatch->validItems;
+                while(processed < valid){
+                    const auto& readWithId = outputBatch->items[processed];
+                    const int writerIndex = numOutputfiles == 1 ? 0 : readWithId.fileId;
+                    assert(writerIndex < numOutputfiles);
+
+                    writerVector[writerIndex]->writeRead(readWithId.read);
+
+                    processed++;
+                }
+
+                if(processed == valid){
+                    addProgress(valid);
+                }
+
+                // aend = std::chrono::system_clock::now();
+                // adelta += aend - abegin;
+
+                freeReadBatches.push(outputBatch);     
+
+                outputBatch = unprocessedOutputreadBatches.popOrDefault(
+                    [&](){
+                        return !noMoreOutputreadBatches;  //its possible that there are no corrections. In that case, return nullptr
+                    },
+                    nullptr
+                );            
+            }
+
+            // std::cout << "# elapsed time ("<< "outputwriting without queues" <<"): " << adelta.count()  << " s" << std::endl;
+
+            // TIMERSTOPCPU(outputwriting);
+        }
+    );
+
+    ResultTypeBatch* tcsBatch = unprocessedTcsBatches.popOrDefault(
+        [&](){
+            return !noMoreTcsBatches;  //its possible that there are no corrections. In that case, return nullptr
+        },
+        nullptr
+    ); 
+
+    ReadBatch* inputBatch = unprocessedInputreadBatches.pop();
+
+    assert(!(inputBatch == nullptr && tcsBatch != nullptr)); //there must be at least one batch of input reads
+
+    std::vector<ResultType> buffer;
+
+    while(!(inputBatch == nullptr && tcsBatch == nullptr)){
+
+        //modify reads in inputbatch, applying corrections.
+        //then place inputbatch in outputqueue
+
+        if(tcsBatch == nullptr){
+            //all correction results are processed
+            //copy remaining input reads to output file
+            
+            ; //nothing to do
+        }else{
+
+            auto last1 = inputBatch->items.begin() + inputBatch->validItems;
+            auto last2 = tcsBatch->items.begin() + tcsBatch->validItems;
+
+            auto first1 = inputBatch->items.begin()+ inputBatch->processedItems;
+            auto first2 = tcsBatch->items.begin()+ tcsBatch->processedItems;    
+
+            // assert(std::is_sorted(
+            //     first1,
+            //     last1,
+            //     [](const auto& l, const auto& r){
+            //         if(l.fileId < r.fileId) return true;
+            //         if(l.fileId > r.fileId) return false;
+            //         if(l.readIdInFile < r.readIdInFile) return true;
+            //         if(l.readIdInFile > r.readIdInFile) return false;
+                    
+            //         return l.globalReadId < r.globalReadId;
+            //     }
+            // ));
+
+            // assert(std::is_sorted(
+            //     first2,
+            //     last2,
+            //     [](const auto& l, const auto& r){
+            //         return l.readId < r.readId;
+            //     }
+            // ));
+
+            while(first1 != last1) {
+                if(first2 == last2){
+                    //all results are processed
+                    //copy remaining input reads to output file
+
+                    ; //nothing to do
+                    break;
+                }
+                //assert(first2->readId >= first1->globalReadId);
+                {
+
+                    ReadWithId& readWithId = *first1;
+                    
+                    buffer.clear();
+                    while(first2 != last2 && !(origIdResultIdLessThan(first1->globalReadId, first2->readId))){
+                    //while(first2 != last2 && !(first1->globalReadId < first2->readId)){
+                        buffer.push_back(*first2);
+                        ++first2;
+                        tcsBatch->processedItems++;
+
+                        if(first2 == last2){                                
+                            freeTcsBatches.push(tcsBatch);
+
+                            tcsBatch = unprocessedTcsBatches.popOrDefault(
+                                [&](){
+                                    return !noMoreTcsBatches;  //its possible that there are no more results to process. In that case, return nullptr
+                                },
+                                nullptr
+                            );
+
+                            if(tcsBatch != nullptr){
+                                //new batch could be fetched. update begin and end accordingly
+                                last2 = tcsBatch->items.begin() + tcsBatch->validItems;
+                                first2 = tcsBatch->items.begin()+ tcsBatch->processedItems;
+                            }
+                        }
+                    }
+
+                    combineResultsWithRead(buffer, readWithId);  
+
+                    ++first1;
+                }
+            }
+        }
+
+        assert(inputBatch != nullptr);
+
+        unprocessedOutputreadBatches.push(inputBatch);
+
+        inputBatch = unprocessedInputreadBatches.popOrDefault(
+            [&](){
+                return !noMoreInputreadBatches;
+            },
+            nullptr
+        );  
+        
+        assert(!(inputBatch == nullptr && tcsBatch != nullptr));
+
+    }
+
+    noMoreOutputreadBatches = true;
+
+    decoderFuture.wait();
+    inputReaderFuture.wait();
+    outputWriterFuture.wait();
+    // progressThread.finished();
+
+    // std::cout << "\n";
+
+    mergetimer.print();
+}
+
 
 
 struct CombinedCorrectionResult{
@@ -58,7 +459,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1(
     
 
     auto isAnchor = [](const auto& tcs){
-        return tcs.type == TempCorrectedSequence::Type::Anchor;
+        return tcs.type == TempCorrectedSequenceType::Anchor;
     };
 
     auto anchorIter = std::find_if(tmpresults.begin(), tmpresults.end(), isAnchor);
@@ -164,7 +565,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1(
 
     }
 
-};
+}
 
 //same as combineMultipleCorrectionResults1, but edits have not been applied in the tcs
 CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs(
@@ -185,7 +586,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs(
     // constexpr bool outputOnlyCand = false;
 
     auto isAnchor = [](const auto& tcs){
-        return tcs.type == TempCorrectedSequence::Type::Anchor;
+        return tcs.type == TempCorrectedSequenceType::Anchor;
     };
 
     auto anchorIter = std::find_if(tmpresults.begin(), tmpresults.end(), isAnchor);
@@ -196,7 +597,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs(
             if(outputHQ){
                 if(anchorIter->useEdits){
                     for(const auto& edit : anchorIter->edits){
-                        originalSequence[edit.pos] = edit.base;
+                        originalSequence[edit.pos()] = edit.base();
                     }
                 }
 
@@ -223,7 +624,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs(
                     if(tmpres.useEdits){
                         tmpres.sequence = originalSequence;
                         for(const auto& edit : tmpres.edits){
-                            tmpres.sequence[edit.pos] = edit.base;
+                            tmpres.sequence[edit.pos()] = edit.base();
                         }
                     }
                 }
@@ -259,7 +660,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs(
                 if(outputLQOnlyAnchor){
                     if(anchorIter->useEdits){
                         for(const auto& edit : anchorIter->edits){
-                            originalSequence[edit.pos] = edit.base;
+                            originalSequence[edit.pos()] = edit.base();
                         }
                     }
                     
@@ -309,7 +710,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs(
 
     }
 
-};
+}
 
 
 CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
@@ -334,7 +735,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
     // };
 
     auto isAnchor = [](const auto& tcs){
-        return tcs.type == TempCorrectedSequence::Type::Anchor;
+        return tcs.type == TempCorrectedSequenceType::Anchor;
     };
 
     auto anchorIter = std::find_if(tmpresults.begin(), tmpresults.end(), isAnchor);
@@ -345,7 +746,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
             if(outputHQ){
                 if(anchorIter->useEdits){
                     for(const auto& edit : anchorIter->edits){
-                        readWithId.read.sequence[edit.pos] = edit.base;
+                        readWithId.read.sequence[edit.pos()] = edit.base();
                     }
                 }else{
                     std::swap(readWithId.read.sequence, anchorIter->sequence);
@@ -382,12 +783,12 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
                 auto editIter = tcswithedit.edits.begin();
                 int pos = 0;
                 while(pos != len1 && editIter != tcswithedit.edits.end()){
-                    if(pos != editIter->pos){
+                    if(pos != editIter->pos()){
                         if(readWithId.read.sequence[pos] != tcs2.sequence[pos]){
                             return false;
                         }
                     }else{
-                        if(editIter->base != tcs2.sequence[pos]){
+                        if(editIter->base() != tcs2.sequence[pos]){
                             return false;
                         }
                         ++editIter;
@@ -467,7 +868,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
 
                         if(tmpresults[0].useEdits){
                             for(const auto& edit : tmpresults[0].edits){
-                                readWithId.read.sequence[edit.pos] = edit.base;
+                                readWithId.read.sequence[edit.pos()] = edit.base();
                             }
                         }else{
                             std::swap(readWithId.read.sequence, tmpresults[0].sequence);
@@ -496,7 +897,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
                 if(outputLQOnlyAnchor){
                     if(anchorIter->useEdits){
                         for(const auto& edit : anchorIter->edits){
-                            readWithId.read.sequence[edit.pos] = edit.base;
+                            readWithId.read.sequence[edit.pos()] = edit.base();
                         }
                     }else{
                         std::swap(readWithId.read.sequence, anchorIter->sequence);
@@ -552,7 +953,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
 
     }
 
-};
+}
 
 
 
@@ -661,17 +1062,18 @@ void constructOutputFileFromCorrectionResults(
         //ptr += numBytes;
     }
 
-
-    TempCorrectedSequence::TempCorrectedSequence(const EncodedTempCorrectedSequence& encoded){
-        decode(encoded);
-    }
-
-    TempCorrectedSequence& TempCorrectedSequence::operator=(const EncodedTempCorrectedSequence& encoded){
-        decode(encoded);
-        return *this;
-    }
-
-    void TempCorrectedSequence::encodeInto(EncodedTempCorrectedSequence& target) const{
+    void encodeDataIntoEncodedCorrectedSequence(
+        EncodedTempCorrectedSequence& target,
+        read_number readId,
+        bool hq,
+        bool useEdits,
+        TempCorrectedSequenceType type,
+        int shift,
+        int numEdits,
+        const TempCorrectedSequence::Edit* edits,
+        int sequenceLength,
+        const char* sequence
+    ){
         const std::uint32_t oldNumBytes = target.getNumBytes(); 
 
         target.readId = readId;
@@ -684,17 +1086,17 @@ void constructOutputFileFromCorrectionResults(
 
         std::uint32_t numBytes = 0;
         if(useEdits){
-            const int numEdits = edits.size();
             numBytes += sizeof(int);
             numBytes += numEdits * (sizeof(int) + sizeof(char));
         }else{
             numBytes += sizeof(int);
-            numBytes += sequence.length();
+            numBytes += sizeof(char) * sequenceLength;
         }
 
-        if(type == TempCorrectedSequence::Type::Anchor){
+        if(type == TempCorrectedSequenceType::Anchor){
             ; //nothing
         }else{
+            //candidate shift
             numBytes += sizeof(int);
         }
 
@@ -712,31 +1114,58 @@ void constructOutputFileFromCorrectionResults(
         std::uint8_t* ptr = target.data.get();
 
         if(useEdits){
-            const int numEdits = edits.size();
             std::memcpy(ptr, &numEdits, sizeof(int));
             ptr += sizeof(int);
-            for(const auto& edit : edits){
-                std::memcpy(ptr, &edit.pos, sizeof(int));
+            for(int i = 0; i < numEdits; i++){
+                const auto& edit = edits[i];
+                const int p = edit.pos();
+                std::memcpy(ptr, &p, sizeof(int));
                 ptr += sizeof(int);
             }
-            for(const auto& edit : edits){
-                std::memcpy(ptr, &edit.base, sizeof(char));
+            for(int i = 0; i < numEdits; i++){
+                const auto& edit = edits[i];
+                const char c = edit.base();
+                std::memcpy(ptr, &c, sizeof(char));
                 ptr += sizeof(char);
             }
         }else{
-            const int length = sequence.length();
-            std::memcpy(ptr, &length, sizeof(int));
+            std::memcpy(ptr, &sequenceLength, sizeof(int));
             ptr += sizeof(int);
-            std::memcpy(ptr, sequence.c_str(), sizeof(char) * length);
-            ptr += sizeof(char) * length;
+            std::memcpy(ptr, sequence, sizeof(char) * sequenceLength);
+            ptr += sizeof(char) * sequenceLength;
         }
 
-        if(type == TempCorrectedSequence::Type::Anchor){
+        if(type == TempCorrectedSequenceType::Anchor){
             ; //nothing
         }else{
             std::memcpy(ptr, &shift, sizeof(int));
             ptr += sizeof(int);
         }
+    }
+
+
+    TempCorrectedSequence::TempCorrectedSequence(const EncodedTempCorrectedSequence& encoded){
+        decode(encoded);
+    }
+
+    TempCorrectedSequence& TempCorrectedSequence::operator=(const EncodedTempCorrectedSequence& encoded){
+        decode(encoded);
+        return *this;
+    }
+
+    void TempCorrectedSequence::encodeInto(EncodedTempCorrectedSequence& target) const{
+        encodeDataIntoEncodedCorrectedSequence(
+            target,
+            readId,
+            hq,
+            useEdits,
+            type,
+            shift,
+            edits.size(),
+            edits.data(),
+            sequence.size(),
+            sequence.data()
+        );
     }
 
     EncodedTempCorrectedSequence TempCorrectedSequence::encode() const{
@@ -748,11 +1177,11 @@ void constructOutputFileFromCorrectionResults(
 
     void TempCorrectedSequence::decode(const EncodedTempCorrectedSequence& encoded){
 
-        readId = encoded.readId;
+        readId = encoded.getReadId();
 
-        hq = (encoded.encodedflags >> 31) & std::uint32_t(1);
-        useEdits = (encoded.encodedflags >> 30) & std::uint32_t(1);
-        type = TempCorrectedSequence::Type((encoded.encodedflags >> 29) & std::uint32_t(1));
+        hq = encoded.isHQ();
+        useEdits = encoded.useEdits();
+        type = encoded.getType();
 
         const std::uint8_t* ptr = encoded.data.get();
     
@@ -765,11 +1194,15 @@ void constructOutputFileFromCorrectionResults(
             edits.resize(size);
 
             for(auto& edit : edits){
-                std::memcpy(&edit.pos, ptr, sizeof(int));
+                int p;
+                std::memcpy(&p, ptr, sizeof(int));
+                edit.pos(p);
                 ptr += sizeof(int);
             }
             for(auto& edit : edits){
-                std::memcpy(&edit.base, ptr, sizeof(char));
+                char c;
+                std::memcpy(&c, ptr, sizeof(char));
+                edit.base(c);
                 ptr += sizeof(char);
             }
         }else{
@@ -783,7 +1216,7 @@ void constructOutputFileFromCorrectionResults(
             ptr += sizeof(char) * length;
         }
 
-        if(type == TempCorrectedSequence::Type::Anchor){
+        if(type == TempCorrectedSequenceType::Anchor){
             ; //nothing
         }else{
             std::memcpy(&shift, ptr, sizeof(int));
@@ -803,10 +1236,10 @@ void constructOutputFileFromCorrectionResults(
         if(useEdits){
             os << edits.size() << ' ';
             for(const auto& edit : edits){
-                os << edit.pos << ' ';
+                os << edit.pos() << ' ';
             }
             for(const auto& edit : edits){
-                os << edit.base;
+                os << edit.base();
             }
             if(edits.size() > 0){
                 os << ' ';
@@ -815,7 +1248,7 @@ void constructOutputFileFromCorrectionResults(
             os << sequence << ' ';
         }
 
-        if(type == TempCorrectedSequence::Type::Anchor){
+        if(type == TempCorrectedSequenceType::Anchor){
             ; // nothing
         }else{
             os << shift;
@@ -837,7 +1270,7 @@ void constructOutputFileFromCorrectionResults(
 
             hq = (data >> 7) & 1;
             useEdits = (data >> 6) & 1;
-            type = TempCorrectedSequence::Type(int(data & 0x3F));
+            type = TempCorrectedSequenceType(int(data & 0x3F));
 
             if(useEdits){
                 size_t size;
@@ -845,16 +1278,20 @@ void constructOutputFileFromCorrectionResults(
                 int numEdits = size;
                 edits.resize(size);
                 for(int i = 0; i < numEdits; i++){
-                    stream >> edits[i].pos;
+                    int p;
+                    stream >> p;
+                    edits[i].pos(p);
                 }
                 for(int i = 0; i < numEdits; i++){
-                    stream >> edits[i].base;
+                    char c;
+                    stream >> c;
+                    edits[i].base(c);
                 }
             }else{
                 stream >> sequence;
             }
 
-            if(type == TempCorrectedSequence::Type::Anchor){
+            if(type == TempCorrectedSequenceType::Anchor){
                 ; //nothing
             }else{
                 stream >> shift;
@@ -875,7 +1312,7 @@ void constructOutputFileFromCorrectionResults(
             << ", useEdits = " << tmp.useEdits << ", numEdits = " << tmp.edits.size();
         if(tmp.edits.size() > 0){
             for(const auto& edit : tmp.edits){
-                os << " , (" << edit.pos << "," << edit.base << ")";
+                os << " , (" << edit.pos() << "," << edit.base() << ")";
             }
         }
 

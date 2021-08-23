@@ -84,10 +84,10 @@ namespace care{
 
 
         void constructFromReadStorage(
-            const FileOptions &fileOptions,
+            const FileOptions &/*fileOptions*/,
             const RuntimeOptions &runtimeOptions,
             const MemoryOptions& memoryOptions,
-            std::uint64_t nReads,
+            std::uint64_t /*nReads*/,
             const CorrectionOptions& correctionOptions,
             const CpuReadStorage& cpuReadStorage
         ){
@@ -558,7 +558,7 @@ namespace care{
             const read_number* h_readIds,
             int firstHashfunction,
             int numHashfunctions,
-            const int* h_hashFunctionNumbers
+            const int* /*h_hashFunctionNumbers*/
         ){
             if(numSequences == 0) return;
 

@@ -4,6 +4,7 @@
 #include <config.hpp>
 #include <memorymanagement.hpp>
 #include <threadpool.hpp>
+#include <hostdevicefunctions.cuh>
 
 #include <vector>
 #include <cassert>
@@ -65,7 +66,7 @@ namespace care{
 
         bool operator==(const AoSCpuSingleValueHashTable& rhs) const{
             return emptySlot == rhs.emptySlot 
-                && load == rhs.load
+                && feq(load, rhs.load)
                 && maxProbes == rhs.maxProbes
                 && size == rhs.size 
                 && capacity == rhs.capacity
@@ -221,7 +222,7 @@ namespace care{
 
         bool operator==(const SoACpuSingleValueHashTable& rhs) const{
             return emptyKey == rhs.emptyKey 
-                && load == rhs.load
+                && feq(load, rhs.load)
                 && maxProbes == rhs.maxProbes
                 && size == rhs.size 
                 && capacity == rhs.capacity

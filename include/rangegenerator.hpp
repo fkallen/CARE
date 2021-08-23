@@ -98,6 +98,70 @@ namespace cpu{
         }
     };
 
+    template<class Iterator>
+    struct IteratorRangeTraversal{
+    private:
+
+        bool isEmpty;
+        Iterator begin;
+        Iterator end;
+        Iterator current;
+        std::mutex mutex;
+
+    public:
+        IteratorRangeTraversal(Iterator begin_, Iterator end_) : isEmpty(std::distance(begin_, end_) <= 0), begin(begin_), end(end_), current(begin_){}
+
+        void reset(Iterator begin_, Iterator end_){
+            std::lock_guard<std::mutex> lm(mutex);
+            isEmpty = std::distance(begin_, end_) <= 0;
+            begin = begin_;
+            end = end_;
+            current = begin_;
+        }
+
+        bool empty(){
+            std::lock_guard<std::mutex> lm(mutex);
+            return isEmpty;
+        }
+
+        void skip(std::size_t n){
+            std::lock_guard<std::mutex> lm(mutex);
+            const std::size_t remaining = std::distance(current, end);
+            const std::size_t resultsize = std::min(remaining, n);
+            std::advance(current, resultsize);
+
+            if(current == end){
+                isEmpty = true;
+            }
+        }
+
+        template<class Func>
+        void process_next_n(std::size_t n, Func callback){
+            std::unique_lock<std::mutex> lock(mutex);
+            if(!isEmpty){
+                const std::size_t remaining = std::distance(current, end);
+                const std::size_t resultsize = std::min(remaining, n);
+                auto callbackbegin = current;
+                std::advance(current, resultsize);
+                auto callbackend = current;
+
+                if(current == end){
+                    isEmpty = true;
+                }
+                lock.unlock();
+                callback(callbackbegin, callbackend);
+            }else{
+                lock.unlock();
+                callback(end, end);
+            }
+        }
+    };
+
+    template<class Iterator>
+    IteratorRangeTraversal<Iterator> makeIteratorRangeTraversal(Iterator begin, Iterator end){
+        return IteratorRangeTraversal<Iterator>(begin, end);
+    }
+
 }
 }
 

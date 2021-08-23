@@ -90,7 +90,7 @@ namespace care{
 
     HOSTDEVICEQUALIFIER
     INLINEQUALIFIER
-    float calculateOverlapWeight(int anchorlength, int nOps, int overlapsize, float maxMismatchRatio){
+    float calculateOverlapWeight(int /*anchorlength*/, int nOps, int overlapsize, float maxMismatchRatio){
         return 1.0f - sqrtf(nOps / (overlapsize * maxMismatchRatio));
         //return 1.0f - sqrtf(float(nOps) / float(overlapsize));
         //return 1.0f - nOps / overlapsize;
@@ -199,7 +199,7 @@ namespace care{
         result += popcount(bits & mask);
 
         return result;
-    };
+    }
 
 }
 

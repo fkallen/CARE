@@ -2,6 +2,7 @@
 #define CARE_CPU_MSA_HPP
 
 #include <config.hpp>
+#include <hostdevicefunctions.cuh>
 
 #include <util.hpp>
 #include <qualityscoreweights.hpp>
@@ -86,7 +87,7 @@ public:
         bool operator==(const PossibleSplitColumn& rhs) const{
             return letter == rhs.letter
                 && column == rhs.column
-                && ratio == rhs.ratio;
+                && feq(ratio, rhs.ratio);
         }
 
         bool operator!=(const PossibleSplitColumn& rhs) const{

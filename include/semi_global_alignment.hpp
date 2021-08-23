@@ -3,6 +3,8 @@
 
 #include <config.hpp>
 
+#include <gpu/cudaerrorcheck.cuh>
+
 #include "hpc_helpers.cuh"
 #include "bestalignment.hpp"
 
@@ -971,7 +973,7 @@ void call_semi_global_alignment_with_revcompl_kernel_async(const SGAdata& sgadat
                             score_ins, \
                             score_del, \
                             accessor, \
-                            make_reverse_complement); CUERR;
+                            make_reverse_complement); CUDACHECKASYNC;
 
     // start kernel
     switch(maxSequenceLength){
@@ -1012,7 +1014,7 @@ void call_semi_global_alignment_with_revcompl_kernel(const SGAdata& sgadata,
                                             accessor,
                                             make_reverse_complement);
 
-    cudaStreamSynchronize(sgadata.streams[0]); CUERR;
+    CUDACHECK(cudaStreamSynchronize(sgadata.streams[0]));
 }
 
 

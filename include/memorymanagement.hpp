@@ -58,7 +58,7 @@
             file.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
         }
         return 0;
-    };
+    }
 
     __inline__ 
     std::size_t getCurrentRSS_linux(){
@@ -86,7 +86,7 @@
         //return getAvailableMemoryInKB_linux();
 
         return std::min(getAvailableMemoryInKB_linux(), (getRSSLimit_linux() - getCurrentRSS_linux()) / 1024);
-    };
+    }
 
     __inline__ 
     std::size_t getMaxRSSUsageInKB(){

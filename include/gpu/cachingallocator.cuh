@@ -41,7 +41,7 @@ struct ThrustCachingAllocator : thrust::device_malloc_allocator<T> {
         return thrust::device_pointer_cast(ptr);
     }
 
-    void deallocate(pointer ptr, size_type n){
+    void deallocate(pointer ptr, size_type /*n*/){
     	//std::cerr << "dealloc" << std::endl;
         cudaError_t status = cudaSuccess;
         if(cubAllocator){

@@ -2,6 +2,7 @@
 #define SINGLE_GPU_ARRAY_HPP
 
 #include <hpc_helpers.cuh>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <2darray.hpp>
 #include <memorymanagement.hpp>
@@ -10,6 +11,7 @@
 #include <cassert>
 #include <iostream>
 #include <vector>
+#include <memory>
 
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
@@ -73,7 +75,7 @@ public:
 
     Gpu2dArrayManaged()
     : alignmentInBytes(sizeof(T)){
-        cudaGetDevice(&deviceId); CUERR;
+        CUDACHECK(cudaGetDevice(&deviceId));
     }
 
     Gpu2dArrayManaged(size_t numRows, size_t numColumns, size_t alignmentInBytes)
@@ -92,7 +94,7 @@ public:
     Gpu2dArrayManaged(const Gpu2dArrayManaged& rhs)
         : Gpu2dArrayManaged(rhs.numRows, rhs.numColumns, rhs.alignmentInBytes)
     {
-        cudaMemcpy(arraydata, rhs.arraydata, numRows * rowPitchInBytes, D2D); CUERR;
+        CUDACHECK(cudaMemcpy(arraydata, rhs.arraydata, numRows * rowPitchInBytes, D2D));
     }
 
     Gpu2dArrayManaged(Gpu2dArrayManaged&& other) noexcept
@@ -123,14 +125,14 @@ public:
         this->numRows = numRows;
         this->numColumns = numColumns;
 
-        cudaGetDevice(&deviceId); CUERR;
+        CUDACHECK(cudaGetDevice(&deviceId));
 
         rowPitchInBytes = computePitch(numColumns, alignmentInBytes);
 
         if(numRows > 0 && numColumns > 0){
 
-            cudaMalloc(&arraydata, numRows * rowPitchInBytes); CUERR;
-            cudaMemset(arraydata, 0, numRows * rowPitchInBytes); CUERR;
+            CUDACHECK(cudaMalloc(&arraydata, numRows * rowPitchInBytes));
+            CUDACHECK(cudaMemset(arraydata, 0, numRows * rowPitchInBytes));
 
         }
     }
@@ -143,13 +145,41 @@ public:
     void destroy(){
         cub::SwitchDevice sd{deviceId};
 
-        cudaFree(arraydata); CUERR;
+        CUDACHECK(cudaFree(arraydata));
         
         numRows = 0;
         numColumns = 0;
         alignmentInBytes = 0;
         rowPitchInBytes = 0;
         arraydata = nullptr;
+    }
+
+    std::unique_ptr<Gpu2dArrayManaged> makeCopy(int targetDeviceid) const{
+        cub::SwitchDevice sd{targetDeviceid};
+
+        auto result = std::make_unique<Gpu2dArrayManaged>();
+
+        result->numRows = numRows;
+        result->numColumns = numColumns;
+        result->alignmentInBytes = alignmentInBytes;
+        result->rowPitchInBytes = rowPitchInBytes;
+        result->arraydata = nullptr;
+
+        cudaError_t status = cudaMalloc(&result->arraydata, numRows * rowPitchInBytes);
+        if(status != cudaSuccess){
+            return nullptr;
+        }
+        status = cudaMemcpyAsync(result->arraydata, arraydata, numRows * rowPitchInBytes, D2D, cudaStreamPerThread);
+        if(status != cudaSuccess){
+            return nullptr;
+        }
+        status = cudaStreamSynchronize(cudaStreamPerThread);
+
+        if(status != cudaSuccess){
+            return nullptr;
+        }else{
+            return result;
+        }
     }
 
     TwoDimensionalArray<T> wrapper() const noexcept{
@@ -164,9 +194,9 @@ public:
 
     void print() const{
         T* tmp;
-        cudaMallocHost(&tmp, numRows * numColumns); CUERR;
+        CUDACHECK(cudaMallocHost(&tmp, numRows * numColumns));
         gather(tmp, numColumns * sizeof(T), [=]__device__(auto i){return i;}, numRows);
-        cudaDeviceSynchronize(); CUERR;
+        CUDACHECK(cudaDeviceSynchronize());
 
         for(size_t i = 0; i < numRows; i++){
             for(size_t k = 0; k < numColumns; k++){
@@ -175,7 +205,7 @@ public:
             std::cerr << "\n";
         }
 
-        cudaFreeHost(tmp); CUERR;
+        CUDACHECK(cudaFreeHost(tmp));
     }
 
     template<class IndexGenerator>
@@ -196,7 +226,7 @@ public:
             numIndices
         );
 
-        CUERR;
+        CUDACHECKASYNC;
     }
 
     template<class IndexGenerator>
@@ -217,7 +247,7 @@ public:
             d_numIndices
         );
 
-        CUERR;
+        CUDACHECKASYNC;
     }
 
     void gather(T* d_dest, size_t destRowPitchInBytes, size_t rowBegin, size_t rowEnd, cudaStream_t stream = 0) const{
@@ -243,7 +273,7 @@ public:
             rows
         );
 
-        CUERR;
+        CUDACHECKASYNC;
     }
 
 
@@ -265,7 +295,7 @@ public:
             numIndices
         );
 
-        CUERR;
+        CUDACHECKASYNC;
     }
 
     template<class IndexGenerator>
@@ -286,7 +316,7 @@ public:
             d_numIndices
         );
 
-        CUERR;
+        CUDACHECKASYNC;
     }
 
     void scatter(const T* d_src, size_t srcRowPitchInBytes, size_t rowBegin, size_t rowEnd, cudaStream_t stream = 0) const{
@@ -311,7 +341,7 @@ public:
             rows
         );
 
-        CUERR;
+        CUDACHECKASYNC;
     }
 
     int getDeviceId() const noexcept{

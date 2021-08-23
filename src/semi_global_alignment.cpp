@@ -1,4 +1,5 @@
 #include "../include/semi_global_alignment.hpp"
+#include <gpu/cudaerrorcheck.cuh>
 #include <config.hpp>
 
 #include <cassert>
@@ -163,7 +164,7 @@ void SGAdata::resize(int n_sub, int n_quer){
 void SGAdata::resize(int n_sub, int n_quer, int n_res, double factor){
     #ifdef __NVCC__
 
-    cudaSetDevice(deviceId); CUERR;
+    CUDACHECK(cudaSetDevice(deviceId));
 
     n_subjects = n_sub;
     n_queries = n_quer;
@@ -185,10 +186,10 @@ void SGAdata::resize(int n_sub, int n_quer, int n_res, double factor){
                                     + memUnpackedQueries;
 
     if(requiredMem > allocatedMem){
-        cudaFree(deviceptr); CUERR;
-        cudaFreeHost(hostptr); CUERR;
-        cudaMalloc(&deviceptr, std::size_t(requiredMem * factor)); CUERR;
-        cudaMallocHost(&hostptr, std::size_t(requiredMem * factor)); CUERR;
+        CUDACHECK(cudaFree(deviceptr));
+        CUDACHECK(cudaFreeHost(hostptr));
+        CUDACHECK(cudaMalloc(&deviceptr, std::size_t(requiredMem * factor)));
+        CUDACHECK(cudaMallocHost(&hostptr, std::size_t(requiredMem * factor)));
 
         allocatedMem = requiredMem * factor;
     }
@@ -241,42 +242,42 @@ void cuda_init_SGAdata(SGAdata& data,
     data.gpuThreshold = gpuThreshold;
 
 #ifdef __NVCC__
-    cudaSetDevice(deviceId); CUERR;
+    CUDACHECK(cudaSetDevice(deviceId));
 
     void* ptr;
     std::size_t pitch;
-    cudaMallocPitch(&ptr, &pitch, max_sequence_bytes, 1); CUERR;
-    cudaFree(ptr); CUERR;
+    CUDACHECK(cudaMallocPitch(&ptr, &pitch, max_sequence_bytes, 1));
+    CUDACHECK(cudaFree(ptr));
     data.sequencepitch = pitch;
 
     for(int i = 0; i < SGAdata::n_streams; i++)
-        cudaStreamCreate(&(data.streams[i])); CUERR;
+        CUDACHECK(cudaStreamCreate(&(data.streams[i])));
 #endif
 }
 
 void cuda_cleanup_SGAdata(SGAdata& data){
 
 	#ifdef __NVCC__
-		cudaSetDevice(data.deviceId); CUERR;
+		CUDACHECK(cudaSetDevice(data.deviceId)));
 #if 0
-		cudaFree(data.d_results); CUERR;
-		cudaFree(data.d_ops); CUERR;
-		cudaFree(data.d_subjectsdata); CUERR;
-		cudaFree(data.d_queriesdata); CUERR;
-		cudaFree(data.d_subjectlengths); CUERR;
-		cudaFree(data.d_querylengths); CUERR;
-        cudaFree(data.d_NqueriesPrefixSum); CUERR;
+		CUDACHECK(cudaFree(data.d_results));
+		CUDACHECK(cudaFree(data.d_ops));
+		CUDACHECK(cudaFree(data.d_subjectsdata));
+		CUDACHECK(cudaFree(data.d_queriesdata));
+		CUDACHECK(cudaFree(data.d_subjectlengths));
+		CUDACHECK(cudaFree(data.d_querylengths));
+        CUDACHECK(cudaFree(data.d_NqueriesPrefixSum));
 
-		cudaFreeHost(data.h_results); CUERR;
-		cudaFreeHost(data.h_ops); CUERR;
-		cudaFreeHost(data.h_subjectsdata); CUERR;
-		cudaFreeHost(data.h_queriesdata); CUERR;
-		cudaFreeHost(data.h_subjectlengths); CUERR;
-		cudaFreeHost(data.h_querylengths); CUERR;
-        cudaFreeHost(data.h_NqueriesPrefixSum); CUERR;
+		CUDACHECK(cudaFreeHost(data.h_results));
+		CUDACHECK(cudaFreeHost(data.h_ops));
+		CUDACHECK(cudaFreeHost(data.h_subjectsdata));
+		CUDACHECK(cudaFreeHost(data.h_queriesdata));
+		CUDACHECK(cudaFreeHost(data.h_subjectlengths));
+		CUDACHECK(cudaFreeHost(data.h_querylengths));
+        CUDACHECK(cudaFreeHost(data.h_NqueriesPrefixSum));
 #else
-        cudaFree(data.deviceptr); CUERR;
-        cudaFreeHost(data.hostptr); CUERR;
+        CUDACHECK(cudaFree(data.deviceptr));
+        CUDACHECK(cudaFreeHost(data.hostptr));
         data.d_ops = nullptr;
         data.h_ops = nullptr;
 
@@ -297,7 +298,7 @@ void cuda_cleanup_SGAdata(SGAdata& data){
         data.h_bestAlignmentFlags = nullptr;
 #endif
 		for(int i = 0; i < SGAdata::n_streams; i++)
-			cudaStreamDestroy(data.streams[i]); CUERR;
+			CUDACHECK(cudaStreamDestroy(data.streams[i])));
 	#endif
 }
 

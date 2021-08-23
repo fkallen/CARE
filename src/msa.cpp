@@ -381,7 +381,7 @@ CorrectionResult MultipleSequenceAlignment::getCorrectedSubject(
     float estimatedErrorrate,
     float estimatedCoverage,
     float m_coverage,
-    int neighborRegionSize,
+    int /*neighborRegionSize*/,
     read_number /* readId*/
 ) const {
 
@@ -664,7 +664,13 @@ RegionSelectionResult MultipleSequenceAlignment::findCandidatesOfDifferentRegion
                 if(base == 'G') seenCounts[2]++;
                 if(base == 'T') seenCounts[3]++;
 
-                if(notAffected || (!(keepMatching ^ (base == foundBase)))){
+                if(notAffected){
+                    result.differentRegionCandidate[candidateIndex] = false;
+                }else if(keepMatching && (base == foundBase)){
+                    //keep candidates which match the found base
+                    result.differentRegionCandidate[candidateIndex] = false;
+                }else if(!keepMatching && (base != foundBase)){
+                    //keep candidates which do not match the found base
                     result.differentRegionCandidate[candidateIndex] = false;
                 }else{
                     result.differentRegionCandidate[candidateIndex] = true;
@@ -1116,7 +1122,8 @@ std::vector<MultipleSequenceAlignment::PossibleSplitColumn> computePossibleSplit
 MultipleSequenceAlignment::PossibleMsaSplits inspectColumnsRegionSplit(
     const MultipleSequenceAlignment::PossibleSplitColumn* possibleColumns,
     int numPossibleColumns,
-    int firstColumn, int lastColumnExcl,
+    int /*firstColumn*/, 
+    int /*lastColumnExcl*/,
     int subjectColumnsBegin_incl,
     int numCandidates,
     const char* candidates,

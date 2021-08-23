@@ -7,12 +7,15 @@
 #include <config.hpp>
 #include <memorymanagement.hpp>
 #include <readstoragehandle.hpp>
+#include <gpu/asyncresult.cuh>
+#include <hpc_helpers.cuh>
 
 #include <cstdint>
 
 namespace care{
 
 namespace gpu{
+
 
 class GpuReadStorage{
 public:
@@ -35,7 +38,7 @@ public:
         ReadStorageHandle& handle,
         unsigned int* d_sequence_data,
         size_t outSequencePitchInInts,
-        const read_number* h_readIds,
+        const AsyncConstBufferWrapper<read_number> h_readIds,
         const read_number* d_readIds,
         int numSequences,
         cudaStream_t stream
@@ -45,7 +48,7 @@ public:
         ReadStorageHandle& handle,
         char* d_quality_data,
         size_t out_quality_pitch,
-        const read_number* h_readIds,
+        const AsyncConstBufferWrapper<read_number> h_readIds,
         const read_number* d_readIds,
         int numSequences,
         cudaStream_t stream

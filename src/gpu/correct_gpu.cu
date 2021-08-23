@@ -6,6 +6,7 @@
 #include <gpu/gpureadstorage.cuh>
 
 #include <gpu/gpuminhasher.cuh>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <options.hpp>
 #include <readlibraryio.hpp>
@@ -255,6 +256,8 @@ public:
         BatchCompletion batchCompleted
     ) const {
 
+        constexpr bool useThreadForOutputConstruction = false;
+
         auto continueCondition = [&](){ return !readIdGenerator.empty(); };
 
         return runDoubleBuffered_impl(
@@ -263,6 +266,35 @@ public:
             correctionOptions,
             goodAlignmentProperties,
             correctionFlags,
+            useThreadForOutputConstruction,
+            processResults,
+            batchCompleted,
+            continueCondition
+        );
+    }
+
+    template<class ResultProcessor, class BatchCompletion>
+    RunStatistics runToCompletionDoubleBufferedWithExtraThread(
+        int deviceId,
+        cpu::RangeGenerator<read_number>& readIdGenerator,
+        const CorrectionOptions& correctionOptions,
+        const GoodAlignmentProperties& goodAlignmentProperties,
+        ReadCorrectionFlags& correctionFlags,
+        ResultProcessor processResults,
+        BatchCompletion batchCompleted
+    ) const {
+
+        constexpr bool useThreadForOutputConstruction = true;
+
+        auto continueCondition = [&](){ return !readIdGenerator.empty(); };
+
+        return runDoubleBuffered_impl(
+            deviceId,
+            readIdGenerator,
+            correctionOptions,
+            goodAlignmentProperties,
+            correctionFlags,
+            useThreadForOutputConstruction,
             processResults,
             batchCompleted,
             continueCondition
@@ -281,6 +313,8 @@ public:
         int numBatches
     ) const {
 
+        constexpr bool useThreadForOutputConstruction = false;
+
         auto continueCondition = [&](){ bool success = !readIdGenerator.empty() && numBatches > 0; numBatches--; return success;};
 
         return runDoubleBuffered_impl(
@@ -289,6 +323,36 @@ public:
             correctionOptions,
             goodAlignmentProperties,
             correctionFlags,
+            useThreadForOutputConstruction,
+            processResults,
+            batchCompleted,
+            continueCondition
+        );
+    }
+
+    template<class ResultProcessor, class BatchCompletion>
+    RunStatistics runSomeBatchesDoubleBufferedWithExtraThread(
+        int deviceId,
+        cpu::RangeGenerator<read_number>& readIdGenerator,
+        const CorrectionOptions& correctionOptions,
+        const GoodAlignmentProperties& goodAlignmentProperties,
+        ReadCorrectionFlags& correctionFlags,
+        ResultProcessor processResults,
+        BatchCompletion batchCompleted,
+        int numBatches
+    ) const {
+
+        constexpr bool useThreadForOutputConstruction = true;
+
+        auto continueCondition = [&](){ bool success = !readIdGenerator.empty() && numBatches > 0; numBatches--; return success;};
+
+        return runDoubleBuffered_impl(
+            deviceId,
+            readIdGenerator,
+            correctionOptions,
+            goodAlignmentProperties,
+            correctionFlags,
+            useThreadForOutputConstruction,
             processResults,
             batchCompleted,
             continueCondition
@@ -302,35 +366,37 @@ public:
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
         ReadCorrectionFlags& correctionFlags,
+        bool useThreadForOutputConstruction,
         ResultProcessor processResults,
         BatchCompletion batchCompleted,
         ContinueCondition continueCondition
     ) const {
-        int cur = 0;
-        cudaGetDevice(&cur); CUERR;
-        cudaSetDevice(deviceId);
+        cub::SwitchDevice sd{deviceId};
 
         constexpr int numextra = 1;
+        constexpr int numStreams = 1 + numextra;
 
-        CudaStream stream;
-        GpuErrorCorrectorInput input;
+        std::array<CudaStream, numStreams> streams{};
+        int streamIndex = 0;
+
+        std::array<GpuErrorCorrectorInput, 1 + numextra> inputArray;
+        SingleProducerSingleConsumerQueue<GpuErrorCorrectorInput*> freeInputsQueue;
+
+        for(auto& a : inputArray){
+            freeInputsQueue.push(&a);
+        }
+
+
         std::array<GpuErrorCorrectorRawOutput, 1 + numextra> rawOutputArray;
-        std::queue<GpuErrorCorrectorRawOutput*> freeRawOutputQueue;
-        std::queue<GpuErrorCorrectorRawOutput*> unprocessedRawOutputQueue;
+        SingleProducerSingleConsumerQueue<GpuErrorCorrectorRawOutput*> freeRawOutputQueue;
+
         for(auto& a : rawOutputArray){
             freeRawOutputQueue.push(&a);
         }
-        //GpuErrorCorrectorRawOutput rawOutput;
 
-        cudaError_t querystatus = input.event.query();
-        if(querystatus != cudaSuccess){
-            std::cout << "CUDA error: " << cudaGetErrorString(querystatus) << " : "
-                << __FILE__ << ", line " << __LINE__ << std::endl;
-        }
-        assert(cudaSuccess == querystatus);
+        SingleProducerSingleConsumerQueue<std::pair<GpuErrorCorrectorInput*,
+            GpuErrorCorrectorRawOutput*>> dataInFlight;
 
-        //ThreadPool::ParallelForHandle pforHandle;
-        //ForLoopExecutor forLoopExecutor(threadPool, &pforHandle);
         SequentialForLoopExecutor forLoopExecutor;
 
         AnchorHasher gpuAnchorHasher(
@@ -355,10 +421,6 @@ public:
             correctionOptions
         );
 
-        RunStatistics runStatistics;
-
-        std::vector<read_number> anchorIds(correctionOptions.batchsize);
-
         int iterations = 0;
         std::vector<double> elapsedHashingTimes;
         std::vector<double> elapsedCorrectionTimes;
@@ -368,65 +430,129 @@ public:
         double elapsedCorrectionTime = 0.0;
         double elapsedOutputTime = 0.0;
 
+        auto processDataInFlight = [&](std::pair<GpuErrorCorrectorInput*, GpuErrorCorrectorRawOutput*> pointers){
+            auto inputPtr = pointers.first;
+            auto rawOutputPtr = pointers.second;
+
+            //std::cerr << "processDataInFlight (" << inputPtr << ", " << rawOutputPtr << ")\n";
+
+            CUDACHECK(inputPtr->event.synchronize());
+            freeInputsQueue.push(inputPtr);
+
+            CUDACHECK(rawOutputPtr->event.synchronize());
+            //std::cerr << "Synchronized output " << pointers.second << "\n";
+
+            helpers::CpuTimer outputTimer;
+
+            nvtx::push_range("constructEncodedResults", 2);
+            EncodedCorrectionOutput encodedCorrectionOutput = outputConstructor.constructEncodedResults(*rawOutputPtr, forLoopExecutor);
+            nvtx::pop_range();
+
+            freeRawOutputQueue.push(rawOutputPtr);
+            
+            outputTimer.stop();
+            //elapsedOutputTimes.emplace_back(outputTimer.elapsed());
+            elapsedOutputTime += outputTimer.elapsed();
+
+            processResults(
+                std::move(encodedCorrectionOutput)
+            );
+        };
+
+        std::future<void> outputConstructorFuture{};
+
+        if(useThreadForOutputConstruction){
+            auto outputConstructorThreadFunc = [&](){
+                std::pair<GpuErrorCorrectorInput*, GpuErrorCorrectorRawOutput*> pointers;
+                
+                pointers = dataInFlight.pop();
+
+                while(pointers.first != nullptr){
+                    processDataInFlight(pointers);
+
+                    pointers = dataInFlight.pop();
+                }
+            };
+
+            outputConstructorFuture = std::async(std::launch::async, outputConstructorThreadFunc);
+        }
+
+        RunStatistics runStatistics;
+
+        std::vector<read_number> anchorIds(correctionOptions.batchsize);
+
         int globalcounter = 0;
 
         for(int i = 0; i < numextra; i++){
             if(continueCondition()){
+                cudaStream_t stream = streams[streamIndex];
+                streamIndex = (streamIndex + 1) % numStreams;
+
                 helpers::CpuTimer hashingTimer;
             
                 anchorIds.resize(correctionOptions.batchsize);
-                auto readIdsEnd = readIdGenerator.next_n_into_buffer(correctionOptions.batchsize, anchorIds.begin());
+                auto readIdsEnd = readIdGenerator.next_n_into_buffer(
+                    correctionOptions.batchsize, 
+                    anchorIds.begin()
+                );
                 anchorIds.erase(readIdsEnd, anchorIds.end());
 
                 if(anchorIds.size() == 0){
                     continue;
                 }
 
+                GpuErrorCorrectorInput* inputPtr = freeInputsQueue.pop();
+                assert(inputPtr != nullptr);
+
+                GpuErrorCorrectorRawOutput* rawOutputPtr = freeRawOutputQueue.pop();
+
                 //std::cerr << "globalcounter " << globalcounter << "\n";
         
                 nvtx::push_range("makeErrorCorrectorInput", 0);
                 gpuAnchorHasher.makeErrorCorrectorInput(
                     anchorIds.data(),
                     anchorIds.size(),
-                    input,
+                    *inputPtr,
                     stream
                 );
                 nvtx::pop_range();
 
-                input.event.synchronize();
+                CUDACHECK(inputPtr->event.synchronize());
 
-                globalcounter++;
-
-                GpuErrorCorrectorRawOutput* rawOutputPtr = freeRawOutputQueue.front();
-                freeRawOutputQueue.pop();
+                globalcounter++;                
 
                 hashingTimer.stop();
                 //elapsedHashingTimes.emplace_back(hashingTimer.elapsed());
                 elapsedHashingTime += hashingTimer.elapsed();
 
                 nvtx::push_range("correct", 1);
-                gpuErrorCorrector.correct(input, *rawOutputPtr, stream);
+                gpuErrorCorrector.correct(*inputPtr, *rawOutputPtr, stream);
                 nvtx::pop_range();
 
-                unprocessedRawOutputQueue.push(rawOutputPtr);
+                dataInFlight.push(std::make_pair(inputPtr, rawOutputPtr));
+
+                batchCompleted(anchorIds.size());
+                iterations++;
+                //std::cerr << "Added extra (" << inputPtr << ", " << rawOutputPtr << ")\n";
             }
         }
 
 
-        while(continueCondition()){
-
-            
+        while(continueCondition()){            
             
             anchorIds.resize(correctionOptions.batchsize);
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(correctionOptions.batchsize, anchorIds.begin());
             anchorIds.erase(readIdsEnd, anchorIds.end());
 
-            helpers::CpuTimer correctionTimer;
-
             if(anchorIds.size() > 0){
+                cudaStream_t stream = streams[streamIndex];
+                streamIndex = (streamIndex + 1) % numStreams;
+
                 helpers::CpuTimer hashingTimer;
 
-                input.event.synchronize();
+                GpuErrorCorrectorInput* const inputPtr = freeInputsQueue.pop();
+
+                assert(cudaSuccess == inputPtr->event.query());
 
                 //std::cerr << "globalcounter " << globalcounter << "\n";
         
@@ -434,12 +560,12 @@ public:
                 gpuAnchorHasher.makeErrorCorrectorInput(
                     anchorIds.data(),
                     anchorIds.size(),
-                    input,
+                    *inputPtr,
                     stream
                 );
                 nvtx::pop_range();
 
-                input.event.synchronize();
+                CUDACHECK(inputPtr->event.synchronize());
 
                 //globalcounter++;
 
@@ -447,112 +573,59 @@ public:
                 //elapsedHashingTimes.emplace_back(hashingTimer.elapsed());
                 elapsedHashingTime += hashingTimer.elapsed();
 
-                GpuErrorCorrectorRawOutput* rawOutputPtr = freeRawOutputQueue.front();
-                freeRawOutputQueue.pop();
-
-                //helpers::CpuTimer correctionTimer;
-                correctionTimer.reset();
-                correctionTimer.start();
+                GpuErrorCorrectorRawOutput* rawOutputPtr = freeRawOutputQueue.pop();
 
                 nvtx::push_range("correct", 1);
-                gpuErrorCorrector.correct(input, *rawOutputPtr, stream);
+                gpuErrorCorrector.correct(*inputPtr, *rawOutputPtr, stream);
                 nvtx::pop_range();
 
-                unprocessedRawOutputQueue.push(rawOutputPtr);
-            }
+                dataInFlight.push(std::make_pair(inputPtr, rawOutputPtr));
+                //std::cerr << "Submitted (" << inputPtr << ", " << rawOutputPtr << ")\n";
 
-            if(unprocessedRawOutputQueue.size() > 0){
-
-                GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputQueue.front();
-                unprocessedRawOutputQueue.pop();
-
-                rawOutputPtr->event.synchronize();
-
-                if(anchorIds.size() > 0){
-                    correctionTimer.stop();
-                    //elapsedCorrectionTimes.emplace_back(correctionTimer.elapsed());
-                    elapsedCorrectionTime += correctionTimer.elapsed();
+                if(!useThreadForOutputConstruction){
+                    auto pointers = dataInFlight.pop();
+                    processDataInFlight(pointers);
                 }
-
-
-                helpers::CpuTimer outputTimer;
-
-                nvtx::push_range("constructResults", 2);
-                auto correctionOutput = outputConstructor.constructResults(*rawOutputPtr, forLoopExecutor);
-                nvtx::pop_range();
-
-                freeRawOutputQueue.push(rawOutputPtr);
-
-
-                nvtx::push_range("encodeResults", 3);
-
-                correctionOutput.encode();
-
-                nvtx::pop_range();
-
-                outputTimer.stop();
-                //elapsedOutputTimes.emplace_back(outputTimer.elapsed());
-                elapsedOutputTime += outputTimer.elapsed();
-
-                processResults(
-                    std::move(correctionOutput)
-                );
-
             }
+
+            // if(!dataInFlight.empty()){
+            //     processDataInFlight();
+            // }
 
             batchCompleted(anchorIds.size());
 
             iterations++;
         }
 
-        //process remaining cached results
-        while(unprocessedRawOutputQueue.size() > 0){
-            GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputQueue.front();
-            unprocessedRawOutputQueue.pop();
+        //signal output constructor thread
+        dataInFlight.push(std::make_pair(nullptr, nullptr));
 
-            rawOutputPtr->event.synchronize();
+        if(!useThreadForOutputConstruction){
+            //process remaining cached results
+            auto pointers = dataInFlight.pop();
+            while(pointers.first != nullptr){
+                processDataInFlight(pointers);
+                pointers = dataInFlight.pop();
+            }
 
-            //correctionTimer.stop();
-            //elapsedCorrectionTimes.emplace_back(correctionTimer.elapsed());
-            //elapsedCorrectionTime += correctionTimer.elapsed();
-
-
-            helpers::CpuTimer outputTimer;
-
-            nvtx::push_range("constructResults", 2);
-            auto correctionOutput = outputConstructor.constructResults(*rawOutputPtr, forLoopExecutor);
-            nvtx::pop_range();
-
-            freeRawOutputQueue.push(rawOutputPtr);
-
-            nvtx::push_range("encodeResults", 3);
-
-            correctionOutput.encode();
-
-            nvtx::pop_range();
-
-            outputTimer.stop();
-            //elapsedOutputTimes.emplace_back(outputTimer.elapsed());
-            elapsedOutputTime += outputTimer.elapsed();
-
-            processResults(
-                std::move(correctionOutput)
-            );
-
-            batchCompleted(*input.h_numAnchors.get());
-
-            iterations++;
+        }else{
+            outputConstructorFuture.wait();
         }
 
-        cudaSetDevice(cur); CUERR;
-
+        
         runStatistics.hasherTimeAverage = elapsedHashingTime / iterations;
         runStatistics.correctorTimeAverage = elapsedCorrectionTime / iterations;
         runStatistics.outputconstructorTimeAverage = elapsedOutputTime / iterations;
         runStatistics.memoryHasher = gpuAnchorHasher.getMemoryInfo();
         runStatistics.memoryCorrector = gpuErrorCorrector.getMemoryInfo();
         runStatistics.memoryOutputConstructor = outputConstructor.getMemoryInfo();
-        runStatistics.memoryInputData = input.getMemoryInfo();
+
+        MemoryUsage memoryInputData{};        
+        for(int i = 0; i < 1 + numextra; i++){
+            auto ptr = freeInputsQueue.pop();
+            memoryInputData += ptr->getMemoryInfo();
+        }
+        runStatistics.memoryInputData = memoryInputData;
         //runStatistics.memoryRawOutputData = rawOutput.getMemoryInfo();
 
         return runStatistics;
@@ -587,9 +660,7 @@ public:
         BatchCompletion batchCompleted,
         ContinueCondition continueCondition
     ) const {
-        int cur = 0;
-        cudaGetDevice(&cur); CUERR;
-        cudaSetDevice(deviceId);
+        cub::SwitchDevice sd{deviceId};
 
         //constexpr int numextra = 1;
 
@@ -649,7 +720,7 @@ public:
 
             if(anchorIds.size() > 0){
 
-                input.event.synchronize();
+                CUDACHECK(input.event.synchronize());
 
                 //std::cerr << "globalcounter " << globalcounter << "\n";
         
@@ -662,7 +733,7 @@ public:
                 );
                 nvtx::pop_range();
 
-                input.event.synchronize();
+                CUDACHECK(input.event.synchronize());
 
                 //globalcounter++;
 
@@ -678,7 +749,7 @@ public:
                 gpuErrorCorrector.correct(input, rawOutput, stream);
                 nvtx::pop_range();
 
-                rawOutput.event.synchronize();
+                CUDACHECK(rawOutput.event.synchronize());
 
                 correctionTimer.stop();
                 //elapsedCorrectionTimes.emplace_back(correctionTimer.elapsed());
@@ -688,14 +759,8 @@ public:
 
                 helpers::CpuTimer outputTimer;
 
-                nvtx::push_range("constructResults", 2);
-                auto correctionOutput = outputConstructor.constructResults(rawOutput, forLoopExecutor);
-                nvtx::pop_range();
-
-                nvtx::push_range("encodeResults", 3);
-
-                correctionOutput.encode();
-
+                nvtx::push_range("constructEncodedResults", 2);
+                EncodedCorrectionOutput encodedCorrectionOutput = outputConstructor.constructEncodedResults(rawOutput, forLoopExecutor);
                 nvtx::pop_range();
 
                 outputTimer.stop();
@@ -705,7 +770,7 @@ public:
                 }
 
                 processResults(
-                    std::move(correctionOutput)
+                    std::move(encodedCorrectionOutput)
                 );
             }
 
@@ -713,8 +778,6 @@ public:
 
             iterations++;
         }
-
-        cudaSetDevice(cur); CUERR;
 
         const int timediterations = std::max(1, iterations - 10);
 
@@ -794,9 +857,7 @@ public:
         ResultProcessor processResults,
         BatchCompletion batchCompleted
     ){
-        int curDevice = 0;
-        cudaGetDevice(&curDevice); CUERR;
-        cudaSetDevice(deviceId); CUERR;
+        cub::SwitchDevice sd{deviceId};
 
         noMoreInputs = false;
         activeHasherThreads = config.numHashers;
@@ -942,7 +1003,6 @@ public:
         //     std::cerr << "\n";
         // }
 
-        cudaSetDevice(curDevice); CUERR;
     }
     
 
@@ -964,7 +1024,7 @@ public:
 
 
         while(!readIdGenerator.empty()){
-            cudaStreamSynchronize(hasherStream);
+            CUDACHECK(cudaStreamSynchronize(hasherStream));
 
             std::vector<read_number> anchorIds(correctionOptions.batchsize);
 
@@ -986,7 +1046,7 @@ public:
             );
             nvtx::pop_range();
 
-            inputPtr->event.synchronize();
+            CUDACHECK(inputPtr->event.synchronize());
 
             unprocessedInputs.push(inputPtr);
             
@@ -1001,7 +1061,7 @@ public:
             }
         }
 
-        cudaStreamSynchronize(hasherStream);
+        CUDACHECK(cudaStreamSynchronize(hasherStream));
 
         // std::cerr << "Hasher memory usage\n";
         // {
@@ -1061,7 +1121,7 @@ public:
                 assert(false);
             }
 
-            cudaStreamSynchronize(stream); CUERR;
+            CUDACHECK(cudaStreamSynchronize(stream));
 
             // assert(cudaSuccess == inputPtr->event.query());
             // assert(cudaSuccess == rawOutputPtr->event.query());
@@ -1070,12 +1130,11 @@ public:
             gpuErrorCorrector.correct(*inputPtr, *rawOutputPtr, stream);
             nvtx::pop_range();
 
-            inputPtr->event.synchronize();
+            CUDACHECK(inputPtr->event.synchronize());
             freeInputs.push(inputPtr);
 
-            //cudaStreamSynchronize(stream);
             
-            rawOutputPtr->event.synchronize();
+            CUDACHECK(rawOutputPtr->event.synchronize());
             //std::cerr << "Synchronized output " << rawOutputPtr << "\n";
             unprocessedRawOutputs.push(rawOutputPtr);
         
@@ -1100,7 +1159,7 @@ public:
             }
         }
 
-        cudaStreamSynchronize(stream); CUERR;
+        CUDACHECK(cudaStreamSynchronize(stream));
     };
 
     static constexpr int getNumExtraBuffers() noexcept{
@@ -1146,17 +1205,12 @@ public:
         }
 
         auto constructOutput = [&](GpuErrorCorrectorRawOutput* rawOutputPtr){
-            nvtx::push_range("constructResults", 0);
-            auto correctionOutput = outputConstructor.constructResults(*rawOutputPtr, forLoopExecutor);
-            nvtx::pop_range();
-
-            nvtx::push_range("encodeResults", 1);
-            correctionOutput.encode();
-
+            nvtx::push_range("constructEncodedResults", 2);
+            EncodedCorrectionOutput encodedCorrectionOutput = outputConstructor.constructEncodedResults(*rawOutputPtr, forLoopExecutor);
             nvtx::pop_range();
 
             processResults(
-                std::move(correctionOutput)
+                std::move(encodedCorrectionOutput)
             );
 
             batchCompleted(rawOutputPtr->numAnchors); 
@@ -1222,7 +1276,7 @@ public:
                 assert(false);
             }
 
-            cudaStreamSynchronize(stream); CUERR;
+            CUDACHECK(cudaStreamSynchronize(stream));
 
             // assert(cudaSuccess == inputPtr->event.query());
             // assert(cudaSuccess == rawOutputPtr->event.query());
@@ -1237,10 +1291,10 @@ public:
                 auto pointers = dataInFlight.front();
                 dataInFlight.pop();
 
-                pointers.first->event.synchronize();
+                CUDACHECK(pointers.first->event.synchronize());
                 freeInputs.push(pointers.first);
 
-                pointers.second->event.synchronize();
+                CUDACHECK(pointers.second->event.synchronize());
                 //std::cerr << "Synchronized output " << pointers.second << "\n";
                 constructOutput(pointers.second);
             }            
@@ -1262,10 +1316,10 @@ public:
             auto pointers = dataInFlight.front();
             dataInFlight.pop();
 
-            pointers.first->event.synchronize();
+            CUDACHECK(pointers.first->event.synchronize());
             freeInputs.push(pointers.first);
 
-            pointers.second->event.synchronize();
+            CUDACHECK(pointers.second->event.synchronize());
             constructOutput(pointers.second);
         }
 
@@ -1278,7 +1332,7 @@ public:
             }
         }
 
-        cudaStreamSynchronize(stream); CUERR;
+        CUDACHECK(cudaStreamSynchronize(stream));
     };
 
 
@@ -1309,48 +1363,12 @@ public:
         GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputs.pop();
 
         while(rawOutputPtr != nullptr){
-            nvtx::push_range("constructResults", 0);
-            auto correctionOutput = outputConstructor.constructResults(*rawOutputPtr, forLoopExecutor);
-            nvtx::pop_range();
-
-            nvtx::push_range("encodeResults", 1);
-            correctionOutput.encode();
-
-            // std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
-            // std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
-
-            // if(correctionOutput.anchorCorrections.size() > 0){
-            //     encodedAnchorCorrections.resize(correctionOutput.anchorCorrections.size());
-
-            //     forLoopExecutor(std::size_t(0), correctionOutput.anchorCorrections.size(), 
-            //         [&](auto begin, auto end, auto /*threadId*/){
-            //             for(auto i = begin; i < end; i++){
-            //                 correctionOutput.anchorCorrections[i].encodeInto(encodedAnchorCorrections[i]);
-            //             }
-            //         }
-            //     );
-            // }
-
-            // if(correctionOutput.candidateCorrections.size() > 0){
-            //     encodedCandidateCorrections.resize(correctionOutput.candidateCorrections.size());
-
-            //     forLoopExecutor(std::size_t(0), correctionOutput.candidateCorrections.size(), 
-            //         [&](auto begin, auto end, auto /*threadId*/){
-            //             for(auto i = begin; i < end; i++){
-            //                 correctionOutput.candidateCorrections[i].encodeInto(encodedCandidateCorrections[i]);
-            //             }
-            //         }
-            //     );
-            // }
-
+            nvtx::push_range("constructEncodedResults", 2);
+            EncodedCorrectionOutput encodedCorrectionOutput = outputConstructor.constructEncodedResults(*rawOutputPtr, forLoopExecutor);
             nvtx::pop_range();
 
             processResults(
-                std::move(correctionOutput)
-                // std::move(correctionOutput.anchorCorrections),
-                // std::move(correctionOutput.candidateCorrections),
-                // std::move(encodedAnchorCorrections),
-                // std::move(encodedCandidateCorrections)
+                std::move(encodedCorrectionOutput)
             );
 
             batchCompleted(rawOutputPtr->numAnchors); 
@@ -1457,53 +1475,34 @@ correct_gpu_impl(
 
     BackgroundThread outputThread;
 
-    auto saveCorrectedSequence = [&](const TempCorrectedSequence* tmp, const EncodedTempCorrectedSequence* encoded){
-        // if(tmp->readId == 38851){
-        // std::cerr << *tmp << "\n";
-        // }
-        //useEditsCountMap[tmp.useEdits]++;
-        //std::unique_lock<std::mutex> l(outputstreammutex);
-        if(!(tmp->hq && tmp->useEdits && tmp->edits.empty())){
-            //outputstream << tmp << '\n';
+    auto saveEncodedCorrectedSequence = [&](const EncodedTempCorrectedSequence* encoded){
+        if(!(encoded->isHQ() && encoded->useEdits() && encoded->getNumEdits() == 0)){
             partialResults.storeElement(encoded);
-            //useEditsSavedCountMap[tmp.useEdits]++;
-            //numEditsHistogram[tmp.edits.size()]++;
-
-            // std::cerr << tmp.edits.size() << " " << encoded.data.capacity() << "\n";
         }
     };
 
     auto processResults = [&](
-        CorrectionOutput&& correctionOutput
+        EncodedCorrectionOutput&& encodedCorrectionOutput
     ){
-        assert(correctionOutput.anchorCorrections.size() == correctionOutput.encodedAnchorCorrections.size());
-        assert(correctionOutput.candidateCorrections.size() == correctionOutput.encodedCandidateCorrections.size());
 
-        const int numA = correctionOutput.encodedAnchorCorrections.size();
-        const int numC = correctionOutput.encodedCandidateCorrections.size();
-
-        // std::stable_sort(correctionOutput.encodedCandidateCorrections.begin(), correctionOutput.encodedCandidateCorrections.end(), [](const auto& l, const auto& r){ return l.readId < r.readId;});
-        // std::stable_sort(correctionOutput.candidateCorrections.begin(), correctionOutput.candidateCorrections.end(), [](const auto& l, const auto& r){ return l.readId < r.readId;});
+        const std::size_t numA = encodedCorrectionOutput.encodedAnchorCorrections.size();
+        const std::size_t numC = encodedCorrectionOutput.encodedCandidateCorrections.size();
 
         auto outputFunction = [
             &,
-            correctionOutput = std::move(correctionOutput)
+            encodedCorrectionOutput = std::move(encodedCorrectionOutput),
+            numA,
+            numC
         ](){
-
-            const int numA = correctionOutput.encodedAnchorCorrections.size();
-            const int numC = correctionOutput.encodedCandidateCorrections.size();
-
-            for(int i = 0; i < numA; i++){
-                saveCorrectedSequence(
-                    &correctionOutput.anchorCorrections[i], 
-                    &correctionOutput.encodedAnchorCorrections[i]
+            for(std::size_t i = 0; i < numA; i++){
+                saveEncodedCorrectedSequence(
+                    &encodedCorrectionOutput.encodedAnchorCorrections[i]
                 );
             }
 
-            for(int i = 0; i < numC; i++){
-                saveCorrectedSequence(
-                    &correctionOutput.candidateCorrections[i], 
-                    &correctionOutput.encodedCandidateCorrections[i]
+            for(std::size_t i = 0; i < numC; i++){
+                saveEncodedCorrectedSequence(
+                    &encodedCorrectionOutput.encodedCandidateCorrections[i]
                 );
             }
         };
@@ -1639,26 +1638,6 @@ correct_gpu_impl(
         const int numHashersPerCorrectorByTime = std::ceil(runStatistics.hasherTimeAverage / runStatistics.correctorTimeAverage);
         //std::cerr << runStatistics.hasherTimeAverage << " " << runStatistics.correctorTimeAverage << "\n";
 
-        // auto runSimpleCpuPipeline = [&](int deviceId){
-        //     // cudaSetDevice(deviceId); CUERR;
-
-        //     // SimpleCpuCorrectionPipeline pipeline;
-
-        //     // std::unique_ptr<ReadProvider> readProvider = std::make_unique<GpuReadStorageReadProvider>(readStorage);
-        //     // std::unique_ptr<CandidateIdsProvider> candidateIdsProvider = std::make_unique<GpuMinhasherCandidateIdsProvider>(minhasher);
-
-        //     // pipeline.runToCompletion(
-        //     //     readIdGenerator,
-        //     //     correctionOptions,
-        //     //     goodAlignmentProperties,
-        //     //     correctionFlags,
-        //     //     readProvider.get(),
-        //     //     candidateIdsProvider.get(),
-        //     //     processResults,
-        //     //     batchCompleted
-        //     // ); 
-        // };
-
         auto runSimpleGpuPipeline = [&](int deviceId,
             const GpuForest* gpuForestAnchor, 
             const GpuForest* gpuForestCandidate
@@ -1672,7 +1651,7 @@ correct_gpu_impl(
             );
 
             pipeline.runToCompletionDoubleBuffered(
-                deviceIds[0],
+                deviceId,
                 readIdGenerator,
                 correctionOptions,
                 goodAlignmentProperties,
@@ -1681,6 +1660,29 @@ correct_gpu_impl(
                 batchCompleted
             );  
         };
+
+        // auto runSimpleGpuPipelineWithExtraThread = [&](int deviceId,
+        //     const GpuForest* gpuForestAnchor, 
+        //     const GpuForest* gpuForestCandidate
+        // ){
+        //     SimpleGpuCorrectionPipeline<Minhasher> pipeline(
+        //         readStorage,
+        //         minhasher,
+        //         nullptr, //&threadPool
+        //         gpuForestAnchor,
+        //         gpuForestCandidate
+        //     );
+
+        //     pipeline.runToCompletionDoubleBufferedWithExtraThread(
+        //         deviceId,
+        //         readIdGenerator,
+        //         correctionOptions,
+        //         goodAlignmentProperties,
+        //         correctionFlags,
+        //         processResults,
+        //         batchCompleted
+        //     );  
+        // };
 
         auto runComplexGpuPipeline = [&](int deviceId, typename ComplexGpuCorrectionPipeline<Minhasher>::Config config,
             const GpuForest* gpuForestAnchor, 
@@ -1713,39 +1715,6 @@ correct_gpu_impl(
         const int requiredNumThreadsForComplex = numHashersPerCorrectorByTime + (2 + 1 + 1);
         int availableThreads = runtimeOptions.threads;
 
-        //std::cerr << "numDevice " << numDevices << ", requiredNumThreadsForComplex " << requiredNumThreadsForComplex << ", availableThreads " << availableThreads << "\n";
-
-        // auto launchSimplePipelines = [&](int firstIdIndex, int lastIdIndex){
-        //     constexpr int maxNumThreadsPerDevice = 3;
-        //     assert(lastIdIndex <= numDevices);
-
-        //     std::vector<int> numThreadsPerDevice(numDevices, 0);
-
-        //     for(int i = 0; i < maxNumThreadsPerDevice; i++){
-        //         for(int d = firstIdIndex; d < lastIdIndex; d++){
-        //             if(availableThreads > 0){
-        //                 futures.emplace_back(std::async(
-        //                     std::launch::async,
-        //                     runSimpleGpuPipeline,
-        //                     deviceIds[d]
-        //                 ));
-
-        //                 availableThreads--;
-
-        //                 numThreadsPerDevice[d]++;
-        //             }
-        //         }
-        //     }
-
-        //     for(int d = firstIdIndex; d < lastIdIndex; d++){
-        //         if(numThreadsPerDevice[d] > 0){
-        //             std::cerr << "Use " << numThreadsPerDevice[d] << " simple threads on device " << deviceIds[d] << "\n";
-        //         }else{
-        //             std::cerr << "Device " << deviceIds[d] << " will be unused. (Not enough threads available.)\n";
-        //         }
-        //     }
-        // };
-
         for(int i = 0; i < numDevices; i++){ 
             const int deviceId = deviceIds[i];
 
@@ -1765,6 +1734,7 @@ correct_gpu_impl(
                     ));
 
                     threadsForDeviceWithGpuTables--;
+                    availableThreads--;
                 }
             }else{
 
@@ -1786,6 +1756,7 @@ correct_gpu_impl(
                     }
 
                     pipelineConfig.numHashers += threadsForDevice;
+                    threadsForDevice = 0;
                     #else
                     pipelineConfig.numOutputConstructors = 0; //always 0
                     pipelineConfig.numCorrectors = 13;
@@ -1827,72 +1798,9 @@ correct_gpu_impl(
             }
         }
 
-        //if there are not enough threads to run one complex pipeline on any device, only use simple pipelines
-        // if(requiredNumThreadsForComplex > availableThreads){
-        //     launchSimplePipelines(0, numDevices);
-        // }else{
-
-            // std::vector<bool> useComplexPipeline(numDevices, false);
-            // int numSimple = 0;
-            // int firstSimpleDevice = numDevices;
-
-            // for(int i = 0; i < numDevices; i++){            
-
-            //     if(availableThreads >= requiredNumThreadsForComplex){  
-            //         availableThreads -= requiredNumThreadsForComplex;
-            //     }else{
-            //         numSimple++;
-
-            //         if(firstSimpleDevice == numDevices){
-            //             firstSimpleDevice = i;
-            //         }
-            //     }
-            // }
-
-            // for(int i = 0; i < firstSimpleDevice; i++){
-            //     const int deviceId = deviceIds[i];
-
-            //     typename ComplexGpuCorrectionPipeline<Minhasher>::Config pipelineConfig;
-            //     pipelineConfig.numHashers = numHashersPerCorrectorByTime + 2;
-            //     pipelineConfig.numCorrectors = 1 + 1;
-            //     pipelineConfig.numOutputConstructors = 0;
-
-            //     // std::cerr << "\nWill use " << pipelineConfig.numHashers << " hasher(s), " 
-            //     // << pipelineConfig.numCorrectors << " corrector(s), " 
-            //     // << pipelineConfig.numOutputConstructors << " output constructor(s) "
-            //     // << "on device " << deviceId << "\n";                
-
-            //     futures.emplace_back(
-            //         std::async(
-            //             std::launch::async,
-            //             runComplexGpuPipeline,
-            //             deviceId, pipelineConfig
-            //         )
-            //     );
-            // }
-
-            // launchSimplePipelines(firstSimpleDevice, numDevices);
-        //}
-
-        //std::cerr << "Remaing threads after launching gpu pipelines: " << availableThreads << "\n";
-
-        //use remaining threads to correct on the host
-        // for(int i = 0; i < availableThreads; i++){
-        //     futures.emplace_back(
-        //         std::async(
-        //             std::launch::async,
-        //             runSimpleCpuPipeline,
-        //             deviceIds[i % deviceIds.size()]
-        //         )
-        //     );                
-        // }
-
         for(auto& f : futures){
             f.wait();
-        }
-
-
-        
+        }        
     }
 
 #if 0

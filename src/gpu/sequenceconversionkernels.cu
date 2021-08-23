@@ -1,5 +1,5 @@
 #include <gpu/kernels.hpp>
-
+#include <gpu/cudaerrorcheck.cuh>
 #include <hpc_helpers.cuh>
 #include <config.hpp>
 #include <sequencehelpers.hpp>
@@ -78,7 +78,7 @@ void callCheckSequenceConversionKernelNN(const unsigned int* normalData,
         first2BitHilo,
         trafo2Bit,
         trafo2BitHilo
-    ); CUERR;
+    ); CUDACHECKASYNC;
 }
 
 void callCheckSequenceConversionKernelNT(const unsigned int* normalData,
@@ -108,7 +108,7 @@ void callCheckSequenceConversionKernelNT(const unsigned int* normalData,
         first2BitHilo,
         trafo2Bit,
         trafo2BitHilo
-    ); CUERR;
+    ); CUDACHECKASYNC;
 }
 
 void callCheckSequenceConversionKernelTT(const unsigned int* normalData,
@@ -138,7 +138,7 @@ void callCheckSequenceConversionKernelTT(const unsigned int* normalData,
         first2BitHilo,
         trafo2Bit,
         trafo2BitHilo
-    ); CUERR;
+    ); CUDACHECKASYNC;
 }
 
  
@@ -384,7 +384,7 @@ void callConversionKernel2BitTo2BitHiLoNN(
         size_t outputpitchInInts,
         const int* d_sequenceLengths,
         const int* d_numSequences,
-        int maxNumSequences,
+        int /*maxNumSequences*/,
         cudaStream_t stream,
         KernelLaunchHandle& handle){
 
@@ -409,9 +409,9 @@ void callConversionKernel2BitTo2BitHiLoNN(
                 kernelLaunchConfig.threads_per_block = (blocksize); \
                 kernelLaunchConfig.smem = 0; \
                 KernelProperties kernelProperties; \
-                cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
                     convert2BitTo2BitHiloKernelNN<groupsize>, \
-                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem)); \
                 mymap[kernelLaunchConfig] = kernelProperties; \
         }
         //getProp(1);
@@ -446,7 +446,7 @@ void callConversionKernel2BitTo2BitHiLoNN(
         d_outputdata,
         outputpitchInInts,
         d_sequenceLengths,
-        d_numSequences); CUERR;
+        d_numSequences); CUDACHECKASYNC;
 
 #ifdef DO_CHECK_CONVERSIONS        
 
@@ -469,7 +469,7 @@ void callConversionKernel2BitTo2BitHiLoNT(
         size_t outputpitchInInts,
         const int* d_sequenceLengths,
         const int* d_numSequences,
-        int maxNumSequences,
+        int /*maxNumSequences*/,
         cudaStream_t stream,
         KernelLaunchHandle& handle){
 
@@ -492,9 +492,9 @@ void callConversionKernel2BitTo2BitHiLoNT(
                 kernelLaunchConfig.threads_per_block = (blocksize); \
                 kernelLaunchConfig.smem = 0; \
                 KernelProperties kernelProperties; \
-                cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
                     convert2BitTo2BitHiloKernelNT, \
-                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem)); \
                 mymap[kernelLaunchConfig] = kernelProperties; \
         }
         getProp(1);
@@ -529,7 +529,7 @@ void callConversionKernel2BitTo2BitHiLoNT(
         d_outputdata,
         outputpitchInInts,
         d_sequenceLengths,
-        d_numSequences); CUERR;
+        d_numSequences); CUDACHECKASYNC;
 
 #if 0    
 
@@ -552,7 +552,7 @@ void callConversionKernel2BitTo2BitHiLoTT(
         size_t outputpitchInInts,
         const int* d_sequenceLengths,
         const int* d_numSequences,
-        int maxNumSequences,
+        int /*maxNumSequences*/,
         cudaStream_t stream,
         KernelLaunchHandle& handle){
 
@@ -575,9 +575,9 @@ void callConversionKernel2BitTo2BitHiLoTT(
                 kernelLaunchConfig.threads_per_block = (blocksize); \
                 kernelLaunchConfig.smem = 0; \
                 KernelProperties kernelProperties; \
-                cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
                     convert2BitTo2BitHiloKernelTT, \
-                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem)); \
                 mymap[kernelLaunchConfig] = kernelProperties; \
         }
         getProp(1);
@@ -612,7 +612,7 @@ void callConversionKernel2BitTo2BitHiLoTT(
         d_outputdata,
         outputpitchInInts,
         d_sequenceLengths,
-        d_numSequences); CUERR;
+        d_numSequences); CUDACHECKASYNC;
 
 #if 0            
 

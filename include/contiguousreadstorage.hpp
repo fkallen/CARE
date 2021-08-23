@@ -740,7 +740,7 @@ public:
         }
 
         void gatherSequenceLengths(
-                GatherHandle& handle,
+                GatherHandle& /*handle*/,
                 const read_number* readIds,
                 int numReadIds,
                 int* destination,
