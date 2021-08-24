@@ -2934,25 +2934,7 @@ namespace gpu{
                 stream
             ));
 
-            // CUDACHECK(cudaMemcpyAsync(
-            //     h_num_total_corrected_candidates.get(),
-            //     d_num_total_corrected_candidates.get(),
-            //     sizeof(int),
-            //     D2H,
-            //     stream
-            // ));
-
-            int* d_forestOpCandidateIndices = nullptr;
-            int* d_forestOpPositionsInCandidates = nullptr;
-            int* d_numForestOperationsPerCandidate = d_indices_tmp.get();
-            int* d_numForestOperations = d_num_indices_tmp.get();
-
-
             callMsaCorrectCandidatesWithForestKernel(
-                d_forestOpCandidateIndices,
-                d_forestOpPositionsInCandidates,
-                d_numForestOperationsPerCandidate,
-                d_numForestOperations,
                 d_corrected_candidates.get(),
                 d_editsPerCorrectedCandidate.get(),
                 d_numEditsPerCorrectedCandidate.get(),              
