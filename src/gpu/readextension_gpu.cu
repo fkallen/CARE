@@ -553,7 +553,7 @@ extend_gpu_pairedend(
         const std::size_t numReadsToProcess = 500000;
         //const std::size_t numReadsToProcess = gpuReadStorage.getNumberOfReads();
 
-        auto idGenerator = cpu::makeIteratorRangeTraversal(
+        IteratorRangeTraversal<thrust::counting_iterator<read_number>> idGenerator(
             thrust::make_counting_iterator<read_number>(0),
             thrust::make_counting_iterator<read_number>(0) + numReadsToProcess
         );
@@ -594,7 +594,7 @@ extend_gpu_pairedend(
 
         isLastIteration = (iterationConfig.maxextensionPerStep <= 4);
 
-        auto idGenerator = cpu::makeIteratorRangeTraversal(
+        auto idGenerator = makeIteratorRangeTraversal(
             pairsWhichShouldBeRepeated.data(), 
             pairsWhichShouldBeRepeated.data() + pairsWhichShouldBeRepeated.size()
         );

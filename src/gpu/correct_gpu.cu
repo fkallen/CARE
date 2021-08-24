@@ -30,6 +30,8 @@
 #include <vector>
 #include <future>
 
+#include <thrust/iterator/counting_iterator.h>
+
 namespace care{
 namespace gpu{
 
@@ -194,10 +196,10 @@ public:
 
     }
 
-    template<class ResultProcessor, class BatchCompletion>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion>
     RunStatistics runToCompletion(
         int deviceId,
-        cpu::RangeGenerator<read_number>& readIdGenerator,
+        IdGenerator& readIdGenerator,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
         ReadCorrectionFlags& correctionFlags,
@@ -219,10 +221,10 @@ public:
         );
     }
 
-    template<class ResultProcessor, class BatchCompletion>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion>
     RunStatistics runSomeBatches(
         int deviceId,
-        cpu::RangeGenerator<read_number>& readIdGenerator,
+        IdGenerator& readIdGenerator,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
         ReadCorrectionFlags& correctionFlags,
@@ -245,10 +247,10 @@ public:
         );
     }
 
-    template<class ResultProcessor, class BatchCompletion>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion>
     RunStatistics runToCompletionDoubleBuffered(
         int deviceId,
-        cpu::RangeGenerator<read_number>& readIdGenerator,
+        IdGenerator& readIdGenerator,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
         ReadCorrectionFlags& correctionFlags,
@@ -273,10 +275,10 @@ public:
         );
     }
 
-    template<class ResultProcessor, class BatchCompletion>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion>
     RunStatistics runToCompletionDoubleBufferedWithExtraThread(
         int deviceId,
-        cpu::RangeGenerator<read_number>& readIdGenerator,
+        IdGenerator& readIdGenerator,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
         ReadCorrectionFlags& correctionFlags,
@@ -301,10 +303,10 @@ public:
         );
     }
 
-    template<class ResultProcessor, class BatchCompletion>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion>
     RunStatistics runSomeBatchesDoubleBuffered(
         int deviceId,
-        cpu::RangeGenerator<read_number>& readIdGenerator,
+        IdGenerator& readIdGenerator,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
         ReadCorrectionFlags& correctionFlags,
@@ -330,10 +332,10 @@ public:
         );
     }
 
-    template<class ResultProcessor, class BatchCompletion>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion>
     RunStatistics runSomeBatchesDoubleBufferedWithExtraThread(
         int deviceId,
-        cpu::RangeGenerator<read_number>& readIdGenerator,
+        IdGenerator& readIdGenerator,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
         ReadCorrectionFlags& correctionFlags,
@@ -359,10 +361,10 @@ public:
         );
     }
 
-    template<class ResultProcessor, class BatchCompletion, class ContinueCondition>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ContinueCondition>
     RunStatistics runDoubleBuffered_impl(
         int deviceId,
-        cpu::RangeGenerator<read_number>& readIdGenerator,
+        IdGenerator& readIdGenerator,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
         ReadCorrectionFlags& correctionFlags,
@@ -491,11 +493,13 @@ public:
                 helpers::CpuTimer hashingTimer;
             
                 anchorIds.resize(correctionOptions.batchsize);
-                auto readIdsEnd = readIdGenerator.next_n_into_buffer(
+                readIdGenerator.process_next_n(
                     correctionOptions.batchsize, 
-                    anchorIds.begin()
-                );
-                anchorIds.erase(readIdsEnd, anchorIds.end());
+                    [&](auto begin, auto end){
+                        auto readIdsEnd = std::copy(begin, end, anchorIds.begin());
+                        anchorIds.erase(readIdsEnd, anchorIds.end());
+                    }
+                ); 
 
                 if(anchorIds.size() == 0){
                     continue;
@@ -541,8 +545,13 @@ public:
         while(continueCondition()){            
             
             anchorIds.resize(correctionOptions.batchsize);
-            auto readIdsEnd = readIdGenerator.next_n_into_buffer(correctionOptions.batchsize, anchorIds.begin());
-            anchorIds.erase(readIdsEnd, anchorIds.end());
+            readIdGenerator.process_next_n(
+                correctionOptions.batchsize, 
+                [&](auto begin, auto end){
+                    auto readIdsEnd = std::copy(begin, end, anchorIds.begin());
+                    anchorIds.erase(readIdsEnd, anchorIds.end());
+                }
+            ); 
 
             if(anchorIds.size() > 0){
                 cudaStream_t stream = streams[streamIndex];
@@ -649,10 +658,10 @@ public:
         // std::cerr << "Average: " << elapsedOutputTime / iterations << "\n";
     }
 
-    template<class ResultProcessor, class BatchCompletion, class ContinueCondition>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ContinueCondition>
     RunStatistics run_impl(
         int deviceId,
-        cpu::RangeGenerator<read_number>& readIdGenerator,
+        IdGenerator& readIdGenerator,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
         ReadCorrectionFlags& correctionFlags,
@@ -715,8 +724,13 @@ public:
             helpers::CpuTimer hashingTimer;
             
             anchorIds.resize(correctionOptions.batchsize);
-            auto readIdsEnd = readIdGenerator.next_n_into_buffer(correctionOptions.batchsize, anchorIds.begin());
-            anchorIds.erase(readIdsEnd, anchorIds.end());
+            readIdGenerator.process_next_n(
+                correctionOptions.batchsize, 
+                [&](auto begin, auto end){
+                    auto readIdsEnd = std::copy(begin, end, anchorIds.begin());
+                    anchorIds.erase(readIdsEnd, anchorIds.end());
+                }
+            );            
 
             if(anchorIds.size() > 0){
 
@@ -846,11 +860,11 @@ public:
 
     }
 
-    template<class ResultProcessor, class BatchCompletion>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion>
     void run(
         int deviceId,
         const Config& config,
-        cpu::RangeGenerator<read_number>& readIdGenerator,
+        IdGenerator& readIdGenerator,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
         ReadCorrectionFlags& correctionFlags,
@@ -1005,10 +1019,10 @@ public:
 
     }
     
-
+    template<class IdGenerator>
     void hasherThreadFunction(
         int deviceId,
-        cpu::RangeGenerator<read_number>& readIdGenerator,
+        IdGenerator& readIdGenerator,
         const CorrectionOptions& correctionOptions
     ){
         cudaSetDevice(deviceId);
@@ -1028,8 +1042,13 @@ public:
 
             std::vector<read_number> anchorIds(correctionOptions.batchsize);
 
-            auto readIdsEnd = readIdGenerator.next_n_into_buffer(correctionOptions.batchsize, anchorIds.begin());
-            anchorIds.erase(readIdsEnd, anchorIds.end());
+            readIdGenerator.process_next_n(
+                correctionOptions.batchsize, 
+                [&](auto begin, auto end){
+                    auto readIdsEnd = std::copy(begin, end, anchorIds.begin());
+                    anchorIds.erase(readIdsEnd, anchorIds.end());
+                }
+            ); 
 
             nvtx::push_range("getFreeInput",1);
             GpuErrorCorrectorInput* const inputPtr = freeInputs.pop();
@@ -1517,16 +1536,10 @@ correct_gpu_impl(
 
     outputThread.start();
 
-    //const int threadPoolSize = std::max(1, runtimeOptions.threads - 2*int(deviceIds.size()));
-    //std::cerr << "threadpool size for correction = " << threadPoolSize << "\n";
-    //ThreadPool threadPool(threadPoolSize);
-
-    
-
-    cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(16); 
-    //cpu::RangeGenerator<read_number> readIdGenerator(std::min(200000u, readStorage.getNumberOfReads()));
-
+    IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(
+        thrust::make_counting_iterator<read_number>(0),
+        thrust::make_counting_iterator<read_number>(0) + readStorage.getNumberOfReads()
+    );
 
     auto showProgress = [&](std::int64_t totalCount, int seconds){
         if(runtimeOptions.showProgress){

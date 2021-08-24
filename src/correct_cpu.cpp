@@ -41,7 +41,7 @@
 
 #include <omp.h>
 
-
+#include <thrust/iterator/counting_iterator.h>
 
 
 namespace care{
@@ -99,8 +99,13 @@ correct_cpu(
     MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfilename);
 
 
-    cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(1000000); 
+    //const std::size_t numReadsToProcess = 500000;
+    const std::size_t numReadsToProcess = readStorage.getNumberOfReads();
+
+    IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(
+        thrust::make_counting_iterator<read_number>(0),
+        thrust::make_counting_iterator<read_number>(0) + numReadsToProcess
+    );
     
     auto saveEncodedCorrectedSequence = [&](const EncodedTempCorrectedSequence* encoded){
         if(!(encoded->isHQ() && encoded->useEdits() && encoded->getNumEdits() == 0)){
@@ -170,12 +175,13 @@ correct_cpu(
 
             batchReadIds.resize(myBatchsize);
 
-            auto readIdsEnd = readIdGenerator.next_n_into_buffer(
+            readIdGenerator.process_next_n(
                 myBatchsize, 
-                batchReadIds.begin()
+                [&](auto begin, auto end){
+                    auto readIdsEnd = std::copy(begin, end, batchReadIds.begin());
+                    batchReadIds.erase(readIdsEnd, batchReadIds.end());
+                }
             );
-            
-            batchReadIds.erase(readIdsEnd, batchReadIds.end());
 
             if(batchReadIds.empty()){
                 continue;

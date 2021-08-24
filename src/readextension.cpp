@@ -33,6 +33,8 @@
 
 #include <omp.h>
 
+#include <thrust/iterator/counting_iterator.h>
+
 
 namespace care{
 
@@ -138,8 +140,13 @@ extend_cpu_pairedend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    //cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
-    cpu::RangeGenerator<read_number> readIdGenerator(1000000);
+    const std::size_t numReadsToProcess = 500000;
+    //const std::size_t numReadsToProcess = readStorage.getNumberOfReads();
+
+    auto readIdGenerator = makeIteratorRangeTraversal(
+        thrust::make_counting_iterator<read_number>(0),
+        thrust::make_counting_iterator<read_number>(0) + numReadsToProcess
+    );
 
     BackgroundThread outputThread(true);
 
@@ -240,12 +247,14 @@ extend_cpu_pairedend(
         bool isLastIteration = true;
 
         auto init = [&](){
-            auto readIdsEnd = readIdGenerator.next_n_into_buffer(
+            int numReadsInBatch = 0;
+            readIdGenerator.process_next_n(
                 batchsizePairs * 2, 
-                currentIds.begin()
+                [&](auto begin, auto end){
+                    auto readIdsEnd = std::copy(begin, end, currentIds.begin());
+                    numReadsInBatch = std::distance(currentIds.begin(), readIdsEnd);
+                }
             );
-
-            int numReadsInBatch = std::distance(currentIds.begin(), readIdsEnd);
 
             if(numReadsInBatch % 2 == 1){
                 throw std::runtime_error("Input files not properly paired. Aborting read extension.");
@@ -528,8 +537,6 @@ extend_cpu_singleend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(1000);
 
     BackgroundThread outputThread(true);
 

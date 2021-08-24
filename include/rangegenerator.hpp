@@ -1,5 +1,5 @@
-#ifndef CARE_CPU_RANGE_GENERATOR_HPP
-#define CARE_CPU_RANGE_GENERATOR_HPP
+#ifndef CARE_RANGE_GENERATOR_HPP
+#define CARE_RANGE_GENERATOR_HPP
 
 #include <config.hpp>
 
@@ -10,7 +10,6 @@
 #include <numeric>
 
 namespace care{
-namespace cpu{
 
     template<class Count_t>
     struct RangeGenerator{
@@ -162,7 +161,6 @@ namespace cpu{
         return IteratorRangeTraversal<Iterator>(begin, end);
     }
 
-}
 }
 
 
