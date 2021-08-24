@@ -7,7 +7,7 @@
 * GNU Make
 
 ## Additional prerequisites for GPU version
-* CUDA Toolkit 10 or newer
+* CUDA Toolkit 11 or newer
 * A CUDA-capable graphics card with Pascal architecture (i.e. Nvidia GTX 1080) or newer.
 
 # Download
