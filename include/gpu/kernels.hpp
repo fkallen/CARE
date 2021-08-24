@@ -383,12 +383,10 @@ void callMsaCorrectAnchorsWithForestKernel(
     size_t decodedSequencePitchInBytes,
     int maximumSequenceLength,
     float estimatedErrorrate,
-    float desiredAlignmentMaxErrorRate,
     float estimatedCoverage,
     float avg_support_threshold,
     float min_support_threshold,
     float min_coverage_threshold,
-    float max_coverage_threshold,
     cudaStream_t stream,
     KernelLaunchHandle& handle
 );

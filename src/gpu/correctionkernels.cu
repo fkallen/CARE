@@ -197,14 +197,11 @@ namespace gpu{
         const int numAnchors,
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
-        int maximumSequenceLength,
         float estimatedErrorrate,
-        float desiredAlignmentMaxErrorRate,
         float estimatedCoverage,
         float avg_support_threshold,
         float min_support_threshold,
-        float min_coverage_threshold,
-        float max_coverage_threshold
+        float min_coverage_threshold
     ){
 
         constexpr int subgroupsize = 32;
@@ -215,24 +212,13 @@ namespace gpu{
 
         auto tbGroup = cg::this_thread_block();
         auto subgroup = cg::tiled_partition<subgroupsize>(tbGroup);
+        auto thread = cg::this_thread();
 
         const int subgroupIdInBlock = threadIdx.x / subgroupsize;
 
-        using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
-        using BlockReduceFloat = cub::BlockReduce<float, BLOCKSIZE>;
-
-        using WarpReduceFloat = cub::WarpReduce<float>;
-
-        __shared__ union {
-            typename BlockReduceInt::TempStorage intreduce;
-            typename BlockReduceFloat::TempStorage floatreduce;
-            GpuMSAProperties msaProperties;
-        } temp_storage;        
+        using WarpReduceFloat = cub::WarpReduce<float>;    
 
         __shared__ typename WarpReduceFloat::TempStorage warpfloatreducetemp[numSubGroupsInBlock];       
-
-        __shared__ bool sharedHQ;
-
         __shared__ float sharedFeatures[numSubGroupsInBlock][AnchorExtractor::numFeatures()];
         __shared__ ExtractAnchorInputData sharedExtractInput[numSubGroupsInBlock];
 
@@ -246,115 +232,45 @@ namespace gpu{
             return result;
         };
 
-        auto groupReduceFloatSum = [&](float f){
-            const float result = BlockReduceFloat(temp_storage.floatreduce).Sum(f);
-            __syncthreads();
-            return result;
-        };
-
-        auto groupReduceFloatMin = [&](float f){
-            const float result = BlockReduceFloat(temp_storage.floatreduce).Reduce(f, cub::Min{});
-            __syncthreads();
-            return result;
-        };
-
-        auto groupReduceIntMin = [&](int i){
-            const int result = BlockReduceInt(temp_storage.intreduce).Reduce(i, cub::Min{});
-            __syncthreads();
-            return result;
-        };
-
-        auto groupReduceIntMax = [&](int i){
-            const int result = BlockReduceInt(temp_storage.intreduce).Reduce(i, cub::Max{});
-            __syncthreads();
-            return result;
-        };
-
-        auto isGoodAvgSupport = [&](float avgsupport){
-            return fgeq(avgsupport, avg_support_threshold);
-        };
-        auto isGoodMinSupport = [&](float minsupport){
-            return fgeq(minsupport, min_support_threshold);
-        };
-        auto isGoodMinCoverage = [&](float mincoverage){
-            return fgeq(mincoverage, min_coverage_threshold);
-        };
-
-        auto to_nuc = [](std::uint8_t c){
-            return SequenceHelpers::decodeBase(c);
-        };
-
         for(unsigned subjectIndex = blockIdx.x; subjectIndex < numAnchors; subjectIndex += gridDim.x){
             const int myNumIndices = d_indices_per_subject[subjectIndex];
             if(myNumIndices > 0){
 
-                const GpuSingleMSA msa = multiMSA.getSingleMSA(subjectIndex);
-
-                char* const globalCorrectedAnchor = correctedSubjects + subjectIndex * decodedSequencePitchInBytes;
+                const GpuSingleMSA msa = multiMSA.getSingleMSA(subjectIndex);                
 
                 const int subjectColumnsBegin_incl = msa.columnProperties->subjectColumnsBegin_incl;
                 const int subjectColumnsEnd_excl = msa.columnProperties->subjectColumnsEnd_excl;
-                //const int lastColumn_excl = msa.columnProperties->lastColumn_excl;
 
-                //only first thread in group returns valid properties
+                auto i_f = thrust::identity<float>{};
+                auto i_i = thrust::identity<int>{};
+
                 GpuMSAProperties msaProperties = msa.getMSAProperties(
-                    tbGroup,
-                    groupReduceFloatSum,
-                    groupReduceFloatMin,
-                    groupReduceIntMin,
-                    groupReduceIntMax,
+                    thread, i_f, i_f, i_i, i_i,
                     subjectColumnsBegin_incl,
                     subjectColumnsEnd_excl
                 );
 
+                AnchorCorrectionQuality correctionQuality(avg_support_threshold, min_support_threshold, min_coverage_threshold, estimatedErrorrate);
+
+                const bool canBeCorrectedBySimpleConsensus = correctionQuality.canBeCorrectedBySimpleConsensus(msaProperties);
+                const bool isHQCorrection = correctionQuality.isHQCorrection(msaProperties);
+
                 if(tbGroup.thread_rank() == 0){
-                    temp_storage.msaProperties = msaProperties;
-
-                    subjectIsCorrected[subjectIndex] = true; //canBeCorrected;
-
-                    const bool canBeCorrectedByConsensus = isGoodAvgSupport(msaProperties.avg_support) && isGoodMinSupport(msaProperties.min_support) && isGoodMinCoverage(msaProperties.min_coverage);
-
-                    if(canBeCorrectedByConsensus){
-                        int smallestErrorrateThatWouldMakeHQ = 100;
-
-                        const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
-                        for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
-                            const float factor = percent / 100.0f;
-                            const float avg_threshold = 1.0f - 1.0f * factor;
-                            const float min_threshold = 1.0f - 3.0f * factor;
-                            if(fgeq(msaProperties.avg_support, avg_threshold) && fgeq(msaProperties.min_support, min_threshold)){
-                                smallestErrorrateThatWouldMakeHQ = percent;
-                            }
-                        }
-
-                        const bool isHQ = isGoodMinCoverage(msaProperties.min_coverage)
-                                            && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
-
-                        //broadcastbuffer = isHQ;
-                        isHighQualitySubject[subjectIndex].hq(isHQ);
-                        sharedHQ = isHQ;
-                    }else{
-                        isHighQualitySubject[subjectIndex].hq(false);
-                        sharedHQ = false;
-                    }
-
+                    subjectIsCorrected[subjectIndex] = true;
+                    isHighQualitySubject[subjectIndex].hq(isHQCorrection);
                 }
-
-                tbGroup.sync();
-
-                msaProperties = temp_storage.msaProperties;
-                const bool isHQ = sharedHQ;
 
                 const int anchorLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
                 const unsigned int* const subject = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
+                char* const globalCorrectedAnchor = correctedSubjects + subjectIndex * decodedSequencePitchInBytes;
 
-                if(isHQ){
+                if(isHQCorrection){
 
                     //set corrected anchor to consensus
                     for(int i = tbGroup.thread_rank(); i < anchorLength; i += tbGroup.size()){
                         const std::uint8_t nuc = msa.consensus[subjectColumnsBegin_incl + i];
                         assert(nuc < 4);
-                        globalCorrectedAnchor[i] = to_nuc(nuc);
+                        globalCorrectedAnchor[i] = SequenceHelpers::decodeBase(nuc);
                     }
 
                 }else{
@@ -363,7 +279,7 @@ namespace gpu{
                     for(int i = tbGroup.thread_rank(); i < anchorLength; i += tbGroup.size()){
                         const std::uint8_t nuc = msa.consensus[subjectColumnsBegin_incl + i];
                         assert(nuc < 4);
-                        sharedCorrectedAnchor[i] = to_nuc(nuc);
+                        sharedCorrectedAnchor[i] = SequenceHelpers::decodeBase(nuc);
                     }
                     
                     tbGroup.sync();                                   
@@ -380,8 +296,8 @@ namespace gpu{
 
                                 ExtractAnchorInputData& extractorInput = sharedExtractInput[subgroupIdInBlock];
 
-                                extractorInput.origBase = to_nuc(origEncodedBase);
-                                extractorInput.consensusBase = to_nuc(consensusEncodedBase);
+                                extractorInput.origBase = SequenceHelpers::decodeBase(origEncodedBase);
+                                extractorInput.consensusBase = SequenceHelpers::decodeBase(consensusEncodedBase);
                                 extractorInput.estimatedCoverage = estimatedCoverage;
                                 extractorInput.msaPos = msaPos;
                                 extractorInput.subjectColumnsBegin_incl = subjectColumnsBegin_incl;
@@ -447,12 +363,10 @@ namespace gpu{
         size_t decodedSequencePitchInBytes,
         int maximumSequenceLength,
         float estimatedErrorrate,
-        float desiredAlignmentMaxErrorRate,
         float estimatedCoverage,
         float avg_support_threshold,
         float min_support_threshold,
         float min_coverage_threshold,
-        float max_coverage_threshold,
         cudaStream_t stream,
         KernelLaunchHandle& /*handle*/
     ){
@@ -475,14 +389,11 @@ namespace gpu{
             numAnchors,
             encodedSequencePitchInInts,
             decodedSequencePitchInBytes,
-            maximumSequenceLength,
             estimatedErrorrate,
-            desiredAlignmentMaxErrorRate,
             estimatedCoverage,
             avg_support_threshold,
             min_support_threshold,
-            min_coverage_threshold,
-            max_coverage_threshold
+            min_coverage_threshold
         );
     }
 

@@ -2622,12 +2622,10 @@ namespace gpu{
                 decodedSequencePitchInBytes,
                 gpuReadStorage->getSequenceLengthUpperBound(),
                 correctionOptions->estimatedErrorrate,
-                goodAlignmentProperties->maxErrorRate,
                 correctionOptions->estimatedCoverage,
                 avg_support_threshold,
                 min_support_threshold,
                 min_coverage_threshold,
-                max_coverage_threshold,
                 stream,
                 kernelLaunchHandle
             );
