@@ -140,7 +140,7 @@ namespace care{
         }
 
         std::size_t getNumOccupiedRawOffsetBytes() const{
-            return std::distance(offsetsEnd, offsetsBegin);
+            return sizeof(std::size_t) * std::distance(offsetsBegin, offsetsEnd);
         }
 
         std::size_t getSizeInBytes() const{
@@ -254,6 +254,11 @@ namespace care{
         template<class ExtractKey, class KeyComparator>
         void sort(std::size_t memoryForSortingInBytes, ExtractKey extractKey, KeyComparator keyComparator){
             using Key = decltype(extractKey(nullptr));
+
+            // std::cerr << "FixedSizeStorage::sort(" << memoryForSortingInBytes << ")\n";
+            // std::cerr << "getSizeInBytes(): " << getSizeInBytes() << "\n";
+            // std::cerr << "getNumOccupiedRawElementBytes(): " << getNumOccupiedRawElementBytes() << "\n";
+            // std::cerr << "getNumOccupiedRawOffsetBytes(): " << getNumOccupiedRawOffsetBytes() << "\n";
 
             if(getNumStoredElements() == 0) return;
 #if 1
