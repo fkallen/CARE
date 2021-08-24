@@ -5,6 +5,9 @@
 
 #include <iterator>
 
+
+// iterator multiplier
+
 template<class Iter>
 struct IteratorMultiplier{
     using value_type = typename std::iterator_traits<Iter>::value_type;
@@ -31,6 +34,34 @@ IteratorMultiplier<Iter> make_iterator_multiplier(Iter data, int factor){
 }
 
 
+// strided iterator
 
+template<class Iter>
+struct StridedIterator{
+    using value_type = typename std::iterator_traits<Iter>::value_type;
+
+    Iter data;
+    int stride;
+
+    HOSTDEVICEQUALIFIER
+    StridedIterator(Iter data_, int stride_) 
+        : data(data_), stride(stride_){
+    }
+
+    HOSTDEVICEQUALIFIER
+    value_type& operator*(){
+        return *data;
+    }
+
+    HOSTDEVICEQUALIFIER
+    const value_type& operator*() const{
+        return *data;
+    }
+
+    HOSTDEVICEQUALIFIER
+    StridedIterator operator+(int i) const{
+        return StridedIterator{data + i * stride, stride};
+    }
+};
 
 #endif
