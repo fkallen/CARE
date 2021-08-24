@@ -2515,7 +2515,7 @@ namespace gpu{
             // coverage is always >= 1
             const float min_coverage_threshold = std::max(1.0f,
                 correctionOptions->m_coverage / 6.0f * correctionOptions->estimatedCoverage);
-            const float max_coverage_threshold = 0.5 * correctionOptions->estimatedCoverage;
+            //const float max_coverage_threshold = 0.5 * correctionOptions->estimatedCoverage;
 
             // correct anchors
 
@@ -2532,28 +2532,21 @@ namespace gpu{
             multiMSA.origCoverages = d_origCoverages.get();
             multiMSA.columnProperties = d_msa_column_properties.get();
 
-
             call_msaCorrectAnchorsKernel_async(
                 d_corrected_anchors.get(),
                 d_anchor_is_corrected.get(),
                 d_is_high_quality_anchor.get(),
                 multiMSA,
                 d_anchor_sequences_data.get(),
-                d_candidate_sequences_data.get(),
-                d_candidate_sequences_lengths.get(),
                 d_indices_per_anchor.get(),
                 d_numAnchors.get(),
                 maxAnchors,
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
-                gpuReadStorage->getSequenceLengthUpperBound(),
                 correctionOptions->estimatedErrorrate,
-                goodAlignmentProperties->maxErrorRate,
                 avg_support_threshold,
                 min_support_threshold,
                 min_coverage_threshold,
-                max_coverage_threshold,
-                correctionOptions->kmerlength,
                 gpuReadStorage->getSequenceLengthUpperBound(),
                 stream,
                 kernelLaunchHandle
