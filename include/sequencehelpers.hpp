@@ -673,6 +673,8 @@ namespace care{
             return char(((((a * x) + b) * x) + c) * x + d);
         }
 
+        #ifdef __CUDACC__
+
         template<class Group>
         DEVICEQUALIFIER
         static void reverseAlignedDecodedSequenceWithGroupShfl(Group& group, char* sequence, int sequenceLength){
@@ -853,6 +855,8 @@ namespace care{
                 group.sync();
             }
         }
+
+        #endif
     };
 
     static_assert(SequenceHelpers::convertDNACharToIntNoIf('A') == 0,"");
