@@ -309,9 +309,17 @@ public:
         return capacity;
     }
 
+    std::size_t getCapacityInMemory() const noexcept{
+        return memoryCapacity;
+    }
+
+    std::size_t getCapacityInFile() const noexcept{
+        return fileCapacity;
+    }
+
     void printStatus(std::ostream& os) const{
-        os << "size: " << size << ", capacity: " << capacity;
-        os << ", memoryCapacity: " << memoryCapacity << ", fileCapacity: " << fileCapacity;
+        os << "size: " << getSize() << ", capacity: " << getCapacity();
+        os << ", memoryCapacity: " << getCapacityInMemory() << ", fileCapacity: " << getCapacityInFile();
         os << ", memoryLimit: " << memoryLimit;
     }
 };
@@ -392,9 +400,6 @@ public:
         return capacity_;
     }
 
-    void clear(){
-        buffer.clear();
-    }
 
     pointer data() noexcept{
         return reinterpret_cast<pointer>(buffer.get());
@@ -446,6 +451,18 @@ public:
 
     const_reference back() const{
         return data()[size() - 1];
+    }
+
+    std::size_t getCapacityInMemoryInBytes() const noexcept{
+        return buffer.getCapacityInMemory();
+    }
+
+    std::size_t getCapacityInFileInBytes() const noexcept{
+        return buffer.getCapacityInFile();
+    }
+
+    void clear(){
+        buffer.clear();
     }
 
     void resize(std::size_t newsize){
