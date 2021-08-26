@@ -217,10 +217,14 @@ namespace care{
 
         helpers::CpuTimer step3Timer("STEP3");
 
+        helpers::CpuTimer sorttimer("sort_results_by_read_id");
+
         sortSerializedResultsByReadIdAscending<EncodedTempCorrectedSequence>(
             partialResults,
             memoryForSorting
         );
+
+        sorttimer.print();
 
         std::vector<FileFormat> formats;
         for(const auto& inputfile : fileOptions.inputfiles){
