@@ -6,6 +6,7 @@
 #include <memoryfile.hpp>
 #include <readlibraryio.hpp>
 #include <sequencehelpers.hpp>
+#include <serializedobjectstorage.hpp>
 
 #include <cstring>
 #include <fstream>
@@ -73,6 +74,10 @@ namespace care{
         int getNumBytes() const{
             constexpr std::uint32_t mask = (std::uint32_t(1) << 29)-1;
             return (encodedflags & mask);
+        }
+
+        int getSerializedNumBytes() const noexcept{
+            return sizeof(read_number) + sizeof(std::uint32_t) + getNumBytes();
         }
 
         //from serialized object beginning at ptr, return the read id of this object
@@ -318,7 +323,14 @@ namespace care{
         bool showProgress
     );
 
-
+    void constructOutputFileFromCorrectionResults(
+        const std::string& tempdir,
+        const std::vector<std::string>& originalReadFiles,
+        SerializedObjectStorage& partialResults, 
+        FileFormat outputFormat,
+        const std::vector<std::string>& outputfiles,
+        bool showProgress
+    );
 
 
 

@@ -7,7 +7,7 @@
 
 #include <config.hpp>
 #include <correctionresultprocessing.hpp>
-#include <memoryfile.hpp>
+#include <serializedobjectstorage.hpp>
 
 #include <options.hpp>
 
@@ -19,7 +19,7 @@ namespace care {
 namespace gpu {
 
 
-MemoryFileFixedSize<EncodedTempCorrectedSequence> 
+SerializedObjectStorage
 correct_gpu(
 	const GoodAlignmentProperties& goodAlignmentProperties,
 	const CorrectionOptions& correctionOptions,

@@ -29,7 +29,7 @@ NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-cons
 NVCCFLAGS_DEBUG = -x cu -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_FLAGS)
 
 # This could be modified to compile only for a single architecture to reduce compilation time
-CUDA_ARCH = -gencode=arch=compute_86,code=sm_86
+CUDA_ARCH = -gencode=arch=compute_70,code=sm_70
 #\
 #		-gencode=arch=compute_70,code=sm_70 \
 #		-gencode=arch=compute_80,code=sm_80 \

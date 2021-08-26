@@ -18,16 +18,13 @@
 
 /*
     KeyType KeyGenerator::operator()(IndexType i)  returns i-th key
-
-    bool KeyComparator::operator()(KeyType l, KeyType r)
 */
-template<class IndexType, class ValueType, class KeyGenerator, class KeyComparator>
+template<class IndexType, class ValueType, class KeyGenerator>
 bool sortValuesByGeneratedKeysViaIndicesHost(
     std::size_t memoryLimitBytes,
     ValueType* values,
     IndexType numValues,
-    KeyGenerator keyGenerator,
-    KeyComparator keyComparator
+    KeyGenerator keyGenerator
 ){
     using KeyType = decltype(keyGenerator(IndexType{0}));
 
@@ -65,7 +62,7 @@ bool sortValuesByGeneratedKeysViaIndicesHost(
     std::sort(
         indices, indices + numValues,
         [&](const auto& l, const auto& r){
-            return keyComparator(keys[l], keys[r]);
+            return keys[l] < keys[r];
         }
     );
 
@@ -87,7 +84,21 @@ bool sortValuesByGeneratedKeysViaIndicesHost(
     return true;
 }
 
-
+template<class IndexType, class ValueType, class KeyGenerator, class KeyComparator>
+bool sortValuesByGeneratedKeysViaIndicesHost(
+    std::size_t memoryLimitBytes,
+    ValueType* values,
+    IndexType numValues,
+    KeyGenerator keyGenerator,
+    KeyComparator /*keyComparator*/
+){
+    return sortValuesByGeneratedKeysViaIndicesHost<IndexType, ValueType, KeyGenerator>(
+        memoryLimitBytes,
+        values,
+        numValues,
+        keyGenerator
+    );
+}
 
 
 /*
@@ -95,13 +106,12 @@ bool sortValuesByGeneratedKeysViaIndicesHost(
 
     bool KeyComparator::operator()(KeyType l, KeyType r)
 */
-template<class IndexType, class ValueType, class KeyGenerator, class KeyComparator>
+template<class IndexType, class ValueType, class KeyGenerator>
 bool sortValuesByGeneratedKeysViaSortByKeyHost(
     std::size_t memoryLimitBytes,
     ValueType* values,
     IndexType numValues,
-    KeyGenerator keyGenerator,
-    KeyComparator /*keyComparator*/
+    KeyGenerator keyGenerator
 ){
     using KeyType = decltype(keyGenerator(IndexType{0}));
 
@@ -142,20 +152,33 @@ bool sortValuesByGeneratedKeysViaSortByKeyHost(
 }
 
 
-#ifdef __CUDACC__
-
-/*
-    KeyType KeyGenerator::operator()(IndexType i)  returns i-th key
-
-    bool KeyComparator::operator()(KeyType l, KeyType r)
-*/
 template<class IndexType, class ValueType, class KeyGenerator, class KeyComparator>
-bool sortValuesByGeneratedKeysViaSortByKeyDevice(
+bool sortValuesByGeneratedKeysViaSortByKeyHost(
     std::size_t memoryLimitBytes,
     ValueType* values,
     IndexType numValues,
     KeyGenerator keyGenerator,
     KeyComparator /*keyComparator*/
+){
+    return sortValuesByGeneratedKeysViaSortByKeyHost<IndexType, ValueType, KeyGenerator>(
+        memoryLimitBytes,
+        values,
+        numValues,
+        keyGenerator
+    );
+}
+
+#ifdef __CUDACC__
+
+/*
+    KeyType KeyGenerator::operator()(IndexType i)  returns i-th key
+*/
+template<class IndexType, class ValueType, class KeyGenerator>
+bool sortValuesByGeneratedKeysViaSortByKeyDevice(
+    std::size_t memoryLimitBytes,
+    ValueType* values,
+    IndexType numValues,
+    KeyGenerator keyGenerator
 ){
     using KeyType = decltype(keyGenerator(IndexType{0}));
 
@@ -351,6 +374,21 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     return true;
 }
 
+template<class IndexType, class ValueType, class KeyGenerator, class KeyComparator>
+bool sortValuesByGeneratedKeysViaSortByKeyDevice(
+    std::size_t memoryLimitBytes,
+    ValueType* values,
+    IndexType numValues,
+    KeyGenerator keyGenerator,
+    KeyComparator /*keyComparator*/
+){
+    return sortValuesByGeneratedKeysViaSortByKeyDevice<IndexType, ValueType, KeyGenerator>(
+        memoryLimitBytes,
+        values,
+        numValues,
+        keyGenerator
+    );
+}
 
 #endif
 
@@ -358,20 +396,19 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
 /*
     Sorts the values of key-value pairs by key. Keys are generated via functor
 */
-template<class IndexType, class ValueType, class KeyGenerator, class KeyComparator>
+template<class IndexType, class ValueType, class KeyGenerator>
 bool sortValuesByGeneratedKeys(
     std::size_t memoryLimitBytes,
     ValueType* values,
     IndexType numValues,
-    KeyGenerator keyGenerator,
-    KeyComparator keyComparator
+    KeyGenerator keyGenerator
 ){
-
+    std::cerr << "sortValuesByGeneratedKeys: memoryLimitBytes = " << memoryLimitBytes << ",numValues: " << numValues << ", sizeof(ValueType): " << sizeof(ValueType) << ", sizeof(IndexType): " << sizeof(IndexType) << "\n";
     bool success = false;
 
     #ifdef __CUDACC__
         try{
-            success = sortValuesByGeneratedKeysViaSortByKeyDevice<IndexType>(memoryLimitBytes, values, numValues, keyGenerator, keyComparator);
+            success = sortValuesByGeneratedKeysViaSortByKeyDevice<IndexType>(memoryLimitBytes, values, numValues, keyGenerator);
         } catch (...){
             std::cerr << "Fallback\n";
         }
@@ -380,7 +417,7 @@ bool sortValuesByGeneratedKeys(
     #endif
 
     try{
-        success = sortValuesByGeneratedKeysViaSortByKeyHost<IndexType>(memoryLimitBytes, values, numValues, keyGenerator, keyComparator);
+        success = sortValuesByGeneratedKeysViaSortByKeyHost<IndexType>(memoryLimitBytes, values, numValues, keyGenerator);
     } catch (...){
         std::cerr << "Fallback\n";
     }
@@ -388,12 +425,28 @@ bool sortValuesByGeneratedKeys(
     if(success) return true;
 
     try{
-        success = sortValuesByGeneratedKeysViaIndicesHost<IndexType>(memoryLimitBytes, values, numValues, keyGenerator, keyComparator);
+        success = sortValuesByGeneratedKeysViaIndicesHost<IndexType>(memoryLimitBytes, values, numValues, keyGenerator);
     } catch (...){
         std::cerr << "Fallback\n";
     }
 
     return success;
+}
+
+template<class IndexType, class ValueType, class KeyGenerator, class KeyComparator>
+bool sortValuesByGeneratedKeys(
+    std::size_t memoryLimitBytes,
+    ValueType* values,
+    IndexType numValues,
+    KeyGenerator keyGenerator,
+    KeyComparator /*keyComparator*/
+){
+    return sortValuesByGeneratedKeys<IndexType, ValueType, KeyGenerator>(
+        memoryLimitBytes,
+        values,
+        numValues,
+        keyGenerator
+    );
 }
 
 

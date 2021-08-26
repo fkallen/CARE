@@ -25,6 +25,9 @@ namespace care{
 template<class T>
 struct MemoryFileFixedSize{
 
+    template<class X>
+    using FixedStorage = FixedSizeStorage<X>;
+
     using ValueType = T;
 
     struct Twrapper{
@@ -169,7 +172,7 @@ struct MemoryFileFixedSize{
     }
     MemoryFileFixedSize& operator=(MemoryFileFixedSize&& rhs){
         isUsingFile = std::exchange(rhs.isUsingFile, false);
-        memoryStorage = std::exchange(rhs.memoryStorage, FixedSizeStorage<T>{0});
+        memoryStorage = std::exchange(rhs.memoryStorage, FixedStorage<T>{0});
         numStoredElementsInFile = std::exchange(rhs.numStoredElementsInFile, 0);
         filename = std::exchange(rhs.filename, "");
         outputstream = std::exchange(rhs.outputstream, std::ofstream{});
@@ -232,6 +235,12 @@ struct MemoryFileFixedSize{
         return result;
     }
 
+    void compact(){
+        if(getNumElementsInFile() == 0){
+            memoryStorage.compact();
+        }
+    }
+
     template<class ExtractKey, class KeyComparator, class TComparator>
     void sort(const std::string& tempdir, std::size_t memoryForSortingInBytes, ExtractKey extractKey, KeyComparator keyComparator, TComparator elementcomparator){
         //using Key = decltype(extractKey(nullptr));
@@ -280,7 +289,7 @@ struct MemoryFileFixedSize{
                     //Grow memory storage to fit all elements:
                     //Create new memory storage, append current memory storage, append elements from file
 
-                    FixedSizeStorage<T> newMemoryStorage(requiredMemForAllElements);
+                    FixedStorage<T> newMemoryStorage(requiredMemForAllElements);
 
                     returnValue = newMemoryStorage.insert(memoryStorage);
                     assert(returnValue);
@@ -453,7 +462,7 @@ private:
 
     bool isUsingFile = false;
 
-    FixedSizeStorage<T> memoryStorage;
+    FixedStorage<T> memoryStorage;
     std::int64_t numStoredElementsInFile = 0;
 
     std::string filename = "";    
