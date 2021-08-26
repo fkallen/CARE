@@ -20,7 +20,7 @@
 #include <queue>
 
 
-
+#include <cstdlib>
 
 
 template<class T>
@@ -1231,6 +1231,19 @@ std::pair<OutputIt1, OutputIt2> findPairedReadIds(
         lessThan12,
         lessThan21
     );
+}
+
+std::string makeRandomFile(const std::string& nametemplate){
+    std::vector<char> filenamevec(nametemplate.begin(), nametemplate.end());
+    filenamevec.push_back('\0');
+    int tempfd = mkstemp(filenamevec.data());
+    if(tmpfd == -1){
+        perror("makeRandomFile mkstemp");
+        throw std::runtime_error("Cannot create random file with template " + nametemplate);
+    }
+    close(tempfd);
+
+    return {filenamevec.begin(), filenamevec.end()};
 }
 
 
