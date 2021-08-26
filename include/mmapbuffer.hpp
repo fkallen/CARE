@@ -363,11 +363,8 @@ public:
     }
 
     void push_back(T obj){
-        const std::size_t currentsize = size();
-        const std::size_t currentcapacity = capacity();
-
         if(size() >= capacity()){
-            reserve(currentsize + 1);
+            reserve(size() + 1);
         }
 
         data()[size_++] = std::move(obj);

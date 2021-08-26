@@ -11,8 +11,8 @@
 #include <sequencehelpers.hpp>
 #include <cpuminhasherconstruction.hpp>
 #include <ordinaryminhasher.hpp>
-
-
+#include <serializedobjectstorage.hpp>
+#include <sortserializedresults.hpp>
 #include <chunkedreadstorageconstruction.hpp>
 #include <chunkedreadstorage.hpp>
 
@@ -184,13 +184,9 @@ namespace care{
         step2Timer.print();
 
         std::cout << "Correction throughput : ~" << (cpuReadStorage->getNumberOfReads() / step2Timer.elapsed()) << " reads/second.\n";
-        const std::size_t numTemp = partialResults.getNumElementsInMemory() + partialResults.getNumElementsInFile();
-        const std::size_t numTempInMem = partialResults.getNumElementsInMemory();
-        const std::size_t numTempInFile = partialResults.getNumElementsInFile();
 
-        std::cerr << "Constructed " << numTemp << " corrections. "
-            << numTempInMem << " corrections are stored in memory. "
-            << numTempInFile << " corrections are stored in temporary file\n";
+        std::cerr << "Constructed " << partialResults.size() << " corrections. ";
+        std::cerr << "They occupy a total of " << (partialResults.dataBytes() + partialResults.offsetBytes()) << " bytes\n";
 
         //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after correction");
 
@@ -221,6 +217,11 @@ namespace care{
 
         helpers::CpuTimer step3Timer("STEP3");
 
+        sortSerializedResultsByReadIdAscending<EncodedTempCorrectedSequence>(
+            partialResults,
+            memoryForSorting
+        );
+
         std::vector<FileFormat> formats;
         for(const auto& inputfile : fileOptions.inputfiles){
             formats.emplace_back(getFileFormat(inputfile));
@@ -230,13 +231,10 @@ namespace care{
             outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
         }
         constructOutputFileFromCorrectionResults(
-            fileOptions.tempdirectory,
-            fileOptions.inputfiles,            
+            fileOptions.inputfiles, 
             partialResults, 
-            memoryForSorting,
-            formats[0], 
-            outputfiles, 
-            false,
+            formats[0],
+            outputfiles,
             runtimeOptions.showProgress
         );
 

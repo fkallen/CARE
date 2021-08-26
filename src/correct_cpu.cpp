@@ -16,7 +16,7 @@
 #include "rangegenerator.hpp"
 
 #include <threadpool.hpp>
-#include <memoryfile.hpp>
+#include <serializedobjectstorage.hpp>
 #include <util.hpp>
 #include <filehelpers.hpp>
 #include <hostdevicefunctions.cuh>
@@ -48,8 +48,7 @@ namespace care{
 namespace cpu{
 
 
-MemoryFileFixedSize<EncodedTempCorrectedSequence>
-correct_cpu(
+SerializedObjectStorage correct_cpu(
     const GoodAlignmentProperties& goodAlignmentProperties,
     const CorrectionOptions& correctionOptions,
     const RuntimeOptions& runtimeOptions,
@@ -95,9 +94,13 @@ correct_cpu(
         memoryForPartialResultsInBytes = availableMemoryInBytes - 2*(std::size_t(1) << 30);
     }
 
-    const std::string tmpfilename{fileOptions.tempdirectory + "/" + "MemoryFileFixedSizetmp"};
-    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfilename);
+    std::cerr << "Partial results may occupy " << (memoryForPartialResultsInBytes /1024. / 1024. / 1024.) 
+        << " GB in memory. Remaining partial results will be stored in temp directory. \n";
 
+    const std::size_t memoryLimitData = memoryForPartialResultsInBytes * 0.75;
+    const std::size_t memoryLimitOffsets = memoryForPartialResultsInBytes * 0.25;
+
+    SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, fileOptions.tempdirectory + "/");
 
     //const std::size_t numReadsToProcess = 500000;
     const std::size_t numReadsToProcess = readStorage.getNumberOfReads();
@@ -107,12 +110,6 @@ correct_cpu(
         thrust::make_counting_iterator<read_number>(0) + numReadsToProcess
     );
     
-    auto saveEncodedCorrectedSequence = [&](const EncodedTempCorrectedSequence* encoded){
-        if(!(encoded->isHQ() && encoded->useEdits() && encoded->getNumEdits() == 0)){
-            partialResults.storeElement(encoded);
-        }
-    };
-
     BackgroundThread outputThread(true);
     outputThread.setMaximumQueueSize(runtimeOptions.threads);
 
@@ -271,6 +268,20 @@ correct_cpu(
                 &, 
                 encodedCorrectionOutput = std::move(encodedCorrectionOutput)
             ](){
+                std::vector<std::uint8_t> tempbuffer(256);
+
+                auto saveEncodedCorrectedSequence = [&](const EncodedTempCorrectedSequence* encoded){
+                    if(!(encoded->isHQ() && encoded->useEdits() && encoded->getNumEdits() == 0)){
+                        const std::size_t serializedSize = encoded->getSerializedNumBytes();
+                        tempbuffer.resize(serializedSize);
+
+                        auto end = encoded->copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
+                        assert(end != nullptr);
+
+                        partialResults.insert(tempbuffer.data(), end);
+                    }
+                };
+
                 const int numA = encodedCorrectionOutput.encodedAnchorCorrections.size();
                 const int numC = encodedCorrectionOutput.encodedCandidateCorrections.size();
 
@@ -305,9 +316,6 @@ correct_cpu(
     progressThread.finished();
 
     outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
-
-    //outputstream.flush();
-    partialResults.flush();
 
     #ifdef ENABLE_CPU_CORRECTOR_TIMING
 

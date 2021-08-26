@@ -324,7 +324,6 @@ namespace care{
     );
 
     void constructOutputFileFromCorrectionResults(
-        const std::string& tempdir,
         const std::vector<std::string>& originalReadFiles,
         SerializedObjectStorage& partialResults, 
         FileFormat outputFormat,

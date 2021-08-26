@@ -2,8 +2,8 @@
 #define CARE_CORRECT_CPU_HPP
 
 #include <config.hpp>
-#include <correctionresultprocessing.hpp>
-#include <memoryfile.hpp>
+
+#include <serializedobjectstorage.hpp>
 #include <options.hpp>
 #include <readlibraryio.hpp>
 #include <cpureadstorage.hpp>
@@ -14,8 +14,7 @@ namespace cpu{
 
 
 
-	MemoryFileFixedSize<EncodedTempCorrectedSequence>
-	correct_cpu(
+	SerializedObjectStorage correct_cpu(
 		const GoodAlignmentProperties& goodAlignmentProperties,
 		const CorrectionOptions& correctionOptions,
 		const RuntimeOptions& runtimeOptions,

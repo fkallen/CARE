@@ -437,7 +437,6 @@ void mergeResultsWithOriginalReads_multithreaded(
 
 template<class ResultType, class Combiner, class ReadIdComparator, class ProgressFunction>
 void mergeSerializedResultsWithOriginalReads_multithreaded(
-    const std::string& tempdir,
     const std::vector<std::string>& originalReadFiles,
     SerializedObjectStorage& partialResults, 
     FileFormat outputFormat,
@@ -1388,7 +1387,6 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
     }
 
     void constructOutputFileFromCorrectionResults(
-        const std::string& tempdir,
         const std::vector<std::string>& originalReadFiles,
         SerializedObjectStorage& partialResults, 
         FileFormat outputFormat,
@@ -1409,7 +1407,6 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
         };
 
         mergeSerializedResultsWithOriginalReads_multithreaded<TempCorrectedSequence>(
-            tempdir,
             originalReadFiles,
             partialResults, 
             outputFormat,
