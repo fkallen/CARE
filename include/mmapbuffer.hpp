@@ -169,7 +169,7 @@ private:
 
             //update file mappings to virtual adress range
             //this overwrites the previous anonymous mapping.
-            newptr = mmap(((char*)rawtotaldata) + memoryCapacity, fileCapacity, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, filehandle.getFd(), 0);
+            newptr = mmap(((char*)rawtotaldata) + memoryCapacity, fileCapacity, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED | MAP_POPULATE | MAP_NONBLOCK, filehandle.getFd(), 0);
             if(newptr == MAP_FAILED){
                 perror("FileBackedMMapBuffer::reserve file mmap");
                 throw std::runtime_error("Reserve failed");
