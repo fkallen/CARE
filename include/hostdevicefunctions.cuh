@@ -201,6 +201,68 @@ namespace care{
         return result;
     }
 
+    struct AnchorCorrectionQuality{
+    public:
+        HOSTDEVICEQUALIFIER
+        AnchorCorrectionQuality(
+            float avg_support_threshold_,
+            float min_support_threshold_,
+            float min_coverage_threshold_,
+            float estimatedErrorrate_
+        ) : avg_support_threshold(avg_support_threshold_),
+            min_support_threshold(min_support_threshold_),
+            min_coverage_threshold(min_coverage_threshold_),
+            estimatedErrorrate(estimatedErrorrate_){
+        }
+
+        HOSTDEVICEQUALIFIER
+        bool canBeCorrectedBySimpleConsensus(float avg_support, float min_support, float min_coverage) const noexcept{
+            return isGoodAvgSupport(avg_support) && isGoodMinSupport(min_support) && isGoodMinCoverage(min_coverage);
+        }
+
+        HOSTDEVICEQUALIFIER
+        bool isHQCorrection(float avg_support, float min_support, float min_coverage) const noexcept{
+            if(canBeCorrectedBySimpleConsensus(avg_support, min_support, min_coverage)){
+                int smallestErrorrateThatWouldMakeHQ = 100;
+
+                const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
+                for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
+                    const float factor = percent / 100.0f;
+                    const float avg_threshold = 1.0f - 1.0f * factor;
+                    const float min_threshold = 1.0f - 3.0f * factor;
+                    if(fgeq(avg_support, avg_threshold) && fgeq(min_support, min_threshold)){
+                        smallestErrorrateThatWouldMakeHQ = percent;
+                    }
+                }
+
+                return isGoodMinCoverage(min_coverage) && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
+            }else{
+                return false;
+            }
+        }
+
+    private:
+        HOSTDEVICEQUALIFIER
+        bool isGoodAvgSupport(float avgsupport) const noexcept{
+            return fgeq(avgsupport, avg_support_threshold);
+        }
+
+        HOSTDEVICEQUALIFIER
+        bool isGoodMinSupport(float minsupport) const noexcept{
+            return fgeq(minsupport, min_support_threshold);
+        }
+
+        HOSTDEVICEQUALIFIER
+        bool isGoodMinCoverage(float mincoverage) const noexcept{
+            return fgeq(mincoverage, min_coverage_threshold);
+        }
+
+        float avg_support_threshold{};
+        float min_support_threshold{};
+        float min_coverage_threshold{};
+        float estimatedErrorrate{};
+    };
+
 }
 
 #endif

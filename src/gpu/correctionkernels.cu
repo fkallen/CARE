@@ -28,69 +28,6 @@ namespace cg = cooperative_groups;
 namespace care{
 namespace gpu{
 
-    struct AnchorCorrectionQuality{
-    public:
-        HOSTDEVICEQUALIFIER
-        AnchorCorrectionQuality(
-            float avg_support_threshold_,
-            float min_support_threshold_,
-            float min_coverage_threshold_,
-            float estimatedErrorrate_
-        ) : avg_support_threshold(avg_support_threshold_),
-            min_support_threshold(min_support_threshold_),
-            min_coverage_threshold(min_coverage_threshold_),
-            estimatedErrorrate(estimatedErrorrate_){
-        }
-
-        HOSTDEVICEQUALIFIER
-        bool canBeCorrectedBySimpleConsensus(const GpuMSAProperties& props) const noexcept{
-            return isGoodAvgSupport(props.avg_support) && isGoodMinSupport(props.min_support) && isGoodMinCoverage(props.min_coverage);
-        }
-
-        HOSTDEVICEQUALIFIER
-        bool isHQCorrection(const GpuMSAProperties& props) const noexcept{
-            if(canBeCorrectedBySimpleConsensus(props)){
-                int smallestErrorrateThatWouldMakeHQ = 100;
-
-                const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
-                for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
-                    const float factor = percent / 100.0f;
-                    const float avg_threshold = 1.0f - 1.0f * factor;
-                    const float min_threshold = 1.0f - 3.0f * factor;
-                    if(fgeq(props.avg_support, avg_threshold) && fgeq(props.min_support, min_threshold)){
-                        smallestErrorrateThatWouldMakeHQ = percent;
-                    }
-                }
-
-                return isGoodMinCoverage(props.min_coverage) && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
-            }else{
-                return false;
-            }
-        }
-
-    private:
-        HOSTDEVICEQUALIFIER
-        bool isGoodAvgSupport(float avgsupport) const noexcept{
-            return fgeq(avgsupport, avg_support_threshold);
-        }
-
-        HOSTDEVICEQUALIFIER
-        bool isGoodMinSupport(float minsupport) const noexcept{
-            return fgeq(minsupport, min_support_threshold);
-        }
-
-        HOSTDEVICEQUALIFIER
-        bool isGoodMinCoverage(float mincoverage) const noexcept{
-            return fgeq(mincoverage, min_coverage_threshold);
-        }
-
-        float avg_support_threshold{};
-        float min_support_threshold{};
-        float min_coverage_threshold{};
-        float estimatedErrorrate{};
-    };
-
-
 
     template<int BLOCKSIZE>
     __global__
@@ -135,8 +72,8 @@ namespace gpu{
 
                 AnchorCorrectionQuality correctionQuality(avg_support_threshold, min_support_threshold, min_coverage_threshold, estimatedErrorrate);
 
-                const bool canBeCorrectedBySimpleConsensus = correctionQuality.canBeCorrectedBySimpleConsensus(msaProperties);
-                const bool isHQCorrection = correctionQuality.isHQCorrection(msaProperties);
+                const bool canBeCorrectedBySimpleConsensus = correctionQuality.canBeCorrectedBySimpleConsensus(msaProperties.avg_support, msaProperties.min_support, msaProperties.min_coverage);
+                const bool isHQCorrection = correctionQuality.isHQCorrection(msaProperties.avg_support, msaProperties.min_support, msaProperties.min_coverage);
 
                 if(tbGroup.thread_rank() == 0){
                     subjectIsCorrected[subjectIndex] = true;
@@ -252,8 +189,8 @@ namespace gpu{
 
                 AnchorCorrectionQuality correctionQuality(avg_support_threshold, min_support_threshold, min_coverage_threshold, estimatedErrorrate);
 
-                const bool canBeCorrectedBySimpleConsensus = correctionQuality.canBeCorrectedBySimpleConsensus(msaProperties);
-                const bool isHQCorrection = correctionQuality.isHQCorrection(msaProperties);
+                const bool canBeCorrectedBySimpleConsensus = correctionQuality.canBeCorrectedBySimpleConsensus(msaProperties.avg_support, msaProperties.min_support, msaProperties.min_coverage);
+                const bool isHQCorrection = correctionQuality.isHQCorrection(msaProperties.avg_support, msaProperties.min_support, msaProperties.min_coverage);
 
                 if(tbGroup.thread_rank() == 0){
                     subjectIsCorrected[subjectIndex] = true;
