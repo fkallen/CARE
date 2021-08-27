@@ -7,7 +7,8 @@
 
 #include <minhasherlimit.hpp>
 
-#include <correctionresultprocessing.hpp>
+#include <correctedsequence.hpp>
+#include <correctionresultoutput.hpp>
 #include <sequencehelpers.hpp>
 #include <cpuminhasherconstruction.hpp>
 #include <ordinaryminhasher.hpp>

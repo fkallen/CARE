@@ -6,7 +6,6 @@
 #include <gpu/forest_gpu.cuh>
 
 #include <config.hpp>
-#include <correctionresultprocessing.hpp>
 #include <serializedobjectstorage.hpp>
 
 #include <options.hpp>
@@ -19,8 +18,7 @@ namespace care {
 namespace gpu {
 
 
-SerializedObjectStorage
-correct_gpu(
+SerializedObjectStorage correct_gpu(
 	const GoodAlignmentProperties& goodAlignmentProperties,
 	const CorrectionOptions& correctionOptions,
 	const RuntimeOptions& runtimeOptions,

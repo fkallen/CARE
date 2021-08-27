@@ -42,7 +42,7 @@ LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -lz -ldl
 SOURCES_CORRECT_CPU = \
     src/args.cpp \
     src/correct_cpu.cpp \
-    src/correctionresultprocessing.cpp \
+    src/correctionresultoutput.cpp \
     src/cpu_alignment.cpp \
     src/cpuminhasherconstruction.cpp \
     src/dispatch_care_correct_cpu.cpp \
@@ -54,12 +54,12 @@ SOURCES_CORRECT_CPU = \
 #sources for correct_gpu
 SOURCES_CORRECT_GPU = \
     src/args.cpp \
+	src/correctionresultoutput.cpp \
     src/readlibraryio.cpp \
     src/threadpool.cpp \
     src/gpu/alignmentkernels.cu \
     src/gpu/correct_gpu.cu \
     src/gpu/correctionkernels.cu \
-    src/gpu/correctionresultprocessing_gpu.cu \
     src/gpu/dispatch_care_correct_gpu.cu \
     src/gpu/distributedreadstorage.cu \
     src/gpu/fakegpuminhasherconstruction.cu \
@@ -208,7 +208,7 @@ $(DIR)/args.o : src/args.cpp
 $(DIR)/correct_cpu.o : src/correct_cpu.cpp
 	$(COMPILE)
 
-$(DIR)/correctionresultprocessing.o : src/correctionresultprocessing.cpp
+$(DIR)/correctionresultoutput.o : src/correctionresultoutput.cpp
 	$(COMPILE)
 
 $(DIR)/cpu_alignment.o : src/cpu_alignment.cpp
@@ -254,9 +254,6 @@ $(DIR)/correct_gpu.o : src/gpu/correct_gpu.cu
 	$(CUDA_COMPILE)
 
 $(DIR)/correctionkernels.o : src/gpu/correctionkernels.cu
-	$(CUDA_COMPILE)
-
-$(DIR)/correctionresultprocessing_gpu.o : src/gpu/correctionresultprocessing_gpu.cu
 	$(CUDA_COMPILE)
 
 $(DIR)/dispatch_care_correct_gpu.o : src/gpu/dispatch_care_correct_gpu.cu

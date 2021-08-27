@@ -7,8 +7,9 @@
 #include <options.hpp>
 #include <readlibraryio.hpp>
 #include <memorymanagement.hpp>
+#include <correctedsequence.hpp>
+#include <correctionresultoutput.hpp>
 #include <gpu/correct_gpu.hpp>
-#include <correctionresultprocessing.hpp>
 #include <classification.hpp>
 #include <gpu/forest_gpu.cuh>
 

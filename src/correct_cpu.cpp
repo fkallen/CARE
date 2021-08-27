@@ -1,19 +1,15 @@
 
-//#include <cpu_correction_thread.hpp>
-
-#include <correctionresultprocessing.hpp>
 
 #include <config.hpp>
 
-#include "options.hpp"
-
-
+#include <options.hpp>
 #include <cpureadstorage.hpp>
-#include "cpu_alignment.hpp"
-#include "bestalignment.hpp"
+#include <cpu_alignment.hpp>
+#include <bestalignment.hpp>
 #include <msa.hpp>
-#include "qualityscoreweights.hpp"
-#include "rangegenerator.hpp"
+#include <qualityscoreweights.hpp>
+#include <rangegenerator.hpp>
+#include <correctedsequence.hpp>
 
 #include <threadpool.hpp>
 #include <serializedobjectstorage.hpp>

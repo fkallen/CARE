@@ -3,7 +3,7 @@
 
 
 #include <config.hpp>
-#include <correctionresultprocessing.hpp>
+#include <correctedsequence.hpp>
 
 #include <gpu/cuda_block_select.cuh>
 #include <thrust/binary_search.h>
@@ -134,8 +134,8 @@ namespace gpucorrectorkernels{
 
     __global__
     void compactEditsKernel(
-        const care::TempCorrectedSequence::EncodedEdit* __restrict__ d_inputEdits,
-        care::TempCorrectedSequence::EncodedEdit* __restrict__ d_outputEdits,
+        const care::EncodedCorrectionEdit* __restrict__ d_inputEdits,
+        care::EncodedCorrectionEdit* __restrict__ d_outputEdits,
         const int* __restrict__ d_editsOutputOffsets,
         const int* __restrict__ d_numSequences,
         const int* __restrict__ d_numEditsPerSequence,

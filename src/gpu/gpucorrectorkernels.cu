@@ -1,4 +1,4 @@
-#include <correctionresultprocessing.hpp>
+#include <correctedsequence.hpp>
 #include <config.hpp>
 
 #include <gpu/gpucorrectorkernels.cuh>
@@ -128,8 +128,8 @@ namespace care{
 
         __global__
         void compactEditsKernel(
-            const care::TempCorrectedSequence::EncodedEdit* __restrict__ d_inputEdits,
-            care::TempCorrectedSequence::EncodedEdit* __restrict__ d_outputEdits,
+            const EncodedCorrectionEdit* __restrict__ d_inputEdits,
+            EncodedCorrectionEdit* __restrict__ d_outputEdits,
             const int* __restrict__ d_editsOutputOffsets,
             const int* __restrict__ d_numSequences,
             const int* __restrict__ d_numEditsPerSequence,
@@ -148,7 +148,7 @@ namespace care{
                     const int outputOffset = d_editsOutputOffsets[c];
 
                     auto* outputPtr = d_outputEdits + outputOffset;
-                    const auto* inputPtr = (const TempCorrectedSequence::EncodedEdit*)(((const char*)d_inputEdits) 
+                    const auto* inputPtr = (const EncodedCorrectionEdit*)(((const char*)d_inputEdits) 
                         + c * editsPitchInBytes);
                     for(int e = 0; e < numEdits; e++){
                         outputPtr[e] = inputPtr[e];

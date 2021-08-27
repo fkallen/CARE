@@ -2,7 +2,7 @@
 #define CARE_CPUCORRECTOR_TASK_HPP
 
 #include <config.hpp>
-#include <correctionresultprocessing.hpp>
+
 #include <cpu_alignment.hpp>
 #include <bestalignment.hpp>
 #include <msa.hpp>
