@@ -1,5 +1,5 @@
-#ifndef CARE_EXTENSION_RESULT_PROCESSING_HPP
-#define CARE_EXTENSION_RESULT_PROCESSING_HPP
+#ifndef CARE_EXTENDEDREAD_HPP
+#define CARE_EXTENDEDREAD_HPP
 
 
 #include <config.hpp>
@@ -430,18 +430,6 @@ namespace care{
             return readId;
         }
     };
-
-
-    void constructOutputFileFromExtensionResults(
-        const std::vector<std::string>& originalReadFiles,
-        SerializedObjectStorage& partialResults, 
-        FileFormat outputFormat,
-        const std::string& extendedOutputfile,
-        const std::vector<std::string>& outputfiles, //one output file per original file
-        SequencePairType pairmode,
-        bool outputToSingleFile
-    );
-
 
 }
 

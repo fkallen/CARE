@@ -15,7 +15,8 @@
 #include <rangegenerator.hpp>
 
 #include <gpu/readextension_gpu.hpp>
-#include <extensionresultprocessing.hpp>
+#include <extendedread.hpp>
+#include <extensionresultoutput.hpp>
 #include <sortserializedresults.hpp>
 
 #include <algorithm>

@@ -7,8 +7,6 @@
 #include <serializedobjectstorage.hpp>
 #include <cpuminhasher.hpp>
 #include <cpureadstorage.hpp>
-#include <correctionresultprocessing.hpp>
-#include <extensionresultprocessing.hpp>
 
 #include <vector>
 

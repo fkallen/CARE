@@ -7,12 +7,6 @@
 #include <serializedobjectstorage.hpp>
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/gpureadstorage.cuh>
-#include <correctionresultprocessing.hpp>
-#include <extensionresultprocessing.hpp>
-
-#include <gpu/gpuminhasher.cuh>
-
-#include <vector>
 
 namespace care{
 namespace gpu{

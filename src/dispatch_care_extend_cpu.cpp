@@ -14,7 +14,10 @@
 #include <chunkedreadstorage.hpp>
 
 #include <readextension_cpu.hpp>
+#include <extendedread.hpp>
+#include <extensionresultoutput.hpp>
 #include <contiguousreadstorage.hpp>
+
 #include <vector>
 #include <iostream>
 #include <mutex>

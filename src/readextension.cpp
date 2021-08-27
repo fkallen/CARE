@@ -22,8 +22,7 @@
 
 
 #include <readextender_cpu.hpp>
-#include <extensionresultprocessing.hpp>
-#include <correctionresultprocessing.hpp>
+#include <extendedread.hpp>
 #include <rangegenerator.hpp>
 #include <threadpool.hpp>
 #include <serializedobjectstorage.hpp>

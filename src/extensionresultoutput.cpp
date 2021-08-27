@@ -1,4 +1,5 @@
-#include <extensionresultprocessing.hpp>
+#include <extensionresultoutput.hpp>
+#include <extendedread.hpp>
 
 #include <hpc_helpers.cuh>
 #include <readlibraryio.hpp>
@@ -10,6 +11,7 @@
 #include <cassert>
 #include <sstream>
 #include <future>
+#include <optional>
 
 namespace care{
 

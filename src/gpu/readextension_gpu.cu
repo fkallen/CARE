@@ -25,7 +25,7 @@
 #include <numeric>
 
 
-#include <extensionresultprocessing.hpp>
+#include <extendedread.hpp>
 #include <rangegenerator.hpp>
 #include <threadpool.hpp>
 #include <serializedobjectstorage.hpp>
