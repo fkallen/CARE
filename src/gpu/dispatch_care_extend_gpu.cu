@@ -16,6 +16,7 @@
 
 #include <gpu/readextension_gpu.hpp>
 #include <extensionresultprocessing.hpp>
+#include <sortserializedresults.hpp>
 
 #include <algorithm>
 #include <iostream>
@@ -323,13 +324,9 @@ namespace care{
         step2timer.print();
 
         std::cout << "Extension throughput : ~" << (gpuReadStorage.getNumberOfReads() / step2timer.elapsed()) << " reads/second.\n"; //TODO: paired end? numreads / 2 ?
-        const std::size_t numTemp = partialResults.getNumElementsInMemory() + partialResults.getNumElementsInFile();
-        const std::size_t numTempInMem = partialResults.getNumElementsInMemory();
-        const std::size_t numTempInFile = partialResults.getNumElementsInFile();
     
-        std::cerr << "Constructed " << numTemp << " extensions. "
-            << numTempInMem << " extensions are stored in memory. "
-            << numTempInFile << " extensions are stored in temporary file\n";
+        std::cerr << "Constructed " << partialResults.size() << " extensions. ";
+        std::cerr << "They occupy a total of " << (partialResults.dataBytes() + partialResults.offsetBytes()) << " bytes\n";
 
         minhasherAndType.first.reset();
         gpuMinhasher = nullptr;
@@ -341,9 +338,9 @@ namespace care{
         const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
         const auto partialResultMemUsage = partialResults.getMemoryInfo();
 
-        std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
-        std::cerr << "memoryLimitOption = " << memoryOptions.memoryTotalLimit << "\n";
-        std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
+        // std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
+        // std::cerr << "memoryLimitOption = " << memoryOptions.memoryTotalLimit << "\n";
+        // std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
 
         std::size_t memoryForSorting = std::min(
             availableMemoryInBytes,
@@ -358,6 +355,15 @@ namespace care{
         std::cout << "STEP 3: Constructing output file(s)" << std::endl;
 
         helpers::CpuTimer step3Timer("STEP3");
+
+        helpers::CpuTimer sorttimer("sort_results_by_read_id");
+
+        sortSerializedResultsByReadIdAscending<ExtendedRead>(
+            partialResults,
+            memoryForSorting
+        );
+
+        sorttimer.print();
 
         std::vector<FileFormat> formats;
         for(const auto& inputfile : fileOptions.inputfiles){
@@ -382,15 +388,12 @@ namespace care{
         const std::string extendedOutputfile = fileOptions.outputdirectory + "/" + fileOptions.extendedReadsOutputfilename;
 
         constructOutputFileFromExtensionResults(
-            fileOptions.tempdirectory,
             fileOptions.inputfiles,            
             partialResults, 
-            memoryForSorting,
             outputFormat, 
             extendedOutputfile,
             outputfiles,
             fileOptions.pairType, 
-            false,
             fileOptions.mergedoutput
         );
 

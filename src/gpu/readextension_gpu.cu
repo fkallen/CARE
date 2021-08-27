@@ -28,7 +28,7 @@
 #include <extensionresultprocessing.hpp>
 #include <rangegenerator.hpp>
 #include <threadpool.hpp>
-#include <memoryfile.hpp>
+#include <serializedobjectstorage.hpp>
 #include <util.hpp>
 #include <filehelpers.hpp>
 #include <readextender_common.hpp>
@@ -201,9 +201,7 @@ makeAndSplitExtensionOutput(GpuReadExtender::TaskData& finishedTasks, GpuReadExt
 
 
 
-MemoryFileFixedSize<ExtendedRead>
-//std::vector<ExtendedRead>
-extend_gpu_pairedend(
+SerializedObjectStorage extend_gpu_pairedend(
     const GoodAlignmentProperties& goodAlignmentProperties,
     const CorrectionOptions& correctionOptions,
     const ExtensionOptions& extensionOptions,
@@ -253,8 +251,13 @@ extend_gpu_pairedend(
         memoryForPartialResultsInBytes = availableMemoryInBytes - 3*(std::size_t(1) << 30);
     }
 
-    const std::string tmpfilename{fileOptions.tempdirectory + "/" + "MemoryFileFixedSizetmp"};
-    MemoryFileFixedSize<ExtendedRead> partialResults(memoryForPartialResultsInBytes, tmpfilename);
+    std::cerr << "Partial results may occupy " << (memoryForPartialResultsInBytes /1024. / 1024. / 1024.) 
+        << " GB in memory. Remaining partial results will be stored in temp directory. \n";
+
+    const std::size_t memoryLimitData = memoryForPartialResultsInBytes * 0.75;
+    const std::size_t memoryLimitOffsets = memoryForPartialResultsInBytes * 0.25;
+
+    SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, fileOptions.tempdirectory + "/");
 
     std::vector<ExtendedRead> resultExtendedReads;
 
@@ -327,8 +330,16 @@ extend_gpu_pairedend(
     auto submitReadyResults = [&](std::vector<ExtendedRead> extendedReads){
         outputThread.enqueue(
             [&, vec = std::move(extendedReads)](){
+                std::vector<std::uint8_t> tempbuffer(256);
+
                 for(const auto& er : vec){
-                    partialResults.storeElement(&er);
+                    const std::size_t serializedSize = er.getSerializedNumBytes();
+                    tempbuffer.resize(serializedSize);
+
+                    auto end = er.copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
+                    assert(end != nullptr);
+
+                    partialResults.insert(tempbuffer.data(), end);
                 }
             }
         );
@@ -638,9 +649,6 @@ extend_gpu_pairedend(
 
 
 
-    //outputstream.flush();
-    partialResults.flush();
-
     // std::cout << "totalNumSuccess0: " << totalNumSuccess0 << std::endl;
     // std::cout << "totalNumSuccess1: " << totalNumSuccess1 << std::endl;
     // std::cout << "totalNumSuccess01: " << totalNumSuccess01 << std::endl;
@@ -667,9 +675,7 @@ extend_gpu_pairedend(
 
 #if 0
 
-MemoryFileFixedSize<ExtendedRead> 
-//std::vector<ExtendedRead>
-extend_gpu_singleend(
+SerializedObjectStorage extend_gpu_singleend(
     const GoodAlignmentProperties& goodAlignmentProperties,
     const CorrectionOptions& correctionOptions,
     const ExtensionOptions& extensionOptions,
@@ -681,303 +687,11 @@ extend_gpu_singleend(
 ){
     std::cerr << "extend_gpu_singleend\n";
     throw std::runtime_error("extend_gpu_singleend NOT IMPLEMENTED");
-#if 0
-    const auto rsMemInfo = gpuReadStorage.getMemoryInfo();
-    const auto mhMemInfo = minhasher.getMemoryInfo();
-
-    std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
-    if(memoryAvailableBytesHost > rsMemInfo.host){
-        memoryAvailableBytesHost -= rsMemInfo.host;
-    }else{
-        memoryAvailableBytesHost = 0;
-    }
-    if(memoryAvailableBytesHost > mhMemInfo.host){
-        memoryAvailableBytesHost -= mhMemInfo.host;
-    }else{
-        memoryAvailableBytesHost = 0;
-    }
-
-    std::unique_ptr<std::uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::uint8_t[]>(gpuReadStorage.getNumberOfReads());
-
-    #pragma omp parallel for
-    for(read_number i = 0; i < gpuReadStorage.getNumberOfReads(); i++){
-        correctionStatusFlagsPerRead[i] = 0;
-    }
-
-    std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::uint8_t) * gpuReadStorage.getNumberOfReads() / 1024. / 1024. << " MB\n";
-
-    if(memoryAvailableBytesHost > sizeof(std::uint8_t) * gpuReadStorage.getNumberOfReads()){
-        memoryAvailableBytesHost -= sizeof(std::uint8_t) * gpuReadStorage.getNumberOfReads();
-    }else{
-        memoryAvailableBytesHost = 0;
-    }
-
-    const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
-    std::size_t memoryForPartialResultsInBytes = 0;
-
-    if(availableMemoryInBytes > 3*(std::size_t(1) << 30)){
-        memoryForPartialResultsInBytes = availableMemoryInBytes - 3*(std::size_t(1) << 30);
-    }
-
-    const std::string tmpfilename{fileOptions.tempdirectory + "/" + "MemoryFileFixedSizetmp"};
-    MemoryFileFixedSize<ExtendedRead> partialResults(memoryForPartialResultsInBytes, tmpfilename);
-
-    std::vector<ExtendedRead> resultExtendedReads;
-
-    cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(100000);
-
-    BackgroundThread outputThread(true);
-
-    auto showProgress = [&](auto totalCount, auto seconds){
-        if(runtimeOptions.showProgress){
-
-            std::size_t numreads = gpuReadStorage.getNumberOfReads();
-
-            printf("Processed %10u of %10lu read pairs (Runtime: %03d:%02d:%02d)\r",
-                    totalCount, numreads,
-                    int(seconds / 3600),
-                    int(seconds / 60) % 60,
-                    int(seconds) % 60);
-            std::cout.flush();
-        }
-
-        if(totalCount == gpuReadStorage.getNumberOfReads()){
-            std::cerr << '\n';
-        }
-    };
-
-    auto updateShowProgressInterval = [](auto duration){
-        return duration;
-    };
-
-    ProgressThread<read_number> progressThread(gpuReadStorage.getNumberOfReads(), showProgress, updateShowProgressInterval);
-
     
-    const int insertSize = extensionOptions.insertSize;
-    const int insertSizeStddev = extensionOptions.insertSizeStddev;
-    const int maximumSequenceLength = gpuReadStorage.getSequenceLengthUpperBound();
-    const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
-
-    std::mutex ompCriticalMutex;
-
-    std::int64_t totalNumSuccess0 = 0;
-    std::int64_t totalNumSuccess1 = 0;
-    std::int64_t totalNumSuccess01 = 0;
-    std::int64_t totalNumSuccessRead = 0;
-
-    std::map<int, int> totalExtensionLengthsMap;
-
-    std::map<int, int> totalMismatchesBetweenMateExtensions;
-
-    //omp_set_num_threads(1);
-
-    #pragma omp parallel
-    {
-        const int numDeviceIds = runtimeOptions.deviceIds.size();
-
-        assert(numDeviceIds > 0);
-
-        cub::CachingDeviceAllocator cubAllocator{};
-
-        const int ompThreadId = omp_get_thread_num();
-        const int deviceId = runtimeOptions.deviceIds.at(ompThreadId % numDeviceIds);
-        CUDACHECK(cudaSetDevice(deviceId));
-
-        GoodAlignmentProperties goodAlignmentProperties2 = goodAlignmentProperties;
-        //goodAlignmentProperties2.maxErrorRate = 0.05;
-
-        constexpr int maxextensionPerStep = 20;
-
-        ReadExtenderGpu readExtenderGpu{
-            insertSize,
-            insertSizeStddev,
-            maxextensionPerStep,
-            maximumSequenceLength,
-            correctionOptions.kmerlength,
-            gpuReadStorage, 
-            minhasher,
-            correctionOptions,
-            goodAlignmentProperties2,
-            cubAllocator
-        };
-
-        std::int64_t numSuccess0 = 0;
-        std::int64_t numSuccess1 = 0;
-        std::int64_t numSuccess01 = 0;
-        std::int64_t numSuccessRead = 0;
-
-        std::map<int, int> extensionLengthsMap;
-        std::map<int, int> mismatchesBetweenMateExtensions;
-
-        ReadStorageHandle readStorageHandle = gpuReadStorage.makeHandle();
-
-        const int batchsize = correctionOptions.batchsize;
-
-        helpers::SimpleAllocationPinnedHost<read_number> currentIds(batchsize);
-        helpers::SimpleAllocationPinnedHost<unsigned int> currentEncodedReads(encodedSequencePitchInInts * batchsize);
-        helpers::SimpleAllocationPinnedHost<int> currentReadLengths(batchsize);
-
-        cudaStream_t stream;
-        CUDACHECK(cudaStreamCreate(&stream));
-        
-
-        while(!(readIdGenerator.empty())){
-
-            auto readIdsEnd = readIdGenerator.next_n_into_buffer(
-                batchsize, 
-                currentIds.get()
-            );
-
-            const int numReadsInBatch = std::distance(currentIds.get(), readIdsEnd);
-            
-            if(numReadsInBatch == 0){
-                continue; //this should only happen if all reads have been processed
-            }
-
-            gpuReadStorage.gatherSequences(
-                readStorageHandle,
-                currentEncodedReads.get(),
-                encodedSequencePitchInInts,
-                currentIds.get(),
-                currentIds.get(), //device accessible
-                numReadsInBatch,
-                stream
-            );
-
-            gpuReadStorage.gatherSequenceLengths(
-                readStorageHandle,
-                currentReadLengths.get(),
-                currentIds.get(),
-                numReadsInBatch,
-                stream
-            );
-    
-            CUDACHECK(cudaStreamSynchronizeWrapper(stream));
-
-            std::vector<ExtendInput> inputs(numReadsInBatch); 
-
-            for(int i = 0; i < numReadsInBatch; i++){
-                auto& input = inputs[i];
-
-                input.readLength1 = currentReadLengths[i];
-                input.readLength2 = 0;
-                input.readId1 = currentIds[i];
-                input.readId2 = std::numeric_limits<read_number>::max();
-                input.encodedRead1.resize(encodedSequencePitchInInts);
-                std::copy_n(currentEncodedReads.get() + (2*i) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead1.begin());
-            }
-
-            auto extensionResultsBatch = readExtenderGpu.extendSingleEndReadBatch(inputs);
-
-            //convert results of ReadExtender
-            std::vector<ExtendedRead> resultvector(extensionResultsBatch.size());
-
-            for(int i = 0; i < numReadsInBatch; i++){
-                auto& extensionOutput = extensionResultsBatch[i];
-                ExtendedRead& er = resultvector[i];
-
-                er.readId = extensionOutput.readId1;
-                er.extendedSequence = std::move(extensionOutput.extendedRead);
-
-                if(extensionOutput.mateHasBeenFound){
-                    er.status = ExtendedReadStatus::FoundMate;
-                }else{
-                    if(extensionOutput.aborted){
-                        if(extensionOutput.abortReason == AbortReason::NoPairedCandidates
-                                || extensionOutput.abortReason == AbortReason::NoPairedCandidatesAfterAlignment){
-
-                            er.status = ExtendedReadStatus::CandidateAbort;
-                        }else if(extensionOutput.abortReason == AbortReason::MsaNotExtended){
-                            er.status = ExtendedReadStatus::MSANoExtension;
-                        }
-                    }else{
-                        er.status = ExtendedReadStatus::LengthAbort;
-                    }
-                }  
-                
-                if(extensionOutput.success){
-                    numSuccessRead++;
-                }                
-            }
-
-            auto outputfunc = [&, vec = std::move(resultvector)](){
-                for(const auto& er : vec){
-                    partialResults.storeElement(&er);
-                }
-            };
-
-            outputThread.enqueue(
-                std::move(outputfunc)
-            );
-
-            progressThread.addProgress(numReadsInBatch);            
-        }
-
-
-        CUDACHECK(cudaStreamDestroy(stream));
-
-        //#pragma omp critical
-        {
-            std::lock_guard<std::mutex> lg(ompCriticalMutex);
-
-            totalNumSuccess0 += numSuccess0;
-            totalNumSuccess1 += numSuccess1;
-            totalNumSuccess01 += numSuccess01;
-            totalNumSuccessRead += numSuccessRead;
-
-            for(const auto& pair : extensionLengthsMap){
-                totalExtensionLengthsMap[pair.first] += pair.second;
-            }
-
-            for(const auto& pair : mismatchesBetweenMateExtensions){
-                totalMismatchesBetweenMateExtensions[pair.first] += pair.second;
-            }
-
-            if(0 == ompThreadId){
-                readExtenderGpu.printTimers();
-            }      
-        }
-
-        gpuReadStorage.destroyHandle(readStorageHandle);
-        
-    } //end omp parallel
-
-    progressThread.finished();
-
-    outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
-
-    //outputstream.flush();
-    partialResults.flush();
-
-    std::cout << "totalNumSuccess0: " << totalNumSuccess0 << std::endl;
-    std::cout << "totalNumSuccess1: " << totalNumSuccess1 << std::endl;
-    std::cout << "totalNumSuccess01: " << totalNumSuccess01 << std::endl;
-    std::cout << "totalNumSuccessRead: " << totalNumSuccessRead << std::endl;
-
-    // std::cout << "Extension lengths:\n";
-
-    // for(const auto& pair : totalExtensionLengthsMap){
-    //     std::cout << pair.first << ": " << pair.second << "\n";
-    // }
-
-    // std::cout << "mismatches between mate extensions:\n";
-
-    // for(const auto& pair : totalMismatchesBetweenMateExtensions){
-    //     std::cout << pair.first << ": " << pair.second << "\n";
-    // }
-
-
-
-    return partialResults;
-    //return resultExtendedReads;
-    #endif
 }
 #endif
 
-MemoryFileFixedSize<ExtendedRead> 
-//std::vector<ExtendedRead>
-extend_gpu(
+SerializedObjectStorage extend_gpu(
     const GoodAlignmentProperties& goodAlignmentProperties,
     const CorrectionOptions& correctionOptions,
     const ExtensionOptions& extensionOptions,

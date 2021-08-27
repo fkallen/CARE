@@ -4,7 +4,7 @@
 
 #include <config.hpp>
 #include <options.hpp>
-#include <memoryfile.hpp>
+#include <serializedobjectstorage.hpp>
 #include <cpuminhasher.hpp>
 #include <cpureadstorage.hpp>
 #include <correctionresultprocessing.hpp>
@@ -13,9 +13,7 @@
 #include <vector>
 
 namespace care{
-    MemoryFileFixedSize<ExtendedRead> 
-    //std::vector<ExtendedRead>
-    extend_cpu(
+    SerializedObjectStorage extend_cpu(
         const GoodAlignmentProperties& goodAlignmentProperties,
         const CorrectionOptions& correctionOptions,
         const ExtensionOptions& extensionOptions,
