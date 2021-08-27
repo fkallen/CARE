@@ -3,7 +3,6 @@
 
 #include <config.hpp>
 #include <hpc_helpers.cuh>
-#include <memoryfile.hpp>
 #include <readlibraryio.hpp>
 #include <sequencehelpers.hpp>
 #include <serializedobjectstorage.hpp>
@@ -311,17 +310,6 @@ namespace care{
         sequence
         ...
     */
-
-    void constructOutputFileFromCorrectionResults(
-        const std::string& tempdir,
-        const std::vector<std::string>& originalReadFiles,
-        MemoryFileFixedSize<EncodedTempCorrectedSequence>& partialResults, 
-        std::size_t memoryForSorting,
-        FileFormat outputFormat,
-        const std::vector<std::string>& outputfiles,
-        bool isSorted,
-        bool showProgress
-    );
 
     void constructOutputFileFromCorrectionResults(
         const std::vector<std::string>& originalReadFiles,

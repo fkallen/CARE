@@ -5,7 +5,6 @@
 #include <config.hpp>
 #include <sequencehelpers.hpp>
 #include <hpc_helpers.cuh>
-#include <memoryfile.hpp>
 #include <serializedobjectstorage.hpp>
 #include <readlibraryio.hpp>
 #include <options.hpp>
@@ -432,22 +431,6 @@ namespace care{
         }
     };
 
-
-
-
-
-    void constructOutputFileFromExtensionResults(
-        const std::string& tempdir,
-        const std::vector<std::string>& originalReadFiles,
-        MemoryFileFixedSize<ExtendedRead>& partialResults, 
-        std::size_t memoryForSorting,
-        FileFormat outputFormat,
-        const std::string& extendedOutputfile,
-        const std::vector<std::string>& outputfiles, //one output file per original file
-        SequencePairType pairmode,
-        bool isSorted,
-        bool outputToSingleFile
-    );
 
     void constructOutputFileFromExtensionResults(
         const std::vector<std::string>& originalReadFiles,
