@@ -61,7 +61,6 @@ SOURCES_CORRECT_GPU = \
     src/gpu/correct_gpu.cu \
     src/gpu/correctionkernels.cu \
     src/gpu/dispatch_care_correct_gpu.cu \
-    src/gpu/distributedreadstorage.cu \
     src/gpu/fakegpuminhasherconstruction.cu \
     src/gpu/gpucorrectorkernels.cu \
     src/gpu/gpuminhasherconstruction.cu \
@@ -93,7 +92,6 @@ SOURCES_EXTEND_GPU = \
     src/threadpool.cpp \
     src/gpu/alignmentkernels.cu \
     src/gpu/dispatch_care_extend_gpu.cu \
-    src/gpu/distributedreadstorage.cu \
     src/gpu/fakegpuminhasherconstruction.cu \
     src/gpu/gpuminhasherconstruction.cu \
     src/gpu/main_extend_gpu.cu \
@@ -260,9 +258,6 @@ $(DIR)/dispatch_care_correct_gpu.o : src/gpu/dispatch_care_correct_gpu.cu
 	$(CUDA_COMPILE)
 
 $(DIR)/dispatch_care_extend_gpu.o : src/gpu/dispatch_care_extend_gpu.cu
-	$(CUDA_COMPILE)
-
-$(DIR)/distributedreadstorage.o : src/gpu/distributedreadstorage.cu
 	$(CUDA_COMPILE)
 
 $(DIR)/fakegpuminhasherconstruction.o : src/gpu/fakegpuminhasherconstruction.cu

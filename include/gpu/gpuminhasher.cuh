@@ -6,7 +6,6 @@
 
 #include <config.hpp>
 #include <memorymanagement.hpp>
-#include <gpu/distributedreadstorage.hpp>
 #include <minhasherhandle.hpp>
 
 #include <cstdint>

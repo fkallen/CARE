@@ -412,7 +412,6 @@ namespace gpu{
         const GpuMinhasher* gpuMinhasher;
         ThreadPool* threadPool;
         ThreadPool::ParallelForHandle pforHandle;
-        DistributedReadStorage::GatherHandleSequences anchorSequenceGatherHandle;
         MinhasherHandle minhashHandle;
         ReadStorageHandle readstorageHandle;
     };
