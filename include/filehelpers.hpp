@@ -1,15 +1,19 @@
-#ifndef FILE_HELPERS_HPP
-#define FILE_HELPERS_HPP
+#ifndef CARE_FILE_HELPERS_HPP
+#define CARE_FILE_HELPERS_HPP
 
 #include <cstdio>
 #include <cassert>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
 
+#include <unistd.h>
+
 #include <experimental/filesystem>
+
 
 //#define FILE_HELPERS_DEBUG
 
@@ -66,6 +70,21 @@ void removeFile(const std::string& filename){
         std::perror(errormessage.c_str());
     }  
 }
+
+__inline__
+std::string makeRandomFile(const std::string& nametemplate){
+    std::vector<char> filenamevec(nametemplate.begin(), nametemplate.end());
+    filenamevec.push_back('\0');
+    int tempfd = mkstemp(filenamevec.data());
+    if(tempfd == -1){
+        perror("makeRandomFile mkstemp");
+        throw std::runtime_error("Cannot create random file with template " + nametemplate);
+    }
+    close(tempfd);
+
+    return {filenamevec.begin(), filenamevec.end()};
+}
+
 
 __inline__ 
 bool fileCanBeOpened(const std::string& filename){
