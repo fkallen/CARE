@@ -43,7 +43,9 @@ void mergeSerializedExtensionResultsWithOriginalReads_multithreaded(
 
             for(const auto& ifname : originalReadFiles){
                 std::ifstream instream(ifname, std::ios::binary);
-                outstream << instream.rdbuf();
+                if(bool(instream) && instream.rdbuf()->in_avail() > 0){
+                    outstream << instream.rdbuf();
+                }
             }
         }else{
             const int numFiles = outputfiles.size();
@@ -54,7 +56,9 @@ void mergeSerializedExtensionResultsWithOriginalReads_multithreaded(
                 }
 
                 std::ifstream instream(originalReadFiles[i], std::ios::binary);
-                outstream << instream.rdbuf();
+                if(bool(instream) && instream.rdbuf()->in_avail() > 0){
+                    outstream << instream.rdbuf();
+                }
             }
         }
 
