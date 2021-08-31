@@ -1,37 +1,38 @@
 
+#include <gpu/cudaerrorcheck.cuh>
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/gpureadstorage.cuh>
 #include <gpu/readextender_gpu.hpp>
-#include <gpu/cudaerrorcheck.cuh>
 
-#include <config.hpp>
-#include <sequencehelpers.hpp>
-#include <options.hpp>
-#include <cpu_alignment.hpp>
 #include <bestalignment.hpp>
-#include <msa.hpp>
 #include <concurrencyhelpers.hpp>
-
+#include <config.hpp>
+#include <cpu_alignment.hpp>
+#include <extendedread.hpp>
+#include <filehelpers.hpp>
 #include <hpc_helpers.cuh>
+#include <msa.hpp>
+#include <options.hpp>
+#include <rangegenerator.hpp>
+#include <readextender_common.hpp>
+#include <sequencehelpers.hpp>
+#include <serializedobjectstorage.hpp>
+#include <threadpool.hpp>
+#include <util.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <vector>
+#include <future>
 #include <iostream>
-#include <string>
 #include <memory>
 #include <mutex>
 #include <numeric>
+#include <string>
+#include <vector>
 
 
-#include <extendedread.hpp>
-#include <rangegenerator.hpp>
-#include <threadpool.hpp>
-#include <serializedobjectstorage.hpp>
-#include <util.hpp>
-#include <filehelpers.hpp>
-#include <readextender_common.hpp>
+
 
 #include <omp.h>
 #include <cub/cub.cuh>
