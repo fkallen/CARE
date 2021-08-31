@@ -377,8 +377,9 @@ struct MemoryFileFixedSize{
         stream.write(reinterpret_cast<const char*>(&filesize), sizeof(std::size_t));
 
         std::ifstream is(filename);
-
-        stream << is.rdbuf();
+        if(is && is.rdbuf()->in_avail() > 0){
+            stream << is.rdbuf();
+        }
 
         stream.flush();
     }

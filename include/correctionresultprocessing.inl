@@ -53,7 +53,9 @@ void mergeResultsWithOriginalReads_multithreaded(
 
             for(const auto& ifname : originalReadFiles){
                 std::ifstream instream(ifname, std::ios::binary);
-                outstream << instream.rdbuf();
+                if(instream && instream.rdbuf()->in_avail() > 0){
+                    outstream << instream.rdbuf();
+                }
             }
         }else{
             const int numFiles = outputfiles.size();
@@ -64,7 +66,9 @@ void mergeResultsWithOriginalReads_multithreaded(
                 }
 
                 std::ifstream instream(originalReadFiles[i], std::ios::binary);
-                outstream << instream.rdbuf();
+                if(instream && instream.rdbuf()->in_avail() > 0){
+                    outstream << instream.rdbuf();
+                }
             }
         }
 

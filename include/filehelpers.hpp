@@ -47,7 +47,9 @@ void copyFile(const std::string& filename, const std::string& newFilename){
     std::ofstream dst(newFilename, std::ios::binary);
     assert(bool(src));
     assert(bool(dst));
-    dst << src.rdbuf();
+    if(src && src.rdbuf()->in_avail() > 0){
+        dst << src.rdbuf();
+    }
     assert(bool(dst));
 }
 
