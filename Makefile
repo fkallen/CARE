@@ -239,9 +239,6 @@ $(DIR)/readextension.o : src/readextension.cpp
 $(DIR)/readlibraryio.o : src/readlibraryio.cpp
 	$(COMPILE)
 
-$(DIR)/semi_global_alignment.o : src/semi_global_alignment.cpp
-	$(COMPILE)
-
 $(DIR)/threadpool.o : src/threadpool.cpp
 	$(COMPILE)
 
