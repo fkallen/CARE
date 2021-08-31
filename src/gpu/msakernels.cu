@@ -3,7 +3,7 @@
 #include <gpu/kernels.hpp>
 #include <hostdevicefunctions.cuh>
 #include <gpu/cudaerrorcheck.cuh>
-#include <bestalignment.hpp>
+#include <alignmentorientation.hpp>
 
 #include <sequencehelpers.hpp>
 

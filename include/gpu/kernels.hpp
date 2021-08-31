@@ -7,7 +7,7 @@
 
 #include <gpu/minhashingkernels.cuh>
 
-#include <bestalignment.hpp>
+#include <alignmentorientation.hpp>
 #include <correctedsequence.hpp>
 #include <gpu/forest_gpu.cuh>
 

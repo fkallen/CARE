@@ -1,6 +1,6 @@
 #include <msa.hpp>
 #include <hostdevicefunctions.cuh>
-#include <bestalignment.hpp>
+#include <alignmentorientation.hpp>
 
 #include <map>
 #include <bitset>

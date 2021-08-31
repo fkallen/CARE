@@ -4,7 +4,7 @@
 #include <config.hpp>
 
 #include <cpu_alignment.hpp>
-#include <bestalignment.hpp>
+#include <alignmentorientation.hpp>
 #include <msa.hpp>
 
 #include <vector>

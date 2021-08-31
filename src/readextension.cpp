@@ -5,7 +5,7 @@
 #include <cpureadstorage.hpp>
 #include <options.hpp>
 #include <cpu_alignment.hpp>
-#include <bestalignment.hpp>
+#include <alignmentorientation.hpp>
 #include <msa.hpp>
 
 #include <hpc_helpers.cuh>

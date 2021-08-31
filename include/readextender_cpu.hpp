@@ -4,7 +4,7 @@
 #include <cpuminhasher.hpp>
 #include <cpureadstorage.hpp>
 #include <options.hpp>
-#include <bestalignment.hpp>
+#include <alignmentorientation.hpp>
 #include <sequencehelpers.hpp>
 #include <hpc_helpers.cuh>
 #include <msa.hpp>
@@ -912,7 +912,7 @@ private:
                 const auto& revcAlignment = revcAlignments[c];
                 const int candidateLength = task.candidateSequenceLengths[c];
 
-                task.alignmentFlags[c] = care::choose_best_alignment(
+                task.alignmentFlags[c] = care::chooseBestAlignmentOrientation(
                     forwardAlignment,
                     revcAlignment,
                     task.currentAnchorLength,

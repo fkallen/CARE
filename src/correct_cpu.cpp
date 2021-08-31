@@ -5,7 +5,7 @@
 #include <options.hpp>
 #include <cpureadstorage.hpp>
 #include <cpu_alignment.hpp>
-#include <bestalignment.hpp>
+#include <alignmentorientation.hpp>
 #include <msa.hpp>
 #include <qualityscoreweights.hpp>
 #include <rangegenerator.hpp>

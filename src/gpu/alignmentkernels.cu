@@ -4,7 +4,7 @@
 #include <gpu/kernellaunch.hpp>
 #include <gpu/cudaerrorcheck.cuh>
 
-#include <bestalignment.hpp>
+#include <alignmentorientation.hpp>
 
 #include <sequencehelpers.hpp>
 
@@ -199,7 +199,7 @@ namespace gpu{
             int subjectlength,
             int querylength)->AlignmentOrientation{
 
-            return choose_best_alignment(
+            return chooseBestAlignmentOrientation(
                 fwd_alignment_overlap,
                 revc_alignment_overlap,
                 fwd_alignment_nops,
@@ -498,7 +498,7 @@ namespace gpu{
             int subjectlength,
             int querylength)->AlignmentOrientation{
 
-            return choose_best_alignment(
+            return chooseBestAlignmentOrientation(
                 fwd_alignment_overlap,
                 revc_alignment_overlap,
                 fwd_alignment_nops,
@@ -864,7 +864,7 @@ namespace gpu{
             int subjectlength,
             int querylength)->AlignmentOrientation{
 
-            return choose_best_alignment(
+            return chooseBestAlignmentOrientation(
                 fwd_alignment_overlap,
                 revc_alignment_overlap,
                 fwd_alignment_nops,
@@ -1276,7 +1276,7 @@ namespace gpu{
             int subjectlength,
             int querylength)->AlignmentOrientation{
 
-            return choose_best_alignment(
+            return chooseBestAlignmentOrientation(
                 fwd_alignment_overlap,
                 revc_alignment_overlap,
                 fwd_alignment_nops,

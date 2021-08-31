@@ -4,7 +4,7 @@
 #include <gpu/gpureadstorage.cuh>
 #include <gpu/readextender_gpu.hpp>
 
-#include <bestalignment.hpp>
+#include <alignmentorientation.hpp>
 #include <concurrencyhelpers.hpp>
 #include <config.hpp>
 #include <cpu_alignment.hpp>

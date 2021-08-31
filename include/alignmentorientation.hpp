@@ -11,7 +11,7 @@ namespace care{
 
     HOSTDEVICEQUALIFIER
     __inline__
-    AlignmentOrientation choose_best_alignment(int fwd_alignment_overlap,
+    AlignmentOrientation chooseBestAlignmentOrientation(int fwd_alignment_overlap,
     			int revc_alignment_overlap,
     			int fwd_alignment_nops,
     			int revc_alignment_nops,
@@ -70,7 +70,7 @@ namespace care{
     }
 
     template<class Alignment>
-    AlignmentOrientation choose_best_alignment(const Alignment& fwdAlignment,
+    AlignmentOrientation chooseBestAlignmentOrientation(const Alignment& fwdAlignment,
                                         const Alignment& revcmplAlignment,
                                         int subjectlength,
                                         int querylength,
@@ -78,7 +78,7 @@ namespace care{
                                         int min_overlap,
                                         float estimatedErrorrate){
 
-        return choose_best_alignment(fwdAlignment.get_overlap(),
+        return chooseBestAlignmentOrientation(fwdAlignment.get_overlap(),
         			revcmplAlignment.get_overlap(),
         			fwdAlignment.get_nOps(),
         			revcmplAlignment.get_nOps(),

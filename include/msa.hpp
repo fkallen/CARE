@@ -6,7 +6,7 @@
 
 #include <util.hpp>
 #include <qualityscoreweights.hpp>
-#include <bestalignment.hpp>
+#include <alignmentorientation.hpp>
 #include <string>
 #include <cassert>
 #include <vector>

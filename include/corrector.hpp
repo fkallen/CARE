@@ -9,7 +9,7 @@
 
 #include <cpureadstorage.hpp>
 #include <cpu_alignment.hpp>
-#include <bestalignment.hpp>
+#include <alignmentorientation.hpp>
 #include <msa.hpp>
 #include <qualityscoreweights.hpp>
 #include <classification.hpp>
@@ -949,7 +949,7 @@ private:
             const auto& revcAlignment = task.revcAlignments[i];
             const int candidateLength = task.candidateSequencesLengths[i];
 
-            AlignmentOrientation bestAlignmentFlag = care::choose_best_alignment(
+            AlignmentOrientation bestAlignmentFlag = care::chooseBestAlignmentOrientation(
                 forwardAlignment,
                 revcAlignment,
                 task.input.anchorLength,

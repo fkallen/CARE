@@ -7,7 +7,7 @@
 #include <config.hpp>
 #include <hostdevicefunctions.cuh>
 
-#include <bestalignment.hpp>
+#include <alignmentorientation.hpp>
 
 #include <sequencehelpers.hpp>
 #include <hpc_helpers.cuh>
