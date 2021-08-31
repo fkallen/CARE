@@ -344,7 +344,27 @@ void callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
     KernelLaunchHandle& handle
 );
 
-void callCorrectCandidatesKernel_async(
+void callCorrectCandidatesKernel(
+    char* __restrict__ correctedCandidates,
+    GPUMultiMSA multiMSA,
+    const int* __restrict__ shifts,
+    const AlignmentOrientation* __restrict__ bestAlignmentFlags,
+    const unsigned int* __restrict__ candidateSequencesData,
+    const int* __restrict__ candidateSequencesLengths,
+    const bool* __restrict__ d_candidateContainsN,
+    const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
+    const int* __restrict__ numCandidatesToBeCorrected,
+    const int* __restrict__ anchorIndicesOfCandidates,
+    const int* d_numAnchors,
+    const int* d_numCandidates,
+    int encodedSequencePitchInInts,
+    size_t decodedSequencePitchInBytes,
+    int maximum_sequence_length,
+    cudaStream_t stream,
+    KernelLaunchHandle& handle
+);
+
+void callCorrectCandidatesAndComputeEditsKernel(
     char* __restrict__ correctedCandidates,
     EncodedCorrectionEdit* __restrict__ d_editsPerCorrectedCandidate,
     int* __restrict__ d_numEditsPerCorrectedCandidate,

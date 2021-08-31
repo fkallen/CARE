@@ -23,6 +23,7 @@ enum class KernelId {
 	FilterAlignmentsByMismatchRatio,
 	MSACorrectSubject,
 	MSACorrectCandidates,
+    msaCorrectCandidatesAndComputeEdits,
     MSACorrectSubjectImplicit,
     ConstructSequenceCorrectionResults,
     MSAConstruction,

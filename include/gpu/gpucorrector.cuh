@@ -2784,6 +2784,7 @@ namespace gpu{
                 stream
             ));
 
+            
             CUDACHECK(cudaMemsetAsync(
                 d_numEditsPerCorrectedCandidate.data(),
                 0,
@@ -2791,7 +2792,9 @@ namespace gpu{
                 stream
             ));
 
-            callCorrectCandidatesKernel_async(
+            #if 0
+
+            callCorrectCandidatesAndComputeEditsKernel(
                 d_corrected_candidates.get(),
                 d_editsPerCorrectedCandidate.get(),
                 d_numEditsPerCorrectedCandidate.get(),              
@@ -2814,7 +2817,50 @@ namespace gpu{
                 gpuReadStorage->getSequenceLengthUpperBound(),
                 stream,
                 kernelLaunchHandle
-            );    
+            );
+            #else
+
+            callCorrectCandidatesKernel(
+                d_corrected_candidates.get(),            
+                multiMSA,
+                d_alignment_shifts.get(),
+                d_alignment_best_alignment_flags.get(),
+                d_candidate_sequences_data.get(),
+                d_candidate_sequences_lengths.get(),
+                d_candidateContainsN.get(),
+                d_indices_of_corrected_candidates.get(),
+                d_num_total_corrected_candidates.get(),
+                d_anchorIndicesOfCandidates.get(),
+                d_numAnchors,
+                d_numCandidates,                
+                encodedSequencePitchInInts,
+                decodedSequencePitchInBytes,
+                gpuReadStorage->getSequenceLengthUpperBound(),
+                stream,
+                kernelLaunchHandle
+            );            
+
+            callConstructSequenceCorrectionResultsKernel(
+                d_editsPerCorrectedCandidate.get(),
+                d_numEditsPerCorrectedCandidate.get(),
+                getDoNotUseEditsValue(),
+                d_indices_of_corrected_candidates.get(),
+                d_num_total_corrected_candidates.get(),
+                d_candidateContainsN.get(),
+                d_candidate_sequences_data.get(),
+                d_candidate_sequences_lengths.get(),
+                d_corrected_candidates.get(),
+                currentNumCandidates,
+                true,
+                maxNumEditsPerSequence,
+                encodedSequencePitchInInts,
+                decodedSequencePitchInBytes,
+                editsPitchInBytes,      
+                stream,
+                kernelLaunchHandle
+            );
+
+            #endif
   
         }
 

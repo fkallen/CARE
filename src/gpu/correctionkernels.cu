@@ -693,7 +693,7 @@ namespace gpu{
 
     template<int BLOCKSIZE, int groupsize>
     __global__
-    void msaCorrectCandidatesKernel(
+    void msaCorrectCandidatesAndComputeEditsKernel(
         char* __restrict__ correctedCandidates,
         EncodedCorrectionEdit* __restrict__ d_editsPerCorrectedCandidate,
         int* __restrict__ d_numEditsPerCorrectedCandidate,
@@ -944,6 +944,97 @@ namespace gpu{
                         
         }
     }
+
+
+    template<int BLOCKSIZE, int groupsize>
+    __global__
+    void msaCorrectCandidatesKernel(
+        char* __restrict__ correctedCandidates,
+        GPUMultiMSA multiMSA,
+        const int* __restrict__ shifts,
+        const AlignmentOrientation* __restrict__ bestAlignmentFlags,
+        const unsigned int* __restrict__ candidateSequencesData,
+        const int* __restrict__ candidateSequencesLengths,
+        const bool* __restrict__ d_candidateContainsN,
+        const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
+        const int* __restrict__ numCandidatesToBeCorrected,
+        const int* __restrict__ anchorIndicesOfCandidates,
+        const int* __restrict__ d_numAnchors,
+        const int* __restrict__ d_numCandidates,         
+        int encodedSequencePitchInInts,
+        size_t decodedSequencePitchInBytes,
+        size_t dynamicsmemSequencePitchInInts
+    ){
+
+        /*
+            Use groupsize threads per candidate to perform correction
+        */
+        static_assert(BLOCKSIZE % groupsize == 0, "BLOCKSIZE % groupsize != 0");
+
+        extern __shared__ int dynamicsmem[]; // for sequences
+
+        auto tgroup = cg::tiled_partition<groupsize>(cg::this_thread_block());
+
+        const int numGroups = (gridDim.x * blockDim.x) / groupsize;
+        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+        const int groupIdInBlock = threadIdx.x / groupsize;
+
+        char* const shared_correctedCandidate = (char*)(dynamicsmem + dynamicsmemSequencePitchInInts * groupIdInBlock);
+
+        const int loopEnd = *numCandidatesToBeCorrected;
+
+        for(int id = groupId; id < loopEnd; id += numGroups){
+
+            const int candidateIndex = candidateIndicesOfCandidatesToBeCorrected[id];
+            const int subjectIndex = anchorIndicesOfCandidates[candidateIndex];
+            const int destinationIndex = id;
+
+            const GpuSingleMSA msa = multiMSA.getSingleMSA(subjectIndex);
+
+            char* const my_corrected_candidate = correctedCandidates + destinationIndex * decodedSequencePitchInBytes;
+            const int candidate_length = candidateSequencesLengths[candidateIndex];
+
+            const int shift = shifts[candidateIndex];
+            const int subjectColumnsBegin_incl = msa.columnProperties->subjectColumnsBegin_incl;
+            const int queryColumnsBegin_incl = subjectColumnsBegin_incl + shift;
+            const int queryColumnsEnd_excl = subjectColumnsBegin_incl + shift + candidate_length;
+
+            const AlignmentOrientation bestAlignmentFlag = bestAlignmentFlags[candidateIndex];       
+
+            const int copyposbegin = queryColumnsBegin_incl;
+            const int copyposend = queryColumnsEnd_excl;
+
+            //the forward strand will be returned -> make reverse complement again
+            if(bestAlignmentFlag == AlignmentOrientation::ReverseComplement) {
+                for(int i = copyposbegin + tgroup.thread_rank(); i < copyposend; i += tgroup.size()) {
+                    shared_correctedCandidate[i - queryColumnsBegin_incl] = SequenceHelpers::decodeBase(SequenceHelpers::complementBase2Bit(msa.consensus[i]));
+                }
+                tgroup.sync(); // threads may access elements in shared memory which were written by another thread
+                SequenceHelpers::reverseAlignedDecodedSequenceWithGroupShfl(tgroup, shared_correctedCandidate, candidate_length);
+                tgroup.sync();
+            }else{
+                for(int i = copyposbegin + tgroup.thread_rank(); i < copyposend; i += tgroup.size()) {
+                    shared_correctedCandidate[i - queryColumnsBegin_incl] = SequenceHelpers::decodeBase(msa.consensus[i]);
+                }
+                tgroup.sync();
+            }
+            
+            //copy corrected sequence from smem to global output
+            const int fullInts1 = candidate_length / sizeof(int);
+
+            for(int i = tgroup.thread_rank(); i < fullInts1; i += tgroup.size()) {
+                ((int*)my_corrected_candidate)[i] = ((int*)shared_correctedCandidate)[i];
+            }
+
+            for(int i = tgroup.thread_rank(); i < candidate_length - fullInts1 * sizeof(int); i += tgroup.size()) {
+                my_corrected_candidate[fullInts1 * sizeof(int) + i] 
+                    = shared_correctedCandidate[fullInts1 * sizeof(int) + i];
+            }       
+
+            tgroup.sync(); //sync before handling next candidate                        
+        }
+    }
+
 
 
     //if isCompactCorrection == true, compare originalsequence[d_indicesOfCorrectedSequences[i]] with correctedsequence[i] to compute edits
@@ -1538,7 +1629,7 @@ namespace gpu{
 
 
 
-    void callCorrectCandidatesKernel_async(
+    void callCorrectCandidatesAndComputeEditsKernel(
         char* __restrict__ correctedCandidates,
         EncodedCorrectionEdit* __restrict__ d_editsPerCorrectedCandidate,
         int* __restrict__ d_numEditsPerCorrectedCandidate,
@@ -1585,6 +1676,132 @@ namespace gpu{
     	kernelLaunchConfig.threads_per_block = blocksize;
     	kernelLaunchConfig.smem = smem;
 
+    	auto iter = handle.kernelPropertiesMap.find(KernelId::msaCorrectCandidatesAndComputeEdits);
+    	if(iter == handle.kernelPropertiesMap.end()) {
+
+    		std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+    	    #define getProp(blocksize) { \
+                KernelLaunchConfig kernelLaunchConfig; \
+                kernelLaunchConfig.threads_per_block = (blocksize); \
+                kernelLaunchConfig.smem = calculateSmemUsage((blocksize)); \
+                KernelProperties kernelProperties; \
+                CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                    msaCorrectCandidatesAndComputeEditsKernel<(blocksize), groupsize>, \
+                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem)); \
+                mymap[kernelLaunchConfig] = kernelProperties; \
+            }
+
+    		getProp(32);
+    		getProp(64);
+    		getProp(96);
+    		getProp(128);
+    		getProp(160);
+    		getProp(192);
+    		getProp(224);
+    		getProp(256);
+
+    		const auto& kernelProperties = mymap[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+            
+            // std::cerr << "msaCorrectCandidatesAndComputeEdits "
+            //     << "multiProcessorCount = " << handle.deviceProperties.multiProcessorCount
+            //     << " max_blocks_per_SM = " << kernelProperties.max_blocks_per_SM << "\n"; 
+
+    		handle.kernelPropertiesMap[KernelId::msaCorrectCandidatesAndComputeEdits] = std::move(mymap);
+
+    	    #undef getProp
+    	}else{
+    		std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+    		const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+    	}
+
+    	dim3 block(blocksize, 1, 1);
+        //dim3 grid(std::min(max_blocks_per_device, n_candidates * numGroupsPerBlock));
+        dim3 grid(max_blocks_per_device);
+        
+        assert(smem % sizeof(int) == 0);
+
+    	#define mycall(blocksize) msaCorrectCandidatesAndComputeEditsKernel<(blocksize), groupsize> \
+    	        <<<grid, block, smem, stream>>>( \
+                    correctedCandidates, \
+                    d_editsPerCorrectedCandidate, \
+                    d_numEditsPerCorrectedCandidate, \
+                    multiMSA, \
+                    shifts, \
+                    bestAlignmentFlags, \
+                    candidateSequencesData, \
+                    candidateSequencesLengths, \
+                    d_candidateContainsN, \
+                    candidateIndicesOfCandidatesToBeCorrected, \
+                    numCandidatesToBeCorrected, \
+                    anchorIndicesOfCandidates, \
+                    d_numAnchors, \
+                    d_numCandidates, \
+                    doNotUseEditsValue, \
+                    numEditsThreshold, \
+                    encodedSequencePitchInInts, \
+                    decodedSequencePitchInBytes, \
+                    editsPitchInBytes, \
+                    dynamicsmemPitchInInts \
+                ); CUDACHECKASYNC;
+
+
+    	switch(blocksize) {
+    	case 32: mycall(32); break;
+    	case 64: mycall(64); break;
+    	case 96: mycall(96); break;
+    	case 128: mycall(128); break;
+    	case 160: mycall(160); break;
+    	case 192: mycall(192); break;
+    	case 224: mycall(224); break;
+    	case 256: mycall(256); break;
+    	default: mycall(256); break;
+    	}
+
+    		#undef mycall 
+    }
+
+    void callCorrectCandidatesKernel(
+        char* __restrict__ correctedCandidates,
+        GPUMultiMSA multiMSA,
+        const int* __restrict__ shifts,
+        const AlignmentOrientation* __restrict__ bestAlignmentFlags,
+        const unsigned int* __restrict__ candidateSequencesData,
+        const int* __restrict__ candidateSequencesLengths,
+        const bool* __restrict__ d_candidateContainsN,
+        const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
+        const int* __restrict__ numCandidatesToBeCorrected,
+        const int* __restrict__ anchorIndicesOfCandidates,
+        const int* d_numAnchors,
+        const int* d_numCandidates,
+        int encodedSequencePitchInInts,
+        size_t decodedSequencePitchInBytes,
+        int maximum_sequence_length,
+        cudaStream_t stream,
+        KernelLaunchHandle& handle
+    ){
+
+        constexpr int blocksize = 128;
+        constexpr int groupsize = 32;
+
+        const size_t dynamicsmemPitchInInts = SDIV(maximum_sequence_length, sizeof(int));
+        auto calculateSmemUsage = [&](int blockDim){
+            const int numGroupsPerBlock = blockDim / groupsize;
+            std::size_t smem = numGroupsPerBlock * (sizeof(int) * dynamicsmemPitchInInts);
+
+            return smem;
+        };
+
+        const std::size_t smem = calculateSmemUsage(blocksize);
+
+    	int max_blocks_per_device = 1;
+
+    	KernelLaunchConfig kernelLaunchConfig;
+    	kernelLaunchConfig.threads_per_block = blocksize;
+    	kernelLaunchConfig.smem = smem;
+
     	auto iter = handle.kernelPropertiesMap.find(KernelId::MSACorrectCandidates);
     	if(iter == handle.kernelPropertiesMap.end()) {
 
@@ -1613,7 +1830,7 @@ namespace gpu{
     		const auto& kernelProperties = mymap[kernelLaunchConfig];
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
             
-            // std::cerr << "msaCorrectCandidatesKernel "
+            // std::cerr << "MSACorrectCandidates "
             //     << "multiProcessorCount = " << handle.deviceProperties.multiProcessorCount
             //     << " max_blocks_per_SM = " << kernelProperties.max_blocks_per_SM << "\n"; 
 
@@ -1635,8 +1852,6 @@ namespace gpu{
     	#define mycall(blocksize) msaCorrectCandidatesKernel<(blocksize), groupsize> \
     	        <<<grid, block, smem, stream>>>( \
                     correctedCandidates, \
-                    d_editsPerCorrectedCandidate, \
-                    d_numEditsPerCorrectedCandidate, \
                     multiMSA, \
                     shifts, \
                     bestAlignmentFlags, \
@@ -1648,11 +1863,8 @@ namespace gpu{
                     anchorIndicesOfCandidates, \
                     d_numAnchors, \
                     d_numCandidates, \
-                    doNotUseEditsValue, \
-                    numEditsThreshold, \
                     encodedSequencePitchInInts, \
                     decodedSequencePitchInBytes, \
-                    editsPitchInBytes, \
                     dynamicsmemPitchInInts \
                 ); CUDACHECKASYNC;
 
