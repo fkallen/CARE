@@ -146,7 +146,7 @@ namespace extension{
         std::vector<unsigned int> candidateSequencesRevcData;
         std::vector<unsigned int> candidateSequenceData;
         std::vector<care::cpu::SHDResult> alignments;
-        std::vector<BestAlignment_t> alignmentFlags;
+        std::vector<AlignmentOrientation> alignmentFlags;
         std::vector<std::string> totalDecodedAnchors;
         std::vector<std::string> totalAnchorQualityScores;
         std::vector<int> totalAnchorBeginInExtendedRead;

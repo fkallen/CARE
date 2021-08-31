@@ -100,7 +100,7 @@ struct clf_agent
     void print_cand(const CpuErrorCorrectorTask& task, int i, const CorrectionOptions& opt, size_t cand, size_t offset) {       
         if (!coinflip_cands(rng)) return;
 
-        cands_stream << task.candidateReadIds[cand] << ' ' << (task.alignmentFlags[cand]==BestAlignment_t::ReverseComplement?-i-1:i) << ' ';
+        cands_stream << task.candidateReadIds[cand] << ' ' << (task.alignmentFlags[cand]==AlignmentOrientation::ReverseComplement?-i-1:i) << ' ';
         for (float j: extract_cands(task, i, opt, cand, offset))
             cands_stream << j << ' ';
         cands_stream << '\n';

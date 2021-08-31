@@ -42,7 +42,7 @@ namespace care{
         std::vector<char> decodedCandidateSequences{};
         std::vector<cpu::SHDResult> alignments{};
         std::vector<cpu::SHDResult> revcAlignments{};
-        std::vector<BestAlignment_t> alignmentFlags{};
+        std::vector<AlignmentOrientation> alignmentFlags{};
         std::vector<bool> isPairedCandidate{};
 
         CpuErrorCorrectorInput input{};

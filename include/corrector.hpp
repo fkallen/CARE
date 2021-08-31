@@ -949,7 +949,7 @@ private:
             const auto& revcAlignment = task.revcAlignments[i];
             const int candidateLength = task.candidateSequencesLengths[i];
 
-            BestAlignment_t bestAlignmentFlag = care::choose_best_alignment(
+            AlignmentOrientation bestAlignmentFlag = care::choose_best_alignment(
                 forwardAlignment,
                 revcAlignment,
                 task.input.anchorLength,
@@ -972,9 +972,9 @@ private:
 
         for(int i = 0; i < numCandidates; i++){
 
-            const BestAlignment_t flag = task.alignmentFlags[i];
+            const AlignmentOrientation flag = task.alignmentFlags[i];
 
-            if(flag == BestAlignment_t::Forward){
+            if(flag == AlignmentOrientation::Forward){
                 task.candidateReadIds[insertpos] = task.candidateReadIds[i];
                 std::copy_n(
                     task.candidateSequencesData.data() + i * size_t(encodedSequencePitchInInts),
@@ -987,7 +987,7 @@ private:
                 task.isPairedCandidate[insertpos] = task.isPairedCandidate[i];             
 
                 insertpos++;
-            }else if(flag == BestAlignment_t::ReverseComplement){
+            }else if(flag == AlignmentOrientation::ReverseComplement){
                 task.candidateReadIds[insertpos] = task.candidateReadIds[i];
                 std::copy_n(
                     task.candidateSequencesRevcData.data() + i * size_t(encodedSequencePitchInInts),
@@ -1001,7 +1001,7 @@ private:
 
                 insertpos++;
             }else{
-                ;//BestAlignment_t::None discard alignment
+                ;//AlignmentOrientation::None discard alignment
             }
         }
 
@@ -1214,7 +1214,7 @@ private:
 
         //reverse quality scores of candidates with reverse complement alignment
         for(int c = 0; c < numCandidates; c++){
-            if(task.alignmentFlags[c] == BestAlignment_t::ReverseComplement){
+            if(task.alignmentFlags[c] == AlignmentOrientation::ReverseComplement){
                 std::reverse(
                     task.candidateQualities.data() + c * size_t(qualityPitchInBytes),
                     task.candidateQualities.data() + (c+1) * size_t(qualityPitchInBytes)
@@ -1672,7 +1672,7 @@ private:
                 tmp.readId = candidateId;
                 tmp.shift = correctedCandidate.shift;
 
-                const bool candidateIsForward = task.alignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward;
+                const bool candidateIsForward = task.alignmentFlags[correctedCandidate.index] == AlignmentOrientation::Forward;
 
                 if(candidateIsForward){
                     tmp.sequence = std::move(correctedCandidate.sequence);

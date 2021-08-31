@@ -3021,7 +3021,7 @@ struct GpuReadExtender{
 
         CachedDeviceUVector<int> d_alignment_overlaps_tmp(numCandidates, stream, *cubAllocator);
         CachedDeviceUVector<int> d_alignment_nOps_tmp(numCandidates, stream, *cubAllocator);
-        CachedDeviceUVector<BestAlignment_t> d_alignment_best_alignment_flags_tmp(numCandidates, stream, *cubAllocator);
+        CachedDeviceUVector<AlignmentOrientation> d_alignment_best_alignment_flags_tmp(numCandidates, stream, *cubAllocator);
         CachedDeviceUVector<bool> d_isPairedCandidate_tmp(numCandidates, stream, *cubAllocator);
 
         //fill the arrays such that msa will have good quality without pairedness
@@ -3036,7 +3036,7 @@ struct GpuReadExtender{
             thrust::make_tuple(
                 100,
                 0,
-                BestAlignment_t::Forward,
+                AlignmentOrientation::Forward,
                 false
             )
         ); CUDACHECKASYNC;
@@ -3519,7 +3519,7 @@ struct GpuReadExtender{
         CachedDeviceUVector<int> d_alignment_overlaps2(initialNumCandidates, stream, *cubAllocator);
         CachedDeviceUVector<int> d_alignment_shifts2(initialNumCandidates, stream, *cubAllocator);
         CachedDeviceUVector<int> d_alignment_nOps2(initialNumCandidates, stream, *cubAllocator);
-        CachedDeviceUVector<BestAlignment_t> d_alignment_best_alignment_flags2(initialNumCandidates, stream, *cubAllocator);
+        CachedDeviceUVector<AlignmentOrientation> d_alignment_best_alignment_flags2(initialNumCandidates, stream, *cubAllocator);
         CachedDeviceUVector<int> d_candidateSequencesLength2(initialNumCandidates, stream, *cubAllocator);
         CachedDeviceUVector<read_number> d_candidateReadIds2(initialNumCandidates, stream, *cubAllocator);
         CachedDeviceUVector<bool> d_isPairedCandidate2(initialNumCandidates, stream, *cubAllocator);
@@ -3794,7 +3794,7 @@ struct GpuReadExtender{
     CachedDeviceUVector<int> d_alignment_overlaps{};
     CachedDeviceUVector<int> d_alignment_shifts{};
     CachedDeviceUVector<int> d_alignment_nOps{};
-    CachedDeviceUVector<BestAlignment_t> d_alignment_best_alignment_flags{};
+    CachedDeviceUVector<AlignmentOrientation> d_alignment_best_alignment_flags{};
 
     CachedDeviceUVector<int> d_numCandidatesPerAnchor{};
     CachedDeviceUVector<int> d_numCandidatesPerAnchorPrefixSum{};

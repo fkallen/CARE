@@ -171,7 +171,7 @@ namespace gpu{
         const int* __restrict__ overlaps,
         const int* __restrict__ shifts,
         const int* __restrict__ nOps,
-        const BestAlignment_t* __restrict__ bestAlignmentFlags,
+        const AlignmentOrientation* __restrict__ bestAlignmentFlags,
         const int* __restrict__ anchorLengths,
         const int* __restrict__ candidateLengths,
         const int* __restrict__ indices,
@@ -227,7 +227,7 @@ namespace gpu{
                 const int* const myOverlaps = overlaps + globalCandidateOffset;
                 const int* const myShifts = shifts + globalCandidateOffset;
                 const int* const myNops = nOps + globalCandidateOffset;
-                const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalCandidateOffset;
+                const AlignmentOrientation* const myAlignmentFlags = bestAlignmentFlags + globalCandidateOffset;
                 const int subjectLength = anchorLengths[subjectIndex];
                 const int* const myCandidateLengths = candidateLengths + globalCandidateOffset;
                 const int* const myIndices = indices + globalCandidateOffset;
@@ -348,7 +348,7 @@ namespace gpu{
         int* __restrict__ d_newNumIndicesPerSubject,
         int* __restrict__ d_newNumIndices,
         GPUMultiMSA multiMSA,
-        const BestAlignment_t* __restrict__ bestAlignmentFlags,
+        const AlignmentOrientation* __restrict__ bestAlignmentFlags,
         const int* __restrict__ shifts,
         const int* __restrict__ nOps,
         const int* __restrict__ overlaps,
@@ -427,7 +427,7 @@ namespace gpu{
 
                     bool* const myShouldBeKept = d_shouldBeKept + globalOffset;                    
 
-                    const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
+                    const AlignmentOrientation* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
                     const int* const myShifts = shifts + globalOffset;
                     const int* const myNops = nOps + globalOffset;
                     const int* const myOverlaps = overlaps + globalOffset;
@@ -640,7 +640,7 @@ namespace gpu{
         int* __restrict__ d_newNumIndicesPerSubject,
         int* __restrict__ d_newNumIndices,
         GPUMultiMSA multiMSA,
-        const BestAlignment_t* __restrict__ bestAlignmentFlags,
+        const AlignmentOrientation* __restrict__ bestAlignmentFlags,
         const int* __restrict__ shifts,
         const int* __restrict__ nOps,
         const int* __restrict__ overlaps,
@@ -752,7 +752,7 @@ namespace gpu{
                     }
                 };
 
-                const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
+                const AlignmentOrientation* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
                 const int* const myShifts = shifts + globalOffset;
                 const int* const myNops = nOps + globalOffset;
                 const int* const myOverlaps = overlaps + globalOffset;
@@ -1029,7 +1029,7 @@ namespace gpu{
         int* d_newNumIndicesPerSubject,
         int* d_newNumIndices,
         GPUMultiMSA multiMSA,
-        const BestAlignment_t* d_bestAlignmentFlags,
+        const AlignmentOrientation* d_bestAlignmentFlags,
         const int* d_shifts,
         const int* d_nOps,
         const int* d_overlaps,
@@ -1156,7 +1156,7 @@ namespace gpu{
         int* d_newNumIndicesPerSubject,
         int* d_newNumIndices,
         GPUMultiMSA multiMSA,
-        const BestAlignment_t* d_bestAlignmentFlags,
+        const AlignmentOrientation* d_bestAlignmentFlags,
         const int* d_shifts,
         const int* d_nOps,
         const int* d_overlaps,
@@ -1284,7 +1284,7 @@ namespace gpu{
         const int* d_overlaps,
         const int* d_shifts,
         const int* d_nOps,
-        const BestAlignment_t* d_bestAlignmentFlags,
+        const AlignmentOrientation* d_bestAlignmentFlags,
         const int* d_anchorLengths,
         const int* d_candidateLengths,
         const int* d_indices,

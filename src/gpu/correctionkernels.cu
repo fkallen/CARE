@@ -300,7 +300,7 @@ namespace gpu{
         float forestThreshold,
         float estimatedCoverage,
         const int* __restrict__ shifts,
-        const BestAlignment_t* __restrict__ bestAlignmentFlags,
+        const AlignmentOrientation* __restrict__ bestAlignmentFlags,
         const unsigned int* __restrict__ candidateSequencesData,
         const int* __restrict__ candidateSequencesLengths,
         const bool* __restrict__ d_candidateContainsN,
@@ -393,7 +393,7 @@ namespace gpu{
 
             tgroup.sync(); 
 
-            const BestAlignment_t bestAlignmentFlag = bestAlignmentFlags[candidateIndex];
+            const AlignmentOrientation bestAlignmentFlag = bestAlignmentFlags[candidateIndex];
 
             const unsigned int* const encUncorrectedCandidate = candidateSequencesData 
                         + std::size_t(candidateIndex) * encodedSequencePitchInInts;
@@ -401,7 +401,7 @@ namespace gpu{
             for(int i = 0; i < candidate_length; i += 1){
                 std::uint8_t origEncodedBase = 0;
 
-                if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
+                if(bestAlignmentFlag == AlignmentOrientation::ReverseComplement){
                     origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
                         encUncorrectedCandidate,
                         candidate_length,
@@ -459,7 +459,7 @@ namespace gpu{
             tgroup.sync();
 
             //the forward strand will be returned -> make reverse complement again
-            if(bestAlignmentFlag == BestAlignment_t::ReverseComplement) {
+            if(bestAlignmentFlag == AlignmentOrientation::ReverseComplement) {
                 SequenceHelpers::reverseComplementDecodedSequence(tgroup, shared_correctedCandidate, candidate_length);
             }else{
                 //orientation ok
@@ -699,7 +699,7 @@ namespace gpu{
         int* __restrict__ d_numEditsPerCorrectedCandidate,
         GPUMultiMSA multiMSA,
         const int* __restrict__ shifts,
-        const BestAlignment_t* __restrict__ bestAlignmentFlags,
+        const AlignmentOrientation* __restrict__ bestAlignmentFlags,
         const unsigned int* __restrict__ candidateSequencesData,
         const int* __restrict__ candidateSequencesLengths,
         const bool* __restrict__ d_candidateContainsN,
@@ -758,7 +758,7 @@ namespace gpu{
             const int queryColumnsBegin_incl = subjectColumnsBegin_incl + shift;
             const int queryColumnsEnd_excl = subjectColumnsBegin_incl + shift + candidate_length;
 
-            const BestAlignment_t bestAlignmentFlag = bestAlignmentFlags[candidateIndex];
+            const AlignmentOrientation bestAlignmentFlag = bestAlignmentFlags[candidateIndex];
 
             if(tgroup.thread_rank() == 0){                        
                 shared_numEditsOfCandidate[groupIdInBlock] = 0;
@@ -769,7 +769,7 @@ namespace gpu{
             const int copyposend = queryColumnsEnd_excl;
 
             //the forward strand will be returned -> make reverse complement again
-            if(bestAlignmentFlag == BestAlignment_t::ReverseComplement) {
+            if(bestAlignmentFlag == AlignmentOrientation::ReverseComplement) {
                 for(int i = copyposbegin + tgroup.thread_rank(); i < copyposend; i += tgroup.size()) {
                     shared_correctedCandidate[i - queryColumnsBegin_incl] = SequenceHelpers::decodeBase(SequenceHelpers::complementBase2Bit(msa.consensus[i]));
                 }
@@ -1297,7 +1297,7 @@ namespace gpu{
         float forestThreshold,
         float estimatedCoverage,
         const int* d_shifts,
-        const BestAlignment_t* d_bestAlignmentFlags,
+        const AlignmentOrientation* d_bestAlignmentFlags,
         const unsigned int* d_candidateSequencesData,
         const int* d_candidateSequencesLengths,
         const bool* d_candidateContainsN,
@@ -1544,7 +1544,7 @@ namespace gpu{
         int* __restrict__ d_numEditsPerCorrectedCandidate,
         GPUMultiMSA multiMSA,
         const int* __restrict__ shifts,
-        const BestAlignment_t* __restrict__ bestAlignmentFlags,
+        const AlignmentOrientation* __restrict__ bestAlignmentFlags,
         const unsigned int* __restrict__ candidateSequencesData,
         const int* __restrict__ candidateSequencesLengths,
         const bool* __restrict__ d_candidateContainsN,

@@ -748,7 +748,7 @@ namespace readextendergpukernels{
             const gpu::MSAColumnProperties& msaColumnProperties,
             int numCandidates, 
             const int* candidateShifts,
-            const BestAlignment_t* bestAlignmentFlags,
+            const AlignmentOrientation* bestAlignmentFlags,
             const int* candidateLengths,
             const unsigned int* encodedCandidates, 
             int encodedSequencePitchInInts, 
@@ -791,14 +791,14 @@ namespace readextendergpukernels{
                         const unsigned int* const myCandidate = encodedCandidates + c * encodedSequencePitchInInts;
                         const int candidateShift = candidateShifts[c];
                         const int candidateLength = candidateLengths[c];
-                        const BestAlignment_t alignmentFlag = bestAlignmentFlags[c];
+                        const AlignmentOrientation alignmentFlag = bestAlignmentFlags[c];
 
                         for(int i = 0; i < candidateShift; i++){
                             printf("0");
                         }
                         for(int i = 0; i < candidateLength; i++){
                             char nuc = 'F';
-                            if(alignmentFlag == BestAlignment_t::Forward){
+                            if(alignmentFlag == AlignmentOrientation::Forward){
                                 const int positionInCandidate = i;
                                 std::uint8_t encodedCandidateNuc = SequenceHelpers::getEncodedNuc2Bit(myCandidate, candidateLength, positionInCandidate);
                                 nuc = SequenceHelpers::decodeBase(encodedCandidateNuc);
@@ -824,7 +824,7 @@ namespace readextendergpukernels{
                     const unsigned int* const myCandidate = encodedCandidates + c * encodedSequencePitchInInts;
                     const int candidateShift = candidateShifts[c];
                     const int candidateLength = candidateLengths[c];
-                    const BestAlignment_t alignmentFlag = bestAlignmentFlags[c];
+                    const AlignmentOrientation alignmentFlag = bestAlignmentFlags[c];
 
                     for(int k = 0; k < numColumnsToCheck; k++){
                         flags <<= 2;
@@ -840,7 +840,7 @@ namespace readextendergpukernels{
                         if(candidateColumnsBegin_incl <= psc0.column && psc0.column < candidateColumnsEnd_excl){                        
 
                             char nuc = 'F';
-                            if(alignmentFlag == BestAlignment_t::Forward){
+                            if(alignmentFlag == AlignmentOrientation::Forward){
                                 const int positionInCandidate = psc0.column - candidateColumnsBegin_incl;
                                 std::uint8_t encodedCandidateNuc = SequenceHelpers::getEncodedNuc2Bit(myCandidate, candidateLength, positionInCandidate);
                                 nuc = SequenceHelpers::decodeBase(encodedCandidateNuc);
@@ -1395,7 +1395,7 @@ namespace readextendergpukernels{
     template<int blocksize>
     __global__
     void flagGoodAlignmentsKernel(
-        const BestAlignment_t* __restrict__ d_alignment_best_alignment_flags,
+        const AlignmentOrientation* __restrict__ d_alignment_best_alignment_flags,
         const int* __restrict__ d_alignment_shifts,
         const int* __restrict__ d_alignment_overlaps,
         const int* __restrict__ d_anchorSequencesLength,
@@ -1437,7 +1437,7 @@ namespace readextendergpukernels{
                 const auto alignmentflag = d_alignment_best_alignment_flags[offset + c];
                 const int shift = d_alignment_shifts[offset + c];
 
-                if(alignmentflag != BestAlignment_t::None && shift >= 0){
+                if(alignmentflag != AlignmentOrientation::None && shift >= 0){
                     if(!d_isPairedCandidate[offset+c]){
                         const float overlap = d_alignment_overlaps[offset + c];                            
                         const float relativeOverlap = overlap / anchorLength;
@@ -2101,7 +2101,7 @@ namespace readextendergpukernels{
         const int* d_numCandidatesPerAnchorPrefixSum,
         const int* d_candidateSequencesLengths,
         const int* d_alignment_shifts,
-        const BestAlignment_t* d_alignment_best_alignment_flags,
+        const AlignmentOrientation* d_alignment_best_alignment_flags,
         const unsigned int* d_candidateSequencesData,
         const gpu::MSAColumnProperties* d_msa_column_properties,
         int encodedSequencePitchInInts
@@ -2132,7 +2132,7 @@ namespace readextendergpukernels{
 
                 const int* const myCandidateLengths = d_candidateSequencesLengths + d_numCandidatesPerAnchorPrefixSum[t];
                 const int* const myCandidateShifts = d_alignment_shifts + d_numCandidatesPerAnchorPrefixSum[t];
-                const BestAlignment_t* const myCandidateBestAlignmentFlags = d_alignment_best_alignment_flags + d_numCandidatesPerAnchorPrefixSum[t];
+                const AlignmentOrientation* const myCandidateBestAlignmentFlags = d_alignment_best_alignment_flags + d_numCandidatesPerAnchorPrefixSum[t];
                 const unsigned int* const myCandidateSequencesData = d_candidateSequencesData + encodedSequencePitchInInts * d_numCandidatesPerAnchorPrefixSum[t];
 
                 // float supportSum = 0.0f;

@@ -922,7 +922,7 @@ private:
                     correctionOptions.estimatedErrorrate
                 );
 
-                if(task.alignmentFlags[c] == BestAlignment_t::Forward){
+                if(task.alignmentFlags[c] == AlignmentOrientation::Forward){
                     task.alignments[c] = forwardAlignment;
                 }else{
                     task.alignments[c] = revcAlignment;
@@ -947,10 +947,10 @@ private:
             float relativeOverlapThreshold = 0.0f;
 
             for(int c = 0; c < size; c++){
-                const BestAlignment_t alignmentFlag0 = task.alignmentFlags[c];
+                const AlignmentOrientation alignmentFlag0 = task.alignmentFlags[c];
                 const int shift = task.alignments[c].shift;
                 
-                if(alignmentFlag0 != BestAlignment_t::None && shift >= 0){
+                if(alignmentFlag0 != AlignmentOrientation::None && shift >= 0){
                     if(!task.isPairedCandidate[c]){
                         const float overlap = task.alignments[c].overlap;
                         const float relativeOverlap = overlap / float(task.currentAnchorLength);
@@ -1001,16 +1001,16 @@ private:
                     task.candidateSequenceLengths[task.numRemainingCandidates] = task.candidateSequenceLengths[c];
                     task.isPairedCandidate[task.numRemainingCandidates] = task.isPairedCandidate[c];
 
-                    assert(task.alignmentFlags[c] != BestAlignment_t::None);
+                    assert(task.alignmentFlags[c] != AlignmentOrientation::None);
 
-                    if(task.alignmentFlags[c] == BestAlignment_t::Forward){
+                    if(task.alignmentFlags[c] == AlignmentOrientation::Forward){
                         std::copy_n(
                             task.candidateSequencesFwdData.data() + c * encodedSequencePitchInInts,
                             encodedSequencePitchInInts,
                             task.candidateSequenceData.data() + task.numRemainingCandidates * encodedSequencePitchInInts
                         );
                     }else{
-                        //BestAlignment_t::ReverseComplement
+                        //AlignmentOrientation::ReverseComplement
 
                         std::copy_n(
                             task.candidateSequencesRevcData.data() + c * encodedSequencePitchInInts,
@@ -1083,7 +1083,7 @@ private:
         //     );
 
         //     for(int c = 0; c < task.numRemainingCandidates; c++){
-        //         if(task.alignmentFlags[c] == BestAlignment_t::ReverseComplement){
+        //         if(task.alignmentFlags[c] == AlignmentOrientation::ReverseComplement){
         //             std::reverse(
         //                 candidateQualities.data() + c * qualityPitchInBytes,
         //                 candidateQualities.data() + c * qualityPitchInBytes + task.candidateSequenceLengths[c]
@@ -1273,7 +1273,7 @@ private:
             );
 
             for(int c = 0; c < task.numRemainingCandidates; c++){
-                if(task.alignmentFlags[c] == BestAlignment_t::ReverseComplement){
+                if(task.alignmentFlags[c] == AlignmentOrientation::ReverseComplement){
                     std::reverse(
                         candidateQualities.data() + c * qualityPitchInBytes,
                         candidateQualities.data() + c * qualityPitchInBytes + task.candidateSequenceLengths[c]
@@ -1637,7 +1637,7 @@ private:
                 const auto& task = tasks[indicesOfActiveTasks[i]];
 
                 for(int c = 0; c < task.numRemainingCandidates; c++){
-                    if(task.alignmentFlags[c] == BestAlignment_t::ReverseComplement){
+                    if(task.alignmentFlags[c] == AlignmentOrientation::ReverseComplement){
                         std::reverse(
                             candidateQualities.data() + (offsets[i] + c) * qualityPitchInBytes,
                             candidateQualities.data() + (offsets[i] + c) * qualityPitchInBytes + task.candidateSequenceLengths[c]
@@ -1672,7 +1672,7 @@ private:
                 //     );
 
                 //     for(int c = 0; c < task.numRemainingCandidates; c++){
-                //         if(task.alignmentFlags[c] == BestAlignment_t::ReverseComplement){
+                //         if(task.alignmentFlags[c] == AlignmentOrientation::ReverseComplement){
                 //             std::reverse(
                 //                 candidateQualitiesSingle.data() + c * qualityPitchInBytes,
                 //                 candidateQualitiesSingle.data() + c * qualityPitchInBytes + task.candidateSequenceLengths[c]

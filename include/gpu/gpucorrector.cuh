@@ -2266,7 +2266,7 @@ namespace gpu{
 
                                 const int candidate_index = firstIndex + index;
                                 if(!d_isPairedCandidate[candidate_index]){
-                                    if(bestAlignmentFlags[candidate_index] != BestAlignment_t::None) {
+                                    if(bestAlignmentFlags[candidate_index] != AlignmentOrientation::None) {
 
                                         const int alignment_overlap = overlaps[candidate_index];
                                         const int alignment_nops = nOps[candidate_index];
@@ -2275,7 +2275,7 @@ namespace gpu{
 
                                         //if(mismatchratio >= 1 * mismatchratioBaseFactor) {
                                         if(mismatchratio >= pairedthreshold1) {
-                                            bestAlignmentFlags[candidate_index] = BestAlignment_t::None;
+                                            bestAlignmentFlags[candidate_index] = AlignmentOrientation::None;
                                         }else{
 
                                             // #pragma unroll
@@ -2330,7 +2330,7 @@ namespace gpu{
                             //     const int candidate_index = firstIndex + index;
 
                             //     if(!d_isPairedCandidate[candidate_index]){
-                            //         if(bestAlignmentFlags[candidate_index] != BestAlignment_t::None) {
+                            //         if(bestAlignmentFlags[candidate_index] != AlignmentOrientation::None) {
 
                             //             const int alignment_overlap = overlaps[candidate_index];
                             //             const int alignment_nops = nOps[candidate_index];
@@ -2339,7 +2339,7 @@ namespace gpu{
 
                             //             const bool doRemove = mismatchratio >= mismatchratioThreshold;
                             //             if(doRemove){
-                            //                 bestAlignmentFlags[candidate_index] = BestAlignment_t::None;
+                            //                 bestAlignmentFlags[candidate_index] = AlignmentOrientation::None;
                             //             }
                             //         }
                             //     }
@@ -3054,7 +3054,7 @@ namespace gpu{
         DeviceBuffer<int> d_alignment_shifts;
         DeviceBuffer<int> d_alignment_nOps;
         DeviceBuffer<bool> d_alignment_isValid;
-        DeviceBuffer<BestAlignment_t> d_alignment_best_alignment_flags; 
+        DeviceBuffer<AlignmentOrientation> d_alignment_best_alignment_flags; 
         DeviceBuffer<int> d_indices;
         DeviceBuffer<int> d_indices_per_anchor;
         DeviceBuffer<int> d_indices_per_anchor_prefixsum;
@@ -3115,7 +3115,7 @@ namespace gpu{
         DeviceBuffer<bool> d_candidateContainsN2;
         DeviceBuffer<int> d_candidate_sequences_lengths2;
         DeviceBuffer<unsigned int> d_candidate_sequences_data2;
-        DeviceBuffer<BestAlignment_t> d_alignment_best_alignment_flags2;
+        DeviceBuffer<AlignmentOrientation> d_alignment_best_alignment_flags2;
         DeviceBuffer<char> d_cubtemp2;
 
 

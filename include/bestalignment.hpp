@@ -7,11 +7,11 @@
 namespace care{
 
 
-    enum class BestAlignment_t : char {Forward=1, ReverseComplement=2, None=3};
+    enum class AlignmentOrientation : char {Forward=1, ReverseComplement=2, None=3};
 
     HOSTDEVICEQUALIFIER
     __inline__
-    BestAlignment_t choose_best_alignment(int fwd_alignment_overlap,
+    AlignmentOrientation choose_best_alignment(int fwd_alignment_overlap,
     			int revc_alignment_overlap,
     			int fwd_alignment_nops,
     			int revc_alignment_nops,
@@ -23,7 +23,7 @@ namespace care{
     			int min_overlap,
     			float maxErrorRate){
 
-    	BestAlignment_t retval = BestAlignment_t::None;
+    	AlignmentOrientation retval = AlignmentOrientation::None;
 
     	const int minimumOverlap = int(subjectlength * min_overlap_ratio) > min_overlap
     	                           ? int(subjectlength * min_overlap_ratio) : min_overlap;
@@ -37,31 +37,31 @@ namespace care{
 
     			if(ratio < revcomplratio) {
     				if(ratio < maxErrorRate) {
-    					retval = BestAlignment_t::Forward;
+    					retval = AlignmentOrientation::Forward;
     				}
     			}else if(revcomplratio < ratio) {
     				if(revcomplratio < maxErrorRate) {
-    					retval = BestAlignment_t::ReverseComplement;
+    					retval = AlignmentOrientation::ReverseComplement;
     				}
     			}else{
     				if(ratio < maxErrorRate) {
     					// both have same mismatch ratio, choose longest overlap
     					if(fwd_alignment_overlap > revc_alignment_overlap) {
-    						retval = BestAlignment_t::Forward;
+    						retval = AlignmentOrientation::Forward;
     					}else{
-    						retval = BestAlignment_t::ReverseComplement;
+    						retval = AlignmentOrientation::ReverseComplement;
     					}
     				}
     			}
     		}else{
     			if((float)fwd_alignment_nops / fwd_alignment_overlap < maxErrorRate) {
-    				retval = BestAlignment_t::Forward;
+    				retval = AlignmentOrientation::Forward;
     			}
     		}
     	}else{
     		if(revc_alignment_isvalid && revc_alignment_overlap >= minimumOverlap) {
     			if((float)revc_alignment_nops / revc_alignment_overlap < maxErrorRate) {
-    				retval = BestAlignment_t::ReverseComplement;
+    				retval = AlignmentOrientation::ReverseComplement;
     			}
     		}
     	}
@@ -70,7 +70,7 @@ namespace care{
     }
 
     template<class Alignment>
-    BestAlignment_t choose_best_alignment(const Alignment& fwdAlignment,
+    AlignmentOrientation choose_best_alignment(const Alignment& fwdAlignment,
                                         const Alignment& revcmplAlignment,
                                         int subjectlength,
                                         int querylength,

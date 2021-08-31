@@ -244,7 +244,7 @@ namespace gpu{
                 const int* __restrict__ goodCandidateIndices,
                 int numGoodCandidates,
                 const int* __restrict__ shifts,
-                const BestAlignment_t* __restrict__ alignmentFlags,
+                const AlignmentOrientation* __restrict__ alignmentFlags,
                 const int subjectLength,
                 const int* __restrict__ candidateLengths
         ){
@@ -256,10 +256,10 @@ namespace gpu{
                 const int localCandidateIndex = goodCandidateIndices[k];
 
                 const int shift = shifts[localCandidateIndex];
-                const BestAlignment_t flag = alignmentFlags[localCandidateIndex];
+                const AlignmentOrientation flag = alignmentFlags[localCandidateIndex];
                 const int queryLength = candidateLengths[localCandidateIndex];
 
-                assert(flag != BestAlignment_t::None);
+                assert(flag != AlignmentOrientation::None);
 
                 const int queryEndsAt = queryLength + shift;
                 startindex = min(startindex, shift);
@@ -297,7 +297,7 @@ namespace gpu{
                 GroupReduceIntMax& groupReduceIntMax,
                 int numGoodCandidates,
                 const int* __restrict__ shifts,
-                const BestAlignment_t* __restrict__ alignmentFlags,
+                const AlignmentOrientation* __restrict__ alignmentFlags,
                 const int subjectLength,
                 const int* __restrict__ candidateLengths
         ){
@@ -309,10 +309,10 @@ namespace gpu{
                 const int localCandidateIndex = k;
 
                 const int shift = shifts[localCandidateIndex];
-                const BestAlignment_t flag = alignmentFlags[localCandidateIndex];
+                const AlignmentOrientation flag = alignmentFlags[localCandidateIndex];
                 const int queryLength = candidateLengths[localCandidateIndex];
 
-                assert(flag != BestAlignment_t::None);
+                assert(flag != AlignmentOrientation::None);
 
                 const int queryEndsAt = queryLength + shift;
                 startindex = min(startindex, shift);
@@ -521,7 +521,7 @@ namespace gpu{
             const int* __restrict__ myShifts,
             const int* __restrict__ myOverlaps,
             const int* __restrict__ myNops,
-            const BestAlignment_t* __restrict__ myAlignmentFlags,
+            const AlignmentOrientation* __restrict__ myAlignmentFlags,
             const unsigned int* __restrict__ myAnchorSequenceData,
             const char* __restrict__ myAnchorQualityData,
             const unsigned int* __restrict__ myCandidateSequencesData,
@@ -591,7 +591,7 @@ namespace gpu{
 
                 const int localCandidateIndex = myIndices[indexInList];
                 const int shift = myShifts[localCandidateIndex];
-                const BestAlignment_t flag = myAlignmentFlags[localCandidateIndex];
+                const AlignmentOrientation flag = myAlignmentFlags[localCandidateIndex];
 
                 const int queryLength = myCandidateLengths[localCandidateIndex];
                 const unsigned int* const query = myCandidateSequencesData 
@@ -612,11 +612,11 @@ namespace gpu{
 
                 assert(overlapweight <= 1.0f);
                 assert(overlapweight >= 0.0f);
-                assert(flag != BestAlignment_t::None); // indices should only be pointing to valid alignments
+                assert(flag != AlignmentOrientation::None); // indices should only be pointing to valid alignments
 
                 const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
 
-                const bool isForward = flag == BestAlignment_t::Forward;
+                const bool isForward = flag == AlignmentOrientation::Forward;
 
                 msaAddOrDeleteASequence2Bit<true>(
                     tile,
@@ -640,7 +640,7 @@ namespace gpu{
             const int* __restrict__ myShifts,
             const int* __restrict__ myOverlaps,
             const int* __restrict__ myNops,
-            const BestAlignment_t* __restrict__ myAlignmentFlags,
+            const AlignmentOrientation* __restrict__ myAlignmentFlags,
             const unsigned int* __restrict__ myCandidateSequencesData, //not transposed
             const char* __restrict__ myCandidateQualities, //not transposed
             const int* __restrict__ myCandidateLengths,
@@ -668,7 +668,7 @@ namespace gpu{
 
                     const int localCandidateIndex = myIndices[indexInList];
                     const int shift = myShifts[localCandidateIndex];
-                    const BestAlignment_t flag = myAlignmentFlags[localCandidateIndex];
+                    const AlignmentOrientation flag = myAlignmentFlags[localCandidateIndex];
 
                     const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
                     const int queryLength = myCandidateLengths[localCandidateIndex];
@@ -688,11 +688,11 @@ namespace gpu{
 
                     assert(overlapweight <= 1.0f);
                     assert(overlapweight >= 0.0f);
-                    assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
+                    assert(flag != AlignmentOrientation::None);                 // indices should only be pointing to valid alignments
 
                     const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
 
-                    const bool isForward = flag == BestAlignment_t::Forward;
+                    const bool isForward = flag == AlignmentOrientation::Forward;
 
                     msaAddOrDeleteASequence2Bit<false>(
                         tile,
@@ -719,7 +719,7 @@ namespace gpu{
             const int* __restrict__ myShifts,
             const int* __restrict__ myOverlaps,
             const int* __restrict__ myNops,
-            const BestAlignment_t* __restrict__ myAlignmentFlags,
+            const AlignmentOrientation* __restrict__ myAlignmentFlags,
             const unsigned int* __restrict__ myCandidateSequencesData, //not transposed
             const char* __restrict__ myCandidateQualities, //not transposed
             const int* __restrict__ myCandidateLengths,
@@ -781,7 +781,7 @@ namespace gpu{
 
                         if(IcanProcessCandidate){
                             //get required data for processing
-                            const BestAlignment_t flag = myAlignmentFlags[localCandidateIndex];     
+                            const AlignmentOrientation flag = myAlignmentFlags[localCandidateIndex];     
                             
                         
                             const unsigned int* const query = myCandidateSequencesData + localCandidateIndex * encodedSequencePitchInInts;
@@ -800,10 +800,10 @@ namespace gpu{
 
                             assert(overlapweight <= 1.0f);
                             assert(overlapweight >= 0.0f);
-                            assert(flag != BestAlignment_t::None); // indices should only be pointing to valid alignments
+                            assert(flag != AlignmentOrientation::None); // indices should only be pointing to valid alignments
 
                             const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
-                            const bool isForward = flag == BestAlignment_t::Forward; 
+                            const bool isForward = flag == AlignmentOrientation::Forward; 
                                                        
 
                             #pragma unroll
@@ -1026,7 +1026,7 @@ namespace gpu{
             const int subjectLength,
             const unsigned int* __restrict__ myCandidateSequencesData,
             const int* __restrict__ myCandidateLengths,
-            const BestAlignment_t* myAlignmentFlags,
+            const AlignmentOrientation* myAlignmentFlags,
             const int* __restrict__ myShifts,
             const int* __restrict__ myNops,
             const int* __restrict__ myOverlaps,
@@ -1160,7 +1160,7 @@ namespace gpu{
                             const unsigned int* const candidateptr = myCandidateSequencesData + std::size_t(localCandidateIndex) * encodedSequencePitchInInts;
                             const int candidateLength = myCandidateLengths[localCandidateIndex];
                             const int shift = myShifts[localCandidateIndex];
-                            const BestAlignment_t alignmentFlag = myAlignmentFlags[localCandidateIndex];
+                            const AlignmentOrientation alignmentFlag = myAlignmentFlags[localCandidateIndex];
 
                             //check if row is affected by column col
                             const int row_begin_incl = subjectColumnsBegin_incl + shift;
@@ -1168,11 +1168,11 @@ namespace gpu{
                             const bool notAffected = (col < row_begin_incl || row_end_excl <= col);
                             std::uint8_t base = 5;
                             if(!notAffected){
-                                if(alignmentFlag == BestAlignment_t::Forward){
+                                if(alignmentFlag == AlignmentOrientation::Forward){
                                     base = SequenceHelpers::getEncodedNuc2Bit(candidateptr, candidateLength, (col - row_begin_incl));
                                 }else{
-                                    //candidates cannot have BestAlignment_t::None
-                                    assert(alignmentFlag == BestAlignment_t::ReverseComplement); 
+                                    //candidates cannot have AlignmentOrientation::None
+                                    assert(alignmentFlag == AlignmentOrientation::ReverseComplement); 
 
                                     const std::uint8_t forwardbaseEncoded = SequenceHelpers::getEncodedNuc2Bit(candidateptr, candidateLength, row_end_excl-1 - col);
                                     base = SequenceHelpers::complementBase2Bit(forwardbaseEncoded);

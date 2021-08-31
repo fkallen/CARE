@@ -34,7 +34,7 @@ namespace gpu{
             int* __restrict__ d_indicesOfGoodCandidates,
             int* __restrict__ d_numIndicesPerAnchor,
             int* __restrict__ d_totalNumIndices,
-            const BestAlignment_t* __restrict__ d_alignmentFlags,
+            const AlignmentOrientation* __restrict__ d_alignmentFlags,
             const int* __restrict__ d_candidates_per_subject,
             const int* __restrict__ d_candidates_per_subject_prefixsum,
             const int* __restrict__ d_anchorIndicesOfCandidates,
@@ -69,7 +69,7 @@ namespace gpu{
             const int offset = d_candidates_per_subject_prefixsum[anchorIndex];
             int* const indicesPtr = d_indicesOfGoodCandidates + offset;
             int* const numIndicesPtr = d_numIndicesPerAnchor + anchorIndex;
-            const BestAlignment_t* const myAlignmentFlagsPtr = d_alignmentFlags + offset;
+            const AlignmentOrientation* const myAlignmentFlagsPtr = d_alignmentFlags + offset;
 
             const int numCandidatesForAnchor = d_candidates_per_subject[anchorIndex];
 
@@ -82,9 +82,9 @@ namespace gpu{
                     localCandidateIndex < numCandidatesForAnchor; 
                     localCandidateIndex += tile.size()){
                 
-                const BestAlignment_t alignmentflag = myAlignmentFlagsPtr[localCandidateIndex];
+                const AlignmentOrientation alignmentflag = myAlignmentFlagsPtr[localCandidateIndex];
 
-                if(alignmentflag != BestAlignment_t::None){
+                if(alignmentflag != AlignmentOrientation::None){
                     cg::coalesced_group g = cg::coalesced_threads();
                     int outputPos;
                     if (g.thread_rank() == 0) {
@@ -134,7 +134,7 @@ namespace gpu{
                 int* __restrict__ d_alignment_shifts,
                 int* __restrict__ d_alignment_nOps,
                 bool* __restrict__ d_alignment_isValid,
-                BestAlignment_t* __restrict__ d_alignment_best_alignment_flags,
+                AlignmentOrientation* __restrict__ d_alignment_best_alignment_flags,
                 const int* __restrict__ subjectSequencesLength,
                 const int* __restrict__ candidateSequencesLength,
                 const int* __restrict__ candidates_per_subject_prefixsum,
@@ -197,7 +197,7 @@ namespace gpu{
             bool fwd_alignment_isvalid,
             bool revc_alignment_isvalid,
             int subjectlength,
-            int querylength)->BestAlignment_t{
+            int querylength)->AlignmentOrientation{
 
             return choose_best_alignment(
                 fwd_alignment_overlap,
@@ -395,7 +395,7 @@ namespace gpu{
                         opnr[orientation] = bestScore[orientation] - totalbases + 2*overlapsize[orientation];
                     }
 
-                    const BestAlignment_t flag = alignmentComparator(
+                    const AlignmentOrientation flag = alignmentComparator(
                         overlapsize[0],
                         overlapsize[1],
                         opnr[0],
@@ -407,12 +407,12 @@ namespace gpu{
                     );
 
                     d_alignment_best_alignment_flags[candidateIndex] = flag;
-                    d_alignment_overlaps[candidateIndex] = flag == BestAlignment_t::Forward ? overlapsize[0] : overlapsize[1];
-                    d_alignment_shifts[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] : bestShift[1];
-                    d_alignment_nOps[candidateIndex] = flag == BestAlignment_t::Forward ? opnr[0] : opnr[1];
-                    d_alignment_isValid[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
+                    d_alignment_overlaps[candidateIndex] = flag == AlignmentOrientation::Forward ? overlapsize[0] : overlapsize[1];
+                    d_alignment_shifts[candidateIndex] = flag == AlignmentOrientation::Forward ? bestShift[0] : bestShift[1];
+                    d_alignment_nOps[candidateIndex] = flag == AlignmentOrientation::Forward ? opnr[0] : opnr[1];
+                    d_alignment_isValid[candidateIndex] = flag == AlignmentOrientation::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
                 }else{
-                    d_alignment_best_alignment_flags[candidateIndex] = BestAlignment_t::None;
+                    d_alignment_best_alignment_flags[candidateIndex] = AlignmentOrientation::None;
                     d_alignment_isValid[candidateIndex] = false;
                 }
             }
@@ -429,7 +429,7 @@ namespace gpu{
                 int* __restrict__ d_alignment_shifts,
                 int* __restrict__ d_alignment_nOps,
                 bool* __restrict__ d_alignment_isValid,
-                BestAlignment_t* __restrict__ d_alignment_best_alignment_flags,
+                AlignmentOrientation* __restrict__ d_alignment_best_alignment_flags,
                 const int* __restrict__ subjectSequencesLength,
                 const int* __restrict__ candidateSequencesLength,
                 const int* __restrict__ candidates_per_subject_prefixsum,
@@ -496,7 +496,7 @@ namespace gpu{
             bool fwd_alignment_isvalid,
             bool revc_alignment_isvalid,
             int subjectlength,
-            int querylength)->BestAlignment_t{
+            int querylength)->AlignmentOrientation{
 
             return choose_best_alignment(
                 fwd_alignment_overlap,
@@ -672,7 +672,7 @@ namespace gpu{
                         opnr[orientation] = bestScore[orientation] - totalbases + 2*overlapsize[orientation];
                     }
 
-                    const BestAlignment_t flag = alignmentComparator(
+                    const AlignmentOrientation flag = alignmentComparator(
                         overlapsize[0],
                         overlapsize[1],
                         opnr[0],
@@ -684,12 +684,12 @@ namespace gpu{
                     );
 
                     d_alignment_best_alignment_flags[candidateIndex] = flag;
-                    d_alignment_overlaps[candidateIndex] = flag == BestAlignment_t::Forward ? overlapsize[0] : overlapsize[1];
-                    d_alignment_shifts[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] : bestShift[1];
-                    d_alignment_nOps[candidateIndex] = flag == BestAlignment_t::Forward ? opnr[0] : opnr[1];
-                    d_alignment_isValid[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
+                    d_alignment_overlaps[candidateIndex] = flag == AlignmentOrientation::Forward ? overlapsize[0] : overlapsize[1];
+                    d_alignment_shifts[candidateIndex] = flag == AlignmentOrientation::Forward ? bestShift[0] : bestShift[1];
+                    d_alignment_nOps[candidateIndex] = flag == AlignmentOrientation::Forward ? opnr[0] : opnr[1];
+                    d_alignment_isValid[candidateIndex] = flag == AlignmentOrientation::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
                 }else{
-                    d_alignment_best_alignment_flags[candidateIndex] = BestAlignment_t::None;
+                    d_alignment_best_alignment_flags[candidateIndex] = AlignmentOrientation::None;
                     d_alignment_isValid[candidateIndex] = false;
                 }
             }
@@ -712,7 +712,7 @@ namespace gpu{
                 const unsigned int* __restrict__ candidateDataHiLoTransposed,
                 const int* __restrict__ subjectSequencesLength,
                 const int* __restrict__ candidateSequencesLength,
-                BestAlignment_t* __restrict__ bestAlignmentFlags,
+                AlignmentOrientation* __restrict__ bestAlignmentFlags,
                 int* __restrict__ alignment_overlaps,
                 int* __restrict__ alignment_shifts,
                 int* __restrict__ alignment_nOps,
@@ -862,7 +862,7 @@ namespace gpu{
             bool fwd_alignment_isvalid,
             bool revc_alignment_isvalid,
             int subjectlength,
-            int querylength)->BestAlignment_t{
+            int querylength)->AlignmentOrientation{
 
             return choose_best_alignment(
                 fwd_alignment_overlap,
@@ -1080,7 +1080,7 @@ namespace gpu{
                         opnr[orientation] = bestScore[orientation] - totalbases + 2*overlapsize[orientation];
                     }
 
-                    const BestAlignment_t flag = alignmentComparator(
+                    const AlignmentOrientation flag = alignmentComparator(
                         overlapsize[0],
                         overlapsize[1],
                         opnr[0],
@@ -1092,16 +1092,16 @@ namespace gpu{
                     );
 
                     bestAlignmentFlags[candidateIndex] = flag;
-                    alignment_overlaps[candidateIndex] = flag == BestAlignment_t::Forward ? overlapsize[0] : overlapsize[1];
-                    alignment_shifts[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] : bestShift[1];
-                    alignment_nOps[candidateIndex] = flag == BestAlignment_t::Forward ? opnr[0] : opnr[1];
-                    alignment_isValid[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
+                    alignment_overlaps[candidateIndex] = flag == AlignmentOrientation::Forward ? overlapsize[0] : overlapsize[1];
+                    alignment_shifts[candidateIndex] = flag == AlignmentOrientation::Forward ? bestShift[0] : bestShift[1];
+                    alignment_nOps[candidateIndex] = flag == AlignmentOrientation::Forward ? opnr[0] : opnr[1];
+                    alignment_isValid[candidateIndex] = flag == AlignmentOrientation::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
                 }else{
-                    bestAlignmentFlags[candidateIndex] = BestAlignment_t::None;
+                    bestAlignmentFlags[candidateIndex] = AlignmentOrientation::None;
                     alignment_isValid[candidateIndex] = false;
                 }
             }else{
-                bestAlignmentFlags[candidateIndex] = BestAlignment_t::None;
+                bestAlignmentFlags[candidateIndex] = AlignmentOrientation::None;
                 alignment_isValid[candidateIndex] = false;
             }
         }
@@ -1124,7 +1124,7 @@ namespace gpu{
                 const unsigned int* __restrict__ candidateDataHiLoTransposed,
                 const int* __restrict__ subjectSequencesLength,
                 const int* __restrict__ candidateSequencesLength,
-                BestAlignment_t* __restrict__ bestAlignmentFlags,
+                AlignmentOrientation* __restrict__ bestAlignmentFlags,
                 int* __restrict__ alignment_overlaps,
                 int* __restrict__ alignment_shifts,
                 int* __restrict__ alignment_nOps,
@@ -1274,7 +1274,7 @@ namespace gpu{
             bool fwd_alignment_isvalid,
             bool revc_alignment_isvalid,
             int subjectlength,
-            int querylength)->BestAlignment_t{
+            int querylength)->AlignmentOrientation{
 
             return choose_best_alignment(
                 fwd_alignment_overlap,
@@ -1478,7 +1478,7 @@ namespace gpu{
                     //         overlapsize[1], bestShift[1], opnr[1], bestShift[1] != -querybases);
                     // }
 
-                    const BestAlignment_t flag = alignmentComparator(
+                    const AlignmentOrientation flag = alignmentComparator(
                         overlapsize[0],
                         overlapsize[1],
                         opnr[0],
@@ -1490,16 +1490,16 @@ namespace gpu{
                     );
 
                     bestAlignmentFlags[candidateIndex] = flag;
-                    alignment_overlaps[candidateIndex] = flag == BestAlignment_t::Forward ? overlapsize[0] : overlapsize[1];
-                    alignment_shifts[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] : bestShift[1];
-                    alignment_nOps[candidateIndex] = flag == BestAlignment_t::Forward ? opnr[0] : opnr[1];
-                    alignment_isValid[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
+                    alignment_overlaps[candidateIndex] = flag == AlignmentOrientation::Forward ? overlapsize[0] : overlapsize[1];
+                    alignment_shifts[candidateIndex] = flag == AlignmentOrientation::Forward ? bestShift[0] : bestShift[1];
+                    alignment_nOps[candidateIndex] = flag == AlignmentOrientation::Forward ? opnr[0] : opnr[1];
+                    alignment_isValid[candidateIndex] = flag == AlignmentOrientation::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
                 }else{
-                    bestAlignmentFlags[candidateIndex] = BestAlignment_t::None;
+                    bestAlignmentFlags[candidateIndex] = AlignmentOrientation::None;
                     alignment_isValid[candidateIndex] = false;
                 }
             }else{
-                bestAlignmentFlags[candidateIndex] = BestAlignment_t::None;
+                bestAlignmentFlags[candidateIndex] = AlignmentOrientation::None;
                 alignment_isValid[candidateIndex] = false;
             }
         }
@@ -1512,7 +1512,7 @@ namespace gpu{
     template<int BLOCKSIZE>
     __global__
     void cuda_filter_alignments_by_mismatchratio_kernel(
-                BestAlignment_t* __restrict__ bestAlignmentFlags,
+                AlignmentOrientation* __restrict__ bestAlignmentFlags,
                 const int* __restrict__ nOps,
                 const int* __restrict__ overlaps,
                 const int* __restrict__ d_candidates_per_subject_prefixsum,
@@ -1550,7 +1550,7 @@ namespace gpu{
             for(int index = threadIdx.x; index < candidatesForSubject; index += blockDim.x) {
 
                 const int candidate_index = firstIndex + index;
-                if(bestAlignmentFlags[candidate_index] != BestAlignment_t::None) {
+                if(bestAlignmentFlags[candidate_index] != AlignmentOrientation::None) {
 
                     const int alignment_overlap = overlaps[candidate_index];
                     const int alignment_nops = nOps[candidate_index];
@@ -1558,7 +1558,7 @@ namespace gpu{
                     const float mismatchratio = float(alignment_nops) / alignment_overlap;
 
                     if(mismatchratio >= 4 * mismatchratioBaseFactor) {
-                        bestAlignmentFlags[candidate_index] = BestAlignment_t::None;
+                        bestAlignmentFlags[candidate_index] = AlignmentOrientation::None;
                     }else{
 
                             #pragma unroll
@@ -1610,7 +1610,7 @@ namespace gpu{
             // Invalidate all alignments for subject with mismatchratio >= mismatchratioThreshold
             for(int index = threadIdx.x; index < candidatesForSubject; index += blockDim.x) {
                 const int candidate_index = firstIndex + index;
-                if(bestAlignmentFlags[candidate_index] != BestAlignment_t::None) {
+                if(bestAlignmentFlags[candidate_index] != AlignmentOrientation::None) {
 
                     const int alignment_overlap = overlaps[candidate_index];
                     const int alignment_nops = nOps[candidate_index];
@@ -1619,7 +1619,7 @@ namespace gpu{
 
                     const bool doRemove = mismatchratio >= mismatchratioThreshold;
                     if(doRemove){
-                        bestAlignmentFlags[candidate_index] = BestAlignment_t::None;
+                        bestAlignmentFlags[candidate_index] = AlignmentOrientation::None;
                     }
                 }
             }
@@ -1642,7 +1642,7 @@ namespace gpu{
         int* d_alignment_shifts,
         int* d_alignment_nOps,
         bool* d_alignment_isValid,
-        BestAlignment_t* d_alignment_best_alignment_flags,
+        AlignmentOrientation* d_alignment_best_alignment_flags,
         const unsigned int* d_subjectSequencesData,
         const unsigned int* d_candidateSequencesData,
         const int* d_subjectSequencesLength,
@@ -1790,7 +1790,7 @@ namespace gpu{
         int* d_alignment_shifts,
         int* d_alignment_nOps,
         bool* d_alignment_isValid,
-        BestAlignment_t* d_alignment_best_alignment_flags,
+        AlignmentOrientation* d_alignment_best_alignment_flags,
         const unsigned int* d_subjectSequencesData,
         const unsigned int* d_candidateSequencesData,
         const int* d_subjectSequencesLength,
@@ -1936,7 +1936,7 @@ namespace gpu{
             int* d_alignment_shifts,
             int* d_alignment_nOps,
             bool* d_alignment_isValid,
-            BestAlignment_t* d_alignment_best_alignment_flags,
+            AlignmentOrientation* d_alignment_best_alignment_flags,
             const unsigned int* d_subjectSequencesData,
             const unsigned int* d_candidateSequencesData,
             const int* d_subjectSequencesLength,
@@ -2179,7 +2179,7 @@ namespace gpu{
             int* d_alignment_shifts,
             int* d_alignment_nOps,
             bool* d_alignment_isValid,
-            BestAlignment_t* d_alignment_best_alignment_flags,
+            AlignmentOrientation* d_alignment_best_alignment_flags,
             const unsigned int* d_subjectSequencesData,
             const unsigned int* d_candidateSequencesData,
             const int* d_subjectSequencesLength,
@@ -2423,7 +2423,7 @@ namespace gpu{
             int* d_alignment_shifts,
             int* d_alignment_nOps,
             bool* d_alignment_isValid,
-            BestAlignment_t* d_alignment_best_alignment_flags,
+            AlignmentOrientation* d_alignment_best_alignment_flags,
             const unsigned int* d_subjectSequencesData,
             const unsigned int* d_candidateSequencesData,
             const int* d_subjectSequencesLength,
@@ -2620,7 +2620,7 @@ namespace gpu{
             int* d_alignment_shifts,
             int* d_alignment_nOps,
             bool* d_alignment_isValid,
-            BestAlignment_t* d_alignment_best_alignment_flags,
+            AlignmentOrientation* d_alignment_best_alignment_flags,
             const unsigned int* d_subjectSequencesData,
             const unsigned int* d_candidateSequencesData,
             const int* d_subjectSequencesLength,
@@ -2809,7 +2809,7 @@ namespace gpu{
 
 
     void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
-                BestAlignment_t* d_bestAlignmentFlags,
+                AlignmentOrientation* d_bestAlignmentFlags,
                 const int* d_nOps,
                 const int* d_overlaps,
                 const int* d_candidates_per_subject_prefixsum,
@@ -2910,7 +2910,7 @@ namespace gpu{
             int* d_indicesOfGoodCandidates,
             int* d_numIndicesPerAnchor,
             int* d_totalNumIndices,
-            const BestAlignment_t* d_alignmentFlags,
+            const AlignmentOrientation* d_alignmentFlags,
             const int* d_candidates_per_subject,
             const int* d_candidates_per_subject_prefixsum,
             const int* d_anchorIndicesOfCandidates,
