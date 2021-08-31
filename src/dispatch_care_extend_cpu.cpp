@@ -8,13 +8,16 @@
 #include <sequencehelpers.hpp>
 #include <cpuminhasherconstruction.hpp>
 #include <ordinaryminhasher.hpp>
-
+#include <sortserializedresults.hpp>
 
 #include <chunkedreadstorageconstruction.hpp>
 #include <chunkedreadstorage.hpp>
 
 #include <readextension_cpu.hpp>
+#include <extendedread.hpp>
+#include <extensionresultoutput.hpp>
 #include <contiguousreadstorage.hpp>
+
 #include <vector>
 #include <iostream>
 #include <mutex>
@@ -183,6 +186,9 @@ namespace care{
 
         step2Timer.print();
 
+        std::cerr << "Constructed " << partialResults.size() << " extensions. ";
+        std::cerr << "They occupy a total of " << (partialResults.dataBytes() + partialResults.offsetBytes()) << " bytes\n";
+
         minhasherAndType.first.reset();
         cpuMinhasher = nullptr;        
         cpuReadStorage.reset();
@@ -190,9 +196,9 @@ namespace care{
         const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
         const auto partialResultMemUsage = partialResults.getMemoryInfo();
 
-        std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
-        std::cerr << "memoryLimitOption = " << memoryOptions.memoryTotalLimit << "\n";
-        std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
+        // std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
+        // std::cerr << "memoryLimitOption = " << memoryOptions.memoryTotalLimit << "\n";
+        // std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
 
         std::size_t memoryForSorting = std::min(
             availableMemoryInBytes,
@@ -207,6 +213,15 @@ namespace care{
         std::cout << "STEP 3: Constructing output file(s)" << std::endl;
 
         helpers::CpuTimer step3Timer("STEP3");
+
+        helpers::CpuTimer sorttimer("sort_results_by_read_id");
+
+        sortSerializedResultsByReadIdAscending<ExtendedRead>(
+            partialResults,
+            memoryForSorting
+        );
+
+        sorttimer.print();
 
         std::vector<FileFormat> formats;
         for(const auto& inputfile : fileOptions.inputfiles){
@@ -227,15 +242,12 @@ namespace care{
         const std::string extendedOutputfile = fileOptions.outputdirectory + "/" + fileOptions.extendedReadsOutputfilename;
 
         constructOutputFileFromExtensionResults(
-            fileOptions.tempdirectory,
             fileOptions.inputfiles,            
             partialResults, 
-            memoryForSorting,
             outputFormat, 
             extendedOutputfile,
             outputfiles,
             fileOptions.pairType, 
-            false,
             fileOptions.mergedoutput
         );
 

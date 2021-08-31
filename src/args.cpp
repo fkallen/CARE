@@ -3,7 +3,7 @@
 #include <util.hpp>
 #include <config.hpp>
 #include <readlibraryio.hpp>
-
+#include <memorymanagement.hpp>
 #include <filehelpers.hpp>
 
 #include <iostream>

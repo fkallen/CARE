@@ -8,7 +8,7 @@
 #include <bestalignment.hpp>
 
 #include <sequencehelpers.hpp>
-#include <correctionresultprocessing.hpp>
+#include <correctedsequence.hpp>
 
 #include <hpc_helpers.cuh>
 #include <config.hpp>
@@ -293,7 +293,7 @@ namespace gpu{
     __global__
     void msaCorrectCandidatesWithForestKernel(
         char* __restrict__ correctedCandidates,
-        TempCorrectedSequence::EncodedEdit* __restrict__ d_editsPerCorrectedCandidate,
+        EncodedCorrectionEdit* __restrict__ d_editsPerCorrectedCandidate,
         int* __restrict__ d_numEditsPerCorrectedCandidate,
         GPUMultiMSA multiMSA,
         GpuClf gpuForest,
@@ -695,7 +695,7 @@ namespace gpu{
     __global__
     void msaCorrectCandidatesKernel(
         char* __restrict__ correctedCandidates,
-        TempCorrectedSequence::EncodedEdit* __restrict__ d_editsPerCorrectedCandidate,
+        EncodedCorrectionEdit* __restrict__ d_editsPerCorrectedCandidate,
         int* __restrict__ d_numEditsPerCorrectedCandidate,
         GPUMultiMSA multiMSA,
         const int* __restrict__ shifts,
@@ -736,8 +736,8 @@ namespace gpu{
 
         char* const shared_correctedCandidate = (char*)(dynamicsmem + dynamicsmemSequencePitchInInts * groupIdInBlock);
 
-        TempCorrectedSequence::EncodedEdit* const shared_Edits 
-            = (TempCorrectedSequence::EncodedEdit*)((dynamicsmem + dynamicsmemSequencePitchInInts * groupsPerBlock) 
+        EncodedCorrectionEdit* const shared_Edits 
+            = (EncodedCorrectionEdit*)((dynamicsmem + dynamicsmemSequencePitchInInts * groupsPerBlock) 
                 + smemPitchEditsInInts * groupIdInBlock);
 
         const int loopEnd = *numCandidatesToBeCorrected;
@@ -820,7 +820,7 @@ namespace gpu{
                     if(currentNumEdits + g.size() <= maxEdits){
                         const int myEditOutputPos = g.thread_rank() + currentNumEdits;
                         if(myEditOutputPos < maxEdits){
-                            const auto theEdit = TempCorrectedSequence::EncodedEdit{posInSequence, correctedNuc};
+                            const auto theEdit = EncodedCorrectionEdit{posInSequence, correctedNuc};
                             //myEdits[myEditOutputPos] = theEdit;
                             //shared_Edits[groupIdInBlock][myEditOutputPos] = theEdit;
                             shared_Edits[myEditOutputPos] = theEdit;
@@ -853,7 +853,7 @@ namespace gpu{
                         if(currentNumEdits + total <= maxEdits){
                             const int myEditOutputPos = prefix + currentNumEdits;
                             if(myEditOutputPos < maxEdits){
-                                const auto theEdit = TempCorrectedSequence::EncodedEdit{posInSequence, correctedNuc};
+                                const auto theEdit = EncodedCorrectionEdit{posInSequence, correctedNuc};
                                 //myEdits[myEditOutputPos] = theEdit;
                                 //shared_Edits[groupIdInBlock][myEditOutputPos] = theEdit;
                                 shared_Edits[myEditOutputPos] = theEdit;
@@ -911,8 +911,8 @@ namespace gpu{
 
                 int* const myNumEdits = d_numEditsPerCorrectedCandidate + destinationIndex;
 
-                TempCorrectedSequence::EncodedEdit* const myEdits 
-                    = (TempCorrectedSequence::EncodedEdit*)(((char*)d_editsPerCorrectedCandidate) + destinationIndex * editsPitchInBytes);
+                EncodedCorrectionEdit* const myEdits 
+                    = (EncodedCorrectionEdit*)(((char*)d_editsPerCorrectedCandidate) + destinationIndex * editsPitchInBytes);
 
                 if(shared_numEditsOfCandidate[groupIdInBlock] <= maxEdits){
                     const int numEdits = shared_numEditsOfCandidate[groupIdInBlock];
@@ -921,8 +921,8 @@ namespace gpu{
                         *myNumEdits = numEdits;
                     }
 
-                    const int fullInts = (numEdits * sizeof(TempCorrectedSequence::EncodedEdit)) / sizeof(int);
-                    static_assert(sizeof(TempCorrectedSequence::EncodedEdit) * 2 == sizeof(int), "");
+                    const int fullInts = (numEdits * sizeof(EncodedCorrectionEdit)) / sizeof(int);
+                    static_assert(sizeof(EncodedCorrectionEdit) * 2 == sizeof(int), "");
 
                     for(int i = tgroup.thread_rank(); i < fullInts; i += tgroup.size()) {
                         ((int*)myEdits)[i] = ((int*)shared_Edits)[i];
@@ -952,7 +952,7 @@ namespace gpu{
     template<bool isCompactCorrection, int groupsize>
     __global__
     void constructSequenceCorrectionResultsKernel(
-        TempCorrectedSequence::EncodedEdit* __restrict__ d_edits,
+        EncodedCorrectionEdit* __restrict__ d_edits,
         int* __restrict__ d_numEditsPerCorrection,
         int doNotUseEditsValue,
         const int* __restrict__ d_indicesOfUncorrectedSequences,
@@ -991,7 +991,7 @@ namespace gpu{
             const unsigned int* const encodedUncorrectedSequence = d_uncorrectedEncodedSequences + encodedSequencePitchInInts * indexOfUncorrected;
             const char* const decodedCorrectedSequence = d_correctedSequences + decodedSequencePitchInBytes * indexOfCorrected;
 
-            TempCorrectedSequence::EncodedEdit* const myEditsGlobal = (TempCorrectedSequence::EncodedEdit*)(((char*)d_edits) + editsPitchInBytes * indexOutput);
+            EncodedCorrectionEdit* const myEditsGlobal = (EncodedCorrectionEdit*)(((char*)d_edits) + editsPitchInBytes * indexOutput);
 
             if(thisSequenceContainsN){
                 if(group.thread_rank() == 0){
@@ -1019,7 +1019,7 @@ namespace gpu{
                     if(currentNumEdits + g.size() <= maxEdits){
                         const int myEditOutputPos = g.thread_rank() + currentNumEdits;
                         if(myEditOutputPos < maxEdits){
-                            const auto theEdit = TempCorrectedSequence::EncodedEdit{posInSequence, correctedNuc};
+                            const auto theEdit = EncodedCorrectionEdit{posInSequence, correctedNuc};
                             myEditsGlobal[myEditOutputPos] = theEdit;
                         }
                     }
@@ -1050,7 +1050,7 @@ namespace gpu{
                         if(currentNumEdits + total <= maxEdits){
                             const int myEditOutputPos = prefix + currentNumEdits;
                             if(myEditOutputPos < maxEdits){
-                                const auto theEdit = TempCorrectedSequence::EncodedEdit{posInSequence, correctedNuc};
+                                const auto theEdit = EncodedCorrectionEdit{posInSequence, correctedNuc};
                                 myEditsGlobal[myEditOutputPos] = theEdit;
                             }
                         }
@@ -1108,8 +1108,8 @@ namespace gpu{
                         *myNumEditsGlobal = *myNumEditsShared;
                     }
 
-                    // const int fullInts = (numEdits * sizeof(TempCorrectedSequence::EncodedEdit)) / sizeof(int);
-                    // static_assert(sizeof(TempCorrectedSequence::EncodedEdit) * 2 == sizeof(int), "");
+                    // const int fullInts = (numEdits * sizeof(EncodedCorrectionEdit)) / sizeof(int);
+                    // static_assert(sizeof(EncodedCorrectionEdit) * 2 == sizeof(int), "");
 
                     // for(int i = tgroup.thread_rank(); i < fullInts; i += tgroup.size()) {
                     //     ((int*)myEdits)[i] = ((int*)shared_Edits)[i];
@@ -1290,7 +1290,7 @@ namespace gpu{
 
     void callMsaCorrectCandidatesWithForestKernel(
         char* d_correctedCandidates,
-        TempCorrectedSequence::EncodedEdit* d_editsPerCorrectedCandidate,
+        EncodedCorrectionEdit* d_editsPerCorrectedCandidate,
         int* d_numEditsPerCorrectedCandidate,
         GPUMultiMSA multiMSA,
         GpuForest::Clf gpuForest,
@@ -1540,7 +1540,7 @@ namespace gpu{
 
     void callCorrectCandidatesKernel_async(
         char* __restrict__ correctedCandidates,
-        TempCorrectedSequence::EncodedEdit* __restrict__ d_editsPerCorrectedCandidate,
+        EncodedCorrectionEdit* __restrict__ d_editsPerCorrectedCandidate,
         int* __restrict__ d_numEditsPerCorrectedCandidate,
         GPUMultiMSA multiMSA,
         const int* __restrict__ shifts,
@@ -1674,7 +1674,7 @@ namespace gpu{
 
 
     void callConstructSequenceCorrectionResultsKernel(
-        TempCorrectedSequence::EncodedEdit* d_edits,
+        EncodedCorrectionEdit* d_edits,
         int* d_numEditsPerCorrection,
         int doNotUseEditsValue,
         const int* d_indicesOfUncorrectedSequences,

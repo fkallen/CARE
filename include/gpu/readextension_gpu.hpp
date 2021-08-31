@@ -4,21 +4,14 @@
 
 #include <config.hpp>
 #include <options.hpp>
-#include <memoryfile.hpp>
+#include <serializedobjectstorage.hpp>
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/gpureadstorage.cuh>
-#include <correctionresultprocessing.hpp>
-#include <extensionresultprocessing.hpp>
-
-#include <gpu/gpuminhasher.cuh>
-
-#include <vector>
 
 namespace care{
 namespace gpu{
     
-    MemoryFileFixedSize<ExtendedRead> 
-    extend_gpu(
+    SerializedObjectStorage extend_gpu(
         const GoodAlignmentProperties& goodAlignmentProperties,
         const CorrectionOptions& correctionOptions,
         const ExtensionOptions& extensionOptions,

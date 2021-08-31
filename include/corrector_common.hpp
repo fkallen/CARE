@@ -2,7 +2,7 @@
 #define CARE_CORRECTOR_COMMON_HPP
 
 #include <config.hpp>
-#include <correctionresultprocessing.hpp>
+#include <correctedsequence.hpp>
 
 #include <algorithm>
 #include <cstddef>

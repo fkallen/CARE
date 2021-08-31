@@ -1,15 +1,17 @@
-#include <extensionresultprocessing.hpp>
+#include <extensionresultoutput.hpp>
+#include <extendedread.hpp>
 
 #include <hpc_helpers.cuh>
-#include <memoryfile.hpp>
 #include <readlibraryio.hpp>
 #include <concurrencyhelpers.hpp>
+#include <serializedobjectstorage.hpp>
 
 #include <string>
 #include <vector>
 #include <cassert>
 #include <sstream>
 #include <future>
+#include <optional>
 
 namespace care{
 
@@ -17,17 +19,15 @@ namespace care{
     Write reads which were extended to extendedOutputfile.
     Write reads which did not grow to outputfiles
 */
-template<class ResultType, class MemoryFile_t, class Combiner, class ReadIdComparator>
-void mergeExtensionResultsWithOriginalReads_multithreaded(
-    const std::string& tempdir,
+
+template<class ResultType, class Combiner, class ReadIdComparator>
+void mergeSerializedExtensionResultsWithOriginalReads_multithreaded(
     const std::vector<std::string>& originalReadFiles,
-    MemoryFile_t& partialResults, 
-    std::size_t memoryForSorting,
+    SerializedObjectStorage& partialResults, 
     FileFormat outputFormat,
     const std::string& extendedOutputfile,
     const std::vector<std::string>& outputfiles,
     SequencePairType pairmode,
-    bool isSorted,
     Combiner combineResultsWithRead, /* combineResultsWithRead(std::vector<ResultType>& in, ReadWithId& in_out) */
     ReadIdComparator origIdResultIdLessThan
 ){
@@ -43,7 +43,7 @@ void mergeExtensionResultsWithOriginalReads_multithreaded(
 
             for(const auto& ifname : originalReadFiles){
                 std::ifstream instream(ifname, std::ios::binary);
-                if(instream && instream.rdbuf()->in_avail() > 0){
+                if(bool(instream) && instream.rdbuf()->in_avail() > 0){
                     outstream << instream.rdbuf();
                 }
             }
@@ -56,44 +56,13 @@ void mergeExtensionResultsWithOriginalReads_multithreaded(
                 }
 
                 std::ifstream instream(originalReadFiles[i], std::ios::binary);
-                if(instream && instream.rdbuf()->in_avail() > 0){
+                if(bool(instream) && instream.rdbuf()->in_avail() > 0){
                     outstream << instream.rdbuf();
                 }
             }
         }
 
         return;
-    }
-
-
-
-    if(!isSorted){
-
-        auto elementcomparator = [](const auto& l, const auto& r){
-            return l.getReadId() < r.getReadId();
-        };
-
-        auto extractKey = [](const std::uint8_t* ptr){
-            using ValueType = typename MemoryFile_t::ValueType;
-
-            const read_number id = ValueType::parseReadId(ptr);
-            
-            return id;
-        };
-
-        auto keyComparator = std::less<read_number>{};
-
-        helpers::CpuTimer timer("sort_results_by_read_id");
-
-        bool fastSuccess = false; //partialResults.template trySortByKeyFast<read_number>(extractKey, keyComparator, memoryForSorting);
-
-        if(!fastSuccess){            
-            partialResults.sort(tempdir, memoryForSorting, extractKey, keyComparator, elementcomparator);
-        }else{
-            std::cerr << "fast sort worked!\n";
-        }
-
-        timer.print();
     }
 
     helpers::CpuTimer mergetimer("merging");
@@ -120,15 +89,17 @@ void mergeExtensionResultsWithOriginalReads_multithreaded(
     auto decoderFuture = std::async(std::launch::async,
         [&](){
             
-
-            auto partialResultsReader = partialResults.makeReader();
-
             // std::chrono::time_point<std::chrono::system_clock> abegin, aend;
             // std::chrono::duration<double> adelta{0};
 
             // TIMERSTARTCPU(tcsparsing);
 
-            while(partialResultsReader.hasNext()){
+            using SerializedType = ExtendedRead;
+
+            read_number previousId = 0;
+            std::size_t itemnumber = 0;
+
+            while(itemnumber < partialResults.size()){
                 ResultTypeBatch* batch = freeTcsBatches.pop();
 
                 //abegin = std::chrono::system_clock::now();
@@ -136,9 +107,20 @@ void mergeExtensionResultsWithOriginalReads_multithreaded(
                 batch->items.resize(decoder_maxbatchsize);
 
                 int batchsize = 0;
-                while(batchsize < decoder_maxbatchsize && partialResultsReader.hasNext()){
-                    batch->items[batchsize] = *(partialResultsReader.next());
+                while(batchsize < decoder_maxbatchsize && itemnumber < partialResults.size()){
+                    const std::uint8_t* serializedPtr = partialResults.getPointer(itemnumber);
+                    SerializedType deserialized;
+                    deserialized.copyFromContiguousMemory(serializedPtr);
+
+                    batch->items[batchsize] = std::move(deserialized);
+
+                    if(batch->items[batchsize].readId < previousId){
+                        std::cerr << "Error, results not sorted. itemnumber = " << itemnumber << ", previousId = " << previousId << ", currentId = " << batch->items[batchsize].readId << "\n";
+                        assert(false);
+                    }
                     batchsize++;
+                    itemnumber++;
+                    previousId = batch->items[batchsize].readId;
                 }
 
                 // aend = std::chrono::system_clock::now();
@@ -438,45 +420,16 @@ void mergeExtensionResultsWithOriginalReads_multithreaded(
 
 
 
+
+
+
+
+
 void writeExtensionResultsToFile(
-    const std::string& tempdir,
-    MemoryFileFixedSize<ExtendedRead>& partialResults, 
-    std::size_t memoryForSorting,
+    SerializedObjectStorage& partialResults, 
     FileFormat outputFormat,
-    const std::string& outputfile,
-    bool isSorted
+    const std::string& outputfile
 ){
-
-    if(!isSorted){
-
-        auto elementcomparator = [](const auto& l, const auto& r){
-            return l.getReadId() < r.getReadId();
-        };
-
-        auto extractKey = [](const std::uint8_t* ptr){
-            using ValueType = typename MemoryFileFixedSize<ExtendedRead>::ValueType;
-
-            const read_number id = ValueType::parseReadId(ptr);
-            
-            return id;
-        };
-
-        auto keyComparator = std::less<read_number>{};
-
-        helpers::CpuTimer timer("sort_results_by_read_id");
-
-        bool fastSuccess = false; //partialResults.template trySortByKeyFast<read_number>(extractKey, keyComparator, memoryForSorting);
-
-        if(!fastSuccess){            
-            partialResults.sort(tempdir, memoryForSorting, extractKey, keyComparator, elementcomparator);
-        }else{
-            std::cerr << "fast sort worked!\n";
-        }
-
-        timer.print();
-    }
-
-    auto partialResultsReader = partialResults.makeReader();
 
     std::unique_ptr<SequenceFileWriter> writer = makeSequenceWriter(
         //fileOptions.outputdirectory + "/extensionresult.txt", 
@@ -484,16 +437,15 @@ void writeExtensionResultsToFile(
         outputFormat
     );
 
-    std::cerr << "in mem: " << partialResults.getNumElementsInMemory() << ", in file: " << partialResults.getNumElementsInFile() << "\n";
-
     std::map<ExtendedReadStatus, std::int64_t> statusHistogram;
 
-    const int expectedNumber = partialResults.getNumElementsInMemory() + partialResults.getNumElementsInFile();
+    const int expectedNumber = partialResults.size();
     int actualNumber = 0;
 
-    while(partialResultsReader.hasNext()){        
-
-        ExtendedRead extendedRead = *(partialResultsReader.next());
+    for(std::size_t itemnumber = 0; itemnumber < partialResults.size(); itemnumber++){
+        const std::uint8_t* serializedPtr = partialResults.getPointer(itemnumber);
+        ExtendedRead extendedRead;
+        extendedRead.copyFromContiguousMemory(serializedPtr);
 
         std::stringstream sstream;
         sstream << extendedRead.readId;
@@ -544,6 +496,19 @@ void writeExtensionResultsToFile(
 }
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 std::optional<Read> combineExtendedReadWithOriginalRead(
     std::vector<ExtendedRead>& tmpresults, 
     const ReadWithId& readWithId
@@ -580,52 +545,27 @@ std::optional<Read> combineExtendedReadWithOriginalRead(
 }
 
 
+
+
+
+
 void constructOutputFileFromExtensionResults(
-    const std::string& tempdir,
     const std::vector<std::string>& originalReadFiles,
-    MemoryFileFixedSize<ExtendedRead>& partialResults, 
-    std::size_t memoryForSorting,
+    SerializedObjectStorage& partialResults, 
     FileFormat outputFormat,
     const std::string& extendedOutputfile,
     const std::vector<std::string>& outputfiles,
     SequencePairType pairmode,
-    bool isSorted,
     bool outputToSingleFile
 ){
 
     if(outputToSingleFile){                      
         writeExtensionResultsToFile(
-            tempdir, 
             partialResults, 
-            memoryForSorting, 
             FileFormat::FASTA, //outputFormat,
-            extendedOutputfile, 
-            isSorted
+            extendedOutputfile
         );
     }else{
-        // {
-        //     std::map<ExtendedReadStatus, std::int64_t> statusHistogram2;
-        //     auto partialResultsReader = partialResults.makeReader();
-
-        //     while(partialResultsReader.hasNext()){
-        //         ExtendedRead er = *(partialResultsReader.next());
-        //         statusHistogram2[er.status]++;
-
-        //         if(er.status == ExtendedReadStatus::MSANoExtension){
-        //             //std::cerr << er.readId << "\n";
-        //         }
-        //     }
-
-        //     std::cerr << "should be:\n";
-        //     for(const auto& pair : statusHistogram2){
-        //         switch(pair.first){
-        //             case ExtendedReadStatus::FoundMate: std::cerr << "Found Mate: " << pair.second << "\n"; break;
-        //             case ExtendedReadStatus::LengthAbort: std::cerr << "Too long: " << pair.second << "\n"; break;
-        //             case ExtendedReadStatus::CandidateAbort: std::cerr << "Empty candidate list: " << pair.second << "\n"; break;
-        //             case ExtendedReadStatus::MSANoExtension: std::cerr << "Did not grow: " << pair.second << "\n"; break;
-        //         }
-        //     }
-        // }
 
         auto origIdResultIdLessThan = [&](read_number origId, read_number resultId){
             //return origId < (resultId / 2);
@@ -645,16 +585,13 @@ void constructOutputFileFromExtensionResults(
             return combineExtendedReadWithOriginalRead(tmpresults, readWithId);
         };
 
-        mergeExtensionResultsWithOriginalReads_multithreaded<ExtendedRead>(
-            tempdir,
+        mergeSerializedExtensionResultsWithOriginalReads_multithreaded<ExtendedRead>(
             originalReadFiles,
             partialResults, 
-            memoryForSorting,
             outputFormat,
             extendedOutputfile,
             outputfiles,
             pairmode,
-            isSorted,
             combine,
             origIdResultIdLessThan
         );
@@ -670,6 +607,8 @@ void constructOutputFileFromExtensionResults(
     }
 
 }
+
+
 
 
 }

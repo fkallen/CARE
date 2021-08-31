@@ -20,7 +20,7 @@
 #include <threadpool.hpp>
 
 #include <options.hpp>
-#include <correctionresultprocessing.hpp>
+#include <correctedsequence.hpp>
 #include <memorymanagement.hpp>
 #include <msa.hpp>
 #include <classification.hpp>
@@ -176,13 +176,13 @@ namespace gpu{
 
         PinnedBuffer<int> h_candidate_sequences_lengths;
         PinnedBuffer<int> h_numEditsPerCorrectedanchor;
-        PinnedBuffer<TempCorrectedSequence::EncodedEdit> h_editsPerCorrectedanchor;
+        PinnedBuffer<EncodedCorrectionEdit> h_editsPerCorrectedanchor;
         PinnedBuffer<char> h_corrected_anchors;
         PinnedBuffer<int> h_anchor_sequences_lengths;
         PinnedBuffer<char> h_corrected_candidates;
         PinnedBuffer<int> h_alignment_shifts;
         PinnedBuffer<int> h_numEditsPerCorrectedCandidate;
-        PinnedBuffer<TempCorrectedSequence::EncodedEdit> h_editsPerCorrectedCandidate;
+        PinnedBuffer<EncodedCorrectionEdit> h_editsPerCorrectedCandidate;
         PinnedBuffer<int> h_anchorEditOffsets;
         PinnedBuffer<int> h_correctedAnchorsOffsets;
         PinnedBuffer<int> h_candidateEditOffsets;
@@ -688,7 +688,7 @@ namespace gpu{
                 //Edits and numEdits are stored compact, only for corrected anchors.
                 //they are indexed by positionInVector instead of anchor_index
 
-                std::vector<TempCorrectedSequence::Edit> edits;
+                std::vector<CorrectionEdit> edits;
                             
                 for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
                     const int anchor_index = anchorIndicesToProcess[positionInVector];
@@ -715,7 +715,7 @@ namespace gpu{
                         sequence = my_corrected_anchor_data;
                     }
 
-                    encodeDataIntoEncodedCorrectedSequence(
+                    EncodedTempCorrectedSequence::encodeDataIntoEncodedCorrectedSequence(
                         encodedCorrectionOutput.encodedAnchorCorrections[positionInVector],
                         readId,
                         currentOutput.h_is_high_quality_anchor[anchor_index].hq(),
@@ -740,7 +740,7 @@ namespace gpu{
                 //edits are only present for candidates which use edits and have numEdits > 0
                 //offsets to the edits of candidates are stored in h_candidateEditOffsets
 
-                std::vector<TempCorrectedSequence::Edit> edits;          
+                std::vector<CorrectionEdit> edits;          
 
                 for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
                     
@@ -783,7 +783,7 @@ namespace gpu{
                         sequence = candidate_data;
                     }
 
-                    encodeDataIntoEncodedCorrectedSequence(
+                    EncodedTempCorrectedSequence::encodeDataIntoEncodedCorrectedSequence(
                         encodedCorrectionOutput.encodedCandidateCorrections[positionInVector],
                         candidate_read_id,
                         false,
@@ -910,7 +910,7 @@ namespace gpu{
             qualityPitchInBytes = SDIV(gpuReadStorage->getSequenceLengthUpperBound(), 32) * 32;
             maxNumEditsPerSequence = std::max(1,gpuReadStorage->getSequenceLengthUpperBound() / 7);
             //pad to multiple of 128 bytes
-            editsPitchInBytes = SDIV(maxNumEditsPerSequence * sizeof(TempCorrectedSequence::EncodedEdit), 128) * 128;
+            editsPitchInBytes = SDIV(maxNumEditsPerSequence * sizeof(EncodedCorrectionEdit), 128) * 128;
 
             const std::size_t min_overlap = std::max(
                 1, 
@@ -1180,7 +1180,7 @@ namespace gpu{
         }
 
         void initFixedSizeBuffers(){
-            const std::size_t numEditsAnchors = SDIV(editsPitchInBytes * maxAnchors, sizeof(TempCorrectedSequence::EncodedEdit));          
+            const std::size_t numEditsAnchors = SDIV(editsPitchInBytes * maxAnchors, sizeof(EncodedCorrectionEdit));          
 
             //does not depend on number of candidates
             h_num_total_corrected_candidates.resize(1);
@@ -1252,9 +1252,9 @@ namespace gpu{
                 }
             }
 
-            std::size_t numEditsCandidates = SDIV(editsPitchInBytes * maxCandidates, sizeof(TempCorrectedSequence::EncodedEdit));
+            std::size_t numEditsCandidates = SDIV(editsPitchInBytes * maxCandidates, sizeof(EncodedCorrectionEdit));
 
-            const std::size_t numEditsAnchors = SDIV(editsPitchInBytes * maxAnchors, sizeof(TempCorrectedSequence::EncodedEdit));          
+            const std::size_t numEditsAnchors = SDIV(editsPitchInBytes * maxAnchors, sizeof(EncodedCorrectionEdit));          
 
             //does not depend on number of candidates
             bool outputBuffersReallocated = false;
@@ -1696,7 +1696,7 @@ namespace gpu{
             //copy compacted edits to host
             helpers::call_copy_n_kernel(
                 (const int*)d_editsPerCorrectedanchor2, 
-                thrust::make_transform_iterator(d_totalNumberOfEdits, [] __device__ (const int num){return SDIV(num * sizeof(TempCorrectedSequence::EncodedEdit), sizeof(int));}),//d_totalNumberOfEdits, 
+                thrust::make_transform_iterator(d_totalNumberOfEdits, [] __device__ (const int num){return SDIV(num * sizeof(EncodedCorrectionEdit), sizeof(int));}),//d_totalNumberOfEdits, 
                 (int*)currentOutput->h_editsPerCorrectedanchor.data(), 
                 currentNumAnchors, 
                 stream
@@ -1872,7 +1872,7 @@ namespace gpu{
             //copy compact edits to host
             helpers::call_copy_n_kernel(
                 (const int*)d_editsPerCorrectedCandidate2.data(), 
-                thrust::make_transform_iterator(d_totalNumberOfEdits, [] __device__ (const int num){return SDIV(num * sizeof(TempCorrectedSequence::EncodedEdit), sizeof(int));}),//d_totalNumberOfEdits, 
+                thrust::make_transform_iterator(d_totalNumberOfEdits, [] __device__ (const int num){return SDIV(num * sizeof(EncodedCorrectionEdit), sizeof(int));}),//d_totalNumberOfEdits, 
                 (int*)currentOutput->h_editsPerCorrectedCandidate.data(), 
                 (currentNumCandidates / 10), 
                 stream
@@ -3081,10 +3081,10 @@ namespace gpu{
         DeviceBuffer<AnchorHighQualityFlag> d_is_high_quality_anchor;
         DeviceBuffer<int> d_high_quality_anchor_indices;
         DeviceBuffer<int> d_num_high_quality_anchor_indices; 
-        DeviceBuffer<TempCorrectedSequence::EncodedEdit> d_editsPerCorrectedanchor;
+        DeviceBuffer<EncodedCorrectionEdit> d_editsPerCorrectedanchor;
         DeviceBuffer<int> d_numEditsPerCorrectedanchor;
-        DeviceBuffer<TempCorrectedSequence::EncodedEdit> d_editsPerCorrectedCandidate;
-        DeviceBuffer<TempCorrectedSequence::EncodedEdit> d_editsPerCorrectedCandidate2;
+        DeviceBuffer<EncodedCorrectionEdit> d_editsPerCorrectedCandidate;
+        DeviceBuffer<EncodedCorrectionEdit> d_editsPerCorrectedCandidate2;
         DeviceBuffer<int> d_numEditsPerCorrectedCandidate;
         DeviceBuffer<int> d_indices_of_corrected_anchors;
         DeviceBuffer<int> d_num_indices_of_corrected_anchors;

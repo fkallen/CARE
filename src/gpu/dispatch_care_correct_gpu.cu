@@ -7,8 +7,9 @@
 #include <options.hpp>
 #include <readlibraryio.hpp>
 #include <memorymanagement.hpp>
+#include <correctedsequence.hpp>
+#include <correctionresultoutput.hpp>
 #include <gpu/correct_gpu.hpp>
-#include <correctionresultprocessing.hpp>
 #include <classification.hpp>
 #include <gpu/forest_gpu.cuh>
 
@@ -17,6 +18,7 @@
 #include <chunkedreadstorage.hpp>
 
 #include <rangegenerator.hpp>
+#include <sortserializedresults.hpp>
 
 
 #include <algorithm>
@@ -106,79 +108,7 @@ namespace care{
     }
 
 
-    void loadPartialResultsAndConstructOutput(
-        CorrectionOptions /*correctionOptions*/,
-        RuntimeOptions runtimeOptions,
-        MemoryOptions memoryOptions,
-        FileOptions fileOptions,
-        GoodAlignmentProperties /*goodAlignmentProperties*/,
-        std::string filename
-    ){
-        std::cerr << "loadPartialResultsAndConstructOutput\n";
 
-        MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults{0, fileOptions.tempdirectory + "/" + "MemoryFileFixedSizetmp"};
-
-        std::ifstream is(filename);
-        assert((bool)is);
-
-        partialResults.loadFromStream(is);
-
-        const std::size_t numTemp = partialResults.getNumElementsInMemory() + partialResults.getNumElementsInFile();
-        const std::size_t numTempInMem = partialResults.getNumElementsInMemory();
-        const std::size_t numTempInFile = partialResults.getNumElementsInFile();
-    
-        std::cerr << "Constructed " << numTemp << " corrections. "
-            << numTempInMem << " corrections are stored in memory. "
-            << numTempInFile << " corrections are stored in temporary file\n";
-
-        //Merge corrected reads with input file to generate output file
-
-        const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
-        const auto partialResultMemUsage = partialResults.getMemoryInfo();
-
-        std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
-        std::cerr << "memoryLimitOption = " << memoryOptions.memoryTotalLimit << "\n";
-        std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
-
-        std::size_t memoryForSorting = std::min(
-            availableMemoryInBytes,
-            memoryOptions.memoryTotalLimit - partialResultMemUsage.host
-        );
-
-        if(memoryForSorting > 1*(std::size_t(1) << 30)){
-            memoryForSorting = memoryForSorting - 1*(std::size_t(1) << 30);
-        }
-        std::cerr << "memoryForSorting = " << memoryForSorting << "\n";        
-
-        std::cout << "STEP 3: Constructing output file(s)" << std::endl;
-
-        helpers::CpuTimer step3timer("STEP3");
-
-        std::vector<FileFormat> formats;
-        for(const auto& inputfile : fileOptions.inputfiles){
-            formats.emplace_back(getFileFormat(inputfile));
-        }
-        std::vector<std::string> outputfiles;
-        for(const auto& outputfilename : fileOptions.outputfilenames){
-            outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
-        }
-        constructOutputFileFromCorrectionResults(
-            fileOptions.tempdirectory,
-            fileOptions.inputfiles, 
-            partialResults, 
-            memoryForSorting,
-            formats[0],
-            outputfiles,
-            false,
-            runtimeOptions.showProgress
-        );
-
-        step3timer.print();
-
-        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after output construction");
-
-        std::cout << "Construction of output file(s) finished." << std::endl;
-    }
 
     void performCorrection(
         CorrectionOptions correctionOptions,
@@ -206,20 +136,6 @@ namespace care{
 
         helpers::PeerAccessDebug peerAccess(runtimeOptions.deviceIds, true);
         peerAccess.enableAllPeerAccesses();
-
-        //debug
-        if(0){
-            loadPartialResultsAndConstructOutput(
-                correctionOptions,
-                runtimeOptions,
-                memoryOptions,
-                fileOptions,
-                goodAlignmentProperties,
-                "partialresults1"
-            );
-
-            return;
-        }
 
         
         /*
@@ -432,13 +348,9 @@ namespace care{
         step2timer.print();
 
         std::cout << "Correction throughput : ~" << (gpuReadStorage.getNumberOfReads() / step2timer.elapsed()) << " reads/second.\n";
-        const std::size_t numTemp = partialResults.getNumElementsInMemory() + partialResults.getNumElementsInFile();
-        const std::size_t numTempInMem = partialResults.getNumElementsInMemory();
-        const std::size_t numTempInFile = partialResults.getNumElementsInFile();
     
-        std::cerr << "Constructed " << numTemp << " corrections. "
-            << numTempInMem << " corrections are stored in memory. "
-            << numTempInFile << " corrections are stored in temporary file\n";
+        std::cerr << "Constructed " << partialResults.size() << " corrections. ";
+        std::cerr << "They occupy a total of " << (partialResults.dataBytes() + partialResults.offsetBytes()) << " bytes\n";
 
         //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after correction");
 
@@ -448,11 +360,6 @@ namespace care{
         gpuReadStorage.destroy();
         cpuReadStorage.reset();
 
-        // {
-        //     std::cerr << "Saving partialresults\n";
-        //     std::ofstream os("partialresults1");
-        //     partialResults.saveToStream(os);
-        // }
 
         //Merge corrected reads with input file to generate output file
 
@@ -477,6 +384,15 @@ namespace care{
 
         helpers::CpuTimer step3timer("STEP3");
 
+        helpers::CpuTimer sorttimer("sort_results_by_read_id");
+
+        sortSerializedResultsByReadIdAscending<EncodedTempCorrectedSequence>(
+            partialResults,
+            memoryForSorting
+        );
+
+        sorttimer.print();
+
         std::vector<FileFormat> formats;
         for(const auto& inputfile : fileOptions.inputfiles){
             formats.emplace_back(getFileFormat(inputfile));
@@ -486,13 +402,10 @@ namespace care{
             outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
         }
         constructOutputFileFromCorrectionResults(
-            fileOptions.tempdirectory,
             fileOptions.inputfiles, 
             partialResults, 
-            memoryForSorting,
             formats[0],
             outputfiles,
-            false,
             runtimeOptions.showProgress
         );
 

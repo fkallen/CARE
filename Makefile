@@ -29,7 +29,7 @@ NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-cons
 NVCCFLAGS_DEBUG = -x cu -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_FLAGS)
 
 # This could be modified to compile only for a single architecture to reduce compilation time
-CUDA_ARCH = -gencode=arch=compute_86,code=sm_86
+CUDA_ARCH = -gencode=arch=compute_70,code=sm_70
 #\
 #		-gencode=arch=compute_70,code=sm_70 \
 #		-gencode=arch=compute_80,code=sm_80 \
@@ -42,7 +42,7 @@ LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -lz -ldl
 SOURCES_CORRECT_CPU = \
     src/args.cpp \
     src/correct_cpu.cpp \
-    src/correctionresultprocessing.cpp \
+    src/correctionresultoutput.cpp \
     src/cpu_alignment.cpp \
     src/cpuminhasherconstruction.cpp \
     src/dispatch_care_correct_cpu.cpp \
@@ -54,12 +54,12 @@ SOURCES_CORRECT_CPU = \
 #sources for correct_gpu
 SOURCES_CORRECT_GPU = \
     src/args.cpp \
+	src/correctionresultoutput.cpp \
     src/readlibraryio.cpp \
     src/threadpool.cpp \
     src/gpu/alignmentkernels.cu \
     src/gpu/correct_gpu.cu \
     src/gpu/correctionkernels.cu \
-    src/gpu/correctionresultprocessing_gpu.cu \
     src/gpu/dispatch_care_correct_gpu.cu \
     src/gpu/distributedreadstorage.cu \
     src/gpu/fakegpuminhasherconstruction.cu \
@@ -78,7 +78,7 @@ SOURCES_EXTEND_CPU = \
     src/cpu_alignment.cpp \
     src/cpuminhasherconstruction.cpp \
     src/dispatch_care_extend_cpu.cpp \
-    src/extensionresultprocessing.cpp \
+    src/extensionresultoutput.cpp \
     src/main_extend_cpu.cpp \
     src/msa.cpp \
     src/readextension.cpp \
@@ -88,12 +88,12 @@ SOURCES_EXTEND_CPU = \
 #sources for correct_gpu
 SOURCES_EXTEND_GPU = \
     src/args.cpp \
+    src/extensionresultoutput.cpp \
     src/readlibraryio.cpp \
     src/threadpool.cpp \
     src/gpu/alignmentkernels.cu \
     src/gpu/dispatch_care_extend_gpu.cu \
     src/gpu/distributedreadstorage.cu \
-    src/gpu/extensionresultprocessing_gpu.cu \
     src/gpu/fakegpuminhasherconstruction.cu \
     src/gpu/gpuminhasherconstruction.cu \
     src/gpu/main_extend_gpu.cu \
@@ -208,7 +208,7 @@ $(DIR)/args.o : src/args.cpp
 $(DIR)/correct_cpu.o : src/correct_cpu.cpp
 	$(COMPILE)
 
-$(DIR)/correctionresultprocessing.o : src/correctionresultprocessing.cpp
+$(DIR)/correctionresultoutput.o : src/correctionresultoutput.cpp
 	$(COMPILE)
 
 $(DIR)/cpu_alignment.o : src/cpu_alignment.cpp
@@ -223,7 +223,7 @@ $(DIR)/dispatch_care_correct_cpu.o : src/dispatch_care_correct_cpu.cpp
 $(DIR)/dispatch_care_extend_cpu.o : src/dispatch_care_extend_cpu.cpp
 	$(COMPILE)
 
-$(DIR)/extensionresultprocessing.o : src/extensionresultprocessing.cpp
+$(DIR)/extensionresultoutput.o : src/extensionresultoutput.cpp
 	$(COMPILE)
 
 $(DIR)/main_correct_cpu.o : src/main_correct_cpu.cpp
@@ -256,9 +256,6 @@ $(DIR)/correct_gpu.o : src/gpu/correct_gpu.cu
 $(DIR)/correctionkernels.o : src/gpu/correctionkernels.cu
 	$(CUDA_COMPILE)
 
-$(DIR)/correctionresultprocessing_gpu.o : src/gpu/correctionresultprocessing_gpu.cu
-	$(CUDA_COMPILE)
-
 $(DIR)/dispatch_care_correct_gpu.o : src/gpu/dispatch_care_correct_gpu.cu
 	$(CUDA_COMPILE)
 
@@ -266,9 +263,6 @@ $(DIR)/dispatch_care_extend_gpu.o : src/gpu/dispatch_care_extend_gpu.cu
 	$(CUDA_COMPILE)
 
 $(DIR)/distributedreadstorage.o : src/gpu/distributedreadstorage.cu
-	$(CUDA_COMPILE)
-
-$(DIR)/extensionresultprocessing_gpu.o : src/gpu/extensionresultprocessing_gpu.cu
 	$(CUDA_COMPILE)
 
 $(DIR)/fakegpuminhasherconstruction.o : src/gpu/fakegpuminhasherconstruction.cu

@@ -13,10 +13,9 @@
 #include <msa.hpp>
 #include <qualityscoreweights.hpp>
 #include <classification.hpp>
-#include <correctionresultprocessing.hpp>
 #include <hostdevicefunctions.cuh>
 #include <cpucorrectortask.hpp>
-#include <correctionresultprocessing.hpp>
+#include <correctedsequence.hpp>
 #include <hostdevicefunctions.cuh>
 #include <corrector_common.hpp>
 #include <cpucorrectortask.hpp>

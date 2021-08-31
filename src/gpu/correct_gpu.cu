@@ -11,7 +11,7 @@
 #include <options.hpp>
 #include <readlibraryio.hpp>
 #include <memorymanagement.hpp>
-#include <memoryfile.hpp>
+#include <serializedobjectstorage.hpp>
 #include <threadpool.hpp>
 #include <rangegenerator.hpp>
 #include <concurrencyhelpers.hpp>
@@ -1431,8 +1431,7 @@ private:
 
 
 template<class Minhasher>
-MemoryFileFixedSize<EncodedTempCorrectedSequence> 
-correct_gpu_impl(
+SerializedObjectStorage correct_gpu_impl(
     const GoodAlignmentProperties& goodAlignmentProperties,
     const CorrectionOptions& correctionOptions,
     const RuntimeOptions& runtimeOptions,
@@ -1487,18 +1486,16 @@ correct_gpu_impl(
     std::cerr << "Partial results may occupy " << (memoryForPartialResultsInBytes /1024. / 1024. / 1024.) 
         << " GB in memory. Remaining partial results will be stored in temp directory. \n";
 
-    const std::string tmpfilename{fileOptions.tempdirectory + "/" + "MemoryFileFixedSizetmp"};
-    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfilename);
+    const std::size_t memoryLimitData = memoryForPartialResultsInBytes * 0.75;
+    const std::size_t memoryLimitOffsets = memoryForPartialResultsInBytes * 0.25;
+
+    SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, fileOptions.tempdirectory + "/");
 
     //std::mutex outputstreamlock;
 
     BackgroundThread outputThread;
 
-    auto saveEncodedCorrectedSequence = [&](const EncodedTempCorrectedSequence* encoded){
-        if(!(encoded->isHQ() && encoded->useEdits() && encoded->getNumEdits() == 0)){
-            partialResults.storeElement(encoded);
-        }
-    };
+
 
     auto processResults = [&](
         EncodedCorrectionOutput&& encodedCorrectionOutput
@@ -1513,6 +1510,20 @@ correct_gpu_impl(
             numA,
             numC
         ](){
+            std::vector<std::uint8_t> tempbuffer(256);
+
+            auto saveEncodedCorrectedSequence = [&](const EncodedTempCorrectedSequence* encoded){
+                if(!(encoded->isHQ() && encoded->useEdits() && encoded->getNumEdits() == 0)){
+                    const std::size_t serializedSize = encoded->getSerializedNumBytes();
+                    tempbuffer.resize(serializedSize);
+
+                    auto end = encoded->copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
+                    assert(end != nullptr);
+
+                    partialResults.insert(tempbuffer.data(), end);
+                }
+            };
+
             for(std::size_t i = 0; i < numA; i++){
                 saveEncodedCorrectedSequence(
                     &encodedCorrectionOutput.encodedAnchorCorrections[i]
@@ -1869,8 +1880,6 @@ correct_gpu_impl(
 
     //assert(threadPool.empty());
 
-    partialResults.flush();
-
     // std::ofstream flagsstream(fileOptions.outputfilenames[0] + "_flags");
 
     // for(std::uint64_t i = 0; i < gpuReadStorage->getNumberOfReads(); i++){
@@ -1881,9 +1890,7 @@ correct_gpu_impl(
     return partialResults;
 }
 
-
-MemoryFileFixedSize<EncodedTempCorrectedSequence> 
-correct_gpu(
+SerializedObjectStorage correct_gpu(
     const GoodAlignmentProperties& goodAlignmentProperties,
     const CorrectionOptions& correctionOptions,
     const RuntimeOptions& runtimeOptions,

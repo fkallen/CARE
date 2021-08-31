@@ -8,7 +8,7 @@
 #include <gpu/minhashingkernels.cuh>
 
 #include <bestalignment.hpp>
-#include <correctionresultprocessing.hpp>
+#include <correctedsequence.hpp>
 #include <gpu/forest_gpu.cuh>
 
 #include <config.hpp>
@@ -346,7 +346,7 @@ void callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
 
 void callCorrectCandidatesKernel_async(
     char* __restrict__ correctedCandidates,
-    TempCorrectedSequence::EncodedEdit* __restrict__ d_editsPerCorrectedCandidate,
+    EncodedCorrectionEdit* __restrict__ d_editsPerCorrectedCandidate,
     int* __restrict__ d_numEditsPerCorrectedCandidate,
     GPUMultiMSA multiMSA,
     const int* __restrict__ shifts,
@@ -393,7 +393,7 @@ void callMsaCorrectAnchorsWithForestKernel(
 
 void callMsaCorrectCandidatesWithForestKernel(
     char* d_correctedCandidates,
-    TempCorrectedSequence::EncodedEdit* d_editsPerCorrectedCandidate,
+    EncodedCorrectionEdit* d_editsPerCorrectedCandidate,
     int* d_numEditsPerCorrectedCandidate,
     GPUMultiMSA multiMSA,
     GpuForest::Clf gpuForest,
@@ -420,7 +420,7 @@ void callMsaCorrectCandidatesWithForestKernel(
 );
 
 void callConstructSequenceCorrectionResultsKernel(
-    TempCorrectedSequence::EncodedEdit* d_edits,
+    EncodedCorrectionEdit* d_edits,
     int* d_numEditsPerCorrection,
     int doNotUseEditsValue,
     const int* d_indicesOfUncorrectedSequences,
