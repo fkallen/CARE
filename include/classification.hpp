@@ -89,7 +89,7 @@ struct clf_agent
     {}
 
     void print_anchor(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt) {       
-        if (!coinflip_anchor(rng)) return;
+        if(!coinflip_anchor(rng)) return;
 
         anchor_stream << task.input.anchorReadId << ' ' << i << ' ';
         for (float j: extract_anchor(task, i, opt))
@@ -98,7 +98,7 @@ struct clf_agent
     }
 
     void print_cand(const CpuErrorCorrectorTask& task, int i, const CorrectionOptions& opt, size_t cand, size_t offset) {       
-        if (!coinflip_cands(rng)) return;
+        if(!coinflip_cands(rng)) return;
 
         cands_stream << task.candidateReadIds[cand] << ' ' << (task.alignmentFlags[cand]==AlignmentOrientation::ReverseComplement?-i-1:i) << ' ';
         for (float j: extract_cands(task, i, opt, cand, offset))
@@ -117,14 +117,20 @@ struct clf_agent
     }
 
     void flush() {
-        #pragma omp critical
-        {
-            if (anchor_file)
+        if (anchor_file && anchor_stream.peek() != decltype(anchor_stream)::traits_type::eof()) {
+            #pragma omp critical
+            {
                 *anchor_file << anchor_stream.rdbuf();
-            if (cands_file)
-                *cands_file << cands_stream.rdbuf();
+            }
         }
         anchor_stream = std::stringstream();
+
+        if (cands_file && cands_stream.peek() != decltype(cands_stream)::traits_type::eof()) {
+            #pragma omp critical
+            {
+                *cands_file << cands_stream.rdbuf();
+            }
+        }
         cands_stream = std::stringstream();
     }
 };
