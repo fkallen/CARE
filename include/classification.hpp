@@ -63,9 +63,6 @@ struct clf_agent
     AnchorExtractor extract_anchor;
     CandsExtractor extract_cands;
 
-    //debug
-    // size_t counter = 0;
-
     clf_agent(const CorrectionOptions& c_opts, const FileOptions& f_opts) :
         classifier_anchor(c_opts.correctionType == CorrectionType::Forest ? std::make_shared<AnchorClf>(f_opts.mlForestfileAnchor, c_opts.thresholdAnchor) : nullptr),
         classifier_cands(c_opts.correctionTypeCands == CorrectionType::Forest ? std::make_shared<CandClf>(f_opts.mlForestfileCands, c_opts.thresholdCands) : nullptr),
@@ -92,11 +89,7 @@ struct clf_agent
     {}
 
     void print_anchor(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt) {       
-        bool b = coinflip_anchor(rng);
-        if (!b) {
-            // std::cerr << "anchor sample rejected" << std::endl;
-            return;
-        }
+        if(!coinflip_anchor(rng)) return;
 
         anchor_stream << task.input.anchorReadId << ' ' << i << ' ';
         for (float j: extract_anchor(task, i, opt))
@@ -105,19 +98,12 @@ struct clf_agent
     }
 
     void print_cand(const CpuErrorCorrectorTask& task, int i, const CorrectionOptions& opt, size_t cand, size_t offset) {       
-        bool b = coinflip_cands(rng);
-        if (b) {
-            // std::cerr << 1 << std::flush;
-        }
-        else {
-            // std::cerr << 0 << std::flush;
-            return;
-        }
+        if(!coinflip_cands(rng)) return;
+
         cands_stream << task.candidateReadIds[cand] << ' ' << (task.alignmentFlags[cand]==BestAlignment_t::ReverseComplement?-i-1:i) << ' ';
         for (float j: extract_cands(task, i, opt, cand, offset))
             cands_stream << j << ' ';
         cands_stream << '\n';
-        // ++counter;
     }
 
     template<typename... Args>
@@ -131,7 +117,7 @@ struct clf_agent
     }
 
     void flush() {
-        if (anchor_file && anchor_stream.peek() != std::stringstream::traits_type::eof()) {
+        if (anchor_file && anchor_stream.peek() != decltype(anchor_stream)::traits_type::eof()) {
             #pragma omp critical
             {
                 *anchor_file << anchor_stream.rdbuf();
@@ -139,8 +125,7 @@ struct clf_agent
         }
         anchor_stream = std::stringstream();
 
-
-        if (cands_file && cands_stream.peek() != std::stringstream::traits_type::eof()) {
+        if (cands_file && cands_stream.peek() != decltype(cands_stream)::traits_type::eof()) {
             #pragma omp critical
             {
                 *cands_file << cands_stream.rdbuf();
