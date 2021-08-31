@@ -1734,6 +1734,7 @@ correct_gpu_impl(
                     ));
 
                     threadsForDeviceWithGpuTables--;
+                    availableThreads--;
                 }
             }else{
 
@@ -1755,6 +1756,7 @@ correct_gpu_impl(
                     }
 
                     pipelineConfig.numHashers += threadsForDevice;
+                    threadsForDevice = 0;
                     #else
                     pipelineConfig.numOutputConstructors = 0; //always 0
                     pipelineConfig.numCorrectors = 13;
