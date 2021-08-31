@@ -6,6 +6,7 @@
 #include <gpu/kernellaunch.hpp>
 #include <gpu/kernels.hpp>
 #include <hpc_helpers.cuh>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <cub/cub.cuh>
 
@@ -54,7 +55,7 @@ namespace gpu{
             d_columnProperties(alloc){
 
             int deviceId;
-            cudaGetDevice(&deviceId); CUERR;
+            CUDACHECK(cudaGetDevice(&deviceId));
             kernelLaunchHandle = gpu::make_kernel_launch_handle(deviceId);
 
             pinnedValue.resize(1);
@@ -64,7 +65,7 @@ namespace gpu{
             const int* d_alignment_overlaps,
             const int* d_alignment_shifts,
             const int* d_alignment_nOps,
-            const BestAlignment_t* d_alignment_best_alignment_flags,
+            const AlignmentOrientation* d_alignment_best_alignment_flags,
             const int* d_candidatePositionsInSegments,
             const int* d_numCandidatePositionsInSegments,
             const int* d_segmentBeginOffsets,
@@ -76,7 +77,7 @@ namespace gpu{
             const unsigned int* d_candidateSequences,
             const char* d_candidateQualities,
             const bool* d_isPairedCandidate,
-            int numCandidates,
+            int maxNumCandidates,
             const int* d_numAnchors,
             std::size_t encodedSequencePitchInInts,
             std::size_t qualityPitchInBytes,
@@ -85,6 +86,7 @@ namespace gpu{
             MSAColumnCount maximumMsaWidth, // upper bound for number of columns in a single msa. must be large enough to actually fit the data.
             cudaStream_t stream
         ){
+            //std::cerr << "thread " << std::this_thread::get_id() << " msa construct, stream " << stream << "\n";
             initializeBuffers(
                 maximumMsaWidth, 
                 numAnchors, 
@@ -116,12 +118,116 @@ namespace gpu{
                 d_numAnchors,
                 desiredAlignmentMaxErrorRate,
                 numAnchors,
-                numCandidates,
+                maxNumCandidates,
                 useQualityScores,
                 encodedSequencePitchInInts,
                 qualityPitchInBytes,
                 stream,
                 kernelLaunchHandle
+            );
+        }
+
+        void refine(
+            int* d_newCandidatePositionsInSegments,
+            int* d_newNumCandidatePositionsInSegments,
+            int* d_newNumCandidates,
+            const int* d_alignment_overlaps,
+            const int* d_alignment_shifts,
+            const int* d_alignment_nOps,
+            const AlignmentOrientation* d_alignment_best_alignment_flags,
+            int* d_candidatePositionsInSegments,
+            int* d_numCandidatePositionsInSegments,
+            const int* d_segmentBeginOffsets,
+            const int* d_anchorSequencesLength,
+            const unsigned int* d_anchorSequences,
+            const char* d_anchorQualities,
+            int numAnchors,
+            const int* d_candidateSequencesLength,
+            const unsigned int* d_candidateSequences,
+            const char* d_candidateQualities,
+            const bool* d_isPairedCandidate,
+            int maxNumCandidates,
+            const int* d_numAnchors,
+            std::size_t encodedSequencePitchInInts,
+            std::size_t qualityPitchInBytes,
+            bool useQualityScores,
+            float desiredAlignmentMaxErrorRate,
+            int dataset_coverage,
+            int numIterations,
+            cudaStream_t stream
+        ){
+            //std::cerr << "thread " << std::this_thread::get_id() << " msa refine, stream " << stream << "\n";
+
+            CachedDeviceUVector<bool> d_temp(maxNumCandidates, stream, *cubAllocator);
+
+            callMsaCandidateRefinementKernel_multiiter_async(
+                d_newCandidatePositionsInSegments,
+                d_newNumCandidatePositionsInSegments,
+                d_newNumCandidates,
+                multiMSA,
+                d_alignment_best_alignment_flags,
+                d_alignment_shifts,
+                d_alignment_nOps,
+                d_alignment_overlaps,
+                d_anchorSequences,
+                d_candidateSequences,
+                d_isPairedCandidate,
+                d_anchorSequencesLength,
+                d_candidateSequencesLength,
+                d_anchorQualities,
+                d_candidateQualities,
+                d_temp.data(),
+                d_segmentBeginOffsets,
+                d_numAnchors,
+                desiredAlignmentMaxErrorRate,
+                numAnchors,
+                maxNumCandidates,
+                useQualityScores,
+                encodedSequencePitchInInts,
+                qualityPitchInBytes,
+                d_candidatePositionsInSegments,
+                d_numCandidatePositionsInSegments,
+                dataset_coverage,
+                numIterations,
+                stream,
+                kernelLaunchHandle
+            );
+        }
+
+        void computeConsensusQuality(
+            char* d_consensusQuality,
+            int consensusQualityPitchInBytes,
+            cudaStream_t stream
+        ){
+            callComputeMsaConsensusQualityKernel(
+                d_consensusQuality,
+                consensusQualityPitchInBytes,
+                multiMSA,
+                stream
+            );
+        }
+
+        void computeConsensus(
+            char* d_consensus,
+            int consensusPitchInBytes,
+            cudaStream_t stream
+        ){
+            callComputeDecodedMsaConsensusKernel(
+                d_consensus,
+                consensusPitchInBytes,
+                multiMSA,
+                stream
+            );
+        }
+
+        void computeMsaSizes(
+            int* d_sizes,
+            cudaStream_t stream
+        ){
+            callComputeMsaSizesKernel(
+                d_sizes,
+                multiMSA,
+                stream
             );
         }
 
@@ -182,15 +288,15 @@ namespace gpu{
                     stream
                 );
 
-                cudaMemcpyAsync(
+                CUDACHECK(cudaMemcpyAsync(
                     pinnedValue.data(),
                     d_maxMsaWidth.data(),
                     sizeof(int),
                     D2H,
                     stream
-                ); CUERR;
+                ));
 
-                cudaStreamSynchronize(stream); CUERR;
+                CUDACHECK(cudaStreamSynchronize(stream));
 
                 columnPitchInElements = *pinnedValue;
             }else{

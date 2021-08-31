@@ -2,8 +2,8 @@
 
 #include <gpu/kernels.hpp>
 #include <hostdevicefunctions.cuh>
-
-#include <bestalignment.hpp>
+#include <gpu/cudaerrorcheck.cuh>
+#include <alignmentorientation.hpp>
 
 #include <sequencehelpers.hpp>
 
@@ -96,6 +96,55 @@ namespace gpu{
         }
     }
 
+    __global__
+    void computeMsaConsensusQualityKernel(
+        char* consensusQuality,
+        int consensusQualityPitchInBytes,
+        GPUMultiMSA multiMSA
+    ){
+        auto group = cg::this_thread_block();
+
+        for(int t = blockIdx.x; t < multiMSA.numMSAs; t += gridDim.x){
+            const gpu::GpuSingleMSA singleMSA = multiMSA.getSingleMSA(t);
+            singleMSA.computeConsensusQuality(
+                group, 
+                consensusQuality + t * consensusQualityPitchInBytes, 
+                consensusQualityPitchInBytes
+            );
+        }
+    }
+
+    __global__
+    void computeDecodedMsaConsensusKernel(
+        char* consensus,
+        int consensusPitchInBytes,
+        GPUMultiMSA multiMSA
+    ){
+        auto group = cg::this_thread_block();
+
+        for(int t = blockIdx.x; t < multiMSA.numMSAs; t += gridDim.x){
+            const gpu::GpuSingleMSA singleMSA = multiMSA.getSingleMSA(t);
+            singleMSA.computeDecodedConsensus(
+                group, 
+                consensus + t * consensusPitchInBytes, 
+                consensusPitchInBytes
+            );
+        }
+    }
+
+    __global__
+    void computeMsaSizesKernel(
+        int* sizes,
+        GPUMultiMSA multiMSA
+    ){
+
+        for(int t = threadIdx.x + blockIdx.x * blockDim.x; t < multiMSA.numMSAs; t += gridDim.x * blockDim.x){
+            const gpu::GpuSingleMSA singleMSA = multiMSA.getSingleMSA(t);
+
+            sizes[t] = singleMSA.computeSize();
+        }
+    }
+
 
 
     #ifdef __CUDACC_DEBUG__
@@ -122,7 +171,7 @@ namespace gpu{
         const int* __restrict__ overlaps,
         const int* __restrict__ shifts,
         const int* __restrict__ nOps,
-        const BestAlignment_t* __restrict__ bestAlignmentFlags,
+        const AlignmentOrientation* __restrict__ bestAlignmentFlags,
         const int* __restrict__ anchorLengths,
         const int* __restrict__ candidateLengths,
         const int* __restrict__ indices,
@@ -178,7 +227,7 @@ namespace gpu{
                 const int* const myOverlaps = overlaps + globalCandidateOffset;
                 const int* const myShifts = shifts + globalCandidateOffset;
                 const int* const myNops = nOps + globalCandidateOffset;
-                const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalCandidateOffset;
+                const AlignmentOrientation* const myAlignmentFlags = bestAlignmentFlags + globalCandidateOffset;
                 const int subjectLength = anchorLengths[subjectIndex];
                 const int* const myCandidateLengths = candidateLengths + globalCandidateOffset;
                 const int* const myIndices = indices + globalCandidateOffset;
@@ -299,7 +348,7 @@ namespace gpu{
         int* __restrict__ d_newNumIndicesPerSubject,
         int* __restrict__ d_newNumIndices,
         GPUMultiMSA multiMSA,
-        const BestAlignment_t* __restrict__ bestAlignmentFlags,
+        const AlignmentOrientation* __restrict__ bestAlignmentFlags,
         const int* __restrict__ shifts,
         const int* __restrict__ nOps,
         const int* __restrict__ overlaps,
@@ -378,7 +427,7 @@ namespace gpu{
 
                     bool* const myShouldBeKept = d_shouldBeKept + globalOffset;                    
 
-                    const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
+                    const AlignmentOrientation* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
                     const int* const myShifts = shifts + globalOffset;
                     const int* const myNops = nOps + globalOffset;
                     const int* const myOverlaps = overlaps + globalOffset;
@@ -591,7 +640,7 @@ namespace gpu{
         int* __restrict__ d_newNumIndicesPerSubject,
         int* __restrict__ d_newNumIndices,
         GPUMultiMSA multiMSA,
-        const BestAlignment_t* __restrict__ bestAlignmentFlags,
+        const AlignmentOrientation* __restrict__ bestAlignmentFlags,
         const int* __restrict__ shifts,
         const int* __restrict__ nOps,
         const int* __restrict__ overlaps,
@@ -703,7 +752,7 @@ namespace gpu{
                     }
                 };
 
-                const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
+                const AlignmentOrientation* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
                 const int* const myShifts = shifts + globalOffset;
                 const int* const myNops = nOps + globalOffset;
                 const int* const myOverlaps = overlaps + globalOffset;
@@ -930,13 +979,57 @@ namespace gpu{
             numAnchors
         );
     }
+
+    void callComputeMsaConsensusQualityKernel(
+        char* d_consensusQuality,
+        int consensusQualityPitchInBytes,
+        GPUMultiMSA multiMSA,
+        cudaStream_t stream
+    ){
+        dim3 block = 128;
+        dim3 grid = multiMSA.numMSAs;
+        computeMsaConsensusQualityKernel<<<grid, block, 0, stream>>>(
+            d_consensusQuality,
+            consensusQualityPitchInBytes,
+            multiMSA
+        ); CUDACHECKASYNC;
+    }
+
+    void callComputeDecodedMsaConsensusKernel(
+        char* d_consensus,
+        int consensusPitchInBytes,
+        GPUMultiMSA multiMSA,
+        cudaStream_t stream
+    ){
+        dim3 block = 128;
+        dim3 grid = multiMSA.numMSAs;
+        computeDecodedMsaConsensusKernel<<<grid, block, 0, stream>>>(
+            d_consensus,
+            consensusPitchInBytes,
+            multiMSA
+        ); CUDACHECKASYNC;
+    }
+
+    void callComputeMsaSizesKernel(
+        int* d_sizes,
+        GPUMultiMSA multiMSA,
+        cudaStream_t stream
+    ){
+        dim3 block = 128;
+        dim3 grid = SDIV(multiMSA.numMSAs, block.x);
+
+        computeMsaSizesKernel<<<grid, block, 0, stream>>>(
+            d_sizes,
+            multiMSA
+        ); CUDACHECKASYNC;
+    }
     
     void callMsaCandidateRefinementKernel_multiiter_async(
         int* d_newIndices,
         int* d_newNumIndicesPerSubject,
         int* d_newNumIndices,
         GPUMultiMSA multiMSA,
-        const BestAlignment_t* d_bestAlignmentFlags,
+        const AlignmentOrientation* d_bestAlignmentFlags,
         const int* d_shifts,
         const int* d_nOps,
         const int* d_overlaps,
@@ -951,8 +1044,8 @@ namespace gpu{
         const int* d_candidates_per_subject_prefixsum,
         const int* d_numAnchors,
         float desiredAlignmentMaxErrorRate,
-        int maxNumAnchors,
-        int maxNumCandidates,
+        int /*maxNumAnchors*/,
+        int /*maxNumCandidates*/,
         bool canUseQualityScores,
         size_t encodedSequencePitchInInts,
         size_t qualityPitchInBytes,
@@ -999,12 +1092,12 @@ namespace gpu{
             std::map<KernelLaunchConfig, KernelProperties> mymap;
 
             KernelProperties kernelProperties;
-            cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
                 &kernelProperties.max_blocks_per_SM,
                 msaCandidateRefinement_multiiter_kernel<blocksize, memType>,
                 kernelLaunchConfig.threads_per_block, 
                 kernelLaunchConfig.smem
-            ); CUERR;
+            ));
 
             mymap[kernelLaunchConfig] = kernelProperties;
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
@@ -1051,7 +1144,7 @@ namespace gpu{
             numIterations
         );
 
-        CUERR;
+        CUDACHECKASYNC;
     }
 
 
@@ -1063,7 +1156,7 @@ namespace gpu{
         int* d_newNumIndicesPerSubject,
         int* d_newNumIndices,
         GPUMultiMSA multiMSA,
-        const BestAlignment_t* d_bestAlignmentFlags,
+        const AlignmentOrientation* d_bestAlignmentFlags,
         const int* d_shifts,
         const int* d_nOps,
         const int* d_overlaps,
@@ -1078,8 +1171,8 @@ namespace gpu{
         const int* d_candidates_per_subject_prefixsum,
         const int* d_numAnchors,
         float desiredAlignmentMaxErrorRate,
-        int maxNumAnchors,
-        int maxNumCandidates,
+        int /*maxNumAnchors*/,
+        int /*maxNumCandidates*/,
         bool canUseQualityScores,
         size_t encodedSequencePitchInInts,
         size_t qualityPitchInBytes,
@@ -1127,12 +1220,12 @@ namespace gpu{
             std::map<KernelLaunchConfig, KernelProperties> mymap;
 
             KernelProperties kernelProperties;
-            cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
                 &kernelProperties.max_blocks_per_SM,
                 msaCandidateRefinement_singleiter_kernel<blocksize, memoryType>,
                 kernelLaunchConfig.threads_per_block, 
                 kernelLaunchConfig.smem
-            ); CUERR;
+            ));
 
             mymap[kernelLaunchConfig] = kernelProperties;
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
@@ -1179,7 +1272,7 @@ namespace gpu{
             d_anchorIsFinished
         );
 
-        CUERR;
+        CUDACHECKASYNC;
     }
 
 
@@ -1191,7 +1284,7 @@ namespace gpu{
         const int* d_overlaps,
         const int* d_shifts,
         const int* d_nOps,
-        const BestAlignment_t* d_bestAlignmentFlags,
+        const AlignmentOrientation* d_bestAlignmentFlags,
         const int* d_anchorLengths,
         const int* d_candidateLengths,
         const int* d_indices,
@@ -1204,8 +1297,8 @@ namespace gpu{
         const char* d_candidateQualities,
         const int* d_numAnchors,
         float desiredAlignmentMaxErrorRate,
-        int maxNumAnchors,
-        int maxNumCandidates,
+        int /*maxNumAnchors*/,
+        int /*maxNumCandidates*/,
         bool canUseQualityScores,
         int encodedSequencePitchInInts,
         size_t qualityPitchInBytes,
@@ -1243,12 +1336,12 @@ namespace gpu{
         std::map<KernelLaunchConfig, KernelProperties> mymap;
 
         KernelProperties kernelProperties;
-        cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
             &kernelProperties.max_blocks_per_SM,
             constructMultipleSequenceAlignmentsKernel<BLOCKSIZE, memoryType>,
             kernelLaunchConfig.threads_per_block, 
             kernelLaunchConfig.smem
-        ); CUERR;
+        ));
 
         mymap[kernelLaunchConfig] = kernelProperties;
         max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
@@ -1285,7 +1378,7 @@ namespace gpu{
         canUseQualityScores,
         encodedSequencePitchInInts,
         qualityPitchInBytes
-    ); CUERR;
+    ); CUDACHECKASYNC;
 
 
 

@@ -20,9 +20,9 @@ namespace care{
 template<class MakeInserterFunc, class MakeReadContainsNFunc>
 void constructReadStorageFromFiles(
     const std::vector<std::string>& inputfiles,
-    bool useQualityScores,
+    bool /*useQualityScores*/,
     read_number expectedNumberOfReads,
-    int expectedMinimumReadLength,
+    int /*expectedMinimumReadLength*/,
     int expectedMaximumReadLength,
     int threads,
     bool showProgress,
@@ -248,9 +248,9 @@ void constructReadStorageFromFiles(
 template<class MakeInserterFunc, class MakeReadContainsNFunc>
 void constructReadStorageFromPairedEndFiles(
     const std::vector<std::string>& inputfiles,
-    bool useQualityScores,
+    bool /*useQualityScores*/,
     read_number expectedNumberOfReads,
-    int expectedMinimumReadLength,
+    int /*expectedMinimumReadLength*/,
     int expectedMaximumReadLength,
     int threads,
     bool showProgress,

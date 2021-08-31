@@ -2,6 +2,7 @@
 #define CARE_SORTBYGENERATEDKEYS_HPP
 
 #include <hpc_helpers.cuh>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <cstdint>
 #include <memory>
@@ -17,16 +18,13 @@
 
 /*
     KeyType KeyGenerator::operator()(IndexType i)  returns i-th key
-
-    bool KeyComparator::operator()(KeyType l, KeyType r)
 */
-template<class IndexType, class ValueType, class KeyGenerator, class KeyComparator>
+template<class IndexType, class ValueType, class KeyGenerator>
 bool sortValuesByGeneratedKeysViaIndicesHost(
     std::size_t memoryLimitBytes,
     ValueType* values,
     IndexType numValues,
-    KeyGenerator keyGenerator,
-    KeyComparator keyComparator
+    KeyGenerator keyGenerator
 ){
     using KeyType = decltype(keyGenerator(IndexType{0}));
 
@@ -64,7 +62,7 @@ bool sortValuesByGeneratedKeysViaIndicesHost(
     std::sort(
         indices, indices + numValues,
         [&](const auto& l, const auto& r){
-            return keyComparator(keys[l], keys[r]);
+            return keys[l] < keys[r];
         }
     );
 
@@ -86,7 +84,21 @@ bool sortValuesByGeneratedKeysViaIndicesHost(
     return true;
 }
 
-
+template<class IndexType, class ValueType, class KeyGenerator, class KeyComparator>
+bool sortValuesByGeneratedKeysViaIndicesHost(
+    std::size_t memoryLimitBytes,
+    ValueType* values,
+    IndexType numValues,
+    KeyGenerator keyGenerator,
+    KeyComparator /*keyComparator*/
+){
+    return sortValuesByGeneratedKeysViaIndicesHost<IndexType, ValueType, KeyGenerator>(
+        memoryLimitBytes,
+        values,
+        numValues,
+        keyGenerator
+    );
+}
 
 
 /*
@@ -94,13 +106,12 @@ bool sortValuesByGeneratedKeysViaIndicesHost(
 
     bool KeyComparator::operator()(KeyType l, KeyType r)
 */
-template<class IndexType, class ValueType, class KeyGenerator, class KeyComparator>
+template<class IndexType, class ValueType, class KeyGenerator>
 bool sortValuesByGeneratedKeysViaSortByKeyHost(
     std::size_t memoryLimitBytes,
     ValueType* values,
     IndexType numValues,
-    KeyGenerator keyGenerator,
-    KeyComparator keyComparator
+    KeyGenerator keyGenerator
 ){
     using KeyType = decltype(keyGenerator(IndexType{0}));
 
@@ -141,20 +152,33 @@ bool sortValuesByGeneratedKeysViaSortByKeyHost(
 }
 
 
-#ifdef __CUDACC__
-
-/*
-    KeyType KeyGenerator::operator()(IndexType i)  returns i-th key
-
-    bool KeyComparator::operator()(KeyType l, KeyType r)
-*/
 template<class IndexType, class ValueType, class KeyGenerator, class KeyComparator>
-bool sortValuesByGeneratedKeysViaSortByKeyDevice(
+bool sortValuesByGeneratedKeysViaSortByKeyHost(
     std::size_t memoryLimitBytes,
     ValueType* values,
     IndexType numValues,
     KeyGenerator keyGenerator,
-    KeyComparator keyComparator
+    KeyComparator /*keyComparator*/
+){
+    return sortValuesByGeneratedKeysViaSortByKeyHost<IndexType, ValueType, KeyGenerator>(
+        memoryLimitBytes,
+        values,
+        numValues,
+        keyGenerator
+    );
+}
+
+#ifdef __CUDACC__
+
+/*
+    KeyType KeyGenerator::operator()(IndexType i)  returns i-th key
+*/
+template<class IndexType, class ValueType, class KeyGenerator>
+bool sortValuesByGeneratedKeysViaSortByKeyDevice(
+    std::size_t memoryLimitBytes,
+    ValueType* values,
+    IndexType numValues,
+    KeyGenerator keyGenerator
 ){
     using KeyType = decltype(keyGenerator(IndexType{0}));
 
@@ -238,7 +262,7 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     if(cubstatus != cudaSuccess) return false;
 
     std::size_t freeMem,totalMem;
-    cudaMemGetInfo(&freeMem, &totalMem); CUERR;
+    CUDACHECK(cudaMemGetInfo(&freeMem, &totalMem));
 
     //std::cerr << "free gpu mem: " << freeMem << ", memoryLimitBytes: " << memoryLimitBytes << ", sizeOfKeys: " << sizeOfKeys << ", temp_storage_bytes: " << temp_storage_bytes << "\n";
 
@@ -246,7 +270,7 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     if(freeMem > temp_storage_bytes){
         cudaMalloc(&temp_storage, temp_storage_bytes);
     }else if(freeMem + memoryLimitBytes - sizeOfKeys > temp_storage_bytes){
-        cudaMallocManaged(&temp_storage, temp_storage_bytes); CUERR;
+        cudaMallocManaged(&temp_storage, temp_storage_bytes);
         int deviceId = 0;
         cudaGetDevice(&deviceId);
         cudaMemAdvise(temp_storage, temp_storage_bytes, cudaMemAdviseSetAccessedBy, deviceId);      
@@ -295,9 +319,9 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
 
     helpers::CpuTimer timer2("copy to device");
 
-    cudaMemcpy(d_keys_dbl.Current(), keys.get(), sizeof(KeyType) * numValues, H2D); CUERR;
+    CUDACHECK(cudaMemcpy(d_keys_dbl.Current(), keys.get(), sizeof(KeyType) * numValues, H2D));
     keys = nullptr;
-    cudaMemcpy(d_values_dbl.Current(), values, sizeof(ValueType) * numValues, H2D); CUERR;
+    CUDACHECK(cudaMemcpy(d_values_dbl.Current(), values, sizeof(ValueType) * numValues, H2D));
 
     // {
     //     std::ofstream os("offsets_2");
@@ -317,12 +341,12 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
         numValues,
         (cudaStream_t)0
     );
-    cudaDeviceSynchronize(); CUERR;
+    CUDACHECK(cudaDeviceSynchronize());
 
     if(cubstatus != cudaSuccess){
         std::cerr << "cub::DeviceRadixSort::SortPairs error: " << cudaGetErrorString(cubstatus) << "\n";
         cudaGetLastError();
-        cudaFree(temp_storage); CUERR;
+        cudaFree(temp_storage);
         return false;
     }
 
@@ -330,13 +354,13 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     //timer3.print();
 
     helpers::CpuTimer timer4("copy to host");
-    cudaMemcpy(values, d_values_dbl.Current(), sizeof(ValueType) * numValues, D2H); CUERR;
+    CUDACHECK(cudaMemcpy(values, d_values_dbl.Current(), sizeof(ValueType) * numValues, D2H));
 
     cudaDeviceSynchronize();
     timer4.stop();
     //timer4.print();
 
-    cudaFree(temp_storage); CUERR;
+    CUDACHECK(cudaFree(temp_storage));
 
     cudaError_t cudastatus = cudaDeviceSynchronize();
 
@@ -350,6 +374,21 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     return true;
 }
 
+template<class IndexType, class ValueType, class KeyGenerator, class KeyComparator>
+bool sortValuesByGeneratedKeysViaSortByKeyDevice(
+    std::size_t memoryLimitBytes,
+    ValueType* values,
+    IndexType numValues,
+    KeyGenerator keyGenerator,
+    KeyComparator /*keyComparator*/
+){
+    return sortValuesByGeneratedKeysViaSortByKeyDevice<IndexType, ValueType, KeyGenerator>(
+        memoryLimitBytes,
+        values,
+        numValues,
+        keyGenerator
+    );
+}
 
 #endif
 
@@ -357,20 +396,19 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
 /*
     Sorts the values of key-value pairs by key. Keys are generated via functor
 */
-template<class IndexType, class ValueType, class KeyGenerator, class KeyComparator>
+template<class IndexType, class ValueType, class KeyGenerator>
 bool sortValuesByGeneratedKeys(
     std::size_t memoryLimitBytes,
     ValueType* values,
     IndexType numValues,
-    KeyGenerator keyGenerator,
-    KeyComparator keyComparator
+    KeyGenerator keyGenerator
 ){
-
+    std::cerr << "sortValuesByGeneratedKeys: memoryLimitBytes = " << memoryLimitBytes << ",numValues: " << numValues << ", sizeof(ValueType): " << sizeof(ValueType) << ", sizeof(IndexType): " << sizeof(IndexType) << "\n";
     bool success = false;
 
     #ifdef __CUDACC__
         try{
-            success = sortValuesByGeneratedKeysViaSortByKeyDevice<IndexType>(memoryLimitBytes, values, numValues, keyGenerator, keyComparator);
+            success = sortValuesByGeneratedKeysViaSortByKeyDevice<IndexType>(memoryLimitBytes, values, numValues, keyGenerator);
         } catch (...){
             std::cerr << "Fallback\n";
         }
@@ -379,7 +417,7 @@ bool sortValuesByGeneratedKeys(
     #endif
 
     try{
-        success = sortValuesByGeneratedKeysViaSortByKeyHost<IndexType>(memoryLimitBytes, values, numValues, keyGenerator, keyComparator);
+        success = sortValuesByGeneratedKeysViaSortByKeyHost<IndexType>(memoryLimitBytes, values, numValues, keyGenerator);
     } catch (...){
         std::cerr << "Fallback\n";
     }
@@ -387,12 +425,28 @@ bool sortValuesByGeneratedKeys(
     if(success) return true;
 
     try{
-        success = sortValuesByGeneratedKeysViaIndicesHost<IndexType>(memoryLimitBytes, values, numValues, keyGenerator, keyComparator);
+        success = sortValuesByGeneratedKeysViaIndicesHost<IndexType>(memoryLimitBytes, values, numValues, keyGenerator);
     } catch (...){
         std::cerr << "Fallback\n";
     }
 
     return success;
+}
+
+template<class IndexType, class ValueType, class KeyGenerator, class KeyComparator>
+bool sortValuesByGeneratedKeys(
+    std::size_t memoryLimitBytes,
+    ValueType* values,
+    IndexType numValues,
+    KeyGenerator keyGenerator,
+    KeyComparator /*keyComparator*/
+){
+    return sortValuesByGeneratedKeys<IndexType, ValueType, KeyGenerator>(
+        memoryLimitBytes,
+        values,
+        numValues,
+        keyGenerator
+    );
 }
 
 

@@ -6,6 +6,7 @@
 #include <hpc_helpers.cuh>
 #include <lengthstorage.hpp>
 #include <memorymanagement.hpp>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <cassert>
 #include <cmath>
@@ -36,13 +37,10 @@ struct GPULengthStore{
     }
 
     void destroyGpuData(){
-        int oldDevice = 0;
-        cudaGetDevice(&oldDevice); CUERR;
         for(int i = 0; i < int(deviceIds.size()); i++){
-            cudaSetDevice(deviceIds[i]); CUERR;
-            cudaFree(deviceDataPointers[i]); CUERR;
+            cub::SwitchDevice sd{deviceIds[i]};
+            CUDACHECK(cudaFree(deviceDataPointers[i]));
         }
-        cudaSetDevice(oldDevice); CUERR;
     }
 
     void init(LengthStore_t&& lStore, const std::vector<int>& deviceIds_){
@@ -52,15 +50,12 @@ struct GPULengthStore{
         lengthStore = std::move(lStore);
 
         deviceDataPointers.resize(deviceIds.size());
-        int oldDevice = 0;
-        cudaGetDevice(&oldDevice); CUERR;
+
         for(int i = 0; i < int(deviceIds.size()); i++){
-            int deviceId = deviceIds[i];
-            cudaSetDevice(deviceId);
-            cudaMalloc(&deviceDataPointers[i], lengthStore.getRawSizeInBytes()); CUERR;
-            cudaMemcpy(deviceDataPointers[i], lengthStore.getRaw(), lengthStore.getRawSizeInBytes(), cudaMemcpyHostToDevice); CUERR;
+            cub::SwitchDevice sd{deviceIds[i]};
+            CUDACHECK(cudaMalloc(&deviceDataPointers[i], lengthStore.getRawSizeInBytes()));
+            CUDACHECK(cudaMemcpy(deviceDataPointers[i], lengthStore.getRaw(), lengthStore.getRawSizeInBytes(), cudaMemcpyHostToDevice));
         }
-        cudaSetDevice(oldDevice); CUERR;
     }
 
     
@@ -105,9 +100,7 @@ struct GPULengthStore{
 
         int gpuIndex = std::distance(deviceIds.begin(), it);
 
-        int oldDevice = 0;
-        cudaGetDevice(&oldDevice); CUERR;
-        cudaSetDevice(resultDeviceId); CUERR;
+        cub::SwitchDevice sd{resultDeviceId};
 
         const Data_t* gpuData = deviceDataPointers[gpuIndex];
         int minLen = getMinLength();
@@ -118,7 +111,7 @@ struct GPULengthStore{
         int bitsPerLength = lengthStore.getRawBitsPerLength();
 
         if(minLen == maxLen){
-            helpers::call_fill_kernel_async(d_result, numIds, minLen, stream); CUERR;
+            helpers::call_fill_kernel_async(d_result, numIds, minLen, stream); CUDACHECKASYNC;
         }else{
 
             dim3 block(128,1,1);
@@ -166,10 +159,8 @@ struct GPULengthStore{
                     d_result[i] = int(lengthBits) + minLen;
                 }
                 
-            }); CUERR;
+            }); CUDACHECKASYNC;
         }
-
-        cudaSetDevice(oldDevice); CUERR;
     }
 
     int getLength(read_number index) const{
@@ -232,13 +223,10 @@ struct GPULengthStore2{
     }
 
     void destroyGpuData(){
-        int oldDevice = 0;
-        cudaGetDevice(&oldDevice); CUERR;
         for(int i = 0; i < int(deviceIds.size()); i++){
-            cudaSetDevice(deviceIds[i]); CUERR;
-            cudaFree(deviceDataPointers[i]); CUERR;
+            cub::SwitchDevice sd{deviceIds[i]};
+            CUDACHECK(cudaFree(deviceDataPointers[i]));
         }
-        cudaSetDevice(oldDevice); CUERR;
     }
 
     void init(const LengthStore_t& lStore, const std::vector<int>& deviceIds_){
@@ -248,15 +236,12 @@ struct GPULengthStore2{
         auto lengthStore = &lStore;
 
         deviceDataPointers.resize(deviceIds.size());
-        int oldDevice = 0;
-        cudaGetDevice(&oldDevice); CUERR;
+
         for(int i = 0; i < int(deviceIds.size()); i++){
-            int deviceId = deviceIds[i];
-            cudaSetDevice(deviceId); CUERR;
-            cudaMalloc(&deviceDataPointers[i], lengthStore->getRawSizeInBytes()); CUERR;
-            cudaMemcpy(deviceDataPointers[i], lengthStore->getRaw(), lengthStore->getRawSizeInBytes(), cudaMemcpyHostToDevice); CUERR;
+            cub::SwitchDevice sd{deviceIds[i]};
+            CUDACHECK(cudaMalloc(&deviceDataPointers[i], lengthStore->getRawSizeInBytes()));
+            CUDACHECK(cudaMemcpy(deviceDataPointers[i], lengthStore->getRaw(), lengthStore->getRawSizeInBytes(), cudaMemcpyHostToDevice));
         }
-        cudaSetDevice(oldDevice); CUERR;
 
         minLength = lengthStore->getMinLength();
         maxLength = lengthStore->getMaxLength();
@@ -301,7 +286,7 @@ struct GPULengthStore2{
                                     int numIds,
                                     cudaStream_t stream) const{
         int resultDeviceId = 0;
-        cudaGetDevice(&resultDeviceId); CUERR;
+        CUDACHECK(cudaGetDevice(&resultDeviceId));
 
         auto it = std::find(deviceIds.begin(), deviceIds.end(), resultDeviceId);
         assert(it != deviceIds.end());
@@ -317,7 +302,7 @@ struct GPULengthStore2{
         int bitsPerLength = getRawBitsPerLength();
 
         if(minLen == maxLen){
-            helpers::call_fill_kernel_async(d_result, numIds, minLen, stream); CUERR;
+            helpers::call_fill_kernel_async(d_result, numIds, minLen, stream); CUDACHECKASYNC;
         }else{
 
             dim3 block(128,1,1);
@@ -365,7 +350,7 @@ struct GPULengthStore2{
                     d_result[i] = int(lengthBits) + minLen;
                 }
                 
-            }); CUERR;
+            }); CUDACHECKASYNC;
         }
     }
 
@@ -449,7 +434,7 @@ struct GPULengthStore3{
 
             DeviceBuffer<Data_t> buffer(cpuLengthStore.getRawSizeInBytes() / sizeof(Data_t));
 
-            cudaMemcpy(buffer.data(), cpuLengthStore.getRaw(), cpuLengthStore.getRawSizeInBytes(), H2D); CUERR;
+            CUDACHECK(cudaMemcpy(buffer.data(), cpuLengthStore.getRaw(), cpuLengthStore.getRawSizeInBytes(), H2D));
 
             deviceData.emplace_back(std::move(buffer));
         }
@@ -493,7 +478,7 @@ struct GPULengthStore3{
                                     int numIds,
                                     cudaStream_t stream) const{
         int resultDeviceId = 0;
-        cudaGetDevice(&resultDeviceId); CUERR;
+        CUDACHECK(cudaGetDevice(&resultDeviceId));
 
         auto it = std::find(deviceIds.begin(), deviceIds.end(), resultDeviceId);
         assert(it != deviceIds.end());
@@ -509,7 +494,7 @@ struct GPULengthStore3{
         int bitsPerLength = getRawBitsPerLength();
 
         if(minLen == maxLen){
-            helpers::call_fill_kernel_async(d_result, numIds, minLen, stream); CUERR;
+            helpers::call_fill_kernel_async(d_result, numIds, minLen, stream); CUDACHECKASYNC;
         }else{
 
             dim3 block(128,1,1);
@@ -557,7 +542,7 @@ struct GPULengthStore3{
                     d_result[i] = int(lengthBits) + minLen;
                 }
                 
-            }); CUERR;
+            }); CUDACHECKASYNC;
         }
     }
 

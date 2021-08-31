@@ -1,7 +1,10 @@
 #ifndef CARE_DESERIALIZE_HPP
 #define CARE_DESERIALIZE_HPP
 
-#include <iostream>
+#include <cstring>
+#include <cstdint>
+#include <fstream>
+#include <string>
 
 namespace care {
 
@@ -25,7 +28,7 @@ inline T read_one(std::ifstream& is) {
     return ret;
 }
 
-template<typename T = uint64_t>
+template<typename T = std::uint64_t>
 inline std::string read_str(std::ifstream& is) {
     std::string ret(read_one<T>(is), char());
     is.read(&ret[0], ret.size());

@@ -1,22 +1,18 @@
 
-//#include <cpu_correction_thread.hpp>
-
-#include <correctionresultprocessing.hpp>
 
 #include <config.hpp>
 
-#include "options.hpp"
-
-
+#include <options.hpp>
 #include <cpureadstorage.hpp>
-#include "cpu_alignment.hpp"
-#include "bestalignment.hpp"
+#include <cpu_alignment.hpp>
+#include <alignmentorientation.hpp>
 #include <msa.hpp>
-#include "qualityscoreweights.hpp"
-#include "rangegenerator.hpp"
+#include <qualityscoreweights.hpp>
+#include <rangegenerator.hpp>
+#include <correctedsequence.hpp>
 
 #include <threadpool.hpp>
-#include <memoryfile.hpp>
+#include <serializedobjectstorage.hpp>
 #include <util.hpp>
 #include <filehelpers.hpp>
 #include <hostdevicefunctions.cuh>
@@ -41,15 +37,14 @@
 
 #include <omp.h>
 
-
+#include <thrust/iterator/counting_iterator.h>
 
 
 namespace care{
 namespace cpu{
 
 
-MemoryFileFixedSize<EncodedTempCorrectedSequence>
-correct_cpu(
+SerializedObjectStorage correct_cpu(
     const GoodAlignmentProperties& goodAlignmentProperties,
     const CorrectionOptions& correctionOptions,
     const RuntimeOptions& runtimeOptions,
@@ -95,22 +90,22 @@ correct_cpu(
         memoryForPartialResultsInBytes = availableMemoryInBytes - 2*(std::size_t(1) << 30);
     }
 
-    const std::string tmpfilename{fileOptions.tempdirectory + "/" + "MemoryFileFixedSizetmp"};
-    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfilename);
+    std::cerr << "Partial results may occupy " << (memoryForPartialResultsInBytes /1024. / 1024. / 1024.) 
+        << " GB in memory. Remaining partial results will be stored in temp directory. \n";
 
+    const std::size_t memoryLimitData = memoryForPartialResultsInBytes * 0.75;
+    const std::size_t memoryLimitOffsets = memoryForPartialResultsInBytes * 0.25;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(1000000); 
+    SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, fileOptions.tempdirectory + "/");
+
+    //const std::size_t numReadsToProcess = 500000;
+    const std::size_t numReadsToProcess = readStorage.getNumberOfReads();
+
+    IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(
+        thrust::make_counting_iterator<read_number>(0),
+        thrust::make_counting_iterator<read_number>(0) + numReadsToProcess
+    );
     
-    auto saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
-        //std::unique_lock<std::mutex> l(outputstreammutex);
-        //std::cerr << tmp.readId  << " hq " << tmp.hq << " " << "useedits " << tmp.useEdits << " emptyedits " << tmp.edits.empty() << "\n";
-        if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
-            //std::cerr << tmp.readId << " " << tmp << '\n';
-            partialResults.storeElement(std::move(encoded));
-        }
-    };
-
     BackgroundThread outputThread(true);
     outputThread.setMaximumQueueSize(runtimeOptions.threads);
 
@@ -173,12 +168,13 @@ correct_cpu(
 
             batchReadIds.resize(myBatchsize);
 
-            auto readIdsEnd = readIdGenerator.next_n_into_buffer(
+            readIdGenerator.process_next_n(
                 myBatchsize, 
-                batchReadIds.begin()
+                [&](auto begin, auto end){
+                    auto readIdsEnd = std::copy(begin, end, batchReadIds.begin());
+                    batchReadIds.erase(readIdsEnd, batchReadIds.end());
+                }
             );
-            
-            batchReadIds.erase(readIdsEnd, batchReadIds.end());
 
             if(batchReadIds.empty()){
                 continue;
@@ -231,12 +227,10 @@ correct_cpu(
                 for(auto& output : outputs){
 
                     if(output.hasAnchorCorrection){
-                        correctionOutput.encodedAnchorCorrections.emplace_back(output.anchorCorrection.encode());
                         correctionOutput.anchorCorrections.emplace_back(std::move(output.anchorCorrection));
                     }
 
                     for(auto& tmp : output.candidateCorrections){
-                        correctionOutput.encodedCandidateCorrections.emplace_back(tmp.encode());
                         correctionOutput.candidateCorrections.emplace_back(std::move(tmp));
                     }
                 }
@@ -255,35 +249,47 @@ correct_cpu(
                     auto output = errorCorrector.process(input);
 
                     if(output.hasAnchorCorrection){
-                        correctionOutput.encodedAnchorCorrections.emplace_back(output.anchorCorrection.encode());
                         correctionOutput.anchorCorrections.emplace_back(std::move(output.anchorCorrection));
                     }
 
                     for(auto& tmp : output.candidateCorrections){
-                        correctionOutput.encodedCandidateCorrections.emplace_back(tmp.encode());
                         correctionOutput.candidateCorrections.emplace_back(std::move(tmp));
                     }
                 }
             }
 
+            EncodedCorrectionOutput encodedCorrectionOutput = correctionOutput;
+
             auto outputfunction = [
                 &, 
-                correctionOutput = std::move(correctionOutput)
+                encodedCorrectionOutput = std::move(encodedCorrectionOutput)
             ](){
-                const int numA = correctionOutput.anchorCorrections.size();
-                const int numC = correctionOutput.candidateCorrections.size();
+                std::vector<std::uint8_t> tempbuffer(256);
+
+                auto saveEncodedCorrectedSequence = [&](const EncodedTempCorrectedSequence* encoded){
+                    if(!(encoded->isHQ() && encoded->useEdits() && encoded->getNumEdits() == 0)){
+                        const std::size_t serializedSize = encoded->getSerializedNumBytes();
+                        tempbuffer.resize(serializedSize);
+
+                        auto end = encoded->copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
+                        assert(end != nullptr);
+
+                        partialResults.insert(tempbuffer.data(), end);
+                    }
+                };
+
+                const int numA = encodedCorrectionOutput.encodedAnchorCorrections.size();
+                const int numC = encodedCorrectionOutput.encodedCandidateCorrections.size();
 
                 for(int i = 0; i < numA; i++){
-                    saveCorrectedSequence(
-                        std::move(correctionOutput.anchorCorrections[i]), 
-                        std::move(correctionOutput.encodedAnchorCorrections[i])
+                    saveEncodedCorrectedSequence(
+                        &encodedCorrectionOutput.encodedAnchorCorrections[i]
                     );
                 }
 
                 for(int i = 0; i < numC; i++){
-                    saveCorrectedSequence(
-                        std::move(correctionOutput.candidateCorrections[i]), 
-                        std::move(correctionOutput.encodedCandidateCorrections[i])
+                    saveEncodedCorrectedSequence(
+                        &encodedCorrectionOutput.encodedCandidateCorrections[i]
                     );
                 }
             };
@@ -306,9 +312,6 @@ correct_cpu(
     progressThread.finished();
 
     outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
-
-    //outputstream.flush();
-    partialResults.flush();
 
     #ifdef ENABLE_CPU_CORRECTOR_TIMING
 

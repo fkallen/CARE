@@ -4,6 +4,7 @@
 #include <gpu/gpuminhasher.cuh>
 #include <cpuminhasher.hpp>
 #include <minhasherhandle.hpp>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <hpc_helpers.cuh>
 
@@ -47,29 +48,29 @@ public: //inherited interface
     ) const override{
 
         unsigned int* d_sequenceData2Bit = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_sequenceData2Bit, sizeof(unsigned int) * encodedSequencePitchInInts * numSequences, stream); CUERR;
+        CUDACHECK(cubAllocator->DeviceAllocate((void**)&d_sequenceData2Bit, sizeof(unsigned int) * encodedSequencePitchInInts * numSequences, stream));
 
         int* d_sequenceLengths;
-        cubAllocator->DeviceAllocate((void**)&d_sequenceLengths, sizeof(int) * numSequences, stream); CUERR;
+        CUDACHECK(cubAllocator->DeviceAllocate((void**)&d_sequenceLengths, sizeof(int) * numSequences, stream));
 
         int* d_numValuesPerSequence;
-        cubAllocator->DeviceAllocate((void**)&d_numValuesPerSequence, sizeof(int) * numSequences, stream); CUERR;
+        CUDACHECK(cubAllocator->DeviceAllocate((void**)&d_numValuesPerSequence, sizeof(int) * numSequences, stream));
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             d_sequenceData2Bit,
             h_sequenceData2Bit,
             sizeof(unsigned int) * encodedSequencePitchInInts * numSequences,
             H2D,
             stream
-        ); CUERR;
+        ));
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             d_sequenceLengths,
             h_sequenceLengths,
             sizeof(int) * numSequences,
             H2D,
             stream
-        ); CUERR;
+        ));
 
         gpuMinhasher->determineNumValues(
             queryHandle,
@@ -82,19 +83,19 @@ public: //inherited interface
             stream
         );
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             h_numValuesPerSequence,
             d_numValuesPerSequence,
             sizeof(int) * numSequences,
             D2H,
             stream
-        ); CUERR;
+        ));
 
-        cubAllocator->DeviceFree(d_sequenceData2Bit); CUERR;
-        cubAllocator->DeviceFree(d_sequenceLengths); CUERR;
-        cubAllocator->DeviceFree(d_numValuesPerSequence); CUERR;
+        CUDACHECK(cubAllocator->DeviceFree(d_sequenceData2Bit));
+        CUDACHECK(cubAllocator->DeviceFree(d_sequenceLengths));
+        CUDACHECK(cubAllocator->DeviceFree(d_numValuesPerSequence));
 
-        cudaStreamSynchronize(stream); CUERR;
+        CUDACHECK(cudaStreamSynchronize(stream));
     }
 
     void retrieveValues(
@@ -108,25 +109,34 @@ public: //inherited interface
     ) const override{
         read_number* d_readIds = nullptr;
         if(h_readIds != nullptr){
-            cubAllocator->DeviceAllocate((void**)&d_readIds, sizeof(read_number) * numSequences, stream); CUERR;
+            CUDACHECK(cubAllocator->DeviceAllocate((void**)&d_readIds, sizeof(read_number) * numSequences, stream));
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 d_readIds,
                 h_readIds,
                 sizeof(read_number) * numSequences,
                 H2D,
                 stream
-            ); CUERR;
+            ));
         }
 
         read_number* d_values = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_values, sizeof(read_number) * totalNumValues, stream); CUERR;
+        CUDACHECK(cubAllocator->DeviceAllocate((void**)&d_values, sizeof(read_number) * totalNumValues, stream));
 
         int* d_numValuesPerSequence = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_numValuesPerSequence, sizeof(int) * numSequences, stream); CUERR;
+        CUDACHECK(cubAllocator->DeviceAllocate((void**)&d_numValuesPerSequence, sizeof(int) * numSequences, stream));
 
         int* d_offsets = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_offsets, sizeof(int) * (numSequences + 1), stream); CUERR;
+        CUDACHECK(cubAllocator->DeviceAllocate((void**)&d_offsets, sizeof(int) * (numSequences + 1), stream));
+
+        //TODO THIS MEMCPY IS ONLY NECCESSARY BECAUSE OF MY STUPID WARPCORE MINHASHER INTERFACE. It needs to be refactored
+        CUDACHECK(cudaMemcpyAsync(
+            d_numValuesPerSequence,
+            h_numValuesPerSequence,
+            sizeof(int) * numSequences,
+            H2D,
+            stream
+        ));
 
         //TODO THIS MEMCPY IS ONLY NECCESSARY BECAUSE OF MY STUPID WARPCORE MINHASHER INTERFACE. It needs to be refactored
         cudaMemcpyAsync(
@@ -148,37 +158,37 @@ public: //inherited interface
             stream
         );
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             h_values,
             d_values,
             sizeof(read_number) * totalNumValues,
             D2H,
             stream
-        ); CUERR;
+        ));
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             h_numValuesPerSequence,
             d_numValuesPerSequence,
             sizeof(int) * numSequences,
             D2H,
             stream
-        ); CUERR;
+        ));
 
-        cudaMemcpyAsync(
+        CUDACHECK(cudaMemcpyAsync(
             h_offsets,
             d_offsets,
             sizeof(int) * (numSequences + 1),
             D2H,
             stream
-        ); CUERR;
+        ));
 
-        cubAllocator->DeviceFree(d_offsets); CUERR;
-        cubAllocator->DeviceFree(d_numValuesPerSequence); CUERR;
-        cubAllocator->DeviceFree(d_values); CUERR;
+        CUDACHECK(cubAllocator->DeviceFree(d_offsets));
+        CUDACHECK(cubAllocator->DeviceFree(d_numValuesPerSequence));
+        CUDACHECK(cubAllocator->DeviceFree(d_values));
         if(d_readIds != nullptr){
-            cubAllocator->DeviceFree(d_readIds); CUERR;
+            CUDACHECK(cubAllocator->DeviceFree(d_readIds));
         }
-        cudaStreamSynchronize(stream); CUERR;
+        CUDACHECK(cudaStreamSynchronize(stream));
     }
 
     // void compact() override{

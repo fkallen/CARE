@@ -4,7 +4,7 @@
 
 #include <shared_mutex>
 
-#if __cplusplus == 201703L
+#if __cplusplus >= 201703L
 
 using SharedMutex = std::shared_mutex;
 

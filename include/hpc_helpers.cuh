@@ -3,20 +3,20 @@
 
 #define CUDA_HELPERS_DONT_INCLUDE_V11_GROUP_HEADERS
 
-#include "hpc_helpers/include/cuda_helpers.cuh"
-#include "hpc_helpers/include/coop_group_helpers.cuh"
-#include "hpc_helpers/include/cuda_raiiwrappers.cuh"
-#include "hpc_helpers/include/custom_thrust_allocators.cuh"
-#include "hpc_helpers/include/hashers.cuh"
-#include "hpc_helpers/include/hpc_helpers.h"
-#include "hpc_helpers/include/io_helpers.h"
-#include "hpc_helpers/include/nvtx_markers.cuh"
-#include "hpc_helpers/include/packed_types.cuh"
-#include "hpc_helpers/include/peer_access.cuh"
-#include "hpc_helpers/include/simple_allocation.cuh"
-#include "hpc_helpers/include/timers.cuh"
-#include "hpc_helpers/include/type_helpers.h"
-#include "hpc_helpers/include/utility_kernels.cuh"
+#include "helpers/cuda_helpers.cuh"
+#include "helpers/coop_group_helpers.cuh"
+#include "helpers/cuda_raiiwrappers.cuh"
+#include "helpers/custom_thrust_allocators.cuh"
+#include "helpers/hashers.cuh"
+#include "helpers/hpc_helpers.h"
+#include "helpers/io_helpers.h"
+#include "helpers/nvtx_markers.cuh"
+#include "helpers/packed_types.cuh"
+#include "helpers/peer_access.cuh"
+#include "helpers/simple_allocation.cuh"
+#include "helpers/timers.cuh"
+#include "helpers/type_helpers.h"
+#include "helpers/utility_kernels.cuh"
 
 #undef CUDA_HELPERS_DONT_INCLUDE_V11_GROUP_HEADERS
 

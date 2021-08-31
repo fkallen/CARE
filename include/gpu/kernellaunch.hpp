@@ -2,6 +2,8 @@
 #define CARE_KERNEL_LAUNCH_HPP
 
 #include <hpc_helpers.cuh>
+#include <gpu/cudaerrorcheck.cuh>
+
 #include <map>
 
 namespace care{
@@ -21,6 +23,7 @@ enum class KernelId {
 	FilterAlignmentsByMismatchRatio,
 	MSACorrectSubject,
 	MSACorrectCandidates,
+    msaCorrectCandidatesAndComputeEdits,
     MSACorrectSubjectImplicit,
     ConstructSequenceCorrectionResults,
     MSAConstruction,
@@ -60,7 +63,7 @@ __inline__
 KernelLaunchHandle make_kernel_launch_handle(int deviceId){
     KernelLaunchHandle handle;
     handle.deviceId = deviceId;
-    cudaGetDeviceProperties(&handle.deviceProperties, deviceId); CUERR;
+    CUDACHECK(cudaGetDeviceProperties(&handle.deviceProperties, deviceId));
     return handle;
 }
 

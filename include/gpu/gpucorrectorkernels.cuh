@@ -3,9 +3,13 @@
 
 
 #include <config.hpp>
-#include <correctionresultprocessing.hpp>
+#include <correctedsequence.hpp>
 
 #include <gpu/cuda_block_select.cuh>
+#include <thrust/binary_search.h>
+
+#include <cooperative_groups.h>
+namespace cg = cooperative_groups;
 
 namespace care{
 namespace gpu{
@@ -127,6 +131,142 @@ namespace gpucorrectorkernels{
         int* __restrict__ d_num_corrected_candidates_per_anchor,
         bool* __restrict__ d_candidateCanBeCorrected
     );
+
+    __global__
+    void compactEditsKernel(
+        const care::EncodedCorrectionEdit* __restrict__ d_inputEdits,
+        care::EncodedCorrectionEdit* __restrict__ d_outputEdits,
+        const int* __restrict__ d_editsOutputOffsets,
+        const int* __restrict__ d_numSequences,
+        const int* __restrict__ d_numEditsPerSequence,
+        int doNotUseEditsValue,
+        std::size_t editsPitchInBytes
+    );
+
+    template<int groupsize, class IndexIterator>
+    __global__
+    void compactCorrectedSequencesKernel(
+        const char* __restrict__ d_inputCorrectedSequences,
+        char* __restrict__ d_outputCorrectedSequences,
+        std::size_t decodedSequencePitchInBytes,
+        const int* __restrict__ d_numSequences,
+        const int* __restrict__ d_numEditsPerSequence,
+        int doNotUseEditsValue,
+        const int* __restrict__ d_outputOffsets,
+        IndexIterator d_indicesOfCorrectedSequences
+    ){
+        const int N = *d_numSequences;
+
+        auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+        const int numGroups = (blockDim.x * gridDim.x) / groupsize;
+
+        for(int c = groupId; c < N; c += numGroups){
+            const int indexOfCorrectedSequence = d_indicesOfCorrectedSequences[c];
+            const int numEdits = d_numEditsPerSequence[c];
+
+            if(numEdits == doNotUseEditsValue){
+                const int outputOffset = d_outputOffsets[c];
+
+                char* outputPtr = d_outputCorrectedSequences + outputOffset;
+                const char* inputPtr = d_inputCorrectedSequences + indexOfCorrectedSequence * decodedSequencePitchInBytes;
+
+                const int copyInts = (decodedSequencePitchInBytes) / sizeof(int);
+                const int remainingBytes = (decodedSequencePitchInBytes) - copyInts * sizeof(int);
+                for(int i = group.thread_rank(); i < copyInts; i += group.size()){
+                    ((int*)outputPtr)[i] = ((const int*)inputPtr)[i];
+                }
+    
+                if(group.thread_rank() < remainingBytes){
+                    ((char*)(((int*)outputPtr) + copyInts))[group.thread_rank()]
+                        = ((const char*)(((const int*)inputPtr) + copyInts))[group.thread_rank()];
+                }
+            }
+        }
+    }
+
+    template<int blocksize, int smemSizeBytes>
+    __global__
+    void flagPairedCandidatesKernel(
+        int numPairedAnchors,
+        const int* __restrict__ d_numCandidatesPerAnchor,
+        const int* __restrict__ d_numCandidatesPerAnchorPrefixSum,
+        const read_number* __restrict__ d_candidateReadIds,
+        bool* __restrict__ d_isPairedCandidate
+    ){
+
+        constexpr int numSharedElements = SDIV(smemSizeBytes, sizeof(int));
+
+        __shared__ read_number sharedElements[numSharedElements];
+
+        //search elements of array1 in array2. if found, set output element to true
+        //array1 and array2 must be sorted
+        auto process = [&](
+            const read_number* array1,
+            int numElements1,
+            const read_number* array2,
+            int numElements2,
+            bool* output
+        ){
+            const int numIterations = SDIV(numElements2, numSharedElements);
+
+            for(int iteration = 0; iteration < numIterations; iteration++){
+
+                const int begin = iteration * numSharedElements;
+                const int end = min((iteration+1) * numSharedElements, numElements2);
+                const int num = end - begin;
+
+                for(int i = threadIdx.x; i < num; i += blocksize){
+                    sharedElements[i] = array2[begin + i];
+                }
+
+                __syncthreads();
+
+                //TODO in iteration > 0, we may skip elements at the beginning of first range
+
+                for(int i = threadIdx.x; i < numElements1; i += blocksize){
+                    if(!output[i]){
+                        const read_number readId = array1[i];
+                        const read_number readIdToFind = readId % 2 == 0 ? readId + 1 : readId - 1;
+
+                        const bool found = thrust::binary_search(thrust::seq, sharedElements, sharedElements + num, readIdToFind);
+                        if(found){
+                            output[i] = true;
+                        }
+                    }
+                }
+
+                __syncthreads();
+            }
+        };
+
+        for(int a = blockIdx.x; a < numPairedAnchors; a += gridDim.x){
+            const int firstTask = 2*a;
+            //const int secondTask = firstTask + 1;
+
+            //check for pairs in current candidates
+            const int rangeBegin = d_numCandidatesPerAnchorPrefixSum[firstTask];                        
+            const int rangeMid = d_numCandidatesPerAnchorPrefixSum[firstTask + 1];
+            const int rangeEnd = rangeMid + d_numCandidatesPerAnchor[firstTask + 1];
+
+            process(
+                d_candidateReadIds + rangeBegin,
+                rangeMid - rangeBegin,
+                d_candidateReadIds + rangeMid,
+                rangeEnd - rangeMid,
+                d_isPairedCandidate + rangeBegin
+            );
+
+            process(
+                d_candidateReadIds + rangeMid,
+                rangeEnd - rangeMid,
+                d_candidateReadIds + rangeBegin,
+                rangeMid - rangeBegin,
+                d_isPairedCandidate + rangeMid
+            );
+        }
+    }
+
 
 } //namespace gpucorrectorkernels   
 

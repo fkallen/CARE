@@ -3,7 +3,7 @@
 
 #include <gpu/gpureadstorage.cuh>
 #include <cpureadstorage.hpp>
-
+#include <gpu/cudaerrorcheck.cuh>
 #include <hpc_helpers.cuh>
 
 #include <cub/cub.cuh>
@@ -30,17 +30,17 @@ namespace gpu{
         ) const override{
 
             read_number* d_readIds = nullptr;
-            cubAllocator->DeviceAllocate((void**)&d_readIds, sizeof(read_number) * numSequences, stream); CUERR;
+            CUDACHECK(cubAllocator->DeviceAllocate((void**)&d_readIds, sizeof(read_number) * numSequences, stream));
             bool* d_result;
-            cubAllocator->DeviceAllocate((void**)&d_result, sizeof(bool) * numSequences, stream); CUERR;
+            CUDACHECK(cubAllocator->DeviceAllocate((void**)&d_result, sizeof(bool) * numSequences, stream));
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 d_readIds,
                 readIds,
                 sizeof(read_number) * numSequences,
                 H2D,
                 stream
-            ); CUERR;
+            ));
 
             gpuReadStorage->areSequencesAmbiguous(
                 gpuHandle,
@@ -50,18 +50,18 @@ namespace gpu{
                 stream
             );
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 result,
                 d_result,
                 sizeof(bool) * numSequences,
                 D2H,
                 stream
-            ); CUERR;
+            ));
 
-            cubAllocator->DeviceFree(d_result); CUERR;
-            cubAllocator->DeviceFree(d_readIds); CUERR;
+            CUDACHECK(cubAllocator->DeviceFree(d_result));
+            CUDACHECK(cubAllocator->DeviceFree(d_readIds));
 
-            cudaStreamSynchronize(stream); CUERR;
+            CUDACHECK(cudaStreamSynchronize(stream));
         }
 
         void gatherSequences(
@@ -71,40 +71,40 @@ namespace gpu{
             int numSequences
         ) const override{
             read_number* d_readIds = nullptr;
-            cubAllocator->DeviceAllocate((void**)&d_readIds, sizeof(read_number) * numSequences, stream); CUERR;
+            CUDACHECK(cubAllocator->DeviceAllocate((void**)&d_readIds, sizeof(read_number) * numSequences, stream));
             unsigned int* d_sequence_data;
-            cubAllocator->DeviceAllocate((void**)&d_sequence_data, sizeof(unsigned int) * outSequencePitchInInts * numSequences, stream); CUERR;
+            CUDACHECK(cubAllocator->DeviceAllocate((void**)&d_sequence_data, sizeof(unsigned int) * outSequencePitchInInts * numSequences, stream));
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 d_readIds,
                 readIds,
                 sizeof(read_number) * numSequences,
                 H2D,
                 stream
-            ); CUERR;
+            ));
 
             gpuReadStorage->gatherSequences(
                 gpuHandle,
                 d_sequence_data,
                 outSequencePitchInInts,
-                readIds,
+                makeAsyncConstBufferWrapper(readIds),
                 d_readIds,
                 numSequences,
                 stream
             );
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 sequence_data,
                 d_sequence_data,
                 sizeof(unsigned int) * outSequencePitchInInts * numSequences,
                 D2H,
                 stream
-            ); CUERR;
+            ));
 
-            cubAllocator->DeviceFree(d_sequence_data); CUERR;
-            cubAllocator->DeviceFree(d_readIds); CUERR;
+            CUDACHECK(cubAllocator->DeviceFree(d_sequence_data));
+            CUDACHECK(cubAllocator->DeviceFree(d_readIds));
 
-            cudaStreamSynchronize(stream); CUERR;
+            CUDACHECK(cudaStreamSynchronize(stream));
         }
 
         void gatherQualities(
@@ -114,40 +114,40 @@ namespace gpu{
             int numSequences
         ) const override{
             read_number* d_readIds = nullptr;
-            cubAllocator->DeviceAllocate((void**)&d_readIds, sizeof(read_number) * numSequences, stream); CUERR;
+            CUDACHECK(cubAllocator->DeviceAllocate((void**)&d_readIds, sizeof(read_number) * numSequences, stream));
             char* d_quality_data;
-            cubAllocator->DeviceAllocate((void**)&d_quality_data, sizeof(char) * out_quality_pitch * numSequences, stream); CUERR;
+            CUDACHECK(cubAllocator->DeviceAllocate((void**)&d_quality_data, sizeof(char) * out_quality_pitch * numSequences, stream));
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 d_readIds,
                 readIds,
                 sizeof(read_number) * numSequences,
                 H2D,
                 stream
-            ); CUERR;
+            ));
 
             gpuReadStorage->gatherQualities(
                 gpuHandle,
                 d_quality_data,
                 out_quality_pitch,
-                readIds,
+                makeAsyncConstBufferWrapper(readIds),
                 d_readIds,
                 numSequences,
                 stream
             );
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 quality_data,
                 d_quality_data,
                 sizeof(char) * out_quality_pitch * numSequences,
                 D2H,
                 stream
-            ); CUERR;
+            ));
 
-            cubAllocator->DeviceFree(d_quality_data); CUERR;
-            cubAllocator->DeviceFree(d_readIds); CUERR;
+            CUDACHECK(cubAllocator->DeviceFree(d_quality_data));
+            CUDACHECK(cubAllocator->DeviceFree(d_readIds));
 
-            cudaStreamSynchronize(stream); CUERR;
+            CUDACHECK(cudaStreamSynchronize(stream));
         }
 
         void gatherSequenceLengths(
@@ -156,17 +156,17 @@ namespace gpu{
             int numSequences
         ) const override{
             read_number* d_readIds = nullptr;
-            cubAllocator->DeviceAllocate((void**)&d_readIds, sizeof(read_number) * numSequences, stream); CUERR;
+            CUDACHECK(cubAllocator->DeviceAllocate((void**)&d_readIds, sizeof(read_number) * numSequences, stream));
             int* d_lengths;
-            cubAllocator->DeviceAllocate((void**)&d_lengths, sizeof(int) * numSequences, stream); CUERR;
+            CUDACHECK(cubAllocator->DeviceAllocate((void**)&d_lengths, sizeof(int) * numSequences, stream));
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 d_readIds,
                 readIds,
                 sizeof(read_number) * numSequences,
                 H2D,
                 stream
-            ); CUERR;
+            ));
 
             gpuReadStorage->gatherSequenceLengths(
                 gpuHandle,
@@ -176,18 +176,18 @@ namespace gpu{
                 stream
             );
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 lengths,
                 d_lengths,
                 sizeof(int) * numSequences,
                 D2H,
                 stream
-            ); CUERR;
+            ));
 
-            cubAllocator->DeviceFree(d_lengths); CUERR;
-            cubAllocator->DeviceFree(d_readIds); CUERR;
+            CUDACHECK(cubAllocator->DeviceFree(d_lengths));
+            CUDACHECK(cubAllocator->DeviceFree(d_readIds));
 
-            cudaStreamSynchronize(stream); CUERR;
+            CUDACHECK(cudaStreamSynchronize(stream));
         }
 
         void getIdsOfAmbiguousReads(

@@ -1,6 +1,6 @@
 #include <msa.hpp>
 #include <hostdevicefunctions.cuh>
-#include <bestalignment.hpp>
+#include <alignmentorientation.hpp>
 
 #include <map>
 #include <bitset>
@@ -381,7 +381,7 @@ CorrectionResult MultipleSequenceAlignment::getCorrectedSubject(
     float estimatedErrorrate,
     float estimatedCoverage,
     float m_coverage,
-    int neighborRegionSize,
+    int /*neighborRegionSize*/,
     read_number /* readId*/
 ) const {
 
@@ -664,7 +664,13 @@ RegionSelectionResult MultipleSequenceAlignment::findCandidatesOfDifferentRegion
                 if(base == 'G') seenCounts[2]++;
                 if(base == 'T') seenCounts[3]++;
 
-                if(notAffected || (!(keepMatching ^ (base == foundBase)))){
+                if(notAffected){
+                    result.differentRegionCandidate[candidateIndex] = false;
+                }else if(keepMatching && (base == foundBase)){
+                    //keep candidates which match the found base
+                    result.differentRegionCandidate[candidateIndex] = false;
+                }else if(!keepMatching && (base != foundBase)){
+                    //keep candidates which do not match the found base
                     result.differentRegionCandidate[candidateIndex] = false;
                 }else{
                     result.differentRegionCandidate[candidateIndex] = true;
@@ -1116,7 +1122,8 @@ std::vector<MultipleSequenceAlignment::PossibleSplitColumn> computePossibleSplit
 MultipleSequenceAlignment::PossibleMsaSplits inspectColumnsRegionSplit(
     const MultipleSequenceAlignment::PossibleSplitColumn* possibleColumns,
     int numPossibleColumns,
-    int firstColumn, int lastColumnExcl,
+    int /*firstColumn*/, 
+    int /*lastColumnExcl*/,
     int subjectColumnsBegin_incl,
     int numCandidates,
     const char* candidates,
@@ -1412,82 +1419,6 @@ MultipleSequenceAlignment::PossibleMsaSplits inspectColumnsRegionSplit(
         
         return result;
     }
-}
-
-MSAProperties getMSAProperties(
-    const float* support,
-    const int* coverage,
-    int firstCol,
-    int lastCol, //exclusive
-    float estimatedErrorrate,
-    float estimatedCoverage,
-    float m_coverage
-) {
-
-    assert(firstCol <= lastCol);
-
-    const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-    const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
-    const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
-
-    //const int firstCol = subjectColumnsBegin_incl; //0;
-    //const int lastCol = subjectColumnsEnd_excl; //nColumns; //exclusive
-    const int distance = lastCol - firstCol;
-
-    MSAProperties msaProperties;
-
-    msaProperties.min_support = *std::min_element(support + firstCol, support + lastCol);
-
-    const float supportsum = std::accumulate(support + firstCol, support + lastCol, 0.0f);
-    msaProperties.avg_support = supportsum / distance;
-
-    auto minmax = std::minmax_element(coverage + firstCol, coverage + lastCol);
-
-    msaProperties.min_coverage = *minmax.first;
-    msaProperties.max_coverage = *minmax.second;
-
-    auto isGoodAvgSupport = [=](float avgsupport){
-        return fgeq(avgsupport, avg_support_threshold);
-    };
-    auto isGoodMinSupport = [=](float minsupport){
-        return fgeq(minsupport, min_support_threshold);
-    };
-    auto isGoodMinCoverage = [=](float mincoverage){
-        return fgeq(mincoverage, min_coverage_threshold);
-    };
-
-    msaProperties.failedAvgSupport = !isGoodAvgSupport(msaProperties.avg_support);
-    msaProperties.failedMinSupport = !isGoodMinSupport(msaProperties.min_support);
-    msaProperties.failedMinCoverage = !isGoodMinCoverage(msaProperties.min_coverage);
-
-
-    const float avg_support = msaProperties.avg_support;
-    const float min_support = msaProperties.min_support;
-    const int min_coverage = msaProperties.min_coverage;
-
-    msaProperties.isHQ = false;
-
-    const bool allGood = isGoodAvgSupport(avg_support) 
-                                        && isGoodMinSupport(min_support) 
-                                        && isGoodMinCoverage(min_coverage);
-    if(allGood){
-        int smallestErrorrateThatWouldMakeHQ = 100;
-
-        const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
-        for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
-            const float factor = percent / 100.0f;
-            const float avg_threshold = 1.0f - 1.0f * factor;
-            const float min_threshold = 1.0f - 3.0f * factor;
-            if(fgeq(avg_support, avg_threshold) && fgeq(min_support, min_threshold)){
-                smallestErrorrateThatWouldMakeHQ = percent;
-            }
-        }
-
-        msaProperties.isHQ = isGoodMinCoverage(min_coverage)
-                            && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
-    }
-
-    return msaProperties;
 }
 
 

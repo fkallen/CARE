@@ -4,11 +4,14 @@
 #include <cub/util_allocator.cuh>
 #include <hpc_helpers.cuh>
 
+#include <optional>
+
 namespace care{
 
     template<class T, int overprovisioningPercent = 0>
     struct CachedDeviceUVector{
     public:
+        using value_type = T;
         static_assert(overprovisioningPercent >= 0, "overprovisioningPercent < 0");
 
         static constexpr size_t getOverprovisionedSize(size_t requiredSize){
@@ -26,6 +29,7 @@ namespace care{
         size_t capacity_{};
         cub::CachingDeviceAllocator* allocator_{};
     public:
+        std::optional<cudaStream_t> previousAllocStream = std::nullopt;
 
         void setAllocator(cub::CachingDeviceAllocator& alloc){
             allocator_ = &alloc;
@@ -50,17 +54,20 @@ namespace care{
         CachedDeviceUVector& operator=(CachedDeviceUVector&& rhs) noexcept{
 
             if(data_ != nullptr){
-                allocator_->DeviceFree(data_);
+                cudaError_t status = allocator_->DeviceFree(data_);
+                throwOnError(status, "operator= DeviceFree");
             }            
 
             data_ = rhs.data_;
             size_ = rhs.size_;
             capacity_ = rhs.capacity_;
             allocator_ = rhs.allocator_;
+            previousAllocStream = rhs.previousAllocStream;
 
             rhs.data_ = nullptr;
             rhs.size_ = 0;
             rhs.capacity_ = 0;
+            rhs.previousAllocStream.reset();
 
             return *this;
         }
@@ -80,7 +87,8 @@ namespace care{
         
         void destroy(){
             if(data_ != nullptr){
-                allocator_->DeviceFree(data_);
+                cudaError_t status = allocator_->DeviceFree(data_);
+                throwOnError(status, "destroy DeviceFree");
             }
             size_ = 0;
             capacity_ = 0;
@@ -98,13 +106,22 @@ namespace care{
         //return true if reallocation occured
         //memory content is unspecified after operation
         bool reserveUninitialized(size_t newcapacity, cudaStream_t stream){
-
+            cudaStream_t workstream = stream;
             if(capacity_ < newcapacity){
+                cudaError_t status = cudaSuccess;
+
                 if(data_ != nullptr){
-                    allocator_->DeviceFree(data_);
+                    status = allocator_->DeviceFree(data_);
+                    throwOnError(status, "reserveUninitialized DeviceFree");
                 }
-                allocator_->DeviceAllocate((void**)&data_, sizeof(T) * newcapacity, stream); CUERR;
+                status = allocator_->DeviceAllocate((void**)&data_, sizeof(T) * newcapacity, workstream);
+                throwOnError(status, "reserveUninitialized DeviceAllocate");
                 capacity_ = newcapacity;
+
+                if(previousAllocStream.has_value() && stream != *previousAllocStream){
+                    std::cerr << "reserveUninitialized streamchange\n";
+                } 
+                previousAllocStream = stream;
 
                 return true;
             }else{
@@ -123,23 +140,37 @@ namespace care{
 
         //return true if reallocation occured
         bool reserve(size_t newcapacity, cudaStream_t stream){
-
+            cudaStream_t workstream = stream;
             if(capacity_ < newcapacity){
+                cudaError_t status = cudaSuccess;
+
                 T* datanew = nullptr;
-                allocator_->DeviceAllocate((void**)&datanew, sizeof(T) * newcapacity, stream); CUERR;
+                status = allocator_->DeviceAllocate((void**)&datanew, sizeof(T) * newcapacity, workstream);
+                throwOnError(status, "reserve DeviceAllocate");
+
                 if(data_ != nullptr){
-                    cudaMemcpyAsync(
+                    cudaError_t status = cudaMemcpyAsync(
                         datanew,
                         data_,
                         sizeof(T) * size_,
                         D2D,
-                        stream
-                    ); CUERR;
-                    allocator_->DeviceFree(data_);
+                        workstream
+                    );
+
+                    throwOnError(status, "reserve cudaMemcpyAsync");
+
+                    status = allocator_->DeviceFree(data_);
+
+                    throwOnError(status, "reserve DeviceFree");
                 }
 
                 data_ = datanew;
                 capacity_ = newcapacity;
+
+                if(previousAllocStream.has_value() && stream != *previousAllocStream){
+                    std::cerr << "reserve streamchange\n";
+                }
+                previousAllocStream = stream;
 
                 return true;
             }else{
@@ -155,22 +186,33 @@ namespace care{
             size_ = newsize;
             return result;
         }
+
+        void clear(){
+            size_ = 0;
+        }
         
 
         void erase(T* first, T* last, cudaStream_t stream){
+            cudaStream_t workstream = stream;
             assert(first >= begin());
-            assert(last <= end());            
+            assert(last <= end());
+
+            if(previousAllocStream.has_value() && stream != *previousAllocStream){
+                std::cerr << "erase not on previousAllocStream\n";
+            }
 
             if(last < end()){
                 const std::size_t elementsAfterRangeToErase = end() - last;
 
-                cudaMemcpyAsync(
+                cudaError_t status = cudaMemcpyAsync(
                     first,
                     last,
                     sizeof(T) * elementsAfterRangeToErase,
                     D2D,
-                    stream
-                ); CUERR;
+                    workstream
+                );
+
+                throwOnError(status, "erase cudaMemcpyAsync");
             }
 
             size_ -= std::distance(first, last);
@@ -179,17 +221,23 @@ namespace care{
 
         //return true if reallocation occured
         bool append(const T* rangeBegin, const T* rangeEnd, cudaStream_t stream){
+            cudaStream_t workstream = stream;
+            if(previousAllocStream.has_value() && stream != *previousAllocStream){
+                //std::cerr << "append not on previousAllocStream\n";
+            }
+
             const std::size_t rangesize = std::distance(rangeBegin, rangeEnd);
             if(rangesize > 0){
                 const std::size_t oldsize = size();
                 bool realloc = resize(size() + rangesize, stream);
-                cudaMemcpyAsync(
+                cudaError_t status = cudaMemcpyAsync(
                     data() + oldsize,
                     rangeBegin,
                     sizeof(T) * rangesize,
                     cudaMemcpyDefault,
-                    stream
-                ); CUERR;
+                    workstream
+                );
+                throwOnError(status, "append cudaMemcpyAsync");
 
                 return realloc;
             }
@@ -227,7 +275,20 @@ namespace care{
         bool empty() const noexcept{
             return size() == 0;
         }
+
+    private:
+        void throwOnError(cudaError_t status, const std::string& info = "") const{
+            if(status != cudaSuccess){
+                
+                std::string msg = cudaGetErrorString(status);
+                std::cerr << "CUDA Error: " << msg << " " << info << "\n";
+                throw std::runtime_error(msg);
+            }
+        }
     };
+
+    template<class T, int overprovisioningPercent = 0>
+    using CachedDeviceUScalar = CachedDeviceUVector<T, overprovisioningPercent>;
 
 }
 

@@ -13,7 +13,33 @@ import struct
 from itertools import accumulate
 from tqdm import tqdm
 import os
-from time import sleep
+import pickle
+import zipfile
+
+def npz_headers(npz): # https://stackoverflow.com/a/43223420
+    """Takes a path to an .npz file, which is a Zip archive of .npy files.
+    Generates a sequence of (name, shape, np.dtype).
+    """
+    with zipfile.ZipFile(npz) as archive:
+        for name in archive.namelist():
+            if not name.endswith('.npy'):
+                continue
+
+            npy = archive.open(name)
+            version = np.lib.format.read_magic(npy)
+            shape, fortran, dtype = np.lib.format._read_array_header(npy, version)
+            yield name[:-4], shape, dtype
+
+def npz_samples_metadata(path):
+    for i in npz_headers(path):
+        if i[0] == 'samples':
+            n, dtype = i[1][0], i[2]
+            return n, dtype
+
+def check_descr(old, new):
+    if old is not None and old != new:
+        raise ValueError("Data descrs do not match!")
+    return new
 
 
 def onehot(base):
@@ -35,16 +61,16 @@ def onehot_(enc):
 def read_data(paths):    
     ### get X
     if "np" in paths[0] and os.path.isfile(paths[0]["np"]):
-        with np.load(paths[0]["np"]) as infile:
-            descriptor, num_features = infile["desc"], infile["samples"].dtype['atts'].shape[0]
+        descr = None
+        num_features = npz_samples_metadata(paths[0]["np"])[1]['atts'].shape[0]
     else:
         with open(paths[0]["X"], "r", encoding="utf-8") as infile:
-            descriptor = infile.readline()[:-1]
+            descr = infile.readline()[:-1]
             num_features = len(infile.readline().split()) - 2
     
-    row_t = np.dtype([("fileId", "u1"), ("readId", "u4"), ("col", "i2"), ('atts', '('+str(int(num_features))+',)f4'), ('class', bool)])
+    row_t = np.dtype([("fileId", "u1"), ("readId", "u4"), ("col", "i2"), ('atts', '('+str(num_features)+',)f4'), ('class', bool)])
 
-    linecounts = [np.load(path["np"])["samples"].shape[0] if "np" in path and os.path.isfile(path["np"]) else sum(1 for line in open(path["X"], "r"))-1 for path in paths]
+    linecounts = [npz_samples_metadata(path["np"])[0] if "np" in path and os.path.isfile(path["np"]) else sum(1 for _ in open(path["X"], "r"))-1 for path in tqdm(paths, total=len(paths), colour="blue", miniters=1, mininterval=0, leave=False)]
     tqdm.write("# files: "+str(len(linecounts)))
     tqdm.write("lengths: "+str(linecounts))
     tqdm.write("total: "+str(sum(linecounts)))
@@ -56,16 +82,14 @@ def read_data(paths):
         if "np" in path and os.path.isfile(path["np"]):
             tqdm.write("load: "+path["np"])
             with np.load(path["np"]) as infile:
-                if descriptor != infile["desc"]:
-                    raise ValueError("Data descriptors do not match!")
-
+                descr = check_descr(descr, infile["desc"])
+                if infile['samples'].dtype != row_t:
+                    raise ValueError("Data dtype does not match!")
                 samples[offsets[file_id]:offsets[file_id+1]] = infile["samples"]
         else:
             tqdm.write("parse: "+path["X"])
             with open(path["X"], "r", encoding="utf-8") as infile:
-                if descriptor != infile.readline()[:-1]:
-                    raise ValueError("Data descriptors do not match!")
-
+                descr = check_descr(descr, infile.readline()[:-1])
                 for i, line in tqdm(enumerate(infile), total=linecounts[file_id], colour="cyan", leave=False):
                     s = samples[i+offsets[file_id]]
                     splt = line.split()
@@ -106,10 +130,10 @@ def read_data(paths):
 
             if "np" in path:
                 tqdm.write("save: "+path["np"])
-                np.savez_compressed(path["np"], desc=descriptor, samples=samples[offsets[file_id]:offsets[file_id]+linecounts[file_id]])
+                np.savez_compressed(path["np"], desc=descr, samples=samples[offsets[file_id]:offsets[file_id]+linecounts[file_id]])
+                os.remove(path["X"])
 
-    # print(samples[0:10])
-    return descriptor, samples
+    return descr, samples
 
 def extract_node(tree_, i, out_file):
     if tree_.children_left[i] == tree._tree.TREE_LEAF:
@@ -147,9 +171,6 @@ def extract_lr(clf: LogisticRegression, out_file):
     print(clf.intercept_[0])
     out_file.write(struct.pack("f", clf.intercept_[0]))
 
-np.array("asdf").__str__()
-
-
 def extract_clf(clf, out_file_path):
     with open(out_file_path, "wb") as out_file:
         desc = clf.CARE_desc.encode("utf-8")
@@ -164,23 +185,36 @@ def process(data_map, clf_t, clf_args, suffix, test_index):
     tqdm.write("### data sets: "+str(len(data_map))+"\n")
     tqdm.write("### leave index "+str(test_index)+" out:\n")
     train_map = list(data_map)
-    train_map.pop(test_index)
+    test_map = [train_map.pop(test_index)]
     train_desc, train_data = read_data(train_map)
+    test_desc, test_data = read_data(test_map)
+
+    if test_desc != train_desc:
+        raise ValueError('Train and test data descriptors do not match!')
 
     X_train, y_train = train_data['atts'], train_data['class']
+    X_test, y_test = test_data['atts'], test_data['class']
 
     tqdm.write("### training classifier(s):")
     clf = clf_t(**clf_args).fit(X_train, y_train)
     clf.CARE_desc = str(train_desc)
-    extract_clf(clf, str(test_index)+suffix)
 
-    for i in range(len(data_map)):
-        test_map = [data_map[i]]
-        test_desc, test_data = read_data(test_map)
-        if train_desc != test_desc:
-            raise ValueError("Train and test data descriptors do not match!")
-        X_test, y_test = test_data['atts'], test_data['class']
-        tqdm.write("AUROC ("+str(i+1)+")  : "+str(metrics.roc_auc_score(y_test, clf.predict_proba(X_test)[:,1])))
+    filename = test_map[0]["prefix"]+'_'+suffix
+    extract_clf(clf, filename+".rf")
+
+    probs = clf.predict_proba(X_test)
+    auroc = metrics.roc_auc_score(y_test, probs[:,1])
+    avgps = metrics.average_precision_score(y_test, probs[:,1])
+    tqdm.write("AUROC (test)  : "+str(auroc))
+    tqdm.write("AVGPS (test)  : "+str(avgps))
+    
+    probs_train = clf.predict_proba(X_train)
+    auroc_train = metrics.roc_auc_score(y_train, probs_train[:,1])
+    avgps_train =  metrics.average_precision_score(y_train, probs_train[:,1])
+    tqdm.write("AUROC (train)  : "+str(auroc_train))
+    tqdm.write("AVGPS (train)  : "+str(avgps_train))
+    
+    pickle.dump(clf, open(filename+".rf.p", "wb"))
 
 ### stuff ###
 

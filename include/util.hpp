@@ -20,7 +20,7 @@
 #include <queue>
 
 
-
+#include <cstdlib>
 
 
 template<class T>
@@ -172,6 +172,39 @@ void permute(T* data, Index* indices, std::size_t N){
         indices[current] = current;
     }
 }
+
+template<class T, std::size_t N>
+struct FixedCapacityVector{
+    std::size_t size_{};
+    std::array<T,N> array{};
+
+    void push_back(T elem){
+        assert(size() < N);
+        array[size_++] = std::move(elem);
+    }
+
+    std::size_t size() const noexcept{
+        return size_;
+    }
+
+    auto begin() noexcept{
+        return array.begin();
+    }
+
+    auto end() noexcept{
+        return array.begin() + size();
+    }
+
+    T& operator[](std::size_t i) noexcept{
+        assert(i < size());
+        return array[i];
+    }
+
+    const T& operator[](std::size_t i) const noexcept{
+        assert(i < size());
+        return array[i];
+    }
+};
 
 
 /*

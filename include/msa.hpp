@@ -2,10 +2,11 @@
 #define CARE_CPU_MSA_HPP
 
 #include <config.hpp>
+#include <hostdevicefunctions.cuh>
 
 #include <util.hpp>
 #include <qualityscoreweights.hpp>
-#include <bestalignment.hpp>
+#include <alignmentorientation.hpp>
 #include <string>
 #include <cassert>
 #include <vector>
@@ -86,7 +87,7 @@ public:
         bool operator==(const PossibleSplitColumn& rhs) const{
             return letter == rhs.letter
                 && column == rhs.column
-                && ratio == rhs.ratio;
+                && feq(ratio, rhs.ratio);
         }
 
         bool operator!=(const PossibleSplitColumn& rhs) const{
@@ -210,16 +211,6 @@ public:
         int dataset_coverage
     ) const;
 };
-
-    MSAProperties getMSAProperties(
-        const float* support,
-        const int* coverage,
-        int firstCol,
-        int lastCol, //exclusive
-        float estimatedErrorrate,
-        float estimatedCoverage,
-        float m_coverage
-    );
 
 
 std::vector<MultipleSequenceAlignment::PossibleSplitColumn> computePossibleSplitColumns(

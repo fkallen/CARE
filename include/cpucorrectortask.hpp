@@ -2,9 +2,9 @@
 #define CARE_CPUCORRECTOR_TASK_HPP
 
 #include <config.hpp>
-#include <correctionresultprocessing.hpp>
+
 #include <cpu_alignment.hpp>
-#include <bestalignment.hpp>
+#include <alignmentorientation.hpp>
 #include <msa.hpp>
 
 #include <vector>
@@ -42,7 +42,7 @@ namespace care{
         std::vector<char> decodedCandidateSequences{};
         std::vector<cpu::SHDResult> alignments{};
         std::vector<cpu::SHDResult> revcAlignments{};
-        std::vector<BestAlignment_t> alignmentFlags{};
+        std::vector<AlignmentOrientation> alignmentFlags{};
         std::vector<bool> isPairedCandidate{};
 
         CpuErrorCorrectorInput input{};

@@ -3,7 +3,7 @@
 #include <util.hpp>
 #include <config.hpp>
 #include <readlibraryio.hpp>
-
+#include <memorymanagement.hpp>
 #include <filehelpers.hpp>
 
 #include <iostream>
@@ -145,6 +145,21 @@ namespace args{
         return result;
 	}
 
+    template<>
+	ExtensionOptions to<ExtensionOptions>(const cxxopts::ParseResult& pr){
+        ExtensionOptions result{};
+
+        if(pr.count("insertsize")){
+            result.insertSize = pr["insertsize"].as<int>();
+        }
+
+        if(pr.count("insertsizedev")){
+            result.insertSizeStddev = pr["insertsizedev"].as<int>();
+        }
+
+        return result;
+	}
+
 	template<>
 	RuntimeOptions to<RuntimeOptions>(const cxxopts::ParseResult& pr){
         RuntimeOptions result{};
@@ -166,6 +181,10 @@ namespace args{
 
         if(pr.count("warpcore")){
             result.warpcore = pr["warpcore"].as<int>();
+        }
+
+        if(pr.count("replicateGpuData")){
+            result.replicateGpuData = pr["replicateGpuData"].as<bool>();
         }
 
         return result;
@@ -261,7 +280,10 @@ namespace args{
             }else{
                 result.pairType = SequencePairType::Invalid;
             }
-        }
+        }  
+        if(pr.count("eo")){
+            result.extendedReadsOutputfilename = pr["eo"].as<std::string>();
+        }       
         if(pr.count("nReads")){
 		    result.nReads = pr["nReads"].as<std::uint64_t>();
         }
@@ -303,6 +325,10 @@ namespace args{
         }
         if(pr.count("outputfilenames")){
             result.outputfilenames = pr["outputfilenames"].as<std::vector<std::string>>();
+        }
+
+        if(pr.count("mergedoutput")){
+            result.mergedoutput = true;
         }
 
         return result;
@@ -367,6 +393,25 @@ namespace args{
     }
 
     template<>
+    bool isValid<ExtensionOptions>(const ExtensionOptions& opt){
+        bool valid = true;
+
+        if(opt.insertSize < 0){
+            valid = false;
+            std::cout << "Error: insert size must be >= 0, is " 
+                << opt.insertSize << std::endl;
+        }
+
+        if(opt.insertSizeStddev < 0){
+            valid = false;
+            std::cout << "Error: insert size deviation must be >= 0, is " 
+                << opt.insertSizeStddev << std::endl;
+        }
+
+        return valid;
+    }
+
+    template<>
     bool isValid<RuntimeOptions>(const RuntimeOptions& opt){
         bool valid = true;
 
@@ -375,21 +420,11 @@ namespace args{
             std::cout << "Error: threads must be > 0, is " + std::to_string(opt.threads) << std::endl;
         }
 
-        // if(opt.threadsForGPUs < 0){
-        //     valid = false;
-        //     std::cout << "Error: threadsForGPUs must be >= 0, is " + std::to_string(opt.threadsForGPUs) << std::endl;
-        // }
-        //
-        // if(opt.threadsForGPUs > opt.threads){
-        //     valid = false;
-        //     std::cout << "Error: threadsForGPUs must be <= threads, is " + std::to_string(opt.threadsForGPUs) << std::endl;
-        // }
-
         return valid;
     }
 
     template<>
-    bool isValid<MemoryOptions>(const MemoryOptions& opt){
+    bool isValid<MemoryOptions>(const MemoryOptions& /*opt*/){
         bool valid = true;
 
         return valid;
@@ -445,13 +480,12 @@ namespace args{
         }
 
         {
-            // if(opt.opt.mlForestfile != ""){
-            //     std::ifstream is(opt.mlForestfile);
-            //     if(!(bool)is){
-            //         valid = false;
-            //         std::cout << "Error: cannot find mlForestfile " << opt.mlForestfile << std::endl;
-            //     }
-            // }
+            const std::string outputfile = opt.outputdirectory + "/" + opt.extendedReadsOutputfilename;
+            std::ofstream os(outputfile);
+            if(!(bool)os){
+                valid = false;
+                std::cout << "Error: cannot open extended reads output file " << outputfile << std::endl;
+            }
         }
 
         {
@@ -490,6 +524,32 @@ namespace args{
             if(opt.outputfilenames.size() > 1 && opt.inputfiles.size() != opt.outputfilenames.size()){
                 valid = false;
                 std::cout << "Error: An output file name must be specified for each input file. Number of input files : " << opt.inputfiles.size() << ", number of output file names: " << opt.outputfilenames.size() << "\n";
+            }
+        }
+
+        {
+            //Disallow invalid type
+            if(opt.pairType == SequencePairType::Invalid){
+                valid = false;
+                std::cout << "Error: pairmode is invalid." << std::endl;
+            }
+
+            //In paired end mode, there must be a single input file with interleaved reads, or exactly two input files, one per direction.
+            if(opt.pairType == SequencePairType::PairedEnd){
+                const int countOk = opt.inputfiles.size() == 1 || opt.inputfiles.size() == 2;
+                if(!countOk){
+                    valid = false;
+                    std::cout << "Error: Invalid number of input files for selected pairmode 'PairedEnd'." << std::endl;
+                }
+            }
+
+            //In single end mode, a single file allowed
+            if(opt.pairType == SequencePairType::SingleEnd){
+                const int countOk = opt.inputfiles.size() == 1;
+                if(!countOk){
+                    valid = false;
+                    std::cout << "Error: Invalid number of input files for selected pairmode 'SingleEnd'." << std::endl;
+                }
             }
         }
         

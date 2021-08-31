@@ -9,6 +9,7 @@
 #include <hpc_helpers.cuh>
 #include <cpuhashtable.hpp>
 #include <memorymanagement.hpp>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <memory>
 #include <algorithm>
@@ -320,6 +321,7 @@ namespace gpu{
         //     return MultiValueHashTable::tombstone_key();
         // }
 
+        GpuHashtable(){}
 
         GpuHashtable(std::size_t pairs_, float load_, std::size_t maxValuesPerKey_)
             : maxPairs(pairs_), load(load_), maxValuesPerKey(maxValuesPerKey_){
@@ -585,7 +587,7 @@ namespace gpu{
                 d_tmp_uniqueKeys,
                 numUniqueKeys,
                 stream
-            ); CUERR;
+            ); CUDACHECKASYNC;
 
             retrieve(
                 d_tmp_uniqueKeys,
@@ -619,7 +621,7 @@ namespace gpu{
                 d_tmp_compactOffset, 
                 numUniqueKeys+1
             );
-            CUERR;
+            CUDACHECKASYNC;
             
             cudaMemcpyAsync(
                 d_compactValues, 
@@ -627,7 +629,7 @@ namespace gpu{
                 d_compactValues.sizeInBytes(), 
                 D2D, 
                 stream
-            ); CUERR;
+            ); CUDACHECKASYNC;
 
             std::vector<int> ids(batchsize);
 
@@ -637,9 +639,9 @@ namespace gpu{
                 const std::size_t num = end - begin;
 
                 std::iota(ids.data(), ids.data() + num, int(begin));
-                cudaStreamSynchronize(stream); CUERR;
+                CUDACHECK(cudaStreamSynchronize(stream));
 
-                cudaMemcpyAsync(d_tmp_ids, ids.data(), sizeof(int) * num, H2D, stream); CUERR;
+                CUDACHECK(cudaMemcpyAsync(d_tmp_ids, ids.data(), sizeof(int) * num, H2D, stream));
 
                 gpuKeyIndexTable->insert(
                     d_tmp_uniqueKeys + begin,
@@ -656,7 +658,7 @@ namespace gpu{
             
             isCompact = true;
 
-            cudaStreamSynchronize(stream); CUERR;
+            CUDACHECK(cudaStreamSynchronize(stream));
         }
 
         template<class Offset>
@@ -672,7 +674,7 @@ namespace gpu{
             gpuMvTable->retrieve_all_keys(
                 d_uniqueKeys,
                 numUniqueKeys
-            ); CUERR;
+            ); CUDACHECKASYNC;
 
             Index numRetrievedValues = 0;
 
@@ -701,11 +703,11 @@ namespace gpu{
                 warpcore::defaults::probing_length()
             );
 
-            cudaMemcpyAsync(h_uniqueKeys.data(), d_uniqueKeys.data(), sizeof(Key) * numUniqueKeys, D2H, (cudaStream_t)0); CUERR;
-            cudaMemcpyAsync(h_compactOffsetTmp.data(), d_compactOffsetTmp.data(), sizeof(Index) * (1+numUniqueKeys), D2H, (cudaStream_t)0); CUERR;
-            cudaMemcpyAsync(h_compactValues.data(), d_compactValues.data(), sizeof(Value) * numRetrievedValues, D2H, (cudaStream_t)0); CUERR;
-            cudaStreamSynchronize((cudaStream_t)0); CUERR;
-            //cudaDeviceSynchronize(); CUERR;
+            CUDACHECK(cudaMemcpyAsync(h_uniqueKeys.data(), d_uniqueKeys.data(), sizeof(Key) * numUniqueKeys, D2H, (cudaStream_t)0));
+            CUDACHECK(cudaMemcpyAsync(h_compactOffsetTmp.data(), d_compactOffsetTmp.data(), sizeof(Index) * (1+numUniqueKeys), D2H, (cudaStream_t)0));
+            CUDACHECK(cudaMemcpyAsync(h_compactValues.data(), d_compactValues.data(), sizeof(Value) * numRetrievedValues, D2H, (cudaStream_t)0));
+            CUDACHECK(cudaStreamSynchronize((cudaStream_t)0));
+
             std::copy(h_uniqueKeys.begin(), h_uniqueKeys.end(), out_uniqueKeys);
             std::copy(h_compactValues.begin(), h_compactValues.end(), out_values);
             std::copy(h_compactOffsetTmp.begin(), h_compactOffsetTmp.end(), out_offsets);
@@ -722,9 +724,9 @@ namespace gpu{
             // gpuMvTable->retrieve_all_keys(
             //     d_uniqueKeys,
             //     numUniqueKeys
-            // ); CUERR;
+            // ); CUDACHECKASYNC;
 
-            // cudaMemcpyAsync(h_uniqueKeys.data(), d_uniqueKeys.data(), sizeof(Key) * numUniqueKeys, D2H, stream1); CUERR;
+            // CUDACHECK(cudaMemcpyAsync(h_uniqueKeys.data(), d_uniqueKeys.data(), sizeof(Key) * numUniqueKeys, D2H, stream1));
             // event0.record(stream1);
 
             //  Index numRetrievedValues = 0;
@@ -749,31 +751,31 @@ namespace gpu{
             // //     warpcore::defaults::probing_length()
             // // );
 
-            // // cudaStreamSynchronize(0); CUERR;
+            // // CUDACHECK(cudaStreamSynchronize(0));
             // // std::size_t required_temp_bytes = 0;
-            // // cub::DeviceScan::InclusiveSum(
+            // // CUDACHECK(cub::DeviceScan::InclusiveSum(
             // //     nullptr,
             // //     required_temp_bytes,
             // //     d_compactOffsetTmp + 1,
             // //     d_compactOffsetTmp + 1,
             // //     numUniqueKeys,
             // //     stream0
-            // // );
+            // // ));
             // helpers::SimpleAllocationPinnedHost<Value, 0> h_compactValues(numRetrievedValues); 
             // helpers::SimpleAllocationDevice<Value, 0> d_compactValues(numRetrievedValues); 
             // //helpers::SimpleAllocationDevice<char, 0> cubtemp(required_temp_bytes);
 
-            // // cub::DeviceScan::InclusiveSum(
+            // // CUDACHECK(cub::DeviceScan::InclusiveSum(
             // //     cubtemp,
             // //     required_temp_bytes,
             // //     d_compactOffsetTmp + 1,
             // //     d_compactOffsetTmp + 1,
             // //     numUniqueKeys,
             // //     stream0
-            // // );
+            // // ));
             // event1.record(stream0);
             // stream1.waitEvent(event1, 0);
-            // cudaMemcpyAsync(h_compactOffsetTmp.data(), d_compactOffsetTmp.data(), sizeof(Offset) * (1+numUniqueKeys), D2H, stream1); CUERR;
+            // CUDACHECK(cudaMemcpyAsync(h_compactOffsetTmp.data(), d_compactOffsetTmp.data(), sizeof(Offset) * (1+numUniqueKeys), D2H, stream1));
             // event1.record(stream1);
 
             // // gpuMvTable->retrieve(
@@ -796,7 +798,7 @@ namespace gpu{
             //     warpcore::defaults::probing_length()
             // );
 
-            // cudaMemcpyAsync(h_compactValues.data(), d_compactValues.data(), sizeof(Value) * numRetrievedValues, D2H, stream0); CUERR;
+            // CUDACHECK(cudaMemcpyAsync(h_compactValues.data(), d_compactValues.data(), sizeof(Value) * numRetrievedValues, D2H, stream0));
 
             // event2.record(stream0);
 
@@ -810,7 +812,7 @@ namespace gpu{
             // //     (cudaStream_t)0
             // // );
             // auto copyToOutput = [](auto event, const auto src, auto dst){
-            //     event->synchronize(); CUERR;
+            //     CUDACHECK(event->synchronize());
             //     std::copy(src->begin(), src->end(), dst);
             // };
 
@@ -834,7 +836,94 @@ namespace gpu{
             // std::copy(h_compactOffsetTmp.begin(), h_compactOffsetTmp.end(), out_offsets);
         }
 
-        
+        std::size_t getMakeCopyTempBytes() const{
+            if(!isCompact){
+                throw std::runtime_error("Cannot compute temp bytes to create a copy of non-compact GpuHashtable");
+            }
+            std::size_t numPairs = gpuKeyIndexTable->size(cudaStreamPerThread);
+            std::size_t keybytes = numPairs * sizeof(Key);
+            std::size_t indexbytes = numPairs * sizeof(int);
+            constexpr std::size_t alignment = 128;
+            return SDIV(keybytes, alignment) * alignment + SDIV(indexbytes, alignment) * alignment;
+        }
+
+        //d_temp must be device-accessible on target device id
+        std::unique_ptr<GpuHashtable> makeCopy(void* d_temp, int targetDeviceId) const{
+            if(!isCompact){
+                throw std::runtime_error("Cannot create a copy of non-compact GpuHashtable");
+            }
+
+            cub::SwitchDevice ds(targetDeviceId);
+
+            auto result = std::make_unique<GpuHashtable>();
+            result->isCompact = isCompact;
+            result->deviceId = targetDeviceId;
+            result->load = load;
+            result->numKeys = numKeys;
+            result->numValues = numValues;
+            result->maxPairs = maxPairs;
+            result->maxValuesPerKey = maxValuesPerKey;
+            result->gpuMvTable = nullptr;
+
+
+            result->d_compactOffsets.resize(d_compactOffsets.size());
+            CUDACHECK(cudaMemcpyAsync(result->d_compactOffsets.data(), d_compactOffsets.data(), sizeof(int) * d_compactOffsets.size(), D2D, cudaStreamPerThread));
+
+            result->d_compactValues.resize(d_compactValues.size());
+            CUDACHECK(cudaMemcpyAsync(result->d_compactValues.data(), d_compactValues.data(), sizeof(Value) * d_compactValues.size(), D2D, cudaStreamPerThread));
+
+            std::size_t capacity = gpuKeyIndexTable->capacity();
+
+            result->gpuKeyIndexTable = std::make_unique<CompactKeyIndexTable>(
+                capacity
+            );
+
+            auto status = result->gpuKeyIndexTable->pop_status(cudaStreamPerThread);
+            CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
+
+            if(status.has_any_errors()){
+                std::cerr << "Error creating copy of GpuHashtable. " << status << "\n";
+                return nullptr;
+            }
+
+            std::size_t numPairs = gpuKeyIndexTable->size(cudaStreamPerThread);
+            std::size_t keybytes = numPairs * sizeof(Key);
+            std::size_t indexbytes = numPairs * sizeof(int);
+            constexpr std::size_t alignment = 128;
+            keybytes = SDIV(keybytes, alignment) * alignment;
+            indexbytes = SDIV(indexbytes, alignment) * alignment;
+            
+            Key* const d_keys = reinterpret_cast<Key*>(d_temp);
+            int* const d_index = reinterpret_cast<int*>(reinterpret_cast<char*>(d_keys) + keybytes);
+
+            std::size_t numRetrieved = 0;
+            //peer access
+            gpuKeyIndexTable->retrieve_all(
+                d_keys,
+                d_index,
+                numRetrieved,
+                cudaStreamPerThread
+            );
+            CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
+            assert(numRetrieved == numPairs);
+
+            result->gpuKeyIndexTable->insert(
+                d_keys,
+                d_index,
+                numRetrieved,
+                cudaStreamPerThread
+            );
+
+            result->gpuKeyIndexTable->pop_status(cudaStreamPerThread);
+            CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
+
+            if(status.has_any_errors()){
+                std::cerr << "Error creating copy of GpuHashtable. " << status << "\n";
+                return nullptr;
+            }
+
+            return result;            
+        }
 
         bool isCompact = false;
         int deviceId{};
@@ -869,7 +958,7 @@ namespace gpu{
 
         GpuHashtableKeyCheck<Key> isValidKey;
 
-        gpuhashtablekernels::fixTableKeysKernel<<<grid, block, 0, stream>>>(d_keys, numKeys, isValidKey); CUERR;
+        gpuhashtablekernels::fixTableKeysKernel<<<grid, block, 0, stream>>>(d_keys, numKeys, isValidKey); CUDACHECKASYNC;
     }
 
 
@@ -1018,21 +1107,21 @@ namespace gpu{
                     const int end = std::min((iter+1) * batchsize, int(keys.size()));
                     const int num = end - begin;
 
-                    cudaMemcpyAsync(
+                    CUDACHECK(cudaMemcpyAsync(
                         d_keys.data(),
                         keys.data() + begin,
                         sizeof(Key) * num;
                         H2D,
                         cudaStreamPerThread
-                    ); CUERR;
+                    ));
 
-                    cudaMemcpyAsync(
+                    CUDACHECK(cudaMemcpyAsync(
                         d_prefixsum.data(),
                         countsPrefixSum.data() + begin,
                         sizeof(read_number) * (num + 1);
                         H2D,
                         cudaStreamPerThread
-                    ); CUERR;
+                    ));
 
                     helpers::lambda_kernel<<<SDIV(batchsize, 256), 256, 0, cudaStreamPerThread>>>(
                         [
@@ -1047,7 +1136,7 @@ namespace gpu{
                                 d_lookupvalues[tid].second = d_prefixsum[tid + 1] - d_prefixsum[tid];
                             }
                         }
-                    ); CUERR;
+                    ); CUDACHECKASYNC;
 
                     me->lookup->insert(
                         d_keys.data(),
@@ -1109,12 +1198,12 @@ namespace gpu{
             QueryResult* d_resultsOutput = (QueryResult*)(d_queryoutput + numKeys);
             QueryResult* h_resultsOutput = (QueryResult*)h_temp;
 
-            cudaMemsetAsync(
+            CUDACHECK(cudaMemsetAsync(
                 d_tempoutput,
                 0, 
                 required_d_temp_bytes,
                 stream
-            ); CUERR;
+            ));
 
             lookup->retrieve(
                 d_keys,
@@ -1143,17 +1232,17 @@ namespace gpu{
                         }
                     }
                 }
-            ); CUERR;
+            ); CUDACHECKASYNC;
 
-            cudaMemcpyAsync(
+            CUDACHECK(cudaMemcpyAsync(
                 h_resultsOutput,
                 d_resultsOutput,
                 sizeof(QueryResult) * numKeys,
                 D2H,
                 stream
-            ); CUERR;
+            ));
 
-            cudaStreamSynchronize(stream); CUERR;
+            CUDACHECK(cudaStreamSynchronize(stream));
 
             std::copy_n(h_resultsOutput, numKeys, resultsOutput);
         }

@@ -5,30 +5,17 @@
 * OpenMP
 * Zlib
 * GNU Make
-* Thrust 1.9 or newer. https://github.com/thrust/thrust
 
 ## Additional prerequisites for GPU version
-* CUDA Toolkit 10 or newer
-* A CUDA capable Pascal or Volta card. Other cards may work, but have not been tested.
-* CUB Version 1.8.0 or newer. CUB is included in CUDA Toolkit 11. https://github.com/thrust/cub
-* Thrust 1.9 or newer. Thrust is shipped together with the CUDA Toolkit
+* CUDA Toolkit 11 or newer
+* A CUDA-capable graphics card with Pascal architecture (i.e. Nvidia GTX 1080) or newer.
 
 # Download
 Clone the repository and initialize submodules: `git clone --recurse-submodules url`
 
 
 # Build
-## Configure
-First, run the configure script to specify include paths and directories. The default values assume CUDA 11 is installed and can be accessed via /usr/local/cuda . If any of --with-cub-incdir or --with-thrust-incdir is not specified but --with-cuda-dir is specified, cuda-dir/include will be used for unspecified include directories.
-
-``` 
-./configure --help
-
-    --prefix=PREFIX          make install will copy executables to PREFIX/bin/ [/usr/local]
-    --with-cuda-dir=DIR      The top directory of the CUDA toolkit. [/usr/local/cuda/]
-    --with-cub-incdir=DIR    use the copy of CUB in DIR. DIR/cub/cub.cuh must exist [/usr/local/cuda/include/]
-    --with-thrust-incdir=DIR use the copy of THRUST in DIR. DIR/thrust/version.h must exist [/usr/local/cuda/include/]
-```
+The build process assumes that the required compilers are available in your PATH.
 
 ## Make
 Run make to generate the executables.
@@ -43,138 +30,73 @@ GPU version: This produces an executable file care-gpu in the top-level director
 make gpu
 ```
 
-Optionally, after executables have been built they can be copied to the installation directory via make install
+Optionally, after executables have been built they can be copied to an installation directory via `make install`.
+This will copy available executables to the directory PREFIX/bin. The default value for PREFIX is `/usr/local`.
+A custom prefix can be set as follows:
 
-Forests: Creates shared object files for random forests
 ```
-make forests
+make install PREFIX=/my/custom/prefix
 ```
+
+
 
 # Run   
 The simplest command which only includes mandatory options is
 
 ```
-./care-cpu -i reads.fastq -d outputdir -o correctedreads.fastq -c 30 
+./care-cpu -i reads.fastq -d outputdir -o correctedreads.fastq -c 30 --pairmode PE
 ```
 
-This command will attempt to correct the reads from file reads.fastq, assuming a read coverage of 30.
+This command will attempt to correct the reads from file reads.fastq, assuming a read coverage of 30. The parameter `--pairmode PE` is used to execute the paired-end correction path.
 The outputfile named correctedreads.fastq will be placed in the directory outputdir. The available program parameters are listed below.
 
-Input files must be in fasta or fastq format, and may be gzip'ed.
+Input files must be in fasta or fastq format, and may be gzip'ed. Specifying both fasta files and fastq files together is not allowed.
+If the input files are unpaired, the setting `--pairmode SE` must be used, which selected the single-end correction path.
+If the input files are paired instead, either `--pairmode SE` or `--pairmode PE` may be used.
 Output files will be uncompressed. The order of reads will be preserved. Read headers and quality scores (if fastq) remain unchanged.
 
+
+# Specifying input files
+## Single-end library
+For a single-end library consisting of one or more files, repeat argument `-i` for each file
+
+## Paired-end library
+A paired-end library must be either a single file in interleaved format, or two files in split format.
+
+### Interleaved
+Two consecutive reads form a read pair. Use `-i reads_interleaved` .
+
+### Split
+Read number N in file 1 and read number N in file 2 form a read pair. Use `-i reads_1 -i reads_2`.
+
 # Available program parameters
+Please execute `./care-cpu --help` or `./care-cpu --help` to print a list of available parameters. Both versions share a common subset of parameters.
+
+The following list is a selection of usefull options.
+
 ```
- Mandatory options:
-  -d, --outdir arg           The output directory. Will be created if it does
-                             not exist yet.
-  -c, --coverage arg         Estimated coverage of input file. (i.e.
-                             number_of_reads * read_length / genome_size)
-  -i, --inputfiles arg       The file(s) to correct. Fasta or Fastq format.
-                             May be gzip'ed. Repeat this option for each input
-                             file (e.g. -i file1.fastq -i file2.fastq). Must
-                             not mix fasta and fastq files. Input files are
-                             treated as unpaired. The collection of input files
-                             is treated as a single read library
-  -o, --outputfilenames arg  The names of outputfiles. Repeat this option for
-                             each output file (e.g. -o file1_corrected.fastq
-                             -o file2_corrected.fastq). If a single output
-                             file is specified, it will contain the concatenated
-                             results of all input files. If multiple output
-                             files are specified, the number of output files
-                             must be equal to the number of input files. In this
-                             case, output file i will contain the results of
-                             input file i. Output files are uncompressed.
+-h, --hashmaps arg            The requested number of hash maps. Must be
+                              greater than 0. The actual number of used hash
+                              maps may be lower to respect the set memory
+                              limit. Default: 48
 
- Mandatory GPU options:
-  -g, --gpu arg  One or more GPU device ids to be used for correction. 
+-t, --threads arg             Maximum number of thread to use. Default: 1
 
- Additional options:
-      --help                    Show this help message
-      --tempdir arg             Directory to store temporary files. Default:
-                                output directory
-  -h, --hashmaps arg            The requested number of hash maps. Must be
-                                greater than 0. The actual number of used hash
-                                maps may be lower to respect the set memory
-                                limit. Default: 48
-  -k, --kmerlength arg          The kmer length for minhashing. If 0 or
-                                missing, it is automatically determined.
-      --enforceHashmapCount     If the requested number of hash maps cannot
-                                be fullfilled, the program terminates without
-                                error correction. Default: false
-  -t, --threads arg             Maximum number of thread to use. Must be
-                                greater than 0
-      --batchsize arg           Number of reads to correct in a single batch.
-                                Must be greater than 0. In CARE CPU, one
-                                batch per thread is used. In CARE GPU, two batches
-                                per GPU are used. Default: 1000
-  -q, --useQualityScores        If set, quality scores (if any) are
+-q, --useQualityScores        If set, quality scores (if any) are
                                 considered during read correction. Default: false
-      --excludeAmbiguous        If set, reads which contain at least one
-                                ambiguous nucleotide will not be corrected.
-                                Default: false
-      --candidateCorrection     If set, candidate reads will be
-                                corrected,too. Default: false
-      --candidateCorrectionNewColumns arg
-                                If candidateCorrection is set, a candidates
-                                with an absolute shift of
-                                candidateCorrectionNewColumns compared to anchor are corrected.
-                                Default: 15
-      --maxmismatchratio arg    Overlap between anchor and candidate must
-                                contain at most (maxmismatchratio * overlapsize)
-                                mismatches. Default: 0.200000
-      --minalignmentoverlap arg
-                                Overlap between anchor and candidate must be
-                                at least this long. Default: 30
-      --minalignmentoverlapratio arg
-                                Overlap between anchor and candidate must be
-                                at least as long as (minalignmentoverlapratio
-                                * candidatelength). Default: 0.300000
-      --errorfactortuning arg   errorfactortuning. Default: 0.060000
-      --coveragefactortuning arg
-                                coveragefactortuning. Default: 0.600000
-      --nReads arg              Upper bound for number of reads in the
-                                inputfile. If missing or set 0, the input file is
-                                parsed to find the exact number of reads before
-                                any work is done.
-      --min_length arg          Lower bound for read length in file. If
-                                missing or set 0, the input file is parsed to find
-                                the exact minimum length before any work is
-                                done.
-      --max_length arg          Upper bound for read length in file. If
-                                missing or set 0, the input file is parsed to find
-                                the exact maximum length before any work is
-                                done.
-  -p, --showProgress            If set, progress bar is shown during
-                                correction
-      --save-preprocessedreads-to arg
-                                Save binary dump of data structure which
-                                stores input reads to disk
-      --load-preprocessedreads-from arg
-                                Load binary dump of read data structure from
-                                disk
-      --save-hashtables-to arg  Save binary dump of hash tables to disk
-      --load-hashtables-from arg
-                                Load binary dump of hash tables from disk
-      --memHashtables arg       Memory limit in bytes for hash tables and
-                                hash table construction. Can use suffix K,M,G ,
-                                e.g. 20G means 20 gigabyte. This option is not
-                                a hard limit. Default: A bit less than
-                                memTotal.
-  -m, --memTotal arg            Total memory limit in bytes. Can use suffix
-                                K,M,G , e.g. 20G means 20 gigabyte. This option
-                                is not a hard limit. Default: All free
-                                memory.
 
-      --correctionType arg      0: Classic, 1: Forest, 2: Print
-      --ml-forestfile arg       The shared object file to load which contains 
-                                ML error correction logic
+--candidateCorrection         If set, candidate reads will be corrected,too. Default: false
 
-```
+-p, --showProgress            If set, progress bar is shown during correction
+
+-m, --memTotal arg            Total memory limit in bytes. Can use suffix
+                              K,M,G , e.g. 20G means 20 gigabyte. This option
+                              is not a hard limit. Default: All free
+                              memory.
 
 If an option allows multiple values to be specified, the option can be repeated with different values.
-As an alternative, multiple values can be separated by comma (,). Both ways can be used simulatneously.
-For example, to specify three input files the following options are equivalent:
+As an alternative, multiple values can be separated by comma (,). Both ways can be used simultaneously.
+For example, to specify three single-end input files the following options are equivalent:
 
 ```
 -i file1,file2,file3

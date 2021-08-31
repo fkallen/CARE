@@ -132,7 +132,7 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
 
             forEachReadInFile(
                 filename,
-                [&](auto readnum, auto& read){
+                [&](auto /*readnum*/, auto& read){
 
                     std::swap(sbatch->sequences[sbatch->validItems], read.sequence);
                     if(useQualityScores){
@@ -188,7 +188,7 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
 
             forEachReadInPairedFiles(
                 filename1, filename2,
-                [&](auto readnum, auto& read){
+                [&](auto /*readnum*/, auto& read){
 
                     std::swap(sbatch->sequences[sbatch->validItems], read.sequence);
                     if(useQualityScores){

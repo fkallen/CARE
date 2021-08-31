@@ -5,6 +5,7 @@
 #include <memorymanagement.hpp>
 
 #include <gpu/cuda_block_select.cuh>
+#include <gpu/cudaerrorcheck.cuh>
 
 #include <memory>
 #include <cassert>
@@ -320,20 +321,16 @@ struct GpuSegmentedUnique{
         helpers::SimpleAllocationDevice<char, 0> d_temp_storage;
 
         HandleData(){
-            cudaGetDevice(&gpu); CUERR;
+            CUDACHECK(cudaGetDevice(&gpu));
         }
 
         HandleData(int gpu): gpu(gpu){
         }
 
         ~HandleData(){
-            int curgpu;
-            cudaGetDevice(&curgpu); CUERR;
-            cudaSetDevice(gpu); CUERR;
+            cub::SwitchDevice sd{gpu};
 
             d_temp_storage.destroy();
-
-            cudaSetDevice(curgpu); CUERR;
         }
 
         MemoryUsage getMemoryInfo() const{
@@ -444,7 +441,7 @@ struct GpuSegmentedUnique{
                 d_begin_offsets,
                 d_end_offsets,
                 maximumSegmentSizeForRegSort+1
-            ); CUERR;
+            ); CUDACHECKASYNC;
 
             makeUniqueRangeWithGmemSort(
                 d_gmemsorttmp,
@@ -618,7 +615,7 @@ struct GpuSegmentedUnique{
                 d_end_offsets, \
                 begin_bit, \
                 end_bit \
-            ); CUERR;
+            ); CUDACHECKASYNC;
 
         if(sizeOfLargestSegment <= 32){
             constexpr int blocksize = 32;
@@ -748,13 +745,13 @@ struct GpuSegmentedUnique{
             numSegments,
             d_begin_offsets,
             d_end_offsets 
-        ); CUERR;
+        ); CUDACHECKASYNC;
 
         if(d_values_dblbuf.Alternate() == d_input){
-            cudaMemcpyAsync(d_output, d_input, sizeof(T) * numItems, D2D, stream); CUERR;
+            CUDACHECK(cudaMemcpyAsync(d_output, d_input, sizeof(T) * numItems, D2D, stream));
         }
 
-        CUERR;
+        CUDACHECKASYNC;
     }
 
 };

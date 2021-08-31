@@ -195,7 +195,7 @@ namespace care{
         HD_WARNING_DISABLE
         template<class IndexTransformation>
         HOSTDEVICEQUALIFIER INLINEQUALIFIER
-        static constexpr std::uint8_t getEncodedNuc2Bit(const unsigned int* data, int sequenceLength, int i, IndexTransformation indextrafo) noexcept{
+        static constexpr std::uint8_t getEncodedNuc2Bit(const unsigned int* data, int /*sequenceLength*/, int i, IndexTransformation indextrafo) noexcept{
             const int intIndex = i / basesPerInt2Bit();
             const int pos = i % basesPerInt2Bit();
             return ((data[indextrafo(intIndex)] >> (30 - 2*pos)) & 3u);
@@ -323,6 +323,52 @@ namespace care{
             reverseComplementSequence2Bit(rcencodedsequence, encodedsequence, length, identity, identity);
         }
 
+        template<class CopyType = char, class Group>
+        DEVICEQUALIFIER
+        static constexpr void decodeSequence2Bit(Group& group, const unsigned int* input, int sequencelength, char* output){
+            #ifdef __CUDA_ARCH__
+
+            //output must be aligned to sizeof(CopyType) bytes
+            constexpr int copyTypeSize = sizeof(CopyType);
+            static_assert(copyTypeSize == 1 || copyTypeSize == 2 || copyTypeSize == 4 || copyTypeSize == 8 || copyTypeSize == 16, "Invalid CopyType");
+
+            const int nInts = SequenceHelpers::getEncodedNumInts2Bit(sequencelength);
+            constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
+
+            for(int i = group.thread_rank(); i < nInts; i += group.size()){
+                unsigned int data = input[i];
+
+                if(i < nInts-1){
+                    //not last iteration. int encodes 16 chars
+                    __align__(16) char nucs[16];
+
+                    #ifdef __CUDA_ARCH__
+                    #pragma unroll
+                    #endif
+                    for(int p = 0; p < 16; p++){
+                        const std::uint8_t encodedBase = SequenceHelpers::getEncodedNucFromInt2Bit(data, p);
+                        nucs[p] = SequenceHelpers::decodeBase(encodedBase);
+                    }
+
+                    #ifdef __CUDA_ARCH__
+                    #pragma unroll
+                    #endif
+                    for(int p = 0; p < 16 / copyTypeSize; p++){
+                        ((CopyType*)output)[(16 / copyTypeSize)*i + p] = *((const CopyType*)&nucs[p]);
+                    }
+                }else{
+                    const int remaining = sequencelength - i * basesPerInt;
+
+                    for(int p = 0; p < remaining; p++){
+                        const std::uint8_t encodedBase = SequenceHelpers::getEncodedNucFromInt2Bit(data, p);
+                        output[i * basesPerInt + p] = SequenceHelpers::decodeBase(encodedBase);
+                    }
+                }
+            }
+
+            #endif
+        }
+
 
 
 
@@ -408,7 +454,6 @@ namespace care{
             auto identity = [](auto i){return i;};
             return getEncodedNuc2BitHiLo(encodedsequence, length, position, identity);
         }
-
 
         HD_WARNING_DISABLE
         template<class IndexTransformation>
@@ -627,6 +672,191 @@ namespace care{
 
             return char(((((a * x) + b) * x) + c) * x + d);
         }
+
+        #ifdef __CUDACC__
+
+        template<class Group>
+        DEVICEQUALIFIER
+        static void reverseAlignedDecodedSequenceWithGroupShfl(Group& group, char* sequence, int sequenceLength){
+
+            auto reverse = [](char4 data){
+                char4 s;
+                s.x = data.w;
+                s.y = data.z;
+                s.z = data.y;
+                s.w = data.x;
+                return s;
+            };
+        
+            auto shiftLeft1 = [](char4 data){
+                char4 s;
+                s.x = data.y;
+                s.y = data.z;
+                s.z = data.w;
+                s.w = '\0';
+                return s;
+            };
+        
+            auto shiftLeft2 = [](char4 data){
+                char4 s;
+                s.x = data.z;
+                s.y = data.w;
+                s.z = '\0';
+                s.w = '\0';
+                return s;
+            };
+        
+            auto shiftLeft3 = [](char4 data){
+                char4 s;
+                s.x = data.w;
+                s.y = '\0';
+                s.z = '\0';
+                s.w = '\0';
+                return s;
+            };
+        
+            //treat [left,right] as "char8", shift to the left by one char. return leftmost 4 chars
+            auto handleUnusedPositions1 = [](char4 left, char4 right){
+                char4 s;
+                s.x = left.y;
+                s.y = left.z;
+                s.z = left.w;
+                s.w = right.x;
+                return s;
+            };
+        
+            //treat [left,right] as "char8", shift to the left by two chars. return leftmost 4 chars
+            auto handleUnusedPositions2 = [](char4 left, char4 right){
+                char4 s;
+                s.x = left.z;
+                s.y = left.w;
+                s.z = right.x;
+                s.w = right.y;
+                return s;
+            };
+        
+            //treat [left,right] as "char8", shift to the left by three chars. return leftmost 4 chars
+            auto handleUnusedPositions3 = [](char4 left, char4 right){
+                char4 s;
+                s.x = left.w;
+                s.y = right.x;
+                s.z = right.y;
+                s.w = right.z;
+                return s;
+            };
+        
+            if(sequenceLength <= 1) return;
+        
+            const int arrayLength = SDIV(sequenceLength, 4); // 4 bases per int
+            const int unusedPositions = arrayLength * 4 - sequenceLength;
+            char4* sequenceAsChar4 = (char4*)sequence;
+        
+            for(int i = group.thread_rank(); i < arrayLength/2; i += group.size()){
+                const char4 fdata = ((char4*)sequence)[i];
+                const char4 bdata = ((char4*)sequence)[arrayLength - 1 - i];
+        
+                const char4 front = reverse(fdata);
+                const char4 back = reverse(bdata);
+                sequenceAsChar4[i] = back;
+                sequenceAsChar4[arrayLength - 1 - i] = front;
+            }
+        
+            if(arrayLength % 2 == 1 && group.thread_rank() == 0){
+                const int middleindex = arrayLength/2;
+                const char4 mdata = ((char4*)sequence)[middleindex];
+                sequenceAsChar4[middleindex] = reverse(mdata);
+            }
+        
+            group.sync();
+        
+            if(unusedPositions > 0){
+        
+                char4 left;
+                char4 right;
+                char4 tmp;
+        
+                const int numIterations = SDIV(arrayLength-1, group.size());
+        
+                for(int iteration = 0; iteration < numIterations; iteration++){
+                    const int index = iteration * group.size() + group.thread_rank();
+                    if(index < arrayLength){
+                        left = sequenceAsChar4[index];
+                    }
+                    const int index2 = (iteration+1) * group.size() + group.thread_rank();
+                    if(index2 < arrayLength && group.thread_rank() == 0){
+                        tmp = sequenceAsChar4[index2];
+                    }
+                    #if __CUDACC_VER_MAJOR__ < 11
+                    //CUDA < 11 does not have shuffle api for char4
+                    *((int*)(&right)) = group.shfl_down(*((const int*)(&left)), 1);
+                    *((int*)(&tmp)) = group.shfl(*((const int*)(&tmp)), 0);
+                    #else
+                    right = group.shfl_down(left, 1);
+                    tmp = group.shfl(tmp, 0);
+                    #endif
+                    if(group.thread_rank() == group.size() - 1){
+                        right = tmp;
+                    }
+        
+                    if(unusedPositions == 1){
+                        char4 result = handleUnusedPositions1(left, right);
+                        if(index < arrayLength - 1){
+                            sequenceAsChar4[index] = result;
+                        }
+                    }else if(unusedPositions == 2){
+                        char4 result = handleUnusedPositions2(left, right);
+                        if(index < arrayLength - 1){
+                            sequenceAsChar4[index] = result;
+                        }
+                    }else{
+                        char4 result = handleUnusedPositions3(left, right);
+                        if(index < arrayLength - 1){
+                            sequenceAsChar4[index] = result;
+                        }
+                    }
+                }
+        
+                group.sync();
+        
+                if(group.thread_rank() == 0){
+                    if(unusedPositions == 1){
+                        sequenceAsChar4[arrayLength-1] = shiftLeft1(sequenceAsChar4[arrayLength-1]);
+                    }else if(unusedPositions == 2){
+                        sequenceAsChar4[arrayLength-1] = shiftLeft2(sequenceAsChar4[arrayLength-1]);
+                    }else{
+                        assert(unusedPositions == 3);
+                        sequenceAsChar4[arrayLength-1] = shiftLeft3(sequenceAsChar4[arrayLength-1]);
+                    }
+                }
+            }
+        }
+    
+        template<class Group>
+        DEVICEQUALIFIER
+        static void reverseComplementDecodedSequence(Group& group, char* sequence, int sequenceLength){
+            const bool isFourByteAligned = (((unsigned long)sequence) % 4) == 0;
+            if(isFourByteAligned){
+                for(int i = group.thread_rank(); i < sequenceLength; i += group.size()) {
+                    sequence[i] = SequenceHelpers::complementBaseDecoded(sequence[i]);
+                }
+                group.sync(); // threads may access elements which were written by another thread
+                SequenceHelpers::reverseAlignedDecodedSequenceWithGroupShfl(group, sequence, sequenceLength);
+                group.sync();
+            }else{
+                for(int i = group.thread_rank(); i < sequenceLength / 2; i += group.size()) {
+                    const char l = SequenceHelpers::complementBaseDecoded(sequence[i]);
+                    const char r = SequenceHelpers::complementBaseDecoded(sequence[sequenceLength - i - 1]);
+                    sequence[i] = r;
+                    sequence[sequenceLength - i - 1] = l;
+                }
+                if(group.thread_rank() == 0 && sequenceLength % 2 == 1){
+                    sequence[sequenceLength / 2] = SequenceHelpers::complementBaseDecoded(sequence[sequenceLength / 2]);
+                }
+                group.sync();
+            }
+        }
+
+        #endif
     };
 
     static_assert(SequenceHelpers::convertDNACharToIntNoIf('A') == 0,"");
