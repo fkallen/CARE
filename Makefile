@@ -12,8 +12,6 @@ WARPCORE_INCDIR = ./dependencies/warpcore/include
 
 WARPCORE_FLAGS = -DCARE_HAS_WARPCORE -I$(WARPCORE_INCDIR)
 
-
-
 CXXFLAGS = 
 
 COMPILER_WARNINGS = -Wall -Wextra 
@@ -27,13 +25,6 @@ CFLAGS_CPU_DEBUG = $(CFLAGS_DEBUG_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SY
 
 NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_FLAGS)
 NVCCFLAGS_DEBUG = -x cu -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_FLAGS)
-
-# This could be modified to compile only for a single architecture to reduce compilation time
-CUDA_ARCH = -gencode=arch=compute_70,code=sm_70 # \
-		# -gencode=arch=compute_70,code=sm_70 \
-		# -gencode=arch=compute_75,code=sm_75 \
-		# -gencode=arch=compute_80,code=sm_80 \
- 		# -gencode=arch=compute_80,code=compute_80
 
 LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt -lz -ldl
 LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -lz -ldl
@@ -130,19 +121,24 @@ OBJECTS_CORRECT_GPU = $(OBJECTS_CORRECT_GPU_NODIR:%=$(BUILDDIR_CORRECT_GPU)/%)
 OBJECTS_EXTEND_CPU = $(OBJECTS_EXTEND_CPU_NODIR:%=$(BUILDDIR_EXTEND_CPU)/%)
 OBJECTS_EXTEND_GPU = $(OBJECTS_EXTEND_GPU_NODIR:%=$(BUILDDIR_EXTEND_GPU)/%)
 
+findgpus: findgpus.cu
+	@$(CUDACC) findgpus.cu -o findgpus
 
+.PHONY: gpuarchs.txt
+gpuarchs.txt : findgpus
+	$(shell ./findgpus > gpuarchs.txt) 
 
 correct_cpu_release:
 	@$(MAKE) correct_cpu_release_dummy DIR=$(BUILDDIR_CORRECT_CPU) CXXFLAGS="-std=c++14"
 
-correct_gpu_release:
-	@$(MAKE) correct_gpu_release_dummy DIR=$(BUILDDIR_CORRECT_GPU) CXXFLAGS="-std=c++14"
+correct_gpu_release: gpuarchs.txt
+	@$(MAKE) correct_gpu_release_dummy DIR=$(BUILDDIR_CORRECT_GPU) CXXFLAGS="-std=c++14" CUDA_ARCH=$(shell cat gpuarchs.txt)
 
 extend_cpu_release:
 	@$(MAKE) extend_cpu_release_dummy DIR=$(BUILDDIR_EXTEND_CPU) CXXFLAGS="-std=c++17"
 
-extend_gpu_release:
-	@$(MAKE) extend_gpu_release_dummy DIR=$(BUILDDIR_EXTEND_GPU) CXXFLAGS="-std=c++17"
+extend_gpu_release: gpuarchs.txt
+	@$(MAKE) extend_gpu_release_dummy DIR=$(BUILDDIR_EXTEND_GPU) CXXFLAGS="-std=c++17" CUDA_ARCH=$(shell cat gpuarchs.txt)
 
 
 
@@ -196,6 +192,7 @@ clean :
 	@rm -f $(EXECUTABLE_CORRECT_GPU)
 	@rm -f $(EXECUTABLE_EXTEND_CPU)
 	@rm -f $(EXECUTABLE_EXTEND_GPU)
+
 
 $(DIR):
 	mkdir $(DIR)

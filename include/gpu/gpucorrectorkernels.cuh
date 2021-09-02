@@ -5,6 +5,7 @@
 #include <config.hpp>
 #include <correctedsequence.hpp>
 
+#include <gpu/groupmemcpy.cuh>
 #include <gpu/cuda_block_select.cuh>
 #include <thrust/binary_search.h>
 
@@ -171,16 +172,7 @@ namespace gpucorrectorkernels{
                 char* outputPtr = d_outputCorrectedSequences + outputOffset;
                 const char* inputPtr = d_inputCorrectedSequences + indexOfCorrectedSequence * decodedSequencePitchInBytes;
 
-                const int copyInts = (decodedSequencePitchInBytes) / sizeof(int);
-                const int remainingBytes = (decodedSequencePitchInBytes) - copyInts * sizeof(int);
-                for(int i = group.thread_rank(); i < copyInts; i += group.size()){
-                    ((int*)outputPtr)[i] = ((const int*)inputPtr)[i];
-                }
-    
-                if(group.thread_rank() < remainingBytes){
-                    ((char*)(((int*)outputPtr) + copyInts))[group.thread_rank()]
-                        = ((const char*)(((const int*)inputPtr) + copyInts))[group.thread_rank()];
-                }
+                care::gpu::memcpy<int4>(group, outputPtr, inputPtr, decodedSequencePitchInBytes);
             }
         }
     }

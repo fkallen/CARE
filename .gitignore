@@ -8,6 +8,7 @@ care-extend-cpu
 care-extend-gpu
 care-cpu-debug
 care-gpu-debug
+findgpus
 .CUB_INCDIR
 .CUDA_DIR
 .PREFIX

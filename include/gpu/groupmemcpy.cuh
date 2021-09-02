@@ -38,7 +38,7 @@ namespace gpu{
 
             //copy vectorized
             const size_t numTypedCopies = bytes / sizeof(VectorCopyType);        
-            for(size_t i = tid; i < numTypedCopies; i += 4 * stride){
+            for(size_t i = tid; i < numTypedCopies; i += stride){
                 reinterpret_cast<VectorCopyType*>(dest)[i] = reinterpret_cast<const VectorCopyType*>(src)[i];
             }
 
