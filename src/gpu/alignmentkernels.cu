@@ -1721,39 +1721,25 @@ namespace gpu{
         
 
         constexpr int blocksize = 128;
-        int max_blocks_per_device = 1;
 
-        KernelLaunchConfig kernelLaunchConfig;
-        kernelLaunchConfig.threads_per_block = blocksize;
-        kernelLaunchConfig.smem = 0;
+        int deviceId = 0;
+        int numSMs = 0;
+        int maxBlocksPerSM = 0;
+        CUDACHECK(cudaGetDevice(&deviceId));
+        CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSM,
+            popcount_shifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>,
+            blocksize, 
+            0
+        ));
 
-        auto iter = handle.kernelPropertiesMap.find(KernelId::PopcountSHDReg);
-        if(iter == handle.kernelPropertiesMap.end()) {
-
-            std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-            KernelProperties kernelProperties;
-            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-                &kernelProperties.max_blocks_per_SM,
-                popcount_shifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>,
-                kernelLaunchConfig.threads_per_block, 
-                kernelLaunchConfig.smem
-            ));
-
-            mymap[kernelLaunchConfig] = kernelProperties;
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-            handle.kernelPropertiesMap[KernelId::PopcountSHDReg] = std::move(mymap);
-        }else{
-            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-        }
+        const int maxBlocks = maxBlocksPerSM * numSMs;
 
         dim3 block(blocksize, 1, 1);
         //const int numBlocks = SDIV(maxNumCandidates, blocksize);
-        //dim3 grid(std::min(numBlocks, max_blocks_per_device), 1, 1);
-        dim3 grid(max_blocks_per_device, 1, 1);
+        //dim3 grid(std::min(numBlocks, maxBlocks), 1, 1);
+        dim3 grid(maxBlocks, 1, 1);
 
         popcount_shifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>
             <<<grid, block, 0, stream>>>(
@@ -1864,42 +1850,28 @@ namespace gpu{
             maxNumAnchors,
             stream,
             handle
-        );       
+        );
 
         constexpr int blocksize = 128;
-        int max_blocks_per_device = 1;
 
-        KernelLaunchConfig kernelLaunchConfig;
-        kernelLaunchConfig.threads_per_block = blocksize;
-        kernelLaunchConfig.smem = 0;
+        int deviceId = 0;
+        int numSMs = 0;
+        int maxBlocksPerSM = 0;
+        CUDACHECK(cudaGetDevice(&deviceId));
+        CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSM,
+            popcount_rightshifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>,
+            blocksize, 
+            0
+        ));
 
-        auto iter = handle.kernelPropertiesMap.find(KernelId::PopcountRightSHDReg);
-        if(iter == handle.kernelPropertiesMap.end()) {
-
-            std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-            KernelProperties kernelProperties;
-            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-                &kernelProperties.max_blocks_per_SM,
-                popcount_rightshifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>,
-                kernelLaunchConfig.threads_per_block, 
-                kernelLaunchConfig.smem
-            ));
-
-            mymap[kernelLaunchConfig] = kernelProperties;
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-            handle.kernelPropertiesMap[KernelId::PopcountRightSHDReg] = std::move(mymap);
-        }else{
-            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-        }
+        const int maxBlocks = maxBlocksPerSM * numSMs;  
 
         dim3 block(blocksize, 1, 1);
         //const int numBlocks = SDIV(maxNumCandidates, blocksize);
-        //dim3 grid(std::min(numBlocks, max_blocks_per_device), 1, 1);
-        dim3 grid(max_blocks_per_device, 1, 1);
+        //dim3 grid(std::min(numBlocks, maxBlocks), 1, 1);
+        dim3 grid(maxBlocks, 1, 1);
 
         popcount_rightshifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>
             <<<grid, block, 0, stream>>>(
@@ -2094,82 +2066,49 @@ namespace gpu{
 
         const std::size_t smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2);
 
-        int max_blocks_per_device = 1;
+        int deviceId = 0;
+        int numSMs = 0;
+        int maxBlocksPerSM = 0;
+        CUDACHECK(cudaGetDevice(&deviceId));
+        CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSM,
+            popcount_shifted_hamming_distance_smem_kernel<tilesize>,
+            blocksize, 
+            smem
+        ));
 
-        KernelLaunchConfig kernelLaunchConfig;
-        kernelLaunchConfig.threads_per_block = blocksize;
-        kernelLaunchConfig.smem = smem;
-
-        auto iter = handle.kernelPropertiesMap.find(KernelId::PopcountSHDSmem);
-        if(iter == handle.kernelPropertiesMap.end()) {
-
-            std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-            #define getProp(blocksize, tilesize) { \
-                    KernelLaunchConfig kernelLaunchConfig; \
-                    kernelLaunchConfig.threads_per_block = (blocksize); \
-                    kernelLaunchConfig.smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2); \
-                    KernelProperties kernelProperties; \
-                    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                        popcount_shifted_hamming_distance_smem_kernel<tilesize>, \
-                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem)); \
-                    mymap[kernelLaunchConfig] = kernelProperties; \
-            }
-            getProp(1, tilesize);
-            getProp(32, tilesize);
-            getProp(64, tilesize);
-            getProp(96, tilesize);
-            getProp(128, tilesize);
-            getProp(160, tilesize);
-            getProp(192, tilesize);
-            getProp(224, tilesize);
-            getProp(256, tilesize);
-
-            const auto& kernelProperties = mymap[kernelLaunchConfig];
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-            handle.kernelPropertiesMap[KernelId::PopcountSHDSmem] = std::move(mymap);
-
-            #undef getProp
-        }else{
-            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-        }
-
-        #define mycall popcount_shifted_hamming_distance_smem_kernel<tilesize> \
-                                            <<<grid, block, smem, stream>>>( \
-                                            d_anchorDataHiLo, \
-                                            d_candidateDataHiLoTransposed, \
-                                            d_alignment_overlaps, \
-                                            d_alignment_shifts, \
-                                            d_alignment_nOps, \
-                                            d_alignment_isValid, \
-                                            d_alignment_best_alignment_flags, \
-                                            d_anchorSequencesLength, \
-                                            d_candidateSequencesLength, \
-                                            d_candidates_per_anchor_prefixsum, \
-                                            d_tiles_per_anchor_prefixsum, \
-                                            d_numAnchors, \
-                                            d_numCandidates, \
-                                            d_anchorContainsN, \
-                                            removeAmbiguousAnchors, \
-                                            d_candidateContainsN, \
-                                            removeAmbiguousCandidates, \
-                                            intsPerSequence2BitHiLo, \
-                                            min_overlap, \
-                                            maxErrorRate, \
-                                            min_overlap_ratio, \
-                                            estimatedNucleotideErrorRate); CUDACHECKASYNC;
+        const int maxBlocks = maxBlocksPerSM * numSMs;
 
         dim3 block(blocksize, 1, 1);
-        //dim3 grid(std::min(requiredBlocks, max_blocks_per_device), 1, 1);
-        dim3 grid(max_blocks_per_device, 1, 1);
+        //dim3 grid(std::min(requiredBlocks, maxBlocks), 1, 1);
+        dim3 grid(maxBlocks, 1, 1);
 
-        mycall;
-
-        #undef mycall
-
+        popcount_shifted_hamming_distance_smem_kernel<tilesize><<<grid, block, smem, stream>>>(
+            d_anchorDataHiLo, 
+            d_candidateDataHiLoTransposed, 
+            d_alignment_overlaps, 
+            d_alignment_shifts, 
+            d_alignment_nOps, 
+            d_alignment_isValid, 
+            d_alignment_best_alignment_flags, 
+            d_anchorSequencesLength, 
+            d_candidateSequencesLength, 
+            d_candidates_per_anchor_prefixsum, 
+            d_tiles_per_anchor_prefixsum, 
+            d_numAnchors, 
+            d_numCandidates, 
+            d_anchorContainsN, 
+            removeAmbiguousAnchors, 
+            d_candidateContainsN, 
+            removeAmbiguousCandidates, 
+            intsPerSequence2BitHiLo, 
+            min_overlap, 
+            maxErrorRate, 
+            min_overlap_ratio, 
+            estimatedNucleotideErrorRate
+        ); 
+        CUDACHECKASYNC;
     }
 
     void call_popcount_rightshifted_hamming_distance_smem_kernel_async(
@@ -2337,81 +2276,49 @@ namespace gpu{
 
         const std::size_t smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2);
 
-        int max_blocks_per_device = 1;
+        int deviceId = 0;
+        int numSMs = 0;
+        int maxBlocksPerSM = 0;
+        CUDACHECK(cudaGetDevice(&deviceId));
+        CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSM,
+            popcount_rightshifted_hamming_distance_smem_kernel<tilesize>,
+            blocksize, 
+            smem
+        ));
 
-        KernelLaunchConfig kernelLaunchConfig;
-        kernelLaunchConfig.threads_per_block = blocksize;
-        kernelLaunchConfig.smem = smem;
-
-        auto iter = handle.kernelPropertiesMap.find(KernelId::PopcountRightSHDSmem);
-        if(iter == handle.kernelPropertiesMap.end()) {
-
-            std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-            #define getProp(blocksize, tilesize) { \
-                    KernelLaunchConfig kernelLaunchConfig; \
-                    kernelLaunchConfig.threads_per_block = (blocksize); \
-                    kernelLaunchConfig.smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2); \
-                    KernelProperties kernelProperties; \
-                    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                        popcount_rightshifted_hamming_distance_smem_kernel<tilesize>, \
-                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem)); \
-                    mymap[kernelLaunchConfig] = kernelProperties; \
-            }
-            getProp(1, tilesize);
-            getProp(32, tilesize);
-            getProp(64, tilesize);
-            getProp(96, tilesize);
-            getProp(128, tilesize);
-            getProp(160, tilesize);
-            getProp(192, tilesize);
-            getProp(224, tilesize);
-            getProp(256, tilesize);
-
-            const auto& kernelProperties = mymap[kernelLaunchConfig];
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-            handle.kernelPropertiesMap[KernelId::PopcountSHDSmem] = std::move(mymap);
-
-            #undef getProp
-        }else{
-            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-        }
-
-        #define mycall popcount_rightshifted_hamming_distance_smem_kernel<tilesize> \
-                                            <<<grid, block, smem, stream>>>( \
-                                            d_anchorDataHiLo, \
-                                            d_candidateDataHiLoTransposed, \
-                                            d_alignment_overlaps, \
-                                            d_alignment_shifts, \
-                                            d_alignment_nOps, \
-                                            d_alignment_isValid, \
-                                            d_alignment_best_alignment_flags, \
-                                            d_anchorSequencesLength, \
-                                            d_candidateSequencesLength, \
-                                            d_candidates_per_anchor_prefixsum, \
-                                            d_tiles_per_anchor_prefixsum, \
-                                            d_numAnchors, \
-                                            d_numCandidates, \
-                                            d_anchorContainsN, \
-                                            removeAmbiguousAnchors, \
-                                            d_candidateContainsN, \
-                                            removeAmbiguousCandidates, \
-                                            intsPerSequence2BitHiLo, \
-                                            min_overlap, \
-                                            maxErrorRate, \
-                                            min_overlap_ratio, \
-                                            estimatedNucleotideErrorRate); CUDACHECKASYNC;
+        const int maxBlocks = maxBlocksPerSM * numSMs;
 
         dim3 block(blocksize, 1, 1);
-        //dim3 grid(std::min(requiredBlocks, max_blocks_per_device), 1, 1);
-        dim3 grid(max_blocks_per_device, 1, 1);
+        //dim3 grid(std::min(requiredBlocks, maxBlocks), 1, 1);
+        dim3 grid(maxBlocks, 1, 1);
 
-        mycall;
-
-        #undef mycall
+        popcount_rightshifted_hamming_distance_smem_kernel<tilesize><<<grid, block, smem, stream>>>( 
+            d_anchorDataHiLo, 
+            d_candidateDataHiLoTransposed, 
+            d_alignment_overlaps, 
+            d_alignment_shifts, 
+            d_alignment_nOps, 
+            d_alignment_isValid, 
+            d_alignment_best_alignment_flags, 
+            d_anchorSequencesLength, 
+            d_candidateSequencesLength, 
+            d_candidates_per_anchor_prefixsum, 
+            d_tiles_per_anchor_prefixsum, 
+            d_numAnchors, 
+            d_numCandidates, 
+            d_anchorContainsN, 
+            removeAmbiguousAnchors, 
+            d_candidateContainsN, 
+            removeAmbiguousCandidates, 
+            intsPerSequence2BitHiLo, 
+            min_overlap, 
+            maxErrorRate, 
+            min_overlap_ratio, 
+            estimatedNucleotideErrorRate
+        ); 
+        CUDACHECKASYNC;
 
     }
 
@@ -2809,165 +2716,92 @@ namespace gpu{
 
 
     void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
-                AlignmentOrientation* d_bestAlignmentFlags,
-                const int* d_nOps,
-                const int* d_overlaps,
-                const int* d_candidates_per_anchor_prefixsum,
-                const int* d_numAnchors,
-                const int* d_numCandidates,
-                int /*maxNumAnchors*/,
-                int /*maxNumCandidates*/,
-                float mismatchratioBaseFactor,
-                float goodAlignmentsCountThreshold,
-                cudaStream_t stream,
-                KernelLaunchHandle& handle){
+        AlignmentOrientation* d_bestAlignmentFlags,
+        const int* d_nOps,
+        const int* d_overlaps,
+        const int* d_candidates_per_anchor_prefixsum,
+        const int* d_numAnchors,
+        const int* d_numCandidates,
+        int /*maxNumAnchors*/,
+        int /*maxNumCandidates*/,
+        float mismatchratioBaseFactor,
+        float goodAlignmentsCountThreshold,
+        cudaStream_t stream,
+        KernelLaunchHandle& /*handle*/
+    ){
 
-        //return;
 
-        constexpr int requestedBlocksize = 128;
+        constexpr int blocksize = 128;
         const std::size_t smem = 0;
 
-        int max_blocks_per_device = 1;
+        int deviceId = 0;
+        int numSMs = 0;
+        int maxBlocksPerSM = 0;
+        CUDACHECK(cudaGetDevice(&deviceId));
+        CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSM,
+            cuda_filter_alignments_by_mismatchratio_kernel<blocksize>,
+            blocksize, 
+            smem
+        ));
+
+        const int maxBlocks = maxBlocksPerSM * numSMs;
+
+        dim3 block(blocksize, 1, 1);
+        //dim3 grid(std::min(maxNumAnchors, maxBlocks));
+        dim3 grid(maxBlocks, 1, 1);
+
+        cuda_filter_alignments_by_mismatchratio_kernel<blocksize><<<grid, block, smem, stream>>>( 
+            d_bestAlignmentFlags, 
+            d_nOps, 
+            d_overlaps, 
+            d_candidates_per_anchor_prefixsum, 
+            d_numAnchors, 
+            d_numCandidates, 
+            mismatchratioBaseFactor, 
+            goodAlignmentsCountThreshold
+        ); 
+        CUDACHECKASYNC;
 
 
-        auto iter = handle.kernelPropertiesMap.find(KernelId::FilterAlignmentsByMismatchRatio);
-        if(iter == handle.kernelPropertiesMap.end()) {
-
-            std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-            #define getProp(blocksize) { \
-                    KernelLaunchConfig klc; \
-                    klc.threads_per_block = (blocksize); \
-                    klc.smem = 0; \
-                    KernelProperties kernelProperties; \
-                    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                                cuda_filter_alignments_by_mismatchratio_kernel<(blocksize)>, \
-                                klc.threads_per_block, klc.smem)); \
-                    mymap[klc] = kernelProperties; \
-            }
-
-            getProp(32);
-            getProp(64);
-            getProp(96);
-            getProp(128);
-            getProp(160);
-            getProp(192);
-            getProp(224);
-            getProp(256);
-            
-            KernelLaunchConfig kernelLaunchConfig;
-            kernelLaunchConfig.threads_per_block = requestedBlocksize;
-            kernelLaunchConfig.smem = smem;    
-            
-            const auto& kernelProperties = mymap[kernelLaunchConfig];
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-            handle.kernelPropertiesMap[KernelId::FilterAlignmentsByMismatchRatio] = std::move(mymap);
-
-            #undef getProp
-        }else{
-            KernelLaunchConfig kernelLaunchConfig;
-            kernelLaunchConfig.threads_per_block = requestedBlocksize;
-            kernelLaunchConfig.smem = smem;   
-
-            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-        }
-
-        dim3 block(requestedBlocksize, 1, 1);
-        //dim3 grid(std::min(max_blocks_per_device, maxNumAnchors));
-        dim3 grid(max_blocks_per_device, 1, 1);
-
-        #define mycall(blocksize) cuda_filter_alignments_by_mismatchratio_kernel<(blocksize)> \
-                <<<grid, block, smem, stream>>>( \
-            d_bestAlignmentFlags, \
-            d_nOps, \
-            d_overlaps, \
-            d_candidates_per_anchor_prefixsum, \
-            d_numAnchors, \
-            d_numCandidates, \
-            mismatchratioBaseFactor, \
-            goodAlignmentsCountThreshold); CUDACHECKASYNC;
-
-        switch(requestedBlocksize) {
-        case 32: mycall(32); break;
-        case 64: mycall(64); break;
-        case 96: mycall(96); break;
-        case 128: mycall(128); break;
-        case 160: mycall(160); break;
-        case 192: mycall(192); break;
-        case 224: mycall(224); break;
-        case 256: mycall(256); break;
-        default: mycall(256); break;
-        }
-
-            #undef mycall
     }
 
 
     void callSelectIndicesOfGoodCandidatesKernelAsync(
-            int* d_indicesOfGoodCandidates,
-            int* d_numIndicesPerAnchor,
-            int* d_totalNumIndices,
-            const AlignmentOrientation* d_alignmentFlags,
-            const int* d_candidates_per_anchor,
-            const int* d_candidates_per_anchor_prefixsum,
-            const int* d_anchorIndicesOfCandidates,
-            const int* d_numAnchors,
-            const int* d_numCandidates,
-            int maxNumAnchors,
-            int /*maxNumCandidates*/,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle){
+        int* d_indicesOfGoodCandidates,
+        int* d_numIndicesPerAnchor,
+        int* d_totalNumIndices,
+        const AlignmentOrientation* d_alignmentFlags,
+        const int* d_candidates_per_anchor,
+        const int* d_candidates_per_anchor_prefixsum,
+        const int* d_anchorIndicesOfCandidates,
+        const int* d_numAnchors,
+        const int* d_numCandidates,
+        int maxNumAnchors,
+        int /*maxNumCandidates*/,
+        cudaStream_t stream,
+        KernelLaunchHandle& /*handle*/
+    ){
 
         constexpr int blocksize = 128;
         constexpr int tilesize = 32;
 
         const std::size_t smem = 0;
 
-        int max_blocks_per_device = 1;
+        int deviceId = 0;
+        int numSMs = 0;
+        int maxBlocksPerSM = 0;
+        CUDACHECK(cudaGetDevice(&deviceId));
+        CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSM,
+            selectIndicesOfGoodCandidatesKernel<blocksize, tilesize>,
+            blocksize, 
+            smem
+        ));
 
-        KernelLaunchConfig kernelLaunchConfig;
-        kernelLaunchConfig.threads_per_block = blocksize;
-        kernelLaunchConfig.smem = smem;
-
-        auto iter = handle.kernelPropertiesMap.find(KernelId::SelectIndicesOfGoodCandidates);
-        if(iter == handle.kernelPropertiesMap.end()){
-
-            std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-            #define getProp(blocksize) { \
-                KernelLaunchConfig kernelLaunchConfig; \
-                kernelLaunchConfig.threads_per_block = (blocksize); \
-                kernelLaunchConfig.smem = 0; \
-                KernelProperties kernelProperties; \
-                CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                    selectIndicesOfGoodCandidatesKernel<(blocksize), tilesize>, \
-                                                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem)); \
-                mymap[kernelLaunchConfig] = kernelProperties; \
-            }
-
-            getProp(32);
-            getProp(64);
-            getProp(96);
-            getProp(128);
-            getProp(160);
-            getProp(192);
-            getProp(224);
-            getProp(256);
-
-            const auto& kernelProperties = mymap[kernelLaunchConfig];
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-            handle.kernelPropertiesMap[KernelId::SelectIndicesOfGoodCandidates] = std::move(mymap);
-
-            #undef getProp
-        }else{
-            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-        }
+        const int maxBlocks = maxBlocksPerSM * numSMs;
 
         helpers::lambda_kernel<<<4, 256, 0, stream>>>([=] __device__(){
             const int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -2983,8 +2817,8 @@ namespace gpu{
         }); CUDACHECKASYNC;
 
         dim3 block(blocksize, 1, 1);
-        //dim3 grid(std::min(SDIV(maxNumCandidates, blocksize), max_blocks_per_device));
-        dim3 grid(max_blocks_per_device, 1, 1);
+        //dim3 grid(std::min(SDIV(maxNumCandidates, blocksize), maxBlocks));
+        dim3 grid(maxBlocks, 1, 1);
 
         selectIndicesOfGoodCandidatesKernel<blocksize, tilesize><<<grid, block, 0, stream>>>(
             d_indicesOfGoodCandidates,

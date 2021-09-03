@@ -966,7 +966,7 @@ namespace gpu{
         const int numAnchors,
         cudaStream_t stream
     ){
-        cudaMemsetAsync(d_result, 0, sizeof(int), stream);
+        CUDACHECK(cudaMemsetAsync(d_result, 0, sizeof(int), stream));
 
         computeMaximumMsaWidthKernel<128><<<numAnchors, 128, 0, stream>>>(
             d_result,
@@ -1054,7 +1054,7 @@ namespace gpu{
         int dataset_coverage,
         int numIterations,
         cudaStream_t stream,
-        KernelLaunchHandle& handle
+        KernelLaunchHandle& /*handle*/
     ){
 
         helpers::call_fill_kernel_async(
@@ -1066,9 +1066,9 @@ namespace gpu{
 
         constexpr int blocksize = 128;
 
-        constexpr MemoryType memType = MemoryType::Shared;
+        constexpr MemoryType memoryType = MemoryType::Shared;
 
-        constexpr bool usesSmem = memType == MemoryType::Shared;
+        constexpr bool usesSmem = memoryType == MemoryType::Shared;
 
         const std::size_t smemAddSequences = (usesSmem ? 
                                                 sizeof(float) * 4 * multiMSA.columnPitchInElements // weights
@@ -1078,43 +1078,26 @@ namespace gpu{
 
         const std::size_t smem = smemAddSequences;
 
-        constexpr auto kernelId = KernelId::MSACandidateRefinementMultiIter;
+        int deviceId = 0;
+        int numSMs = 0;
+        int maxBlocksPerSM = 0;
+        CUDACHECK(cudaGetDevice(&deviceId));
+        CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSM,
+            msaCandidateRefinement_multiiter_kernel<blocksize, memoryType>,
+            blocksize, 
+            smem
+        ));
 
-        int max_blocks_per_device = 1;
-
-        KernelLaunchConfig kernelLaunchConfig;
-        kernelLaunchConfig.threads_per_block = blocksize;
-        kernelLaunchConfig.smem = smem;
-
-        auto iter = handle.kernelPropertiesMap.find(kernelId);
-        if(iter == handle.kernelPropertiesMap.end()) {
-
-            std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-            KernelProperties kernelProperties;
-            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-                &kernelProperties.max_blocks_per_SM,
-                msaCandidateRefinement_multiiter_kernel<blocksize, memType>,
-                kernelLaunchConfig.threads_per_block, 
-                kernelLaunchConfig.smem
-            ));
-
-            mymap[kernelLaunchConfig] = kernelProperties;
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-            handle.kernelPropertiesMap[kernelId] = std::move(mymap);
-        }else{
-            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-        }
+        const int maxBlocks = maxBlocksPerSM * numSMs;
 
         dim3 block(blocksize, 1, 1);
         //dim3 grid(maxNumAnchors, 1, 1);
-        dim3 grid(max_blocks_per_device, 1, 1);
+        dim3 grid(maxBlocks, 1, 1);
 
 
-        msaCandidateRefinement_multiiter_kernel<blocksize, memType>
+        msaCandidateRefinement_multiiter_kernel<blocksize, memoryType>
                 <<<grid, block, smem, stream>>>(
             d_newIndices,
             d_newNumIndicesPerAnchor,
@@ -1182,7 +1165,7 @@ namespace gpu{
         int iteration,
         bool* d_anchorIsFinished,
         cudaStream_t stream,
-        KernelLaunchHandle& handle
+        KernelLaunchHandle& /*handle*/
     ){
 
         helpers::call_fill_kernel_async(
@@ -1206,41 +1189,23 @@ namespace gpu{
 
         const std::size_t smem = smemAddSequences;
 
-        constexpr auto kernelId = KernelId::MSACandidateRefinementSingleIter;
+        int deviceId = 0;
+        int numSMs = 0;
+        int maxBlocksPerSM = 0;
+        CUDACHECK(cudaGetDevice(&deviceId));
+        CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSM,
+            msaCandidateRefinement_singleiter_kernel<blocksize, memoryType>,
+            blocksize, 
+            smem
+        ));
 
-        int max_blocks_per_device = 1;
-
-        KernelLaunchConfig kernelLaunchConfig;
-        kernelLaunchConfig.threads_per_block = blocksize;
-        kernelLaunchConfig.smem = smem;
-
-        auto iter = handle.kernelPropertiesMap.find(kernelId);
-        if(iter == handle.kernelPropertiesMap.end()) {
-
-            std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-            KernelProperties kernelProperties;
-            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-                &kernelProperties.max_blocks_per_SM,
-                msaCandidateRefinement_singleiter_kernel<blocksize, memoryType>,
-                kernelLaunchConfig.threads_per_block, 
-                kernelLaunchConfig.smem
-            ));
-
-            mymap[kernelLaunchConfig] = kernelProperties;
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-            handle.kernelPropertiesMap[kernelId] = std::move(mymap);
-        }else{
-            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-        }
+        const int maxBlocks = maxBlocksPerSM * numSMs;
 
         dim3 block(blocksize, 1, 1);
         //dim3 grid(maxNumAnchors, 1, 1);
-        dim3 grid(max_blocks_per_device, 1, 1);
-
+        dim3 grid(maxBlocks, 1, 1);
 
         msaCandidateRefinement_singleiter_kernel<blocksize, memoryType><<<grid, block, smem, stream>>>(
             d_newIndices,
@@ -1303,7 +1268,7 @@ namespace gpu{
         int encodedSequencePitchInInts,
         size_t qualityPitchInBytes,
         cudaStream_t stream,
-        KernelLaunchHandle& handle){
+        KernelLaunchHandle& /*handle*/){
             
 
     constexpr MemoryType memoryType = MemoryType::Shared;
@@ -1322,40 +1287,23 @@ namespace gpu{
 
     const std::size_t smem = std::max(smemCub, smemAddSequences);
 
-    int max_blocks_per_device = 1;
+    int deviceId = 0;
+    int numSMs = 0;
+    int maxBlocksPerSM = 0;
+    CUDACHECK(cudaGetDevice(&deviceId));
+    CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &maxBlocksPerSM,
+        constructMultipleSequenceAlignmentsKernel<BLOCKSIZE, memoryType>,
+        BLOCKSIZE, 
+        smem
+    ));
 
-    KernelLaunchConfig kernelLaunchConfig;
-    kernelLaunchConfig.threads_per_block = BLOCKSIZE;
-    kernelLaunchConfig.smem = smem;
-
-    constexpr auto kernelId = KernelId::MSAConstruction;
-
-    auto iter = handle.kernelPropertiesMap.find(kernelId);
-    if(iter == handle.kernelPropertiesMap.end()) {
-
-        std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-        KernelProperties kernelProperties;
-        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-            &kernelProperties.max_blocks_per_SM,
-            constructMultipleSequenceAlignmentsKernel<BLOCKSIZE, memoryType>,
-            kernelLaunchConfig.threads_per_block, 
-            kernelLaunchConfig.smem
-        ));
-
-        mymap[kernelLaunchConfig] = kernelProperties;
-        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-        handle.kernelPropertiesMap[kernelId] = std::move(mymap);
-    }else{
-        std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-        const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-    }
+    const int maxBlocks = maxBlocksPerSM * numSMs;
 
     dim3 block(BLOCKSIZE, 1, 1);
     //dim3 grid(maxNumAnchors, 1, 1);
-    dim3 grid(max_blocks_per_device, 1, 1);
+    dim3 grid(maxBlocks, 1, 1);
     
     constructMultipleSequenceAlignmentsKernel<BLOCKSIZE, memoryType><<<grid, block, smem, stream>>>(
         multiMSA,         

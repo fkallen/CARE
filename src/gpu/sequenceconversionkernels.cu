@@ -386,59 +386,30 @@ void callConversionKernel2BitTo2BitHiLoNN(
         const int* d_numSequences,
         int /*maxNumSequences*/,
         cudaStream_t stream,
-        KernelLaunchHandle& handle){
+        KernelLaunchHandle& /*handle*/){
 
     
     constexpr int groupsize = 8;        
     constexpr int blocksize = 128;
     constexpr size_t smem = 0;
     
-    int max_blocks_per_device = 1;
+    int deviceId = 0;
+    int numSMs = 0;
+    int maxBlocksPerSM = 0;
+    CUDACHECK(cudaGetDevice(&deviceId));
+    CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &maxBlocksPerSM,
+        convert2BitTo2BitHiloKernelNN<groupsize>,
+        blocksize, 
+        smem
+    ));
 
-    KernelLaunchConfig kernelLaunchConfig;
-    kernelLaunchConfig.threads_per_block = blocksize;
-    kernelLaunchConfig.smem = smem;
-
-    auto iter = handle.kernelPropertiesMap.find(KernelId::Conversion2BitTo2BitHiLoNN);
-    if(iter == handle.kernelPropertiesMap.end()) {
-
-        std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-        #define getProp(blocksize) { \
-                KernelLaunchConfig kernelLaunchConfig; \
-                kernelLaunchConfig.threads_per_block = (blocksize); \
-                kernelLaunchConfig.smem = 0; \
-                KernelProperties kernelProperties; \
-                CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                    convert2BitTo2BitHiloKernelNN<groupsize>, \
-                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem)); \
-                mymap[kernelLaunchConfig] = kernelProperties; \
-        }
-        //getProp(1);
-        getProp(32);
-        getProp(64);
-        getProp(96);
-        getProp(128);
-        getProp(160);
-        getProp(192);
-        getProp(224);
-        getProp(256);
-
-        const auto& kernelProperties = mymap[kernelLaunchConfig];
-        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-        handle.kernelPropertiesMap[KernelId::Conversion2BitTo2BitHiLoNN] = std::move(mymap);
-
-        #undef getProp
-    }else{
-        std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-        const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-    }
+    const int maxBlocks = maxBlocksPerSM * numSMs;
 
     dim3 block(blocksize,1,1);
-    //dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumSequences * groupsize, blocksize)), 1, 1);
-    dim3 grid(max_blocks_per_device, 1, 1);
+    //dim3 grid(std::min(maxBlocks, SDIV(maxNumSequences * groupsize, blocksize)), 1, 1);
+    dim3 grid(maxBlocks, 1, 1);
 
     convert2BitTo2BitHiloKernelNN<groupsize><<<grid, block, 0, stream>>>(
         d_inputdata,
@@ -471,57 +442,28 @@ void callConversionKernel2BitTo2BitHiLoNT(
         const int* d_numSequences,
         int /*maxNumSequences*/,
         cudaStream_t stream,
-        KernelLaunchHandle& handle){
-
-    int max_blocks_per_device = 1;
+        KernelLaunchHandle& /*handle*/){
 
     constexpr int blocksize = 128;
     constexpr size_t smem = 0;
 
-    KernelLaunchConfig kernelLaunchConfig;
-    kernelLaunchConfig.threads_per_block = blocksize;
-    kernelLaunchConfig.smem = smem;
+    int deviceId = 0;
+    int numSMs = 0;
+    int maxBlocksPerSM = 0;
+    CUDACHECK(cudaGetDevice(&deviceId));
+    CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &maxBlocksPerSM,
+        convert2BitTo2BitHiloKernelNT,
+        blocksize, 
+        smem
+    ));
 
-    auto iter = handle.kernelPropertiesMap.find(KernelId::Conversion2BitTo2BitHiLoNT);
-    if(iter == handle.kernelPropertiesMap.end()) {
-
-        std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-        #define getProp(blocksize) { \
-                KernelLaunchConfig kernelLaunchConfig; \
-                kernelLaunchConfig.threads_per_block = (blocksize); \
-                kernelLaunchConfig.smem = 0; \
-                KernelProperties kernelProperties; \
-                CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                    convert2BitTo2BitHiloKernelNT, \
-                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem)); \
-                mymap[kernelLaunchConfig] = kernelProperties; \
-        }
-        getProp(1);
-        getProp(32);
-        getProp(64);
-        getProp(96);
-        getProp(128);
-        getProp(160);
-        getProp(192);
-        getProp(224);
-        getProp(256);
-
-        const auto& kernelProperties = mymap[kernelLaunchConfig];
-        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-        handle.kernelPropertiesMap[KernelId::Conversion2BitTo2BitHiLoNT] = std::move(mymap);
-
-        #undef getProp
-    }else{
-        std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-        const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-    }
+    const int maxBlocks = maxBlocksPerSM * numSMs;
 
     dim3 block(blocksize,1,1);
-    //dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumSequences, blocksize)), 1, 1);
-    dim3 grid(max_blocks_per_device, 1, 1);
+    //dim3 grid(std::min(maxBlocks, SDIV(maxNumSequences, blocksize)), 1, 1);
+    dim3 grid(maxBlocks, 1, 1);
 
     convert2BitTo2BitHiloKernelNT<<<grid, block, 0, stream>>>(
         d_inputdata,
@@ -554,57 +496,28 @@ void callConversionKernel2BitTo2BitHiLoTT(
         const int* d_numSequences,
         int /*maxNumSequences*/,
         cudaStream_t stream,
-        KernelLaunchHandle& handle){
-
-    int max_blocks_per_device = 1;
+        KernelLaunchHandle& /*handle*/){
 
     constexpr int blocksize = 128;
     constexpr size_t smem = 0;
 
-    KernelLaunchConfig kernelLaunchConfig;
-    kernelLaunchConfig.threads_per_block = blocksize;
-    kernelLaunchConfig.smem = smem;
+    int deviceId = 0;
+    int numSMs = 0;
+    int maxBlocksPerSM = 0;
+    CUDACHECK(cudaGetDevice(&deviceId));
+    CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &maxBlocksPerSM,
+        convert2BitTo2BitHiloKernelTT,
+        blocksize, 
+        smem
+    ));
 
-    auto iter = handle.kernelPropertiesMap.find(KernelId::Conversion2BitTo2BitHiLoTT);
-    if(iter == handle.kernelPropertiesMap.end()) {
-
-        std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-        #define getProp(blocksize) { \
-                KernelLaunchConfig kernelLaunchConfig; \
-                kernelLaunchConfig.threads_per_block = (blocksize); \
-                kernelLaunchConfig.smem = 0; \
-                KernelProperties kernelProperties; \
-                CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                    convert2BitTo2BitHiloKernelTT, \
-                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem)); \
-                mymap[kernelLaunchConfig] = kernelProperties; \
-        }
-        getProp(1);
-        getProp(32);
-        getProp(64);
-        getProp(96);
-        getProp(128);
-        getProp(160);
-        getProp(192);
-        getProp(224);
-        getProp(256);
-
-        const auto& kernelProperties = mymap[kernelLaunchConfig];
-        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-        handle.kernelPropertiesMap[KernelId::Conversion2BitTo2BitHiLoTT] = std::move(mymap);
-
-        #undef getProp
-    }else{
-        std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-        const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-    }
+    const int maxBlocks = maxBlocksPerSM * numSMs;
 
     dim3 block(blocksize,1,1);
-    //dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumSequences, blocksize)), 1, 1);
-    dim3 grid(max_blocks_per_device, 1, 1);
+    //dim3 grid(std::min(maxBlocks, SDIV(maxNumSequences, blocksize)), 1, 1);
+    dim3 grid(maxBlocks, 1, 1);
 
     convert2BitTo2BitHiloKernelTT<<<grid, block, 0, stream>>>(
         d_inputdata,
