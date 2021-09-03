@@ -1125,13 +1125,13 @@ private:
 
             MultipleSequenceAlignment::InputData msaInput;
             msaInput.useQualityScores = useQualityScoresForMSA;
-            msaInput.subjectLength = task.currentAnchorLength;
+            msaInput.anchorLength = task.currentAnchorLength;
             msaInput.nCandidates = task.numRemainingCandidates;
             msaInput.candidatesPitch = decodedSequencePitchInBytes;
             msaInput.candidateQualitiesPitch = qualityPitchInBytes;
-            msaInput.subject = decodedAnchor.c_str();
+            msaInput.anchor = decodedAnchor.c_str();
             msaInput.candidates = task.candidateStrings.data();
-            msaInput.subjectQualities = task.currentQualityScores.c_str();
+            msaInput.anchorQualities = task.currentQualityScores.c_str();
             //msaInput.candidateQualities = candidateQualities.data();
             msaInput.candidateQualities = candidateQualities;
             msaInput.candidateLengths = task.candidateSequenceLengths.data();
@@ -1315,13 +1315,13 @@ private:
 
             MultipleSequenceAlignment::InputData msaInput;
             msaInput.useQualityScores = true;
-            msaInput.subjectLength = task.currentAnchorLength;
+            msaInput.anchorLength = task.currentAnchorLength;
             msaInput.nCandidates = task.numRemainingCandidates;
             msaInput.candidatesPitch = decodedSequencePitchInBytes;
             msaInput.candidateQualitiesPitch = qualityPitchInBytes;
-            msaInput.subject = decodedAnchor.c_str();
+            msaInput.anchor = decodedAnchor.c_str();
             msaInput.candidates = task.candidateStrings.data();
-            msaInput.subjectQualities = task.currentQualityScores.c_str();
+            msaInput.anchorQualities = task.currentQualityScores.c_str();
             msaInput.candidateQualities = candidateQualities.data();
             msaInput.candidateLengths = task.candidateSequenceLengths.data();
             msaInput.candidateShifts = task.candidateShifts.data();
@@ -1793,13 +1793,13 @@ private:
 
             MultipleSequenceAlignment::InputData msaInput;
             msaInput.useQualityScores = false;
-            msaInput.subjectLength = decodedAnchor.length();
+            msaInput.anchorLength = decodedAnchor.length();
             msaInput.nCandidates = numsteps-1;
             msaInput.candidatesPitch = maxlen;
             msaInput.candidateQualitiesPitch = maxlen;
-            msaInput.subject = decodedAnchor.c_str();
+            msaInput.anchor = decodedAnchor.c_str();
             msaInput.candidates = stepstrings.data();
-            msaInput.subjectQualities = anchorQuality.data();
+            msaInput.anchorQualities = anchorQuality.data();
             msaInput.candidateQualities = stepqualities.data();
             msaInput.candidateLengths = stepstringlengths.data();
             msaInput.candidateShifts = shifts.data();

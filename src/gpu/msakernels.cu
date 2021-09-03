@@ -40,8 +40,8 @@ namespace gpu{
         const int* __restrict__ anchorLengths,
         const int* __restrict__ candidateLengths,
         const int* __restrict__ indices,
-        const int* __restrict__ indices_per_subject,
-        const int* __restrict__ candidatesPerSubjectPrefixSum,
+        const int* __restrict__ indices_per_anchor,
+        const int* __restrict__ candidatesPerAnchorPrefixSum,
         const int numAnchors
     ){
 
@@ -53,14 +53,14 @@ namespace gpu{
 
         int myMaxWidth = 0; //only valid for thread_rank 0
 
-        for(int subjectIndex = blockIdx.x; subjectIndex < numAnchors; subjectIndex += gridDim.x){
-            const int myNumGoodCandidates = indices_per_subject[subjectIndex];
+        for(int anchorIndex = blockIdx.x; anchorIndex < numAnchors; anchorIndex += gridDim.x){
+            const int myNumGoodCandidates = indices_per_anchor[anchorIndex];
             tbGroup.sync();
 
-            const int globalCandidateOffset = candidatesPerSubjectPrefixSum[subjectIndex];
+            const int globalCandidateOffset = candidatesPerAnchorPrefixSum[anchorIndex];
 
             const int* const myShifts = shifts + globalCandidateOffset;
-            const int subjectLength = anchorLengths[subjectIndex];
+            const int anchorLength = anchorLengths[anchorIndex];
             const int* const myCandidateLengths = candidateLengths + globalCandidateOffset;
             const int* const myIndices = indices + globalCandidateOffset;
 
@@ -83,7 +83,7 @@ namespace gpu{
                 myIndices,
                 myNumGoodCandidates,
                 myShifts,
-                subjectLength,
+                anchorLength,
                 myCandidateLengths
             );
 
@@ -175,12 +175,12 @@ namespace gpu{
         const int* __restrict__ anchorLengths,
         const int* __restrict__ candidateLengths,
         const int* __restrict__ indices,
-        const int* __restrict__ indices_per_subject,
-        const int* __restrict__ candidatesPerSubjectPrefixSum,            
-        const unsigned int* __restrict__ subjectSequencesData,
+        const int* __restrict__ indices_per_anchor,
+        const int* __restrict__ candidatesPerAnchorPrefixSum,            
+        const unsigned int* __restrict__ anchorSequencesData,
         const unsigned int* __restrict__ candidateSequencesData,
         const bool* __restrict__ d_isPairedCandidate,
-        const char* __restrict__ subjectQualities,
+        const char* __restrict__ anchorQualities,
         const char* __restrict__ candidateQualities,
         const int* __restrict__ d_numAnchors,
         float desiredAlignmentMaxErrorRate,
@@ -198,7 +198,7 @@ namespace gpu{
 
         auto tbGroup = cg::this_thread_block();
 
-        const int n_subjects = *d_numAnchors;
+        const int n_anchors = *d_numAnchors;
 
         typename BlockReduceInt::TempStorage* const cubTempStorage = (typename BlockReduceInt::TempStorage*)sharedmem;
 
@@ -207,14 +207,14 @@ namespace gpu{
         int* const shared_coverages = (int*)(shared_counts + 4 * multiMSA.columnPitchInElements);
 
 
-        for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
-            const int myNumGoodCandidates = indices_per_subject[subjectIndex];
+        for(int anchorIndex = blockIdx.x; anchorIndex < n_anchors; anchorIndex += gridDim.x){
+            const int myNumGoodCandidates = indices_per_anchor[anchorIndex];
 
             //if(myNumGoodCandidates > 0){
 
                 tbGroup.sync(); //wait for smem of previous iteration
 
-                GpuSingleMSA msa = multiMSA.getSingleMSA(subjectIndex);
+                GpuSingleMSA msa = multiMSA.getSingleMSA(anchorIndex);
 
                 if(useSmemMSA){
                     msa.counts = shared_counts;
@@ -222,19 +222,19 @@ namespace gpu{
                     msa.coverages = shared_coverages;
                 }
 
-                const int globalCandidateOffset = candidatesPerSubjectPrefixSum[subjectIndex];
+                const int globalCandidateOffset = candidatesPerAnchorPrefixSum[anchorIndex];
 
                 const int* const myOverlaps = overlaps + globalCandidateOffset;
                 const int* const myShifts = shifts + globalCandidateOffset;
                 const int* const myNops = nOps + globalCandidateOffset;
                 const AlignmentOrientation* const myAlignmentFlags = bestAlignmentFlags + globalCandidateOffset;
-                const int subjectLength = anchorLengths[subjectIndex];
+                const int anchorLength = anchorLengths[anchorIndex];
                 const int* const myCandidateLengths = candidateLengths + globalCandidateOffset;
                 const int* const myIndices = indices + globalCandidateOffset;
 
-                const unsigned int* const myAnchorSequenceData = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
+                const unsigned int* const myAnchorSequenceData = anchorSequencesData + std::size_t(anchorIndex) * encodedSequencePitchInInts;
                 const unsigned int* const myCandidateSequencesData = candidateSequencesData + size_t(globalCandidateOffset) * encodedSequencePitchInInts;
-                const char* const myAnchorQualityData = subjectQualities + std::size_t(subjectIndex) * qualityPitchInBytes;
+                const char* const myAnchorQualityData = anchorQualities + std::size_t(anchorIndex) * qualityPitchInBytes;
                 const char* const myCandidateQualities = candidateQualities + size_t(globalCandidateOffset) * qualityPitchInBytes;
                 const bool* const myIsPairedCandidate = d_isPairedCandidate + globalCandidateOffset;
 
@@ -262,14 +262,14 @@ namespace gpu{
                     myNumGoodCandidates,
                     myShifts,
                     myAlignmentFlags,
-                    subjectLength,
+                    anchorLength,
                     myCandidateLengths
                 );
 
                 //only thread 0 has valid column properties. 
                 //save to global memory and broadcast to all threads in block
                 if(tbGroup.thread_rank() == 0){
-                    auto* globalDest = multiMSA.getColumnPropertiesOfMSA(subjectIndex);
+                    auto* globalDest = multiMSA.getColumnPropertiesOfMSA(anchorIndex);
                     *globalDest = columnProperties;
                     shared_columnProperties = columnProperties;
                 }
@@ -301,25 +301,25 @@ namespace gpu{
                     encodedSequencePitchInInts,
                     qualityPitchInBytes,
                     desiredAlignmentMaxErrorRate,
-                    subjectIndex
+                    anchorIndex
                 );
 
                 tbGroup.sync();
         
-                msa.checkAfterBuild(tbGroup, subjectIndex);
+                msa.checkAfterBuild(tbGroup, anchorIndex);
 
                 msa.findConsensus(
                     tbGroup,
                     myAnchorSequenceData, 
                     encodedSequencePitchInInts, 
-                    subjectIndex
+                    anchorIndex
                 );
 
                 if(useSmemMSA){
                     // copy from counts and weights and coverages from shared to global
-                    int* const gmemCounts = multiMSA.getCountsOfMSA(subjectIndex);
-                    float* const gmemWeights = multiMSA.getWeightsOfMSA(subjectIndex);
-                    int* const gmemCoverages = multiMSA.getCoveragesOfMSA(subjectIndex);
+                    int* const gmemCounts = multiMSA.getCountsOfMSA(anchorIndex);
+                    float* const gmemWeights = multiMSA.getWeightsOfMSA(anchorIndex);
+                    int* const gmemCoverages = multiMSA.getCoveragesOfMSA(anchorIndex);
 
                     for(int index = tbGroup.thread_rank(); index < columnsToCheck; index += tbGroup.size()){
                         for(int k = 0; k < 4; k++){
@@ -345,29 +345,29 @@ namespace gpu{
     __global__
     void msaCandidateRefinement_singleiter_kernel(
         int* __restrict__ d_newIndices,
-        int* __restrict__ d_newNumIndicesPerSubject,
+        int* __restrict__ d_newNumIndicesPerAnchor,
         int* __restrict__ d_newNumIndices,
         GPUMultiMSA multiMSA,
         const AlignmentOrientation* __restrict__ bestAlignmentFlags,
         const int* __restrict__ shifts,
         const int* __restrict__ nOps,
         const int* __restrict__ overlaps,
-        const unsigned int* __restrict__ subjectSequencesData,
+        const unsigned int* __restrict__ anchorSequencesData,
         const unsigned int* __restrict__ candidateSequencesData,
         const bool* __restrict__ d_isPairedCandidate,
-        const int* __restrict__ subjectSequencesLength,
+        const int* __restrict__ anchorSequencesLength,
         const int* __restrict__ candidateSequencesLength,
-        const char* __restrict__ subjectQualities,
+        const char* __restrict__ anchorQualities,
         const char* __restrict__ candidateQualities,
         bool* __restrict__ d_shouldBeKept,
-        const int* __restrict__ d_candidates_per_subject_prefixsum,
+        const int* __restrict__ d_candidates_per_anchor_prefixsum,
         const int* __restrict__ d_numAnchors,
         float desiredAlignmentMaxErrorRate,
         bool canUseQualityScores,
         size_t encodedSequencePitchInInts,
         size_t qualityPitchInBytes,
         const int* __restrict__ d_indices,
-        const int* __restrict__ d_indices_per_subject,
+        const int* __restrict__ d_indices_per_anchor,
         int dataset_coverage,
         int iteration,
         bool* __restrict__ d_anchorIsFinished
@@ -393,13 +393,13 @@ namespace gpu{
         int* const shared_counts = (int*)(shared_weights + 4 * multiMSA.columnPitchInElements);
         int* const shared_coverages = (int*)(shared_counts + 4 * multiMSA.columnPitchInElements);
 
-        const int n_subjects = *d_numAnchors;
+        const int n_anchors = *d_numAnchors;
 
         auto tbGroup = cg::this_thread_block();
 
-        for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
-            const bool myAnchorIsFinished = d_anchorIsFinished[subjectIndex];
-            const int myNumIndices = d_indices_per_subject[subjectIndex];
+        for(int anchorIndex = blockIdx.x; anchorIndex < n_anchors; anchorIndex += gridDim.x){
+            const bool myAnchorIsFinished = d_anchorIsFinished[anchorIndex];
+            const int myNumIndices = d_indices_per_anchor[anchorIndex];
 
             if(myAnchorIsFinished){
                 if(threadIdx.x == 0){
@@ -408,22 +408,22 @@ namespace gpu{
             }else{               
 
                 if(myNumIndices > 0){
-                    GpuSingleMSA msa = multiMSA.getSingleMSA(subjectIndex);
+                    GpuSingleMSA msa = multiMSA.getSingleMSA(anchorIndex);
                     msa.columnProperties = &shared_columnProperties;
 
                     tbGroup.sync(); //wait for previous iteration
 
                     if(threadIdx.x == 0){
-                        shared_columnProperties = *(multiMSA.getColumnPropertiesOfMSA(subjectIndex));
+                        shared_columnProperties = *(multiMSA.getColumnPropertiesOfMSA(anchorIndex));
                     }
                     tbGroup.sync();
 
-                    const int globalOffset = d_candidates_per_subject_prefixsum[subjectIndex];
+                    const int globalOffset = d_candidates_per_anchor_prefixsum[anchorIndex];
                     const int* const myIndices = d_indices + globalOffset;
-                    const int* const myNumIndicesPerSubjectPtr = d_indices_per_subject + subjectIndex;
+                    const int* const myNumIndicesPerAnchorPtr = d_indices_per_anchor + anchorIndex;
 
                     int* const myNewIndicesPtr = d_newIndices + globalOffset;
-                    int* const myNewNumIndicesPerSubjectPtr = d_newNumIndicesPerSubject + subjectIndex;
+                    int* const myNewNumIndicesPerAnchorPtr = d_newNumIndicesPerAnchor + anchorIndex;
 
                     bool* const myShouldBeKept = d_shouldBeKept + globalOffset;                    
 
@@ -432,16 +432,16 @@ namespace gpu{
                     const int* const myNops = nOps + globalOffset;
                     const int* const myOverlaps = overlaps + globalOffset;
 
-                    const unsigned int* const myAnchorSequenceData = subjectSequencesData 
-                        + std::size_t(subjectIndex) * encodedSequencePitchInInts;
+                    const unsigned int* const myAnchorSequenceData = anchorSequencesData 
+                        + std::size_t(anchorIndex) * encodedSequencePitchInInts;
                     const unsigned int* const myCandidateSequencesData = candidateSequencesData 
                         + std::size_t(globalOffset) * encodedSequencePitchInInts;
 
-                    const char* const myAnchorQualityData = subjectQualities + std::size_t(subjectIndex) * qualityPitchInBytes;
+                    const char* const myAnchorQualityData = anchorQualities + std::size_t(anchorIndex) * qualityPitchInBytes;
                     const char* const myCandidateQualities = candidateQualities 
                         + size_t(globalOffset) * qualityPitchInBytes;
 
-                    const int subjectLength = subjectSequencesLength[subjectIndex];
+                    const int anchorLength = anchorSequencesLength[anchorIndex];
                     const int* const myCandidateLengths = candidateSequencesLength + globalOffset;
 
                     const bool* const myIsPairedCandidate = d_isPairedCandidate + globalOffset;
@@ -449,8 +449,8 @@ namespace gpu{
                     const int* const srcIndices = myIndices;
                     int* const destIndices = myNewIndicesPtr;
 
-                    const int* const srcNumIndices = myNumIndicesPerSubjectPtr;
-                    int* const destNumIndices = myNewNumIndicesPerSubjectPtr;
+                    const int* const srcNumIndices = myNumIndicesPerAnchorPtr;
+                    int* const destNumIndices = myNewNumIndicesPerAnchorPtr;
 
                     auto groupReduceBool = [&](bool b, auto comp){
                         b = BlockReduceBool(temp_storage.boolreduce).Reduce(b, comp);
@@ -469,7 +469,7 @@ namespace gpu{
                         destIndices,
                         destNumIndices,
                         myAnchorSequenceData,
-                        subjectLength,
+                        anchorLength,
                         myCandidateSequencesData,
                         myCandidateLengths,
                         myAlignmentFlags,
@@ -478,7 +478,7 @@ namespace gpu{
                         myOverlaps,
                         myShouldBeKept,
                         desiredAlignmentMaxErrorRate,
-                        subjectIndex,
+                        anchorIndex,
                         encodedSequencePitchInInts,
                         srcIndices,
                         *srcNumIndices,
@@ -522,12 +522,12 @@ namespace gpu{
                             *destNumIndices,
                             myShifts,
                             myAlignmentFlags,
-                            subjectLength,
+                            anchorLength,
                             myCandidateLengths
                         );
 
                         if(tbGroup.thread_rank() == 0){
-                            *(multiMSA.getColumnPropertiesOfMSA(subjectIndex)) = shared_columnProperties;
+                            *(multiMSA.getColumnPropertiesOfMSA(anchorIndex)) = shared_columnProperties;
                         }
 
                         tbGroup.sync();
@@ -554,27 +554,27 @@ namespace gpu{
                             encodedSequencePitchInInts,
                             qualityPitchInBytes,
                             desiredAlignmentMaxErrorRate,
-                            subjectIndex
+                            anchorIndex
                         );
 
                         tbGroup.sync();
                 
-                        msa.checkAfterBuild(tbGroup, subjectIndex);
+                        msa.checkAfterBuild(tbGroup, anchorIndex);
 
                         msa.findConsensus(
                             tbGroup,
                             myAnchorSequenceData, 
                             encodedSequencePitchInInts, 
-                            subjectIndex
+                            anchorIndex
                         );
 
                         tbGroup.sync();
 
                         if(useSmemMSA){
                             // copy from counts and weights and coverages from shared to global
-                            int* const gmemCounts = multiMSA.getCountsOfMSA(subjectIndex);
-                            float* const gmemWeights = multiMSA.getWeightsOfMSA(subjectIndex);
-                            int* const gmemCoverages = multiMSA.getCoveragesOfMSA(subjectIndex);
+                            int* const gmemCounts = multiMSA.getCountsOfMSA(anchorIndex);
+                            float* const gmemWeights = multiMSA.getWeightsOfMSA(anchorIndex);
+                            int* const gmemCoverages = multiMSA.getCoveragesOfMSA(anchorIndex);
     
                             for(int index = tbGroup.thread_rank(); index < columnsToCheck; index += tbGroup.size()){
                                 for(int k = 0; k < 4; k++){
@@ -601,13 +601,13 @@ namespace gpu{
                 
                     }else{
                         if(threadIdx.x == 0){
-                            d_anchorIsFinished[subjectIndex] = true;
+                            d_anchorIsFinished[anchorIndex] = true;
                         }
                     }
                 }else{
                     if(threadIdx.x == 0){
-                        d_newNumIndicesPerSubject[subjectIndex] = 0;
-                        d_anchorIsFinished[subjectIndex] = true;
+                        d_newNumIndicesPerAnchor[anchorIndex] = 0;
+                        d_anchorIsFinished[anchorIndex] = true;
                     }
                     ; //nothing else to do if there are no candidates in msa
                 }
@@ -637,29 +637,29 @@ namespace gpu{
     __global__
     void msaCandidateRefinement_multiiter_kernel(
         int* __restrict__ d_newIndices,
-        int* __restrict__ d_newNumIndicesPerSubject,
+        int* __restrict__ d_newNumIndicesPerAnchor,
         int* __restrict__ d_newNumIndices,
         GPUMultiMSA multiMSA,
         const AlignmentOrientation* __restrict__ bestAlignmentFlags,
         const int* __restrict__ shifts,
         const int* __restrict__ nOps,
         const int* __restrict__ overlaps,
-        const unsigned int* __restrict__ subjectSequencesData,
+        const unsigned int* __restrict__ anchorSequencesData,
         const unsigned int* __restrict__ candidateSequencesData,
         const bool* __restrict__ d_isPairedCandidate,
-        const int* __restrict__ subjectSequencesLength,
+        const int* __restrict__ anchorSequencesLength,
         const int* __restrict__ candidateSequencesLength,
-        const char* __restrict__ subjectQualities,
+        const char* __restrict__ anchorQualities,
         const char* __restrict__ candidateQualities,
         bool* __restrict__ d_shouldBeKept,
-        const int* __restrict__ d_candidates_per_subject_prefixsum,
+        const int* __restrict__ d_candidates_per_anchor_prefixsum,
         const int* __restrict__ d_numAnchors,
         float desiredAlignmentMaxErrorRate,
         bool canUseQualityScores,
         size_t encodedSequencePitchInInts,
         size_t qualityPitchInBytes,
         int* __restrict__ d_indices,
-        int* __restrict__ d_indices_per_subject,
+        int* __restrict__ d_indices_per_anchor,
         int dataset_coverage,
         int numRefinementIterations
     ){
@@ -685,31 +685,31 @@ namespace gpu{
         int* const shared_counts = (int*)(shared_weights + 4 * multiMSA.columnPitchInElements);
         int* const shared_coverages = (int*)(shared_counts + 4 * multiMSA.columnPitchInElements);            
 
-        const int n_subjects = *d_numAnchors;
+        const int n_anchors = *d_numAnchors;
 
-        for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
-            int myNumIndices = d_indices_per_subject[subjectIndex];                            
+        for(int anchorIndex = blockIdx.x; anchorIndex < n_anchors; anchorIndex += gridDim.x){
+            int myNumIndices = d_indices_per_anchor[anchorIndex];                            
 
             if(myNumIndices > 0){
 
                 tbGroup.sync();
 
                 if(threadIdx.x == 0){
-                    shared_columnProperties = *(multiMSA.getColumnPropertiesOfMSA(subjectIndex));
+                    shared_columnProperties = *(multiMSA.getColumnPropertiesOfMSA(anchorIndex));
                 }
                 tbGroup.sync();
 
-                const int globalOffset = d_candidates_per_subject_prefixsum[subjectIndex];
+                const int globalOffset = d_candidates_per_anchor_prefixsum[anchorIndex];
                 int* const myIndices = d_indices + globalOffset;
-                int* const myNumIndicesPerSubjectPtr = d_indices_per_subject + subjectIndex;
+                int* const myNumIndicesPerAnchorPtr = d_indices_per_anchor + anchorIndex;
 
                 int* const myNewIndicesPtr = d_newIndices + globalOffset;
-                int* const myNewNumIndicesPerSubjectPtr = d_newNumIndicesPerSubject + subjectIndex;
+                int* const myNewNumIndicesPerAnchorPtr = d_newNumIndicesPerAnchor + anchorIndex;
 
                 bool* const myShouldBeKept = d_shouldBeKept + globalOffset;
                 const bool* const myIsPairedCandidate = d_isPairedCandidate + globalOffset;
 
-                GpuSingleMSA msa = multiMSA.getSingleMSA(subjectIndex);
+                GpuSingleMSA msa = multiMSA.getSingleMSA(anchorIndex);
                 msa.columnProperties = &shared_columnProperties;
 
                 if(useSmemMSA){
@@ -721,9 +721,9 @@ namespace gpu{
                 if(useSmemMSA){
                     //load counts weights and coverages from gmem to smem
 
-                    const int* const gmemCounts = multiMSA.getCountsOfMSA(subjectIndex);
-                    const float* const gmemWeights = multiMSA.getWeightsOfMSA(subjectIndex);
-                    const int* const gmemCoverages = multiMSA.getCoveragesOfMSA(subjectIndex);
+                    const int* const gmemCounts = multiMSA.getCountsOfMSA(anchorIndex);
+                    const float* const gmemWeights = multiMSA.getWeightsOfMSA(anchorIndex);
+                    const int* const gmemCoverages = multiMSA.getCoveragesOfMSA(anchorIndex);
 
                     for(int k = tbGroup.thread_rank(); k < msa.columnPitchInElements; k += tbGroup.size()){
                         for(int i = 0; i < 4; i++){
@@ -737,9 +737,9 @@ namespace gpu{
                 }
 
                 auto storeSmemMSAToGmem = [&](){
-                    int* const gmemCounts = multiMSA.getCountsOfMSA(subjectIndex);
-                    float* const gmemWeights = multiMSA.getWeightsOfMSA(subjectIndex);
-                    int* const gmemCoverages = multiMSA.getCoveragesOfMSA(subjectIndex);
+                    int* const gmemCounts = multiMSA.getCountsOfMSA(anchorIndex);
+                    float* const gmemWeights = multiMSA.getWeightsOfMSA(anchorIndex);
+                    int* const gmemCoverages = multiMSA.getCoveragesOfMSA(anchorIndex);
 
                     for(int k = tbGroup.thread_rank(); k < msa.columnPitchInElements; k += tbGroup.size()){
                         for(int i = 0; i < 4; i++){
@@ -757,34 +757,34 @@ namespace gpu{
                 const int* const myNops = nOps + globalOffset;
                 const int* const myOverlaps = overlaps + globalOffset;
 
-                const unsigned int* const myAnchorSequenceData = subjectSequencesData 
-                    + std::size_t(subjectIndex) * encodedSequencePitchInInts;
+                const unsigned int* const myAnchorSequenceData = anchorSequencesData 
+                    + std::size_t(anchorIndex) * encodedSequencePitchInInts;
                 const unsigned int* const myCandidateSequencesData = candidateSequencesData 
                     + std::size_t(globalOffset) * encodedSequencePitchInInts;
 
                 const char* const myCandidateQualities = candidateQualities 
                     + std::size_t(globalOffset) * qualityPitchInBytes;
 
-                const int subjectLength = subjectSequencesLength[subjectIndex];
+                const int anchorLength = anchorSequencesLength[anchorIndex];
                 const int* const myCandidateLengths = candidateSequencesLength + globalOffset;
 
                 for(int refinementIteration = 0; 
                         refinementIteration < numRefinementIterations; 
                         refinementIteration++){
 
-                    auto finalizeRefinement = [&](int newNumIndicesPerSubject){
+                    auto finalizeRefinement = [&](int newNumIndicesPerAnchor){
                         //copy indices to correct output array
                         if(refinementIteration % 2 == 1){
                             for(int i = tbGroup.thread_rank(); i < myNumIndices; i += tbGroup.size()){
                                 myNewIndicesPtr[i] = myIndices[i];
                             }
                             if(tbGroup.thread_rank() == 0){
-                                *myNewNumIndicesPerSubjectPtr = *myNumIndicesPerSubjectPtr;
+                                *myNewNumIndicesPerAnchorPtr = *myNumIndicesPerAnchorPtr;
                             }
                         }
 
                         if(tbGroup.thread_rank() == 0){
-                            atomicAdd(d_newNumIndices, newNumIndicesPerSubject);
+                            atomicAdd(d_newNumIndices, newNumIndicesPerAnchor);
                         }
                     };
 
@@ -794,9 +794,9 @@ namespace gpu{
                             myNewIndicesPtr : myIndices;
 
                     int* const srcNumIndices = (refinementIteration % 2 == 0) ?
-                        myNumIndicesPerSubjectPtr : myNewNumIndicesPerSubjectPtr;
+                        myNumIndicesPerAnchorPtr : myNewNumIndicesPerAnchorPtr;
                     int* const destNumIndices = (refinementIteration % 2 == 0) ?
-                        myNewNumIndicesPerSubjectPtr : myNumIndicesPerSubjectPtr;
+                        myNewNumIndicesPerAnchorPtr : myNumIndicesPerAnchorPtr;
 
                     tbGroup.sync();
 
@@ -819,7 +819,7 @@ namespace gpu{
                         destIndices,
                         destNumIndices,
                         myAnchorSequenceData,
-                        subjectLength,
+                        anchorLength,
                         myCandidateSequencesData,
                         myCandidateLengths,
                         myAlignmentFlags,
@@ -828,7 +828,7 @@ namespace gpu{
                         myOverlaps,
                         myShouldBeKept,
                         desiredAlignmentMaxErrorRate,
-                        subjectIndex,
+                        anchorIndex,
                         encodedSequencePitchInInts,
                         srcIndices,
                         *srcNumIndices,
@@ -839,7 +839,7 @@ namespace gpu{
 
                     long long int t2 = clock64();
 
-                    if(subjectIndex == 0 && tbGroup.thread_rank() == 0){
+                    if(anchorIndex == 0 && tbGroup.thread_rank() == 0){
                         //printf("duration flag: %lu\n", t2-t1);
                     }
 
@@ -877,7 +877,7 @@ namespace gpu{
 
                         long long int t4 = clock64();
 
-                        if(subjectIndex == 0 && tbGroup.thread_rank() == 0){
+                        if(anchorIndex == 0 && tbGroup.thread_rank() == 0){
                             //printf("duration removal: %lu. candidates before %d, after %d\n", t4-t3, myNumIndices, myNewNumIndices);
                         }
 
@@ -885,7 +885,7 @@ namespace gpu{
 
                         tbGroup.sync();
 
-                        //msa.checkAfterBuild(tbGroup, subjectIndex);
+                        //msa.checkAfterBuild(tbGroup, anchorIndex);
 
                         assert(shared_columnProperties.firstColumn_incl != -1);
                         assert(shared_columnProperties.lastColumn_excl != -1);
@@ -896,18 +896,18 @@ namespace gpu{
                             tbGroup,
                             myAnchorSequenceData, 
                             encodedSequencePitchInInts, 
-                            subjectIndex
+                            anchorIndex
                         );
 
                         if(tbGroup.thread_rank() == 0){
-                            *(multiMSA.getColumnPropertiesOfMSA(subjectIndex)) = shared_columnProperties;
+                            *(multiMSA.getColumnPropertiesOfMSA(anchorIndex)) = shared_columnProperties;
                         }
 
                         tbGroup.sync();
 
                         long long int t6 = clock64();
 
-                        if(subjectIndex == 0 && tbGroup.thread_rank() == 0){
+                        if(anchorIndex == 0 && tbGroup.thread_rank() == 0){
                             //printf("duration consensus: %lu\n", t6-t5);
                         }
 
@@ -939,7 +939,7 @@ namespace gpu{
                 }
             }else{
                 if(tbGroup.thread_rank() == 0){
-                    d_newNumIndicesPerSubject[subjectIndex] = 0;
+                    d_newNumIndicesPerAnchor[anchorIndex] = 0;
                 }
                 ; //nothing else to do if there are no candidates in msa
             }                
@@ -961,8 +961,8 @@ namespace gpu{
         const int* d_anchorLengths,
         const int* d_candidateLengths,
         const int* d_indices,
-        const int* d_indices_per_subject,
-        const int* d_candidatesPerSubjectPrefixSum,
+        const int* d_indices_per_anchor,
+        const int* d_candidatesPerAnchorPrefixSum,
         const int numAnchors,
         cudaStream_t stream
     ){
@@ -974,8 +974,8 @@ namespace gpu{
             d_anchorLengths,
             d_candidateLengths,
             d_indices,
-            d_indices_per_subject,
-            d_candidatesPerSubjectPrefixSum,
+            d_indices_per_anchor,
+            d_candidatesPerAnchorPrefixSum,
             numAnchors
         );
     }
@@ -1026,22 +1026,22 @@ namespace gpu{
     
     void callMsaCandidateRefinementKernel_multiiter_async(
         int* d_newIndices,
-        int* d_newNumIndicesPerSubject,
+        int* d_newNumIndicesPerAnchor,
         int* d_newNumIndices,
         GPUMultiMSA multiMSA,
         const AlignmentOrientation* d_bestAlignmentFlags,
         const int* d_shifts,
         const int* d_nOps,
         const int* d_overlaps,
-        const unsigned int* d_subjectSequencesData,
+        const unsigned int* d_anchorSequencesData,
         const unsigned int* d_candidateSequencesData,
         const bool* d_isPairedCandidate,
-        const int* d_subjectSequencesLength,
+        const int* d_anchorSequencesLength,
         const int* d_candidateSequencesLength,
-        const char* d_subjectQualities,
+        const char* d_anchorQualities,
         const char* d_candidateQualities,
         bool* d_shouldBeKept,
-        const int* d_candidates_per_subject_prefixsum,
+        const int* d_candidates_per_anchor_prefixsum,
         const int* d_numAnchors,
         float desiredAlignmentMaxErrorRate,
         int /*maxNumAnchors*/,
@@ -1050,7 +1050,7 @@ namespace gpu{
         size_t encodedSequencePitchInInts,
         size_t qualityPitchInBytes,
         int* d_indices,
-        int* d_indices_per_subject,
+        int* d_indices_per_anchor,
         int dataset_coverage,
         int numIterations,
         cudaStream_t stream,
@@ -1117,29 +1117,29 @@ namespace gpu{
         msaCandidateRefinement_multiiter_kernel<blocksize, memType>
                 <<<grid, block, smem, stream>>>(
             d_newIndices,
-            d_newNumIndicesPerSubject,
+            d_newNumIndicesPerAnchor,
             d_newNumIndices,
             multiMSA,
             d_bestAlignmentFlags,
             d_shifts,
             d_nOps,
             d_overlaps,
-            d_subjectSequencesData,
+            d_anchorSequencesData,
             d_candidateSequencesData,
             d_isPairedCandidate,
-            d_subjectSequencesLength,
+            d_anchorSequencesLength,
             d_candidateSequencesLength,
-            d_subjectQualities,
+            d_anchorQualities,
             d_candidateQualities,
             d_shouldBeKept,
-            d_candidates_per_subject_prefixsum,
+            d_candidates_per_anchor_prefixsum,
             d_numAnchors,
             desiredAlignmentMaxErrorRate,
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
             d_indices,
-            d_indices_per_subject,
+            d_indices_per_anchor,
             dataset_coverage,
             numIterations
         );
@@ -1153,22 +1153,22 @@ namespace gpu{
 
     void callMsaCandidateRefinementKernel_singleiter_async(
         int* d_newIndices,
-        int* d_newNumIndicesPerSubject,
+        int* d_newNumIndicesPerAnchor,
         int* d_newNumIndices,
         GPUMultiMSA multiMSA,
         const AlignmentOrientation* d_bestAlignmentFlags,
         const int* d_shifts,
         const int* d_nOps,
         const int* d_overlaps,
-        const unsigned int* d_subjectSequencesData,
+        const unsigned int* d_anchorSequencesData,
         const unsigned int* d_candidateSequencesData,
         const bool* d_isPairedCandidate,
-        const int* d_subjectSequencesLength,
+        const int* d_anchorSequencesLength,
         const int* d_candidateSequencesLength,
-        const char* d_subjectQualities,
+        const char* d_anchorQualities,
         const char* d_candidateQualities,
         bool* d_shouldBeKept,
-        const int* d_candidates_per_subject_prefixsum,
+        const int* d_candidates_per_anchor_prefixsum,
         const int* d_numAnchors,
         float desiredAlignmentMaxErrorRate,
         int /*maxNumAnchors*/,
@@ -1177,7 +1177,7 @@ namespace gpu{
         size_t encodedSequencePitchInInts,
         size_t qualityPitchInBytes,
         const int* d_indices,
-        const int* d_indices_per_subject,
+        const int* d_indices_per_anchor,
         int dataset_coverage,
         int iteration,
         bool* d_anchorIsFinished,
@@ -1244,29 +1244,29 @@ namespace gpu{
 
         msaCandidateRefinement_singleiter_kernel<blocksize, memoryType><<<grid, block, smem, stream>>>(
             d_newIndices,
-            d_newNumIndicesPerSubject,
+            d_newNumIndicesPerAnchor,
             d_newNumIndices,
             multiMSA,
             d_bestAlignmentFlags,
             d_shifts,
             d_nOps,
             d_overlaps,
-            d_subjectSequencesData,
+            d_anchorSequencesData,
             d_candidateSequencesData,
             d_isPairedCandidate,
-            d_subjectSequencesLength,
+            d_anchorSequencesLength,
             d_candidateSequencesLength,
-            d_subjectQualities,
+            d_anchorQualities,
             d_candidateQualities,
             d_shouldBeKept,
-            d_candidates_per_subject_prefixsum,
+            d_candidates_per_anchor_prefixsum,
             d_numAnchors,
             desiredAlignmentMaxErrorRate,
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
             d_indices,
-            d_indices_per_subject,
+            d_indices_per_anchor,
             dataset_coverage,
             iteration,
             d_anchorIsFinished
@@ -1288,12 +1288,12 @@ namespace gpu{
         const int* d_anchorLengths,
         const int* d_candidateLengths,
         const int* d_indices,
-        const int* d_indices_per_subject,
-        const int* d_candidatesPerSubjectPrefixSum,            
-        const unsigned int* d_subjectSequencesData,
+        const int* d_indices_per_anchor,
+        const int* d_candidatesPerAnchorPrefixSum,            
+        const unsigned int* d_anchorSequencesData,
         const unsigned int* d_candidateSequencesData,
         const bool* d_isPairedCandidate,
-        const char* d_subjectQualities,
+        const char* d_anchorQualities,
         const char* d_candidateQualities,
         const int* d_numAnchors,
         float desiredAlignmentMaxErrorRate,
@@ -1366,12 +1366,12 @@ namespace gpu{
         d_anchorLengths,
         d_candidateLengths,
         d_indices,
-        d_indices_per_subject,
-        d_candidatesPerSubjectPrefixSum,            
-        d_subjectSequencesData,
+        d_indices_per_anchor,
+        d_candidatesPerAnchorPrefixSum,            
+        d_anchorSequencesData,
         d_candidateSequencesData,
         d_isPairedCandidate,
-        d_subjectQualities,
+        d_anchorQualities,
         d_candidateQualities,
         d_numAnchors,
         desiredAlignmentMaxErrorRate,

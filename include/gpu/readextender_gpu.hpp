@@ -124,9 +124,9 @@ struct GpuReadExtender{
         AnchorData(cub::CachingDeviceAllocator& cubAlloc_)
             : d_anchorSequencesLength(cubAlloc_),
             d_accumExtensionsLengths(cubAlloc_),
-            d_subjectSequencesDataDecoded(cubAlloc_),
+            d_anchorSequencesDataDecoded(cubAlloc_),
             d_anchorQualityScores(cubAlloc_),
-            d_subjectSequencesData(cubAlloc_){
+            d_anchorSequencesData(cubAlloc_){
 
         }
 
@@ -136,9 +136,9 @@ struct GpuReadExtender{
 
         CachedDeviceUVector<int> d_anchorSequencesLength{};
         CachedDeviceUVector<int> d_accumExtensionsLengths{};
-        CachedDeviceUVector<char> d_subjectSequencesDataDecoded{};
+        CachedDeviceUVector<char> d_anchorSequencesDataDecoded{};
         CachedDeviceUVector<char> d_anchorQualityScores{};
-        CachedDeviceUVector<unsigned int> d_subjectSequencesData{};
+        CachedDeviceUVector<unsigned int> d_anchorSequencesData{};
     };
 
     struct AnchorHashResult{
@@ -574,9 +574,9 @@ struct GpuReadExtender{
             //std::cerr << "task " << this << " aggregateAnchorData, stream " << stream << "\n";
             anchorData.d_anchorSequencesLength.resizeUninitialized(size(), stream);
             anchorData.d_accumExtensionsLengths.resizeUninitialized(size(), stream);
-            anchorData.d_subjectSequencesDataDecoded.resizeUninitialized(size() * decodedSequencePitchInBytes, stream);
+            anchorData.d_anchorSequencesDataDecoded.resizeUninitialized(size() * decodedSequencePitchInBytes, stream);
             anchorData.d_anchorQualityScores.resizeUninitialized(size() * qualityPitchInBytes, stream);
-            anchorData.d_subjectSequencesData.resizeUninitialized(size() * encodedSequencePitchInInts, stream);
+            anchorData.d_anchorSequencesData.resizeUninitialized(size() * encodedSequencePitchInInts, stream);
 
             anchorData.encodedSequencePitchInInts = encodedSequencePitchInInts;
             anchorData.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
@@ -604,7 +604,7 @@ struct GpuReadExtender{
                     anchorData.d_accumExtensionsLengths.data(),
                     anchorData.d_anchorSequencesLength.data(),
                     anchorData.d_anchorQualityScores.data(),
-                    anchorData.d_subjectSequencesDataDecoded.data(),
+                    anchorData.d_anchorSequencesDataDecoded.data(),
                     soatotalAnchorBeginInExtendedRead.data(),
                     soatotalDecodedAnchorsLengths.data(),
                     soainputAnchorLengths.data(),
@@ -616,8 +616,8 @@ struct GpuReadExtender{
 
                 readextendergpukernels::encodeSequencesTo2BitKernel<8>
                 <<<SDIV(size(), (128 / 8)), 128, 0, stream>>>(
-                    anchorData.d_subjectSequencesData.data(),
-                    anchorData.d_subjectSequencesDataDecoded.data(),
+                    anchorData.d_anchorSequencesData.data(),
+                    anchorData.d_anchorSequencesDataDecoded.data(),
                     anchorData.d_anchorSequencesLength.data(),
                     decodedSequencePitchInBytes,
                     encodedSequencePitchInInts,
@@ -1690,7 +1690,7 @@ struct GpuReadExtender{
 
             gpuMinhasher->determineNumValues(
                 minhashHandle,
-                anchorData.d_subjectSequencesData.data(),
+                anchorData.d_anchorSequencesData.data(),
                 anchorData.encodedSequencePitchInInts,
                 anchorData.d_anchorSequencesLength.data(),
                 numAnchors,
@@ -1819,10 +1819,10 @@ struct GpuReadExtender{
         d_alignment_best_alignment_flags(cubAllocator_),
         d_numCandidatesPerAnchor(cubAllocator_),
         d_numCandidatesPerAnchorPrefixSum(cubAllocator_),
-        d_subjectSequencesDataDecoded(cubAllocator_),
+        d_anchorSequencesDataDecoded(cubAllocator_),
         d_anchorQualityScores(cubAllocator_),
         d_anchorSequencesLength(cubAllocator_),
-        d_subjectSequencesData(cubAllocator_),
+        d_anchorSequencesData(cubAllocator_),
         d_accumExtensionsLengths(cubAllocator_),
         multiMSA(cubAllocator_)
     {
@@ -2216,7 +2216,7 @@ struct GpuReadExtender{
                 d_alignment_nOps.data(),
                 d_alignment_isValid.data(),
                 d_alignment_best_alignment_flags.data(),
-                d_subjectSequencesData.data(),
+                d_anchorSequencesData.data(),
                 d_candidateSequencesData.data(),
                 d_anchorSequencesLength.data(),
                 d_candidateSequencesLength.data(),
@@ -2319,7 +2319,7 @@ struct GpuReadExtender{
             d_numCandidatesPerAnchor.data(),
             d_numCandidatesPerAnchorPrefixSum.data(),
             d_anchorSequencesLength.data(),
-            d_subjectSequencesData.data(),
+            d_anchorSequencesData.data(),
             d_anchorQualityScores.data(),
             tasks->size(),
             d_candidateSequencesLength.data(),
@@ -2348,7 +2348,7 @@ struct GpuReadExtender{
             d_numCandidatesPerAnchor.data(),
             d_numCandidatesPerAnchorPrefixSum.data(),
             d_anchorSequencesLength.data(),
-            d_subjectSequencesData.data(),
+            d_anchorSequencesData.data(),
             d_anchorQualityScores.data(),
             tasks->size(),
             d_candidateSequencesLength.data(),
@@ -3674,16 +3674,16 @@ struct GpuReadExtender{
     }
 
     void copyAnchorDataFrom(const AnchorData& results, cudaStream_t stream){
-        d_subjectSequencesDataDecoded.resizeUninitialized(results.d_subjectSequencesDataDecoded.size(), stream);
+        d_anchorSequencesDataDecoded.resizeUninitialized(results.d_anchorSequencesDataDecoded.size(), stream);
         d_anchorQualityScores.resizeUninitialized(results.d_anchorQualityScores.size(), stream);
         d_anchorSequencesLength.resizeUninitialized(results.d_anchorSequencesLength.size(), stream);
-        d_subjectSequencesData.resizeUninitialized(results.d_subjectSequencesData.size(), stream);
+        d_anchorSequencesData.resizeUninitialized(results.d_anchorSequencesData.size(), stream);
         d_accumExtensionsLengths.resizeUninitialized(results.d_accumExtensionsLengths.size(), stream);
 
         CUDACHECK(cudaMemcpyAsync(
-            d_subjectSequencesDataDecoded.data(),
-            results.d_subjectSequencesDataDecoded.data(),
-            sizeof(char) * d_subjectSequencesDataDecoded.size(),
+            d_anchorSequencesDataDecoded.data(),
+            results.d_anchorSequencesDataDecoded.data(),
+            sizeof(char) * d_anchorSequencesDataDecoded.size(),
             D2D,
             stream
         ));
@@ -3705,9 +3705,9 @@ struct GpuReadExtender{
         ));
 
         CUDACHECK(cudaMemcpyAsync(
-            d_subjectSequencesData.data(),
-            results.d_subjectSequencesData.data(),
-            sizeof(unsigned int) * d_subjectSequencesData.size(),
+            d_anchorSequencesData.data(),
+            results.d_anchorSequencesData.data(),
+            sizeof(unsigned int) * d_anchorSequencesData.size(),
             D2D,
             stream
         ));
@@ -3778,10 +3778,10 @@ struct GpuReadExtender{
         d_alignment_best_alignment_flags.destroy();
         d_numCandidatesPerAnchor.destroy();
         d_numCandidatesPerAnchorPrefixSum.destroy();
-        d_subjectSequencesDataDecoded.destroy();
+        d_anchorSequencesDataDecoded.destroy();
         d_anchorQualityScores.destroy();
         d_anchorSequencesLength.destroy();
-        d_subjectSequencesData.destroy();
+        d_anchorSequencesData.destroy();
         d_accumExtensionsLengths.destroy();
         multiMSA.destroy();
     }
@@ -3801,10 +3801,10 @@ struct GpuReadExtender{
     // ----- 
     
     // ----- input data
-    CachedDeviceUVector<char> d_subjectSequencesDataDecoded{};
+    CachedDeviceUVector<char> d_anchorSequencesDataDecoded{};
     CachedDeviceUVector<char> d_anchorQualityScores{};
     CachedDeviceUVector<int> d_anchorSequencesLength{};
-    CachedDeviceUVector<unsigned int> d_subjectSequencesData{};
+    CachedDeviceUVector<unsigned int> d_anchorSequencesData{};
     CachedDeviceUVector<int> d_accumExtensionsLengths{};
     // -----
 

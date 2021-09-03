@@ -15,15 +15,15 @@ namespace shd{
     AlignmentResult
     cpuShiftedHammingDistancePopcount2BitHiLo(
             CpuAlignmentHandle& handle,
-            const unsigned int* subjectHiLo,
-            int subjectLength,
+            const unsigned int* anchorHiLo,
+            int anchorLength,
             const unsigned int* candidateHiLo,
             int candidateLength,
             int min_overlap,
             float maxErrorRate,
             float min_overlap_ratio) noexcept{
 
-        assert(subjectLength > 0);
+        assert(anchorLength > 0);
         assert(candidateLength > 0);
 
         auto popcount = [](auto i){return __builtin_popcount(i);};
@@ -54,24 +54,24 @@ namespace shd{
 
         auto& shiftbuffer = handle.shiftbuffer;
 
-        const int subjectInts = SequenceHelpers::getEncodedNumInts2BitHiLo(subjectLength);
+        const int anchorInts = SequenceHelpers::getEncodedNumInts2BitHiLo(anchorLength);
         const int candidateInts = SequenceHelpers::getEncodedNumInts2BitHiLo(candidateLength);
-        const int maxInts = std::max(subjectInts, candidateInts);
+        const int maxInts = std::max(anchorInts, candidateInts);
 
 
         shiftbuffer.resize(maxInts);
 
-        const unsigned int* const subjectBackup_hi = subjectHiLo;
-        const unsigned int* const subjectBackup_lo = subjectHiLo + subjectInts / 2;
+        const unsigned int* const anchorBackup_hi = anchorHiLo;
+        const unsigned int* const anchorBackup_lo = anchorHiLo + anchorInts / 2;
 
         const unsigned int* const candidateBackup_hi = candidateHiLo;
         const unsigned int* const candidateBackup_lo = candidateHiLo + candidateInts / 2;
 
-        const int totalbases = subjectLength + candidateLength;
-        const int minoverlap = std::max(min_overlap, int(float(subjectLength) * min_overlap_ratio));
+        const int totalbases = anchorLength + candidateLength;
+        const int minoverlap = std::max(min_overlap, int(float(anchorLength) * min_overlap_ratio));
 
         int bestScore = totalbases; // score is number of mismatches
-        int bestShift = -candidateLength; // shift of query relative to subject. shift < 0 if query begins before subject
+        int bestShift = -candidateLength; // shift of query relative to anchor. shift < 0 if query begins before anchor
 
         auto handle_shift = [&](int shift, int overlapsize,
                                 unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
@@ -104,16 +104,16 @@ namespace shd{
             }
         };
 
-        std::copy_n(subjectHiLo, subjectInts, shiftbuffer.begin());
+        std::copy_n(anchorHiLo, anchorInts, shiftbuffer.begin());
         unsigned int* shiftbuffer_hi = shiftbuffer.data();
-        unsigned int* shiftbuffer_lo = shiftbuffer.data() + subjectInts / 2;
+        unsigned int* shiftbuffer_lo = shiftbuffer.data() + anchorInts / 2;
 
 
-        for(int shift = 0; shift < subjectLength - minoverlap + 1; ++shift){
-            const int overlapsize = std::min(subjectLength - shift, candidateLength);
+        for(int shift = 0; shift < anchorLength - minoverlap + 1; ++shift){
+            const int overlapsize = std::min(anchorLength - shift, candidateLength);
             bool b = handle_shift(shift, overlapsize,
                                 shiftbuffer_hi, shiftbuffer_lo, identity,
-                                subjectInts,
+                                anchorInts,
                                 candidateBackup_hi, candidateBackup_lo, identity);
             if(!b){
                 break;
@@ -125,12 +125,12 @@ namespace shd{
         shiftbuffer_lo = shiftbuffer.data() + candidateInts / 2;
 
         for(int shift = -1; shift >= -candidateLength + minoverlap; --shift){
-            const int overlapsize = std::min(subjectLength, candidateLength + shift);
+            const int overlapsize = std::min(anchorLength, candidateLength + shift);
 
             bool b = handle_shift(shift, overlapsize,
                                 shiftbuffer_hi, shiftbuffer_lo, identity,
                                 candidateInts,
-                                subjectBackup_hi, subjectBackup_lo, identity);
+                                anchorBackup_hi, anchorBackup_lo, identity);
 
             if(!b){
                 break;
@@ -141,7 +141,7 @@ namespace shd{
         alignmentresult.isValid = (bestShift != -candidateLength);
 
         const int candidateoverlapbegin_incl = std::max(-bestShift, 0);
-        const int candidateoverlapend_excl = std::min(candidateLength, subjectLength - bestShift);
+        const int candidateoverlapend_excl = std::min(candidateLength, anchorLength - bestShift);
         const int overlapsize = candidateoverlapend_excl - candidateoverlapbegin_incl;
         const int opnr = bestScore - totalbases + 2*overlapsize;
 

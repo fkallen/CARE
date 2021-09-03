@@ -28,8 +28,8 @@ namespace care{
 namespace gpu{
 
     struct MSAColumnProperties{
-        int subjectColumnsBegin_incl;
-        int subjectColumnsEnd_excl;
+        int anchorColumnsBegin_incl;
+        int anchorColumnsEnd_excl;
         int firstColumn_incl;
         int lastColumn_excl;
     };
@@ -46,7 +46,7 @@ namespace gpu{
 
         template<class ThreadGroup>
         __device__ __forceinline__
-        void checkAfterBuild(ThreadGroup& group, int subjectIndex = -1){
+        void checkAfterBuild(ThreadGroup& group, int anchorIndex = -1){
     
             const int firstColumn_incl = columnProperties->firstColumn_incl;
             const int lastColumn_excl = columnProperties->lastColumn_excl;
@@ -65,14 +65,14 @@ namespace gpu{
                     const float weight = myweights[k * columnPitchInElements];
 
                     if(count > 0 && weight <= 0.0f){
-                        printf("msa check failed! subjectIndex %d, column %d, base %d, count %d, weight %f\n",
-                            subjectIndex, column, k, count, weight);
+                        printf("msa check failed! anchorIndex %d, column %d, base %d, count %d, weight %f\n",
+                            anchorIndex, column, k, count, weight);
                         assert(false);
                     }
     
                     if(count <= 0 && weight > 0.0f){
-                        printf("msa check failed! subjectIndex %d, column %d, base %d, count %d, weight %f\n",
-                            subjectIndex, column, k, count, weight);
+                        printf("msa check failed! anchorIndex %d, column %d, base %d, count %d, weight %f\n",
+                            anchorIndex, column, k, count, weight);
                         assert(false);
                     }
     
@@ -80,7 +80,7 @@ namespace gpu{
                 }
     
                 if(sumOfWeights == 0){
-                    printf("s %d c %d\n", subjectIndex, column);
+                    printf("s %d c %d\n", anchorIndex, column);
                     assert(sumOfWeights != 0);
                 }
             }
@@ -197,12 +197,12 @@ namespace gpu{
                 const int* __restrict__ goodCandidateIndices,
                 int numGoodCandidates,
                 const int* __restrict__ shifts,
-                const int subjectLength,
+                const int anchorLength,
                 const int* __restrict__ candidateLengths
         ){
 
             int startindex = 0;
-            int endindex = subjectLength;
+            int endindex = anchorLength;
 
             for(int k = group.thread_rank(); k < numGoodCandidates; k += group.size()) {
                 const int localCandidateIndex = goodCandidateIndices[k];
@@ -222,8 +222,8 @@ namespace gpu{
 
             MSAColumnProperties my_columnproperties;
 
-            my_columnproperties.subjectColumnsBegin_incl = max(-startindex, 0);
-            my_columnproperties.subjectColumnsEnd_excl = my_columnproperties.subjectColumnsBegin_incl + subjectLength;
+            my_columnproperties.anchorColumnsBegin_incl = max(-startindex, 0);
+            my_columnproperties.anchorColumnsEnd_excl = my_columnproperties.anchorColumnsBegin_incl + anchorLength;
             my_columnproperties.firstColumn_incl = 0;
             my_columnproperties.lastColumn_excl = endindex - startindex;
 
@@ -245,12 +245,12 @@ namespace gpu{
                 int numGoodCandidates,
                 const int* __restrict__ shifts,
                 const AlignmentOrientation* __restrict__ alignmentFlags,
-                const int subjectLength,
+                const int anchorLength,
                 const int* __restrict__ candidateLengths
         ){
 
             int startindex = 0;
-            int endindex = subjectLength;
+            int endindex = anchorLength;
 
             for(int k = group.thread_rank(); k < numGoodCandidates; k += group.size()) {
                 const int localCandidateIndex = goodCandidateIndices[k];
@@ -275,8 +275,8 @@ namespace gpu{
             if(group.thread_rank() == 0) {
                 MSAColumnProperties my_columnproperties;
 
-                my_columnproperties.subjectColumnsBegin_incl = max(-startindex, 0);
-                my_columnproperties.subjectColumnsEnd_excl = my_columnproperties.subjectColumnsBegin_incl + subjectLength;
+                my_columnproperties.anchorColumnsBegin_incl = max(-startindex, 0);
+                my_columnproperties.anchorColumnsEnd_excl = my_columnproperties.anchorColumnsBegin_incl + anchorLength;
                 my_columnproperties.firstColumn_incl = 0;
                 my_columnproperties.lastColumn_excl = endindex - startindex;
 
@@ -298,12 +298,12 @@ namespace gpu{
                 int numGoodCandidates,
                 const int* __restrict__ shifts,
                 const AlignmentOrientation* __restrict__ alignmentFlags,
-                const int subjectLength,
+                const int anchorLength,
                 const int* __restrict__ candidateLengths
         ){
 
             int startindex = 0;
-            int endindex = subjectLength;
+            int endindex = anchorLength;
 
             for(int k = group.thread_rank(); k < numGoodCandidates; k += group.size()) {
                 const int localCandidateIndex = k;
@@ -328,8 +328,8 @@ namespace gpu{
             if(group.thread_rank() == 0) {
                 MSAColumnProperties my_columnproperties;
 
-                my_columnproperties.subjectColumnsBegin_incl = max(-startindex, 0);
-                my_columnproperties.subjectColumnsEnd_excl = my_columnproperties.subjectColumnsBegin_incl + subjectLength;
+                my_columnproperties.anchorColumnsBegin_incl = max(-startindex, 0);
+                my_columnproperties.anchorColumnsEnd_excl = my_columnproperties.anchorColumnsBegin_incl + anchorLength;
                 my_columnproperties.firstColumn_incl = 0;
                 my_columnproperties.lastColumn_excl = endindex - startindex;
 
@@ -534,7 +534,7 @@ namespace gpu{
             size_t encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
             float desiredAlignmentMaxErrorRate,
-            int subjectIndex
+            int anchorIndex
         ){   
             constexpr int threadsPerSequence = 8;
             auto tile = cg::tiled_partition<threadsPerSequence>(group);
@@ -553,17 +553,17 @@ namespace gpu{
             group.sync();
 
             
-            const int subjectColumnsBegin_incl = columnProperties->subjectColumnsBegin_incl;
-            const int subjectColumnsEnd_excl = columnProperties->subjectColumnsEnd_excl;
+            const int anchorColumnsBegin_incl = columnProperties->anchorColumnsBegin_incl;
+            const int anchorColumnsEnd_excl = columnProperties->anchorColumnsEnd_excl;
 
-            const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
-            const unsigned int* const subject = myAnchorSequenceData;
-            const char* const subjectQualityScore = myAnchorQualityData;
+            const int anchorLength = anchorColumnsEnd_excl - anchorColumnsBegin_incl;
+            const unsigned int* const anchor = myAnchorSequenceData;
+            const char* const anchorQualityScore = myAnchorQualityData;
                             
-            // for(int i = group.thread_rank(); i < subjectLength; i += group.size()){
-            //     const int columnIndex = subjectColumnsBegin_incl + i;
-            //     const unsigned int encbase = getEncodedNuc2Bit(subject, subjectLength, i);
-            //     const float weight = canUseQualityScores ? getQualityWeight(subjectQualityScore[i]) : 1.0f;
+            // for(int i = group.thread_rank(); i < anchorLength; i += group.size()){
+            //     const int columnIndex = anchorColumnsBegin_incl + i;
+            //     const unsigned int encbase = getEncodedNuc2Bit(anchor, anchorLength, i);
+            //     const float weight = canUseQualityScores ? getQualityWeight(anchorQualityScore[i]) : 1.0f;
             //     const int rowOffset = int(encbase) * columnPitchInElements;
 
             //     atomicAdd(counts + rowOffset + columnIndex, 1);
@@ -576,12 +576,12 @@ namespace gpu{
             if(tileIdInGroup == 0){
                 msaAddOrDeleteASequence2Bit<true>(
                     tile,
-                    subject, 
-                    subjectLength, 
+                    anchor, 
+                    anchorLength, 
                     true,
-                    subjectColumnsBegin_incl,
+                    anchorColumnsBegin_incl,
                     1.0f,
-                    subjectQualityScore,
+                    anchorQualityScore,
                     canUseQualityScores,
                     false
                 );
@@ -604,7 +604,7 @@ namespace gpu{
                 const int query_alignment_nops = myNops[localCandidateIndex];
 
                 const float overlapweight = calculateOverlapWeight(
-                    subjectLength, 
+                    anchorLength, 
                     query_alignment_nops, 
                     query_alignment_overlap,
                     desiredAlignmentMaxErrorRate
@@ -614,7 +614,7 @@ namespace gpu{
                 assert(overlapweight >= 0.0f);
                 assert(flag != AlignmentOrientation::None); // indices should only be pointing to valid alignments
 
-                const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
+                const int defaultcolumnoffset = anchorColumnsBegin_incl + shift;
 
                 const bool isForward = flag == AlignmentOrientation::Forward;
 
@@ -654,8 +654,8 @@ namespace gpu{
         ){  
     
 
-            const int subjectColumnsBegin_incl = columnProperties->subjectColumnsBegin_incl;
-            const int subjectColumnsEnd_excl = columnProperties->subjectColumnsEnd_excl;
+            const int anchorColumnsBegin_incl = columnProperties->anchorColumnsBegin_incl;
+            const int anchorColumnsEnd_excl = columnProperties->anchorColumnsEnd_excl;
 
             constexpr int threadsPerSequence = 8;
             auto tile = cg::tiled_partition<threadsPerSequence>(group);
@@ -670,7 +670,7 @@ namespace gpu{
                     const int shift = myShifts[localCandidateIndex];
                     const AlignmentOrientation flag = myAlignmentFlags[localCandidateIndex];
 
-                    const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+                    const int anchorLength = anchorColumnsEnd_excl - anchorColumnsBegin_incl;
                     const int queryLength = myCandidateLengths[localCandidateIndex];
                     const unsigned int* const query = myCandidateSequencesData + localCandidateIndex * encodedSequencePitchInInts;
 
@@ -680,7 +680,7 @@ namespace gpu{
                     const int query_alignment_nops = myNops[localCandidateIndex];
 
                     const float overlapweight = calculateOverlapWeight(
-                        subjectLength, 
+                        anchorLength, 
                         query_alignment_nops, 
                         query_alignment_overlap,
                         desiredAlignmentMaxErrorRate
@@ -690,7 +690,7 @@ namespace gpu{
                     assert(overlapweight >= 0.0f);
                     assert(flag != AlignmentOrientation::None);                 // indices should only be pointing to valid alignments
 
-                    const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
+                    const int defaultcolumnoffset = anchorColumnsBegin_incl + shift;
 
                     const bool isForward = flag == AlignmentOrientation::Forward;
 
@@ -731,9 +731,9 @@ namespace gpu{
             float desiredAlignmentMaxErrorRate
         ){      
 
-            const int subjectColumnsBegin_incl = columnProperties->subjectColumnsBegin_incl;
-            const int subjectColumnsEnd_excl = columnProperties->subjectColumnsEnd_excl;
-            const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+            const int anchorColumnsBegin_incl = columnProperties->anchorColumnsBegin_incl;
+            const int anchorColumnsEnd_excl = columnProperties->anchorColumnsEnd_excl;
+            const int anchorLength = anchorColumnsEnd_excl - anchorColumnsBegin_incl;
             const int msasize = columnProperties->lastColumn_excl;
 
             //blocked arrangement. each thread is responsible for a number of consecutve columns in msa
@@ -773,7 +773,7 @@ namespace gpu{
                         bool IcanProcessCandidate = false;
                         #pragma unroll
                         for(int i = 0; i < itemsPerThread; i++){
-                            const int positionOfColumnInCandidate = myFirstColumn - (subjectColumnsBegin_incl + shift) + i;
+                            const int positionOfColumnInCandidate = myFirstColumn - (anchorColumnsBegin_incl + shift) + i;
                             if(positionOfColumnInCandidate >= 0 && positionOfColumnInCandidate < queryLength){
                                 IcanProcessCandidate = true;
                             }
@@ -792,7 +792,7 @@ namespace gpu{
                             const int query_alignment_nops = myNops[localCandidateIndex];
 
                             const float overlapweight = calculateOverlapWeight(
-                                subjectLength, 
+                                anchorLength, 
                                 query_alignment_nops, 
                                 query_alignment_overlap,
                                 desiredAlignmentMaxErrorRate
@@ -802,7 +802,7 @@ namespace gpu{
                             assert(overlapweight >= 0.0f);
                             assert(flag != AlignmentOrientation::None); // indices should only be pointing to valid alignments
 
-                            const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
+                            const int defaultcolumnoffset = anchorColumnsBegin_incl + shift;
                             const bool isForward = flag == AlignmentOrientation::Forward; 
                                                        
 
@@ -867,24 +867,24 @@ namespace gpu{
             ThreadGroup& group,
             const unsigned int* __restrict__ myAnchorSequenceData, 
             int encodedSequencePitchInInts,
-            int subjectIndex = -1
+            int anchorIndex = -1
         ){
 
-            const int subjectColumnsBegin_incl = columnProperties->subjectColumnsBegin_incl;
-            const int subjectColumnsEnd_excl = columnProperties->subjectColumnsEnd_excl;
+            const int anchorColumnsBegin_incl = columnProperties->anchorColumnsBegin_incl;
+            const int anchorColumnsEnd_excl = columnProperties->anchorColumnsEnd_excl;
             const int firstColumn_incl = columnProperties->firstColumn_incl;
             const int lastColumn_excl = columnProperties->lastColumn_excl;
 
             if(lastColumn_excl > columnPitchInElements){
                 if(group.thread_rank() == 0){
-                    printf("%d, %d %d\n", subjectIndex, lastColumn_excl, columnPitchInElements);
+                    printf("%d, %d %d\n", anchorIndex, lastColumn_excl, columnPitchInElements);
                 }
                 group.sync();
             }
             assert(lastColumn_excl <= columnPitchInElements);
 
-            const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
-            const unsigned int* const subject = myAnchorSequenceData;
+            const int anchorLength = anchorColumnsEnd_excl - anchorColumnsBegin_incl;
+            const unsigned int* const anchor = myAnchorSequenceData;
 
             //set columns to zero which are not in range firstColumn_incl <= column && column < lastColumn_excl
 
@@ -974,20 +974,20 @@ namespace gpu{
 
                         const float columnWeight = wa + wc + wg + wt;
                         if(columnWeight == 0){
-                            printf("s %d c %d\n", subjectIndex, column);
+                            printf("s %d c %d\n", anchorIndex, column);
                             assert(columnWeight != 0);
                         }
 
                         support[column] = consWeight / columnWeight;
 
-                        if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
+                        if(anchorColumnsBegin_incl <= column && column < anchorColumnsEnd_excl){
                             constexpr std::uint8_t A_enc = SequenceHelpers::encodedbaseA();
                             constexpr std::uint8_t C_enc = SequenceHelpers::encodedbaseC();
                             constexpr std::uint8_t G_enc = SequenceHelpers::encodedbaseG();
                             constexpr std::uint8_t T_enc = SequenceHelpers::encodedbaseT();
 
-                            const int localIndex = column - subjectColumnsBegin_incl;
-                            const std::uint8_t encNuc = SequenceHelpers::getEncodedNuc2Bit(subject, subjectLength, localIndex);
+                            const int localIndex = column - anchorColumnsBegin_incl;
+                            const std::uint8_t encNuc = SequenceHelpers::getEncodedNuc2Bit(anchor, anchorLength, localIndex);
 
                             if(encNuc == A_enc){
                                 origWeights[column] = wa;
@@ -1021,9 +1021,9 @@ namespace gpu{
             GroupReduceBool& groupReduceBool,
             GroupReduceInt2& groupReduceInt2,
             int* __restrict__ myNewIndicesPtr,
-            int* __restrict__ myNewNumIndicesPerSubjectPtr,
+            int* __restrict__ myNewNumIndicesPerAnchorPtr,
             const unsigned int* __restrict__ myAnchorSequenceData,
-            const int subjectLength,
+            const int anchorLength,
             const unsigned int* __restrict__ myCandidateSequencesData,
             const int* __restrict__ myCandidateLengths,
             const AlignmentOrientation* myAlignmentFlags,
@@ -1032,7 +1032,7 @@ namespace gpu{
             const int* __restrict__ myOverlaps,
             bool* __restrict__ myShouldBeKept,
             float desiredAlignmentMaxErrorRate,
-            int subjectIndex,
+            int anchorIndex,
             int encodedSequencePitchInInts,
             const int* __restrict__ myIndices,
             const int myNumIndices,
@@ -1052,21 +1052,21 @@ namespace gpu{
             __shared__ int broadcastbufferint4[4];
             __shared__ int smemcounts[1];
 
-            const unsigned int* const subjectptr = myAnchorSequenceData;
+            const unsigned int* const anchorptr = myAnchorSequenceData;
 
-            const int subjectColumnsBegin_incl = columnProperties->subjectColumnsBegin_incl;
-            const int subjectColumnsEnd_excl = columnProperties->subjectColumnsEnd_excl;
+            const int anchorColumnsBegin_incl = columnProperties->anchorColumnsBegin_incl;
+            const int anchorColumnsEnd_excl = columnProperties->anchorColumnsEnd_excl;
 
-            //check if subject and consensus differ at at least one position
+            //check if anchor and consensus differ at at least one position
 
             bool hasMismatchToConsensus = false;
 
-            for(int pos = group.thread_rank(); pos < subjectLength && !hasMismatchToConsensus; pos += group.size()){
-                const int column = subjectColumnsBegin_incl + pos;
+            for(int pos = group.thread_rank(); pos < anchorLength && !hasMismatchToConsensus; pos += group.size()){
+                const int column = anchorColumnsBegin_incl + pos;
                 const std::uint8_t consbase = consensus[column];
-                const std::uint8_t subjectbase = SequenceHelpers::getEncodedNuc2Bit(subjectptr, subjectLength, pos);
+                const std::uint8_t anchorbase = SequenceHelpers::getEncodedNuc2Bit(anchorptr, anchorLength, pos);
 
-                hasMismatchToConsensus |= (consbase != subjectbase);
+                hasMismatchToConsensus |= (consbase != anchorbase);
             }
 
             hasMismatchToConsensus = groupReduceBool(hasMismatchToConsensus, [](auto l, auto r){
@@ -1080,7 +1080,7 @@ namespace gpu{
 
             hasMismatchToConsensus = broadcastbufferbool;
 
-            //if subject and consensus differ at at least one position, check columns in msa
+            //if anchor and consensus differ at at least one position, check columns in msa
 
             if(hasMismatchToConsensus){
                 int col = std::numeric_limits<int>::max();
@@ -1092,8 +1092,8 @@ namespace gpu{
                 const int* const myCountsG = counts + 2 * columnPitchInElements;
                 const int* const myCountsT = counts + 3 * columnPitchInElements;
 
-                for(int columnindex = subjectColumnsBegin_incl + group.thread_rank(); 
-                        columnindex < subjectColumnsEnd_excl && !foundColumn; 
+                for(int columnindex = anchorColumnsBegin_incl + group.thread_rank(); 
+                        columnindex < anchorColumnsEnd_excl && !foundColumn; 
                         columnindex += group.size()){
 
                     int regcounts[4];
@@ -1163,7 +1163,7 @@ namespace gpu{
                             const AlignmentOrientation alignmentFlag = myAlignmentFlags[localCandidateIndex];
 
                             //check if row is affected by column col
-                            const int row_begin_incl = subjectColumnsBegin_incl + shift;
+                            const int row_begin_incl = anchorColumnsBegin_incl + shift;
                             const int row_end_excl = row_begin_incl + candidateLength;
                             const bool notAffected = (col < row_begin_incl || row_end_excl <= col);
                             std::uint8_t base = 5;
@@ -1201,7 +1201,7 @@ namespace gpu{
                                 const int nOps = myNops[localCandidateIndex];
                                 const int overlapsize = myOverlaps[localCandidateIndex];
                                 const float overlapweight = calculateOverlapWeight(
-                                    subjectLength, 
+                                    anchorLength, 
                                     nOps, 
                                     overlapsize,
                                     desiredAlignmentMaxErrorRate
@@ -1266,7 +1266,7 @@ namespace gpu{
                         group.sync();
 
                         if(group.thread_rank() == 0){
-                            *myNewNumIndicesPerSubjectPtr = smemcounts[0];
+                            *myNewNumIndicesPerAnchorPtr = smemcounts[0];
                         }
 
                         group.sync();
@@ -1274,7 +1274,7 @@ namespace gpu{
                     };
 
                     //compare found base to original base
-                    const std::uint8_t originalbase = SequenceHelpers::getEncodedNuc2Bit(subjectptr, subjectLength, col - subjectColumnsBegin_incl);
+                    const std::uint8_t originalbase = SequenceHelpers::getEncodedNuc2Bit(anchorptr, anchorLength, col - anchorColumnsBegin_incl);
 
                     if(originalbase == foundBase){
                         //discard all candidates whose base in column col differs from foundBase
@@ -1292,12 +1292,12 @@ namespace gpu{
                         myNewIndicesPtr[k] = myIndices[k];
                     }
                     if(group.thread_rank() == 0){
-                        *myNewNumIndicesPerSubjectPtr = myNumIndices;
+                        *myNewNumIndicesPerAnchorPtr = myNumIndices;
                     }
                 }
 
             }else{
-                //no mismatch between consensus and subject
+                //no mismatch between consensus and anchor
 
                 //remove no candidate
                 for(int k = group.thread_rank(); k < myNumIndices; k += group.size()){
@@ -1308,7 +1308,7 @@ namespace gpu{
                     myNewIndicesPtr[k] = myIndices[k];
                 }
                 if(group.thread_rank() == 0){
-                    *myNewNumIndicesPerSubjectPtr = myNumIndices;
+                    *myNewNumIndicesPerAnchorPtr = myNumIndices;
                 }
             }
         }

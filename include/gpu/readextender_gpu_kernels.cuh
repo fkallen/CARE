@@ -771,7 +771,7 @@ namespace readextendergpukernels{
             }
             __syncthreads();
 
-            const int subjectColumnsBegin_incl = msaColumnProperties.subjectColumnsBegin_incl;
+            const int anchorColumnsBegin_incl = msaColumnProperties.anchorColumnsBegin_incl;
             const int numColumnsToCheck = std::min(numPossibleColumnsPerFlag, splitInfos.numSplitInfos / 2);
             const int maxCandidatesToCheck = std::min(blocksize, numCandidates);
 
@@ -833,7 +833,7 @@ namespace readextendergpukernels{
                         const SplitInfo psc1 = splitInfos.splitInfos[2*k+1];
                         assert(psc0.column == psc1.column);
 
-                        const int candidateColumnsBegin_incl = candidateShift + subjectColumnsBegin_incl;
+                        const int candidateColumnsBegin_incl = candidateShift + anchorColumnsBegin_incl;
                         const int candidateColumnsEnd_excl = candidateLength + candidateColumnsBegin_incl;
                         
                         //column range check for row
@@ -1035,7 +1035,7 @@ namespace readextendergpukernels{
         int* __restrict__ d_accumExtensionsLengths,
         int* __restrict__ d_anchorSequencesLength,
         char* __restrict__ d_anchorQualityScores,
-        char* __restrict__ d_subjectSequencesDataDecoded,
+        char* __restrict__ d_anchorSequencesDataDecoded,
         const int* __restrict__ soatotalAnchorBeginInExtendedRead,
         const int* __restrict__ soatotalDecodedAnchorsLengths,
         const int* __restrict__ soainputAnchorLengths,
@@ -1072,7 +1072,7 @@ namespace readextendergpukernels{
                         = soainputAnchorQualities[qualityPitchInBytes * i + k];
                 }
                 for(int k = group.thread_rank(); k < decodedSequencePitchInBytes; k += group.size()){
-                    d_subjectSequencesDataDecoded[decodedSequencePitchInBytes * i + k]
+                    d_anchorSequencesDataDecoded[decodedSequencePitchInBytes * i + k]
                         = soainputAnchorsDecoded[decodedSequencePitchInBytes * i + k];
                 }
             }else{
@@ -1081,7 +1081,7 @@ namespace readextendergpukernels{
                         = soatotalAnchorQualityScoresFlat[qualityPitchInBytes * (offset + num - 1) + k];
                 }
                 for(int k = group.thread_rank(); k < decodedSequencePitchInBytes; k += group.size()){
-                    d_subjectSequencesDataDecoded[decodedSequencePitchInBytes * i + k]
+                    d_anchorSequencesDataDecoded[decodedSequencePitchInBytes * i + k]
                         = soatotalDecodedAnchorsFlat[decodedSequencePitchInBytes * (offset + num - 1) + k];
                 }
             }
@@ -3149,7 +3149,7 @@ namespace readextendergpukernels{
         const int* __restrict__ d_readpair_readLengths,
         const unsigned int* __restrict__ d_readpair_sequences,
         const char* __restrict__ d_readpair_qualities,
-        unsigned int* __restrict__ d_subjectSequencesData,
+        unsigned int* __restrict__ d_anchorSequencesData,
         int* __restrict__ d_anchorSequencesLength,
         char* __restrict__ d_anchorQualityScores,
         unsigned int* __restrict__ d_inputanchormatedata,
@@ -3220,7 +3220,7 @@ namespace readextendergpukernels{
             const int id = t % 4;
 
             const unsigned int* const myReadpairSequences = d_readpair_sequences + 2 * pairId * encodedSequencePitchInInts;
-            unsigned int* const myAnchorSequence = d_subjectSequencesData + t * encodedSequencePitchInInts;
+            unsigned int* const myAnchorSequence = d_anchorSequencesData + t * encodedSequencePitchInInts;
             unsigned int* const myMateSequence = d_inputanchormatedata + t * encodedSequencePitchInInts;
 
             if(id == 0){

@@ -53,7 +53,7 @@ public:
     };
 
     struct TimeMeasurements{
-        std::chrono::duration<double> getSubjectSequenceDataTimeTotal{0};
+        std::chrono::duration<double> getAnchorSequenceDataTimeTotal{0};
         std::chrono::duration<double> getCandidatesTimeTotal{0};
         std::chrono::duration<double> copyCandidateDataToBufferTimeTotal{0};
         std::chrono::duration<double> getAlignmentsTimeTotal{0};
@@ -66,11 +66,11 @@ public:
         std::chrono::duration<double> msaAddSequencesTimeTotal{0};
         std::chrono::duration<double> msaFindConsensusTimeTotal{0};
         std::chrono::duration<double> msaMinimizationTimeTotal{0};
-        std::chrono::duration<double> msaCorrectSubjectTimeTotal{0};
+        std::chrono::duration<double> msaCorrectAnchorTimeTotal{0};
         std::chrono::duration<double> msaCorrectCandidatesTimeTotal{0};
 
         TimeMeasurements& operator+=(const TimeMeasurements& rhs) noexcept{
-            getSubjectSequenceDataTimeTotal += rhs.getSubjectSequenceDataTimeTotal;
+            getAnchorSequenceDataTimeTotal += rhs.getAnchorSequenceDataTimeTotal;
             getCandidatesTimeTotal += rhs.getCandidatesTimeTotal;
             copyCandidateDataToBufferTimeTotal += rhs.copyCandidateDataToBufferTimeTotal;
             getAlignmentsTimeTotal += rhs.getAlignmentsTimeTotal;
@@ -83,14 +83,14 @@ public:
             msaAddSequencesTimeTotal += rhs.msaAddSequencesTimeTotal;
             msaFindConsensusTimeTotal += rhs.msaFindConsensusTimeTotal;
             msaMinimizationTimeTotal += rhs.msaMinimizationTimeTotal;
-            msaCorrectSubjectTimeTotal += rhs.msaCorrectSubjectTimeTotal;
+            msaCorrectAnchorTimeTotal += rhs.msaCorrectAnchorTimeTotal;
             msaCorrectCandidatesTimeTotal += rhs.msaCorrectCandidatesTimeTotal;
 
             return *this;
         }
 
         std::chrono::duration<double> getSumOfDurations() const noexcept{
-            std::chrono::duration<double> sum = getSubjectSequenceDataTimeTotal
+            std::chrono::duration<double> sum = getAnchorSequenceDataTimeTotal
                                             + getCandidatesTimeTotal
                                             + copyCandidateDataToBufferTimeTotal
                                             + getAlignmentsTimeTotal
@@ -103,7 +103,7 @@ public:
                                             + msaAddSequencesTimeTotal
                                             + msaFindConsensusTimeTotal
                                             + msaMinimizationTimeTotal
-                                            + msaCorrectSubjectTimeTotal
+                                            + msaCorrectAnchorTimeTotal
                                             + msaCorrectCandidatesTimeTotal;
             return sum;
         }
@@ -277,10 +277,10 @@ public:
         correctAnchor(task);
 
         #ifdef ENABLE_CPU_CORRECTOR_TIMING
-        timings.msaCorrectSubjectTimeTotal += std::chrono::system_clock::now() - tpa;
+        timings.msaCorrectAnchorTimeTotal += std::chrono::system_clock::now() - tpa;
         #endif
 
-        if(task.subjectCorrection.isCorrected){
+        if(task.anchorCorrection.isCorrected){
             if(task.msaProperties.isHQ){
                 correctionFlags->setCorrectedAsHqAnchor(task.input.anchorReadId);
             }
@@ -472,10 +472,10 @@ public:
             correctAnchor(task);
 
             #ifdef ENABLE_CPU_CORRECTOR_TIMING
-            timings.msaCorrectSubjectTimeTotal += std::chrono::system_clock::now() - tpa;
+            timings.msaCorrectAnchorTimeTotal += std::chrono::system_clock::now() - tpa;
             #endif
 
-            if(task.subjectCorrection.isCorrected){
+            if(task.anchorCorrection.isCorrected){
                 if(task.msaProperties.isHQ){
                     correctionFlags->setCorrectedAsHqAnchor(task.input.anchorReadId);
                 }
@@ -1274,13 +1274,13 @@ private:
 
         MultipleSequenceAlignment::InputData buildArgs;
         buildArgs.useQualityScores = correctionOptions->useQualityScores;
-        buildArgs.subjectLength = task.input.anchorLength;
+        buildArgs.anchorLength = task.input.anchorLength;
         buildArgs.nCandidates = numCandidates;
         buildArgs.candidatesPitch = decodedSequencePitchInBytes;
         buildArgs.candidateQualitiesPitch = qualityPitchInBytes;
-        buildArgs.subject = task.decodedAnchor.data();
+        buildArgs.anchor = task.decodedAnchor.data();
         buildArgs.candidates = task.decodedCandidateSequences.data();
-        buildArgs.subjectQualities = task.input.anchorQualityscores;
+        buildArgs.anchorQualities = task.input.anchorQualityscores;
         buildArgs.candidateQualities = candidateQualityPtr;
         buildArgs.candidateLengths = task.candidateSequencesLengths.data();
         buildArgs.candidateShifts = task.alignmentShifts.data();
@@ -1409,18 +1409,18 @@ private:
 
         assert(correctionOptions->correctionType == CorrectionType::Classic);
 
-        const int subjectColumnsBegin_incl = task.multipleSequenceAlignment.subjectColumnsBegin_incl;
-        const int subjectColumnsEnd_excl = task.multipleSequenceAlignment.subjectColumnsEnd_excl;
+        const int anchorColumnsBegin_incl = task.multipleSequenceAlignment.anchorColumnsBegin_incl;
+        const int anchorColumnsEnd_excl = task.multipleSequenceAlignment.anchorColumnsEnd_excl;
 
         task.msaProperties = task.multipleSequenceAlignment.getMSAProperties(
-            subjectColumnsBegin_incl,
-            subjectColumnsEnd_excl,
+            anchorColumnsBegin_incl,
+            anchorColumnsEnd_excl,
             correctionOptions->estimatedErrorrate,
             correctionOptions->estimatedCoverage,
             correctionOptions->m_coverage
         );
 
-        task.subjectCorrection = task.multipleSequenceAlignment.getCorrectedSubject(
+        task.anchorCorrection = task.multipleSequenceAlignment.getCorrectedAnchor(
             task.msaProperties,
             correctionOptions->estimatedErrorrate,
             correctionOptions->estimatedCoverage,
@@ -1433,48 +1433,48 @@ private:
     void correctAnchorClf(CpuErrorCorrectorTask& task) const
     {
         auto& msa = task.multipleSequenceAlignment;
-        int subject_b = msa.subjectColumnsBegin_incl;
-        int subject_e = msa.subjectColumnsEnd_excl;
+        int anchor_b = msa.anchorColumnsBegin_incl;
+        int anchor_e = msa.anchorColumnsEnd_excl;
         auto& cons = msa.consensus;
         auto& orig = task.decodedAnchor;
-        auto& corr = task.subjectCorrection.correctedSequence;
+        auto& corr = task.anchorCorrection.correctedSequence;
 
         task.msaProperties = msa.getMSAProperties(
-            subject_b, subject_e, correctionOptions->estimatedErrorrate, correctionOptions->estimatedCoverage,
+            anchor_b, anchor_e, correctionOptions->estimatedErrorrate, correctionOptions->estimatedCoverage,
             correctionOptions->m_coverage);
 
-        corr.insert(0, cons.data()+subject_b, task.input.anchorLength);
+        corr.insert(0, cons.data()+anchor_b, task.input.anchorLength);
         if (!task.msaProperties.isHQ) {
             for (int i = 0; i < task.input.anchorLength; ++i) {
-                if (orig[i] != cons[subject_b+i] && !clfAgent->decide_anchor(task, i, *correctionOptions))
+                if (orig[i] != cons[anchor_b+i] && !clfAgent->decide_anchor(task, i, *correctionOptions))
                 {
                     corr[i] = orig[i];
                 }
             }
         }
 
-        task.subjectCorrection.isCorrected = true;
+        task.anchorCorrection.isCorrected = true;
     }
 
     void correctAnchorPrint(CpuErrorCorrectorTask& task) const{
         auto& msa = task.multipleSequenceAlignment;
-        int subject_b = msa.subjectColumnsBegin_incl;
-        int subject_e = msa.subjectColumnsEnd_excl;
+        int anchor_b = msa.anchorColumnsBegin_incl;
+        int anchor_e = msa.anchorColumnsEnd_excl;
         auto& cons = msa.consensus;
         auto& orig = task.decodedAnchor;
 
         task.msaProperties = msa.getMSAProperties(
-            subject_b, subject_e, correctionOptions->estimatedErrorrate, correctionOptions->estimatedCoverage,
+            anchor_b, anchor_e, correctionOptions->estimatedErrorrate, correctionOptions->estimatedCoverage,
             correctionOptions->m_coverage);
 
         if (!task.msaProperties.isHQ) {
             for (int i = 0; i < task.input.anchorLength; ++i) {
-                if (orig[i] != cons[subject_b+i]) {
+                if (orig[i] != cons[anchor_b+i]) {
                     clfAgent->print_anchor(task, i, *correctionOptions);
                 }
             }
         }
-        task.subjectCorrection.isCorrected = false;
+        task.anchorCorrection.isCorrected = false;
     }
 
     void correctAnchor(CpuErrorCorrectorTask& task) const{
@@ -1499,17 +1499,17 @@ private:
     void correctCandidatesPrint(CpuErrorCorrectorTask& task) const{
 
         const auto& msa = task.multipleSequenceAlignment;
-        const int subject_begin = msa.subjectColumnsBegin_incl;
-        const int subject_end = msa.subjectColumnsEnd_excl;
+        const int anchor_begin = msa.anchorColumnsBegin_incl;
+        const int anchor_end = msa.anchorColumnsEnd_excl;
 
         for(int cand = 0; cand < msa.nCandidates; ++cand) {
-            const int cand_begin = msa.subjectColumnsBegin_incl + task.alignmentShifts[cand];
+            const int cand_begin = msa.anchorColumnsBegin_incl + task.alignmentShifts[cand];
             const int cand_length = task.candidateSequencesLengths[cand];
             const int cand_end = cand_begin + cand_length;
             const int offset = cand * decodedSequencePitchInBytes;
             
-            if(cand_begin >= subject_begin - correctionOptions->new_columns_to_correct
-                && cand_end <= subject_end + correctionOptions->new_columns_to_correct)
+            if(cand_begin >= anchor_begin - correctionOptions->new_columns_to_correct
+                && cand_end <= anchor_end + correctionOptions->new_columns_to_correct)
             {
                 for (int i = 0; i < cand_length; ++i) {
                     if (task.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]) {
@@ -1532,8 +1532,8 @@ private:
         //     std::cerr << "found 37 at local position " << std::distance(task.candidateReadIds.begin(), it) << "\n";
         // }
 
-        const int subject_begin = msa.subjectColumnsBegin_incl;
-        const int subject_end = msa.subjectColumnsEnd_excl;
+        const int anchor_begin = msa.anchorColumnsBegin_incl;
+        const int anchor_end = msa.anchorColumnsEnd_excl;
         for(int cand = 0; cand < msa.nCandidates; ++cand) {
             read_number candidateReadId = task.candidateReadIds[cand];
 
@@ -1542,7 +1542,7 @@ private:
             if(correctionFlags->isCorrectedAsHQAnchor(candidateReadId)){
                 continue;
             }
-            const int cand_begin = msa.subjectColumnsBegin_incl + task.alignmentShifts[cand];
+            const int cand_begin = msa.anchorColumnsBegin_incl + task.alignmentShifts[cand];
             const int cand_length = task.candidateSequencesLengths[cand];
             const int cand_end = cand_begin + cand_length;
             const int offset = cand * decodedSequencePitchInBytes;
@@ -1557,8 +1557,8 @@ private:
             // }
 
             
-            if(cand_begin >= subject_begin - correctionOptions->new_columns_to_correct
-                && cand_end <= subject_end + correctionOptions->new_columns_to_correct)
+            if(cand_begin >= anchor_begin - correctionOptions->new_columns_to_correct
+                && cand_end <= anchor_end + correctionOptions->new_columns_to_correct)
             {
 
                 task.candidateCorrections.emplace_back(cand, task.alignmentShifts[cand],
@@ -1624,10 +1624,10 @@ private:
     CpuErrorCorrectorOutput makeOutputOfTask(CpuErrorCorrectorTask& task) const{
         CpuErrorCorrectorOutput result;
 
-        result.hasAnchorCorrection = task.subjectCorrection.isCorrected;
+        result.hasAnchorCorrection = task.anchorCorrection.isCorrected;
 
         if(result.hasAnchorCorrection){
-            auto& correctedSequenceString = task.subjectCorrection.correctedSequence;
+            auto& correctedSequenceString = task.anchorCorrection.correctedSequence;
             const int correctedlength = correctedSequenceString.length();
             bool originalReadContainsN = false;
             readStorage->areSequencesAmbiguous(&originalReadContainsN, &task.input.anchorReadId, 1);

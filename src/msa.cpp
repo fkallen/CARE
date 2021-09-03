@@ -8,8 +8,8 @@ namespace care{
 
 void MultipleSequenceAlignment::build(const InputData& args){
 
-    assert(args.subjectLength > 0);
-    assert(args.subject != nullptr);
+    assert(args.anchorLength > 0);
+    assert(args.anchor != nullptr);
 
     inputData = args;
     addedSequences = 0;
@@ -18,7 +18,7 @@ void MultipleSequenceAlignment::build(const InputData& args){
 
     //determine number of columns in pileup image
     int startindex = 0;
-    int endindex = args.subjectLength;
+    int endindex = args.anchorLength;
 
     for(int i = 0; i < nCandidates; ++i){
         const int shift = args.candidateShifts[i];
@@ -29,14 +29,14 @@ void MultipleSequenceAlignment::build(const InputData& args){
 
     nColumns = endindex - startindex;
 
-    subjectColumnsBegin_incl = std::max(-startindex,0);
-    subjectColumnsEnd_excl = subjectColumnsBegin_incl + args.subjectLength;
+    anchorColumnsBegin_incl = std::max(-startindex,0);
+    anchorColumnsEnd_excl = anchorColumnsBegin_incl + args.anchorLength;
 
     resize(nColumns);
 
     fillzero();
 
-    addSequence(args.useQualityScores, args.subject, args.subjectQualities, args.subjectLength, 0, 1.0f);
+    addSequence(args.useQualityScores, args.anchor, args.anchorQualities, args.anchorLength, 0, 1.0f);
 
     for(int candidateIndex = 0; candidateIndex < nCandidates; candidateIndex++){
         const char* ptr = args.candidates + candidateIndex * args.candidatesPitch;
@@ -50,7 +50,7 @@ void MultipleSequenceAlignment::build(const InputData& args){
 
     findConsensus();
 
-    findOrigWeightAndCoverage(args.subject);
+    findOrigWeightAndCoverage(args.anchor);
 }
 
 void MultipleSequenceAlignment::resize(int cols){
@@ -95,7 +95,7 @@ void MultipleSequenceAlignment::addSequence(bool useQualityScores, const char* s
     assert(!useQualityScores || quality != nullptr);
 
     for(int i = 0; i < length; i++){
-        const int globalIndex = subjectColumnsBegin_incl + shift + i;
+        const int globalIndex = anchorColumnsBegin_incl + shift + i;
         const char base = sequence[i];
         const float weight = defaultWeightFactor * (useQualityScores ? qualityConversion->getWeight(quality[i]) : 1.0f);
         switch(base){
@@ -117,7 +117,7 @@ void MultipleSequenceAlignment::removeSequence(bool useQualityScores, const char
     assert(!useQualityScores || quality != nullptr);
 
     for(int i = 0; i < length; i++){
-        const int globalIndex = subjectColumnsBegin_incl + shift + i;
+        const int globalIndex = anchorColumnsBegin_incl + shift + i;
         const char base = sequence[i];
         const float weight = defaultWeightFactor * (useQualityScores ? qualityConversion.getWeight(quality[i]) : 1.0f);
         switch(base){
@@ -156,12 +156,12 @@ void MultipleSequenceAlignment::findConsensus(){
     }
 }
 
-void MultipleSequenceAlignment::findOrigWeightAndCoverage(const char* subject){
-    for(int column = subjectColumnsBegin_incl; column < subjectColumnsEnd_excl; ++column){
+void MultipleSequenceAlignment::findOrigWeightAndCoverage(const char* anchor){
+    for(int column = anchorColumnsBegin_incl; column < anchorColumnsEnd_excl; ++column){
 
-        const int localIndex = column - subjectColumnsBegin_incl;
-        const char subjectBase = subject[localIndex];
-        switch(subjectBase){
+        const int localIndex = column - anchorColumnsBegin_incl;
+        const char anchorBase = anchor[localIndex];
+        switch(anchorBase){
             case 'A':origWeights[column] = weightsA[column]; origCoverages[column] = countsA[column]; break;
             case 'C':origWeights[column] = weightsG[column]; origCoverages[column] = countsC[column]; break;
             case 'G':origWeights[column] = weightsC[column]; origCoverages[column] = countsG[column]; break;
@@ -191,15 +191,15 @@ void MultipleSequenceAlignment::print(std::ostream& os) const{
         if(sortedrow == 0){
             os << ">> ";
 
-            for(int i = 0; i < subjectColumnsBegin_incl; i++){
+            for(int i = 0; i < anchorColumnsBegin_incl; i++){
                 os << "0";
             }
 
-            for(int i = 0; i < inputData.subjectLength; i++){
-                os << inputData.subject[i];
+            for(int i = 0; i < inputData.anchorLength; i++){
+                os << inputData.anchor[i];
             }
 
-            for(int i = subjectColumnsEnd_excl; i < nColumns; i++){
+            for(int i = anchorColumnsEnd_excl; i < nColumns; i++){
                 os << "0";
             }
 
@@ -207,7 +207,7 @@ void MultipleSequenceAlignment::print(std::ostream& os) const{
         }else{
             os << "   ";
             int written = 0;
-            for(int i = 0; i < subjectColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
+            for(int i = 0; i < anchorColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
                 os << "0";
                 written++;
             }
@@ -217,7 +217,7 @@ void MultipleSequenceAlignment::print(std::ostream& os) const{
                 written++;
             }
 
-            for(int i = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) 
+            for(int i = anchorColumnsBegin_incl + get_shift_of_row(sortedrow) 
                         + inputData.candidateLengths[sortedrow-1]; 
                     i < nColumns; i++){
                 os << "0";
@@ -252,17 +252,17 @@ void MultipleSequenceAlignment::printWithDiffToConsensus(std::ostream& os) const
         if(sortedrow == 0){
             os << ">> ";
 
-            for(int i = 0; i < subjectColumnsBegin_incl; i++){
+            for(int i = 0; i < anchorColumnsBegin_incl; i++){
                 os << "0";
             }
 
-            for(int i = 0; i < inputData.subjectLength; i++){
-                const int globalIndex = subjectColumnsBegin_incl + i;
-                const char c = consensus[globalIndex] == inputData.subject[i] ? '=' : inputData.subject[i];
+            for(int i = 0; i < inputData.anchorLength; i++){
+                const int globalIndex = anchorColumnsBegin_incl + i;
+                const char c = consensus[globalIndex] == inputData.anchor[i] ? '=' : inputData.anchor[i];
                 os << c;
             }
 
-            for(int i = subjectColumnsEnd_excl; i < nColumns; i++){
+            for(int i = anchorColumnsEnd_excl; i < nColumns; i++){
                 os << "0";
             }
 
@@ -270,13 +270,13 @@ void MultipleSequenceAlignment::printWithDiffToConsensus(std::ostream& os) const
         }else{
             os << "   ";
             int written = 0;
-            for(int i = 0; i < subjectColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
+            for(int i = 0; i < anchorColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
                 os << "0";
                 written++;
             }
 
             for(int i = 0; i < inputData.candidateLengths[sortedrow-1]; i++){
-                const int globalIndex = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) + i;
+                const int globalIndex = anchorColumnsBegin_incl + get_shift_of_row(sortedrow) + i;
                 const char base = inputData.candidates[(sortedrow-1) * inputData.candidatesPitch + i];
                 const char c = consensus[globalIndex] == base ? '=' : base;
 
@@ -284,7 +284,7 @@ void MultipleSequenceAlignment::printWithDiffToConsensus(std::ostream& os) const
                 written++;
             }
 
-            for(int i = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) 
+            for(int i = anchorColumnsBegin_incl + get_shift_of_row(sortedrow) 
                         + inputData.candidateLengths[sortedrow-1]; 
                     i < nColumns; i++){
                 os << "0";
@@ -315,8 +315,8 @@ MSAProperties MultipleSequenceAlignment::getMSAProperties(
     const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
     const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
 
-    //const int firstCol = subjectColumnsBegin_incl; //0;
-    //const int lastCol = subjectColumnsEnd_excl; //nColumns; //exclusive
+    //const int firstCol = anchorColumnsBegin_incl; //0;
+    //const int lastCol = anchorColumnsEnd_excl; //nColumns; //exclusive
     const int distance = lastCol - firstCol;
 
     MSAProperties msaProperties;
@@ -376,7 +376,7 @@ MSAProperties MultipleSequenceAlignment::getMSAProperties(
 }
 
 
-CorrectionResult MultipleSequenceAlignment::getCorrectedSubject(
+CorrectionResult MultipleSequenceAlignment::getCorrectedAnchor(
     MSAProperties msaProperties,
     float estimatedErrorrate,
     float estimatedCoverage,
@@ -420,7 +420,7 @@ CorrectionResult MultipleSequenceAlignment::getCorrectedSubject(
 
     CorrectionResult result{};
     result.isCorrected = false;
-    result.correctedSequence.resize(inputData.subjectLength);
+    result.correctedSequence.resize(inputData.anchorLength);
 
     result.isCorrected = true;
 
@@ -433,18 +433,18 @@ CorrectionResult MultipleSequenceAlignment::getCorrectedSubject(
 
     if(flag > 0){
         std::copy_n(
-            consensus.data() + subjectColumnsBegin_incl,
-            inputData.subjectLength,
+            consensus.data() + anchorColumnsBegin_incl,
+            inputData.anchorLength,
             result.correctedSequence.begin()
         );
     }else{
         //correct only positions with high support to consensus, else leave position unchanged.
-        for(int i = 0; i < inputData.subjectLength; i += 1){
+        for(int i = 0; i < inputData.anchorLength; i += 1){
             //assert(consensus[i] == 'A' || consensus[i] == 'C' || consensus[i] == 'G' || consensus[i] == 'T');
-            if(support[subjectColumnsBegin_incl + i] > 0.90f && origCoverages[subjectColumnsBegin_incl + i] <= 2){
-                result.correctedSequence[i] = consensus[subjectColumnsBegin_incl + i];
+            if(support[anchorColumnsBegin_incl + i] > 0.90f && origCoverages[anchorColumnsBegin_incl + i] <= 2){
+                result.correctedSequence[i] = consensus[anchorColumnsBegin_incl + i];
             }else{
-                result.correctedSequence[i] = inputData.subject[i];
+                result.correctedSequence[i] = inputData.anchor[i];
             }
         }
     }
@@ -470,23 +470,23 @@ std::vector<CorrectedCandidate> MultipleSequenceAlignment::getCorrectedCandidate
 
     for(int candidate_index = 0; candidate_index < inputData.nCandidates; ++candidate_index){
 
-        const int queryColumnsBegin_incl = subjectColumnsBegin_incl + inputData.candidateShifts[candidate_index];
+        const int queryColumnsBegin_incl = anchorColumnsBegin_incl + inputData.candidateShifts[candidate_index];
         const int candidateLength = inputData.candidateLengths[candidate_index];
         const int queryColumnsEnd_excl = queryColumnsBegin_incl + candidateLength;
 
         bool candidateShouldBeCorrected = false;
 
         //check range condition and length condition
-        if(subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
-            && queryColumnsBegin_incl <= subjectColumnsBegin_incl + new_columns_to_correct
-            && queryColumnsEnd_excl <= subjectColumnsEnd_excl + new_columns_to_correct){
+        if(anchorColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
+            && queryColumnsBegin_incl <= anchorColumnsBegin_incl + new_columns_to_correct
+            && queryColumnsEnd_excl <= anchorColumnsEnd_excl + new_columns_to_correct){
 
             float newColMinSupport = 1.0f;
             int newColMinCov = std::numeric_limits<int>::max();
 
-            //check new columns left of subject
-            for(int columnindex = subjectColumnsBegin_incl - new_columns_to_correct;
-                columnindex < subjectColumnsBegin_incl;
+            //check new columns left of anchor
+            for(int columnindex = anchorColumnsBegin_incl - new_columns_to_correct;
+                columnindex < anchorColumnsBegin_incl;
                 columnindex++){
 
                 assert(columnindex < nColumns);
@@ -496,9 +496,9 @@ std::vector<CorrectedCandidate> MultipleSequenceAlignment::getCorrectedCandidate
                     newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
                 }
             }
-            //check new columns right of subject
-            for(int columnindex = subjectColumnsEnd_excl;
-                columnindex < subjectColumnsEnd_excl + new_columns_to_correct
+            //check new columns right of anchor
+            for(int columnindex = anchorColumnsEnd_excl;
+                columnindex < anchorColumnsEnd_excl + new_columns_to_correct
                 && columnindex < nColumns;
                 columnindex++){
 
@@ -549,17 +549,17 @@ RegionSelectionResult MultipleSequenceAlignment::findCandidatesOfDifferentRegion
     int consindex = 0;
 
     //if anchor has no mismatch to consensus, don't minimize
-    auto pair = std::mismatch(inputData.subject,
-                                inputData.subject + inputData.subjectLength,
-                                consensus.data() + subjectColumnsBegin_incl);
+    auto pair = std::mismatch(inputData.anchor,
+                                inputData.anchor + inputData.anchorLength,
+                                consensus.data() + anchorColumnsBegin_incl);
 
-    if(pair.first == inputData.subject + inputData.subjectLength){
+    if(pair.first == inputData.anchor + inputData.anchorLength){
         RegionSelectionResult result;
         result.performedMinimization = false;
         return result;
     }
 
-    for(int columnindex = subjectColumnsBegin_incl; columnindex < subjectColumnsEnd_excl && !foundColumn; columnindex++){
+    for(int columnindex = anchorColumnsBegin_incl; columnindex < anchorColumnsEnd_excl && !foundColumn; columnindex++){
         std::array<int,4> counts;
         //std::array<float,4> weights;
 
@@ -583,7 +583,7 @@ RegionSelectionResult MultipleSequenceAlignment::findCandidatesOfDifferentRegion
             case 'T': consindex = 3;break;
         }
 
-        //const char originalbase = subject[columnindex - columnProperties.subjectColumnsBegin_incl];
+        //const char originalbase = anchor[columnindex - columnProperties.anchorColumnsBegin_incl];
 
         //find out if there is a non-consensus base with significant coverage
         int significantBaseIndex = -1;
@@ -621,7 +621,7 @@ RegionSelectionResult MultipleSequenceAlignment::findCandidatesOfDifferentRegion
         result.differentRegionCandidate.resize(nCandidates);
 
         //compare found base to original base
-        const char originalbase = inputData.subject[col - subjectColumnsBegin_incl];
+        const char originalbase = inputData.anchor[col - anchorColumnsBegin_incl];
 
         result.significantBase = foundBase;
         result.originalBase = originalbase;
@@ -643,7 +643,7 @@ RegionSelectionResult MultipleSequenceAlignment::findCandidatesOfDifferentRegion
 
             for(int candidateIndex = 0; candidateIndex < nCandidates; candidateIndex++){
                 //check if row is affected by column col
-                const int row_begin_incl = subjectColumnsBegin_incl + inputData.candidateShifts[candidateIndex];
+                const int row_begin_incl = anchorColumnsBegin_incl + inputData.candidateShifts[candidateIndex];
                 const int row_end_excl = row_begin_incl + inputData.candidateLengths[candidateIndex];
                 const bool notAffected = (col < row_begin_incl || row_end_excl <= col);
                 const char base = notAffected ? 'F' : inputData.candidates[candidateIndex * inputData.candidatesPitch + (col - row_begin_incl)];
@@ -805,7 +805,7 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
                     const PossibleSplitColumn psc1 = possibleColumns[2*k+1];
                     assert(psc0.column == psc1.column);
 
-                    const int candidateColumnsBegin_incl = inputData.candidateShifts[candidateRow] + subjectColumnsBegin_incl;
+                    const int candidateColumnsBegin_incl = inputData.candidateShifts[candidateRow] + anchorColumnsBegin_incl;
                     const int candidateColumnsEnd_excl = inputData.candidateLengths[candidateRow] + candidateColumnsBegin_incl;
                     
                     //column range check for row
@@ -927,7 +927,7 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
                     const PossibleSplitColumn psc1 = possibleColumns[2*k+1];
                     assert(psc0.column == psc1.column);
 
-                    const int candidateColumnsBegin_incl = inputData.candidateShifts[candidateRow] + subjectColumnsBegin_incl;
+                    const int candidateColumnsBegin_incl = inputData.candidateShifts[candidateRow] + anchorColumnsBegin_incl;
                     const int candidateColumnsEnd_excl = inputData.candidateLengths[candidateRow] + candidateColumnsBegin_incl;
                     
                     //column range check for row
@@ -1124,7 +1124,7 @@ MultipleSequenceAlignment::PossibleMsaSplits inspectColumnsRegionSplit(
     int numPossibleColumns,
     int /*firstColumn*/, 
     int /*lastColumnExcl*/,
-    int subjectColumnsBegin_incl,
+    int anchorColumnsBegin_incl,
     int numCandidates,
     const char* candidates,
     int decodedSequencePitchBytes,
@@ -1166,7 +1166,7 @@ MultipleSequenceAlignment::PossibleMsaSplits inspectColumnsRegionSplit(
                     const MultipleSequenceAlignment::PossibleSplitColumn psc1 = possibleColumns[2*k+1];
                     assert(psc0.column == psc1.column);
 
-                    const int candidateColumnsBegin_incl = candidateShifts[candidateRow] + subjectColumnsBegin_incl;
+                    const int candidateColumnsBegin_incl = candidateShifts[candidateRow] + anchorColumnsBegin_incl;
                     const int candidateColumnsEnd_excl = candidateLengths[candidateRow] + candidateColumnsBegin_incl;
                     
                     //column range check for row
@@ -1288,7 +1288,7 @@ MultipleSequenceAlignment::PossibleMsaSplits inspectColumnsRegionSplit(
                     const PossibleSplitColumn psc1 = possibleColumns[2*k+1];
                     assert(psc0.column == psc1.column);
 
-                    const int candidateColumnsBegin_incl = candidateShifts[candidateRow] + subjectColumnsBegin_incl;
+                    const int candidateColumnsBegin_incl = candidateShifts[candidateRow] + anchorColumnsBegin_incl;
                     const int candidateColumnsEnd_excl = candidateLengths[candidateRow] + candidateColumnsBegin_incl;
                     
                     //column range check for row

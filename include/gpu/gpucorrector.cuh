@@ -2233,8 +2233,8 @@ namespace gpu{
                         bestAlignmentFlags = d_alignment_best_alignment_flags.data(),
                         nOps = d_alignment_nOps.data(),
                         overlaps = d_alignment_overlaps.data(),
-                        d_candidates_per_subject_prefixsum = d_candidates_per_anchor_prefixsum.data(),
-                        n_subjects = currentNumAnchors,
+                        d_candidates_per_anchor_prefixsum = d_candidates_per_anchor_prefixsum.data(),
+                        n_anchors = currentNumAnchors,
                         mismatchratioBaseFactor = correctionOptions->estimatedErrorrate,
                         goodAlignmentsCountThreshold = correctionOptions->estimatedCoverage * correctionOptions->m_coverage,
                         d_isPairedCandidate = d_isPairedCandidate.data(),
@@ -2247,14 +2247,14 @@ namespace gpu{
                         //     int broadcast[3];
                         // } temp_storage;
 
-                        for(int subjectindex = blockIdx.x; subjectindex < n_subjects; subjectindex += gridDim.x) {
+                        for(int anchorindex = blockIdx.x; anchorindex < n_anchors; anchorindex += gridDim.x) {
 
-                            const int candidatesForSubject = d_candidates_per_subject_prefixsum[subjectindex+1]
-                                                            - d_candidates_per_subject_prefixsum[subjectindex];
+                            const int candidatesForAnchor = d_candidates_per_anchor_prefixsum[anchorindex+1]
+                                                            - d_candidates_per_anchor_prefixsum[anchorindex];
 
-                            const int firstIndex = d_candidates_per_subject_prefixsum[subjectindex];
+                            const int firstIndex = d_candidates_per_anchor_prefixsum[anchorindex];
 
-                            //printf("subjectindex %d\n", subjectindex);
+                            //printf("anchorindex %d\n", anchorindex);
 
                             //int counts[3]{0,0,0};
 
@@ -2262,7 +2262,7 @@ namespace gpu{
                             //    printf("my_n_indices %d\n", my_n_indices);
                             //}
 
-                            for(int index = threadIdx.x; index < candidatesForSubject; index += blockDim.x) {
+                            for(int index = threadIdx.x; index < candidatesForAnchor; index += blockDim.x) {
 
                                 const int candidate_index = firstIndex + index;
                                 if(!d_isPairedCandidate[candidate_index]){
@@ -2320,13 +2320,13 @@ namespace gpu{
                             // } else if (counts[2] >= goodAlignmentsCountThreshold) {
                             //     mismatchratioThreshold = 4 * mismatchratioBaseFactor;
                             // } else {
-                            //     mismatchratioThreshold = -1.0f;                         //this will invalidate all alignments for subject
+                            //     mismatchratioThreshold = -1.0f;                         //this will invalidate all alignments for anchor
                             //     //mismatchratioThreshold = 4 * mismatchratioBaseFactor; //use alignments from every bin
                             //     //mismatchratioThreshold = 1.1f;
                             // }
 
-                            // // Invalidate all alignments for subject with mismatchratio >= mismatchratioThreshold which are not paired end
-                            // for(int index = threadIdx.x; index < candidatesForSubject; index += blockDim.x) {
+                            // // Invalidate all alignments for anchor with mismatchratio >= mismatchratioThreshold which are not paired end
+                            // for(int index = threadIdx.x; index < candidatesForAnchor; index += blockDim.x) {
                             //     const int candidate_index = firstIndex + index;
 
                             //     if(!d_isPairedCandidate[candidate_index]){

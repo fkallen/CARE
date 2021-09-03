@@ -17,7 +17,7 @@ namespace care{
     			int revc_alignment_nops,
     			bool fwd_alignment_isvalid,
     			bool revc_alignment_isvalid,
-    			int subjectlength,
+    			int anchorLength,
     			int /*querylength*/,
     			float min_overlap_ratio,
     			int min_overlap,
@@ -25,8 +25,8 @@ namespace care{
 
     	AlignmentOrientation retval = AlignmentOrientation::None;
 
-    	const int minimumOverlap = int(subjectlength * min_overlap_ratio) > min_overlap
-    	                           ? int(subjectlength * min_overlap_ratio) : min_overlap;
+    	const int minimumOverlap = int(anchorLength * min_overlap_ratio) > min_overlap
+    	                           ? int(anchorLength * min_overlap_ratio) : min_overlap;
 
     	// choose alignment with smallest error rate in overlap and overlaplength >= minimumOverlap and error rate in overlap < maxErrorRate
 
@@ -72,7 +72,7 @@ namespace care{
     template<class Alignment>
     AlignmentOrientation chooseBestAlignmentOrientation(const Alignment& fwdAlignment,
                                         const Alignment& revcmplAlignment,
-                                        int subjectlength,
+                                        int anchorLength,
                                         int querylength,
                                         float min_overlap_ratio,
                                         int min_overlap,
@@ -84,7 +84,7 @@ namespace care{
         			revcmplAlignment.get_nOps(),
         			fwdAlignment.get_isValid(),
         			revcmplAlignment.get_isValid(),
-        			subjectlength,
+        			anchorLength,
         			querylength,
         			min_overlap_ratio,
         			min_overlap,

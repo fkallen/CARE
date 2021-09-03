@@ -66,13 +66,13 @@ public:
 
     struct InputData{
         bool useQualityScores;
-        int subjectLength;
+        int anchorLength;
         int nCandidates;
         size_t candidatesPitch;
         size_t candidateQualitiesPitch;
-        const char* subject;
+        const char* anchor;
         const char* candidates;
-        const char* subjectQualities;
+        const char* anchorQualities;
         const char* candidateQualities;
         const int* candidateLengths;
         const int* candidateShifts;
@@ -145,8 +145,8 @@ public:
     int nColumns{};
     int addedSequences{};
 
-    int subjectColumnsBegin_incl{};
-    int subjectColumnsEnd_excl{};
+    int anchorColumnsBegin_incl{};
+    int anchorColumnsEnd_excl{};
 
 
     InputData inputData{};
@@ -167,7 +167,7 @@ public:
 
     void findConsensus();
 
-    void findOrigWeightAndCoverage(const char* subject);
+    void findOrigWeightAndCoverage(const char* anchor);
 
     void addSequence(bool useQualityScores, const char* sequence, const char* quality, int length, int shift, float defaultWeightFactor);
 
@@ -191,7 +191,7 @@ public:
         float m_coverage
     ) const;
 
-    CorrectionResult getCorrectedSubject(
+    CorrectionResult getCorrectedAnchor(
         MSAProperties msaProperties,
         float estimatedErrorrate,
         float estimatedCoverage,
@@ -228,7 +228,7 @@ MultipleSequenceAlignment::PossibleMsaSplits inspectColumnsRegionSplit(
     int numPossibleColumns,
     int firstColumn, 
     int lastColumnExcl,
-    int subjectColumnsBegin_incl,
+    int anchorColumnsBegin_incl,
     int numCandidates,
     const char* candidates,
     int decodedSequencePitchBytes,

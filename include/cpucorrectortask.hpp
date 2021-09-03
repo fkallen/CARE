@@ -47,7 +47,7 @@ namespace care{
 
         CpuErrorCorrectorInput input{};
 
-        CorrectionResult subjectCorrection;
+        CorrectionResult anchorCorrection;
         std::vector<CorrectedCandidate> candidateCorrections;
         MSAProperties msaProperties;
         MultipleSequenceAlignment multipleSequenceAlignment;

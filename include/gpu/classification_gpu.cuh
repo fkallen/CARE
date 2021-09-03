@@ -12,8 +12,8 @@ namespace gpu{
         char consensusBase;
         float estimatedCoverage;
         int msaPos;
-        int subjectColumnsBegin_incl;
-        int subjectColumnsEnd_excl;
+        int anchorColumnsBegin_incl;
+        int anchorColumnsEnd_excl;
         GpuMSAProperties msaProperties;
         GpuSingleMSA msa;
     };
@@ -23,8 +23,8 @@ namespace gpu{
         char consensusBase;
         float estimatedCoverage;
         int msaPos;
-        int subjectColumnsBegin_incl;
-        int subjectColumnsEnd_excl;
+        int anchorColumnsBegin_incl;
+        int anchorColumnsEnd_excl;
         int queryColumnsBegin_incl;
         int queryColumnsEnd_excl;
         GpuMSAProperties msaProperties;
@@ -92,7 +92,7 @@ namespace gpu{
                 *(features + 33) = input.msaProperties.min_support;
                 *(features + 34) = float(input.msaProperties.max_coverage) / input.estimatedCoverage;
                 *(features + 35) = float(input.msaProperties.min_coverage) / input.estimatedCoverage;
-                *(features + 36) = float(std::max(input.subjectColumnsBegin_incl - msaPos, msaPos - input.subjectColumnsEnd_excl)) / (input.subjectColumnsEnd_excl-input.subjectColumnsBegin_incl);
+                *(features + 36) = float(std::max(input.anchorColumnsBegin_incl - msaPos, msaPos - input.anchorColumnsEnd_excl)) / (input.anchorColumnsEnd_excl-input.anchorColumnsBegin_incl);
             }
         };
 
@@ -106,8 +106,8 @@ namespace gpu{
             template<class OutIter>
             HOSTDEVICEQUALIFIER
             void operator()(OutIter features, const ExtractCandidateInputData& input) const noexcept{
-                const int a_begin = input.subjectColumnsBegin_incl;
-                const int a_end = input.subjectColumnsEnd_excl;
+                const int a_begin = input.anchorColumnsBegin_incl;
+                const int a_end = input.anchorColumnsEnd_excl;
                 const int c_begin = input.queryColumnsBegin_incl;
                 const int c_end = input.queryColumnsEnd_excl;
 
@@ -212,7 +212,7 @@ namespace gpu{
                 *(features + 17) = input.msaProperties.min_support;
                 *(features + 18) = float(input.msaProperties.max_coverage)/input.estimatedCoverage;
                 *(features + 19) = float(input.msaProperties.min_coverage)/input.estimatedCoverage;
-                *(features + 20) = float(std::max(input.subjectColumnsBegin_incl-msaPos, msaPos-input.subjectColumnsEnd_excl))/(input.subjectColumnsEnd_excl-input.subjectColumnsBegin_incl);
+                *(features + 20) = float(std::max(input.anchorColumnsBegin_incl-msaPos, msaPos-input.anchorColumnsEnd_excl))/(input.anchorColumnsEnd_excl-input.anchorColumnsBegin_incl);
             }
         };
 
@@ -226,8 +226,8 @@ namespace gpu{
             template<class OutIter>
             HOSTDEVICEQUALIFIER
             void operator()(OutIter features, const ExtractCandidateInputData& input) const noexcept{  
-                const int a_begin = input.subjectColumnsBegin_incl;
-                const int a_end = input.subjectColumnsEnd_excl;
+                const int a_begin = input.anchorColumnsBegin_incl;
+                const int a_end = input.anchorColumnsEnd_excl;
                 const int c_begin = input.queryColumnsBegin_incl;
                 const int c_end = input.queryColumnsEnd_excl;
 
@@ -297,8 +297,8 @@ namespace gpu{
                 const float* const weightsT = &input.msa.weights[3 * pitch];
                 const float weightsACGT = weightsA[msaPos] + weightsC[msaPos] + weightsG[msaPos] + weightsT[msaPos];
 
-                const int a_begin = input.subjectColumnsBegin_incl;
-                const int a_end = input.subjectColumnsEnd_excl;
+                const int a_begin = input.anchorColumnsBegin_incl;
+                const int a_end = input.anchorColumnsEnd_excl;
 
                 *(features + 0) = float(input.origBase == 'A');
                 *(features + 1) = float(input.origBase == 'C');
@@ -334,8 +334,8 @@ namespace gpu{
             template<class OutIter>
             HOSTDEVICEQUALIFIER
             void operator()(OutIter features, const ExtractCandidateInputData& input) const noexcept{  
-                const int a_begin = input.subjectColumnsBegin_incl;
-                const int a_end = input.subjectColumnsEnd_excl;
+                const int a_begin = input.anchorColumnsBegin_incl;
+                const int a_end = input.anchorColumnsEnd_excl;
                 const int c_begin = input.queryColumnsBegin_incl;
                 const int c_end = input.queryColumnsEnd_excl;
 
@@ -442,7 +442,7 @@ namespace gpu{
                 *(features + 33) = input.msaProperties.min_support;
                 *(features + 34) = float(input.msaProperties.max_coverage) / input.estimatedCoverage;
                 *(features + 35) = float(input.msaProperties.min_coverage) / input.estimatedCoverage;
-                *(features + 36) = float(std::max(input.subjectColumnsBegin_incl - msaPos, msaPos - input.subjectColumnsEnd_excl)) / (input.subjectColumnsEnd_excl-input.subjectColumnsBegin_incl);
+                *(features + 36) = float(std::max(input.anchorColumnsBegin_incl - msaPos, msaPos - input.anchorColumnsEnd_excl)) / (input.anchorColumnsEnd_excl-input.anchorColumnsBegin_incl);
             }
         };
 
@@ -456,8 +456,8 @@ namespace gpu{
             template<class OutIter>
             HOSTDEVICEQUALIFIER
             void operator()(OutIter features, const ExtractCandidateInputData& input) const noexcept{
-                const int a_begin = input.subjectColumnsBegin_incl;
-                const int a_end = input.subjectColumnsEnd_excl;
+                const int a_begin = input.anchorColumnsBegin_incl;
+                const int a_end = input.anchorColumnsEnd_excl;
                 const int c_begin = input.queryColumnsBegin_incl;
                 const int c_end = input.queryColumnsEnd_excl;
 

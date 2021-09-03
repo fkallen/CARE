@@ -326,7 +326,7 @@ SerializedObjectStorage correct_cpu(
 
     #define printme(x) printDuration((#x), timingsOfAllThreads.x);
 
-    printme(getSubjectSequenceDataTimeTotal);
+    printme(getAnchorSequenceDataTimeTotal);
     printme(getCandidatesTimeTotal);
     printme(copyCandidateDataToBufferTimeTotal);
     printme(getAlignmentsTimeTotal);
@@ -339,7 +339,7 @@ SerializedObjectStorage correct_cpu(
     printme(msaAddSequencesTimeTotal);
     printme(msaFindConsensusTimeTotal);
     printme(msaMinimizationTimeTotal);
-    printme(msaCorrectSubjectTimeTotal);
+    printme(msaCorrectAnchorTimeTotal);
     printme(msaCorrectCandidatesTimeTotal);
 
     #undef printme
