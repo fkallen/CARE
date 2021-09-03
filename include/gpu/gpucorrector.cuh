@@ -7,7 +7,6 @@
 
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/kernels.hpp>
-#include <gpu/kernellaunch.hpp>
 #include <gpu/gpucorrectorkernels.cuh>
 #include <gpu/cudagraphhelpers.cuh>
 #include <gpu/gpureadstorage.cuh>
@@ -896,8 +895,6 @@ namespace gpu{
 
             CUDACHECK(cudaGetDevice(&deviceId));
 
-            kernelLaunchHandle = make_kernel_launch_handle(deviceId);
-
             for(auto& event: events){
                 event = std::move(CudaEvent{cudaEventDisableTiming});
             }
@@ -1359,8 +1356,7 @@ namespace gpu{
                 goodAlignmentProperties->maxErrorRate,
                 goodAlignmentProperties->min_overlap_ratio,
                 correctionOptions->estimatedErrorrate,                
-                (cudaStream_t)0,
-                kernelLaunchHandle
+                (cudaStream_t)0
             );
 
             std::size_t cubtemp = 0;
@@ -2206,8 +2202,7 @@ namespace gpu{
                 goodAlignmentProperties->maxErrorRate,
                 goodAlignmentProperties->min_overlap_ratio,
                 correctionOptions->estimatedErrorrate,
-                stream,
-                kernelLaunchHandle
+                stream
             );
 
             #if 1
@@ -2224,8 +2219,7 @@ namespace gpu{
                     maxCandidates,
                     correctionOptions->estimatedErrorrate,
                     correctionOptions->estimatedCoverage * correctionOptions->m_coverage,
-                    stream,
-                    kernelLaunchHandle
+                    stream
                 );
             }else{
                 helpers::lambda_kernel<<<currentNumAnchors, 128, 0, stream>>>(
@@ -2361,8 +2355,7 @@ namespace gpu{
                     maxCandidates,
                     correctionOptions->estimatedErrorrate,
                     correctionOptions->estimatedCoverage * correctionOptions->m_coverage,
-                    stream,
-                    kernelLaunchHandle
+                    stream
                 );
             #endif
 
@@ -2378,8 +2371,7 @@ namespace gpu{
                 d_numCandidates.get(),
                 maxAnchors,
                 maxCandidates,
-                stream,
-                kernelLaunchHandle
+                stream
             );
 
             CUDACHECK(cudaMemcpyAsync(
@@ -2432,8 +2424,7 @@ namespace gpu{
                 correctionOptions->useQualityScores,
                 encodedSequencePitchInInts,
                 qualityPitchInBytes,
-                stream,
-                kernelLaunchHandle
+                stream
             );
         }
 
@@ -2487,8 +2478,7 @@ namespace gpu{
                 d_indices_per_anchor.get(),
                 correctionOptions->estimatedCoverage,
                 getNumRefinementIterations(),
-                stream,
-                kernelLaunchHandle
+                stream
             );
 
             std::swap(d_indices_tmp, d_indices);
@@ -2547,8 +2537,7 @@ namespace gpu{
                 min_support_threshold,
                 min_coverage_threshold,
                 gpuReadStorage->getSequenceLengthUpperBound(),
-                stream,
-                kernelLaunchHandle
+                stream
             );
 
             gpucorrectorkernels::selectIndicesOfFlagsOneBlock<256><<<1,256,0, stream>>>(
@@ -2576,8 +2565,7 @@ namespace gpu{
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
                 editsPitchInBytes,      
-                stream,
-                kernelLaunchHandle
+                stream
             );
             
         }
@@ -2625,8 +2613,7 @@ namespace gpu{
                 avg_support_threshold,
                 min_support_threshold,
                 min_coverage_threshold,
-                stream,
-                kernelLaunchHandle
+                stream
             );
 
             gpucorrectorkernels::selectIndicesOfFlagsOneBlock<256><<<1,256,0, stream>>>(
@@ -2654,8 +2641,7 @@ namespace gpu{
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
                 editsPitchInBytes,      
-                stream,
-                kernelLaunchHandle
+                stream
             );
 
         }
@@ -2746,8 +2732,7 @@ namespace gpu{
                     min_support_threshold,
                     min_coverage_threshold,
                     new_columns_to_correct,
-                    stream,
-                    kernelLaunchHandle
+                    stream
                 );
             #else
             callFlagCandidatesToBeCorrectedKernel_async(
@@ -2766,8 +2751,7 @@ namespace gpu{
                 min_support_threshold,
                 min_coverage_threshold,
                 new_columns_to_correct,
-                stream,
-                kernelLaunchHandle
+                stream
             );
             #endif
 
@@ -2815,8 +2799,7 @@ namespace gpu{
                 decodedSequencePitchInBytes,
                 editsPitchInBytes,
                 gpuReadStorage->getSequenceLengthUpperBound(),
-                stream,
-                kernelLaunchHandle
+                stream
             );
             #else
 
@@ -2836,8 +2819,7 @@ namespace gpu{
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
                 gpuReadStorage->getSequenceLengthUpperBound(),
-                stream,
-                kernelLaunchHandle
+                stream
             );            
 
             callConstructSequenceCorrectionResultsKernel(
@@ -2856,8 +2838,7 @@ namespace gpu{
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
                 editsPitchInBytes,      
-                stream,
-                kernelLaunchHandle
+                stream
             );
 
             #endif
@@ -2941,8 +2922,7 @@ namespace gpu{
                     min_support_threshold,
                     min_coverage_threshold,
                     new_columns_to_correct,
-                    stream,
-                    kernelLaunchHandle
+                    stream
                 );
             #else
             callFlagCandidatesToBeCorrectedKernel_async(
@@ -2961,8 +2941,7 @@ namespace gpu{
                 min_support_threshold,
                 min_coverage_threshold,
                 new_columns_to_correct,
-                stream,
-                kernelLaunchHandle
+                stream
             );
             #endif
 
@@ -3003,7 +2982,6 @@ namespace gpu{
                 editsPitchInBytes,
                 gpuReadStorage->getSequenceLengthUpperBound(),
                 stream,
-                kernelLaunchHandle,
                 d_candidate_read_ids.data()
             );  
 
@@ -3025,8 +3003,7 @@ namespace gpu{
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
                 editsPitchInBytes,      
-                stream,
-                kernelLaunchHandle
+                stream
             );
             
         }
@@ -3069,7 +3046,6 @@ namespace gpu{
 
         ThreadPool* threadPool;
         ThreadPool::ParallelForHandle pforHandle;
-        KernelLaunchHandle kernelLaunchHandle; 
 
         const GpuForest* gpuForestAnchor{};
         const GpuForest* gpuForestCandidate{};

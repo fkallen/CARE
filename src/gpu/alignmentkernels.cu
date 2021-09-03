@@ -1,7 +1,6 @@
 //#define NDEBUG
 
 #include <gpu/kernels.hpp>
-#include <gpu/kernellaunch.hpp>
 #include <gpu/cudaerrorcheck.cuh>
 
 #include <alignmentorientation.hpp>
@@ -1664,8 +1663,7 @@ namespace gpu{
         float maxErrorRate,
         float min_overlap_ratio,
         float estimatedNucleotideErrorRate,
-        cudaStream_t stream,
-        KernelLaunchHandle& handle){
+        cudaStream_t stream){
 
         const int intsPerSequence2BitHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLength);
         
@@ -1703,8 +1701,7 @@ namespace gpu{
             d_candidateSequencesLength,
             d_numCandidates,
             maxNumCandidates,
-            stream,
-            handle
+            stream
         );
 
         callConversionKernel2BitTo2BitHiLoNT(
@@ -1715,8 +1712,7 @@ namespace gpu{
             d_anchorSequencesLength,
             d_numAnchors,
             maxNumAnchors,
-            stream,
-            handle
+            stream
         );
         
 
@@ -1798,8 +1794,7 @@ namespace gpu{
         float maxErrorRate,
         float min_overlap_ratio,
         float estimatedNucleotideErrorRate,
-        cudaStream_t stream,
-        KernelLaunchHandle& handle){
+        cudaStream_t stream){
 
         const int intsPerSequence2BitHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLength);       
         
@@ -1836,8 +1831,7 @@ namespace gpu{
             d_candidateSequencesLength,
             d_numCandidates,
             maxNumCandidates,
-            stream,
-            handle
+            stream
         );
 
         callConversionKernel2BitTo2BitHiLoNT(
@@ -1848,8 +1842,7 @@ namespace gpu{
             d_anchorSequencesLength,
             d_numAnchors,
             maxNumAnchors,
-            stream,
-            handle
+            stream
         );
 
         constexpr int blocksize = 128;
@@ -1930,8 +1923,7 @@ namespace gpu{
             float maxErrorRate,
             float min_overlap_ratio,
             float estimatedNucleotideErrorRate,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle){
+            cudaStream_t stream){
         
         constexpr int tilesize = 16;
         
@@ -1994,8 +1986,7 @@ namespace gpu{
             d_candidateSequencesLength,
             d_numCandidates,
             maxNumCandidates,
-            stream,
-            handle
+            stream
         );
 
         callConversionKernel2BitTo2BitHiLoNN(
@@ -2006,8 +1997,7 @@ namespace gpu{
             d_anchorSequencesLength,
             d_numAnchors,
             maxNumAnchors,
-            stream,
-            handle
+            stream
         );
 
         //calculate d_tiles_per_anchor_prefixsum
@@ -2140,8 +2130,7 @@ namespace gpu{
             float maxErrorRate,
             float min_overlap_ratio,
             float estimatedNucleotideErrorRate,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle){
+            cudaStream_t stream){
         
         constexpr int tilesize = 16;
         
@@ -2204,8 +2193,7 @@ namespace gpu{
             d_candidateSequencesLength,
             d_numCandidates,
             maxNumCandidates,
-            stream,
-            handle
+            stream
         );
 
         callConversionKernel2BitTo2BitHiLoNN(
@@ -2216,8 +2204,7 @@ namespace gpu{
             d_anchorSequencesLength,
             d_numAnchors,
             maxNumAnchors,
-            stream,
-            handle
+            stream
         );
 
         //calculate d_tiles_per_anchor_prefixsum
@@ -2352,8 +2339,7 @@ namespace gpu{
             float maxErrorRate,
             float min_overlap_ratio,
             float estimatedNucleotideErrorRate,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle){
+            cudaStream_t stream){
 
             #define regKernel(intsPerSequence){ \
                 call_popcount_shifted_hamming_distance_reg_kernel_async<intsPerSequence>( \
@@ -2385,8 +2371,7 @@ namespace gpu{
                     maxErrorRate, \
                     min_overlap_ratio, \
                     estimatedNucleotideErrorRate, \
-                    stream, \
-                    handle \
+                    stream \
                 ); \
             };
             
@@ -2462,8 +2447,7 @@ namespace gpu{
                         maxErrorRate,
                         min_overlap_ratio,
                         estimatedNucleotideErrorRate,
-                        stream,
-                        handle
+                        stream
                     );
                 }
 
@@ -2498,8 +2482,7 @@ namespace gpu{
                         maxErrorRate,
                         min_overlap_ratio,
                         estimatedNucleotideErrorRate,
-                        stream,
-                        handle
+                        stream
                     );
                 #endif
             };
@@ -2549,8 +2532,7 @@ namespace gpu{
             float maxErrorRate,
             float min_overlap_ratio,
             float estimatedNucleotideErrorRate,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle){
+            cudaStream_t stream){
 
             #define regKernel(intsPerSequence){ \
                 call_popcount_rightshifted_hamming_distance_reg_kernel_async<intsPerSequence>( \
@@ -2582,8 +2564,7 @@ namespace gpu{
                     maxErrorRate, \
                     min_overlap_ratio, \
                     estimatedNucleotideErrorRate, \
-                    stream, \
-                    handle \
+                    stream \
                 ); \
             };
             
@@ -2618,8 +2599,7 @@ namespace gpu{
                     maxErrorRate,
                     min_overlap_ratio,
                     estimatedNucleotideErrorRate,
-                    stream,
-                    handle
+                    stream
                 );
                 #else
                 if(1 <= maximumSequenceLength && maximumSequenceLength <= 32){
@@ -2693,8 +2673,7 @@ namespace gpu{
                         maxErrorRate,
                         min_overlap_ratio,
                         estimatedNucleotideErrorRate,
-                        stream,
-                        handle
+                        stream
                     );
                 }
                 #endif
@@ -2726,8 +2705,7 @@ namespace gpu{
         int /*maxNumCandidates*/,
         float mismatchratioBaseFactor,
         float goodAlignmentsCountThreshold,
-        cudaStream_t stream,
-        KernelLaunchHandle& /*handle*/
+        cudaStream_t stream
     ){
 
 
@@ -2780,8 +2758,7 @@ namespace gpu{
         const int* d_numCandidates,
         int maxNumAnchors,
         int /*maxNumCandidates*/,
-        cudaStream_t stream,
-        KernelLaunchHandle& /*handle*/
+        cudaStream_t stream
     ){
 
         constexpr int blocksize = 128;

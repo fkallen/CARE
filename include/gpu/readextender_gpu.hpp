@@ -9,7 +9,6 @@
 #include <gpu/gpumsa.cuh>
 #include <gpu/gpumsamanaged.cuh>
 #include <gpu/kernels.hpp>
-#include <gpu/kernellaunch.hpp>
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/segmented_set_operations.cuh>
 #include <gpu/cachingallocator.cuh>
@@ -1829,8 +1828,6 @@ struct GpuReadExtender{
 
         CUDACHECK(cudaGetDevice(&deviceId));
 
-        kernelLaunchHandle = gpu::make_kernel_launch_handle(deviceId);
-
         h_numAnchors.resize(1);
         h_numCandidates.resize(1);
         h_numAnchorsWithRemovedMates.resize(1);
@@ -2237,8 +2234,7 @@ struct GpuReadExtender{
                 maxErrorRate,
                 min_overlap_ratio,
                 estimatedNucleotideErrorRate,
-                stream,
-                kernelLaunchHandle
+                stream
             );
         };
 
@@ -3739,7 +3735,6 @@ struct GpuReadExtender{
     const GoodAlignmentProperties* goodAlignmentProperties{};
     const cpu::QualityScoreConversion* qualityConversion{};
     mutable ReadStorageHandle readStorageHandle{};
-    mutable gpu::KernelLaunchHandle kernelLaunchHandle{};
 
     std::size_t encodedSequencePitchInInts = 0;
     std::size_t decodedSequencePitchInBytes = 0;

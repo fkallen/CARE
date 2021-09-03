@@ -1,7 +1,6 @@
 //#define NDEBUG
 
 #include <gpu/kernels.hpp>
-#include <gpu/kernellaunch.hpp>
 #include <hostdevicefunctions.cuh>
 #include <gpu/gpumsa.cuh>
 #include <gpu/cudaerrorcheck.cuh>
@@ -1242,8 +1241,7 @@ namespace gpu{
         float min_support_threshold,
         float min_coverage_threshold,
         int maximum_sequence_length,
-        cudaStream_t stream,
-        KernelLaunchHandle& /*handle*/
+        cudaStream_t stream
     ){
 
         const int max_block_size = 256;
@@ -1303,8 +1301,7 @@ namespace gpu{
         float avg_support_threshold,
         float min_support_threshold,
         float min_coverage_threshold,
-        cudaStream_t stream,
-        KernelLaunchHandle& /*handle*/
+        cudaStream_t stream
     ){
         if(numAnchors == 0) return;
 
@@ -1373,7 +1370,6 @@ namespace gpu{
         size_t editsPitchInBytes,
         int maximum_sequence_length,
         cudaStream_t stream,
-        KernelLaunchHandle& /*handle*/,
         const read_number* candidateReadIds
     ){
 
@@ -1452,8 +1448,7 @@ namespace gpu{
         float min_support_threshold,
         float min_coverage_threshold,
         int new_columns_to_correct,
-        cudaStream_t stream,
-        KernelLaunchHandle& /*handle*/
+        cudaStream_t stream
     ){
 
         constexpr int blocksize = 256;
@@ -1516,8 +1511,7 @@ namespace gpu{
         float min_support_threshold,
         float min_coverage_threshold,
         int new_columns_to_correct,
-        cudaStream_t stream,
-        KernelLaunchHandle& /*handle*/
+        cudaStream_t stream
     ){
 
         constexpr int blocksize = 256;
@@ -1586,8 +1580,7 @@ namespace gpu{
         size_t decodedSequencePitchInBytes,
         size_t editsPitchInBytes,
         int maximum_sequence_length,
-        cudaStream_t stream,
-        KernelLaunchHandle& /*handle*/
+        cudaStream_t stream
     ){
 
         constexpr int blocksize = 128;
@@ -1667,8 +1660,7 @@ namespace gpu{
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
         int maximum_sequence_length,
-        cudaStream_t stream,
-        KernelLaunchHandle& /*handle*/
+        cudaStream_t stream
     ){
 
         constexpr int blocksize = 128;
@@ -1742,8 +1734,7 @@ namespace gpu{
         size_t encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
         size_t editsPitchInBytes,        
-        cudaStream_t stream,
-        KernelLaunchHandle& /*handle*/
+        cudaStream_t stream
     ){
         if(numCorrectedSequencesUpperBound == 0) return;
 

@@ -2,7 +2,6 @@
 #define CARE_GPU_KERNELS_HPP
 
 #include <hpc_helpers.cuh>
-#include <gpu/kernellaunch.hpp>
 #include <gpu/gpumsa.cuh>
 
 #include <gpu/minhashingkernels.cuh>
@@ -82,8 +81,7 @@ void call_popcount_shifted_hamming_distance_kernel_async(
             float maxErrorRate,
             float min_overlap_ratio,
             float estimatedNucleotideErrorRate,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle);
+            cudaStream_t stream);
 
 
 void call_popcount_rightshifted_hamming_distance_kernel_async(
@@ -115,8 +113,7 @@ void call_popcount_rightshifted_hamming_distance_kernel_async(
             float maxErrorRate,
             float min_overlap_ratio,
             float estimatedNucleotideErrorRate,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle);
+            cudaStream_t stream);
 
 
 void callSelectIndicesOfGoodCandidatesKernelAsync(
@@ -131,8 +128,7 @@ void callSelectIndicesOfGoodCandidatesKernelAsync(
             const int* d_numCandidates,
             int maxNumAnchors,
             int maxNumCandidates,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle);
+            cudaStream_t stream);
 
 
 void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
@@ -146,8 +142,7 @@ void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
             int maxNumCandidates,
             float mismatchratioBaseFactor,
             float goodAlignmentsCountThreshold,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle);
+            cudaStream_t stream);
 
 // msa construction kernels
 
@@ -206,8 +201,7 @@ void callConstructMultipleSequenceAlignmentsKernel_async(
         bool canUseQualityScores,
         int encodedSequencePitchInInts,
         size_t qualityPitchInBytes,
-        cudaStream_t stream,
-        KernelLaunchHandle& handle);
+        cudaStream_t stream);
 
 void callMsaCandidateRefinementKernel_singleiter_async(
         int* d_newIndices,
@@ -239,8 +233,7 @@ void callMsaCandidateRefinementKernel_singleiter_async(
         int dataset_coverage,
         int iteration,
         bool* d_anchorIsFinished,
-        cudaStream_t stream,
-        KernelLaunchHandle& handle
+        cudaStream_t stream
     );
 
 
@@ -273,8 +266,7 @@ void callMsaCandidateRefinementKernel_multiiter_async(
     int* d_indices_per_anchor,
     int dataset_coverage,
     int numIterations,
-    cudaStream_t stream,
-    KernelLaunchHandle& handle
+    cudaStream_t stream
 );
 
 
@@ -298,8 +290,7 @@ void call_msaCorrectAnchorsKernel_async(
     float min_support_threshold,
     float min_coverage_threshold,
     int maximum_sequence_length,
-    cudaStream_t stream,
-    KernelLaunchHandle& handle
+    cudaStream_t stream
 );
 
 
@@ -319,8 +310,7 @@ void callFlagCandidatesToBeCorrectedKernel_async(
     float min_support_threshold,
     float min_coverage_threshold,
     int new_columns_to_correct,
-    cudaStream_t stream,
-    KernelLaunchHandle& handle
+    cudaStream_t stream
 );
 
 void callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
@@ -340,8 +330,7 @@ void callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
     float min_support_threshold,
     float min_coverage_threshold,
     int new_columns_to_correct,
-    cudaStream_t stream,
-    KernelLaunchHandle& handle
+    cudaStream_t stream
 );
 
 void callCorrectCandidatesKernel(
@@ -360,8 +349,7 @@ void callCorrectCandidatesKernel(
     int encodedSequencePitchInInts,
     size_t decodedSequencePitchInBytes,
     int maximum_sequence_length,
-    cudaStream_t stream,
-    KernelLaunchHandle& handle
+    cudaStream_t stream
 );
 
 void callCorrectCandidatesAndComputeEditsKernel(
@@ -385,8 +373,7 @@ void callCorrectCandidatesAndComputeEditsKernel(
     size_t decodedSequencePitchInBytes,
     size_t editsPitchInBytes,
     int maximum_sequence_length,
-    cudaStream_t stream,
-    KernelLaunchHandle& handle
+    cudaStream_t stream
 );
 
 void callMsaCorrectAnchorsWithForestKernel(
@@ -407,8 +394,7 @@ void callMsaCorrectAnchorsWithForestKernel(
     float avg_support_threshold,
     float min_support_threshold,
     float min_coverage_threshold,
-    cudaStream_t stream,
-    KernelLaunchHandle& handle
+    cudaStream_t stream
 );
 
 void callMsaCorrectCandidatesWithForestKernel(
@@ -435,7 +421,6 @@ void callMsaCorrectCandidatesWithForestKernel(
     size_t editsPitchInBytes,
     int maximum_sequence_length,
     cudaStream_t stream,
-    KernelLaunchHandle& handle,
     const read_number* candidateReadIds
 );
 
@@ -455,8 +440,7 @@ void callConstructSequenceCorrectionResultsKernel(
     size_t encodedSequencePitchInInts,
     size_t decodedSequencePitchInBytes,
     size_t editsPitchInBytes,        
-    cudaStream_t stream,
-    KernelLaunchHandle& handle
+    cudaStream_t stream
 );
 
 
@@ -469,8 +453,7 @@ void callConversionKernel2BitTo2BitHiLoNN(
             const int* d_sequenceLengths,
             const int* d_numSequences,
             int maxNumSequences,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle);
+            cudaStream_t stream);
 
 void callConversionKernel2BitTo2BitHiLoNT(
             const unsigned int* d_inputdata,
@@ -480,8 +463,7 @@ void callConversionKernel2BitTo2BitHiLoNT(
             const int* d_sequenceLengths,
             const int* d_numSequences,
             int maxNumSequences,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle);
+            cudaStream_t stream);
 
 void callConversionKernel2BitTo2BitHiLoTT(
             const unsigned int* d_inputdata,
@@ -491,8 +473,7 @@ void callConversionKernel2BitTo2BitHiLoTT(
             const int* d_sequenceLengths,
             const int* d_numSequences,
             int maxNumSequences,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle);            
+            cudaStream_t stream);            
 
 
 

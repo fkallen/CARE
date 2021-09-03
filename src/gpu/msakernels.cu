@@ -1053,8 +1053,7 @@ namespace gpu{
         int* d_indices_per_anchor,
         int dataset_coverage,
         int numIterations,
-        cudaStream_t stream,
-        KernelLaunchHandle& /*handle*/
+        cudaStream_t stream
     ){
 
         helpers::call_fill_kernel_async(
@@ -1164,8 +1163,7 @@ namespace gpu{
         int dataset_coverage,
         int iteration,
         bool* d_anchorIsFinished,
-        cudaStream_t stream,
-        KernelLaunchHandle& /*handle*/
+        cudaStream_t stream
     ){
 
         helpers::call_fill_kernel_async(
@@ -1267,8 +1265,7 @@ namespace gpu{
         bool canUseQualityScores,
         int encodedSequencePitchInInts,
         size_t qualityPitchInBytes,
-        cudaStream_t stream,
-        KernelLaunchHandle& /*handle*/){
+        cudaStream_t stream){
             
 
     constexpr MemoryType memoryType = MemoryType::Shared;

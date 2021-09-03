@@ -3,7 +3,6 @@
 
 #include <gpu/gpumsa.cuh>
 #include <gpu/cubvector.cuh>
-#include <gpu/kernellaunch.hpp>
 #include <gpu/kernels.hpp>
 #include <hpc_helpers.cuh>
 #include <gpu/cudaerrorcheck.cuh>
@@ -53,10 +52,6 @@ namespace gpu{
             d_support(alloc),
             d_origWeights(alloc),
             d_columnProperties(alloc){
-
-            int deviceId;
-            CUDACHECK(cudaGetDevice(&deviceId));
-            kernelLaunchHandle = gpu::make_kernel_launch_handle(deviceId);
 
             pinnedValue.resize(1);
         }
@@ -122,8 +117,7 @@ namespace gpu{
                 useQualityScores,
                 encodedSequencePitchInInts,
                 qualityPitchInBytes,
-                stream,
-                kernelLaunchHandle
+                stream
             );
         }
 
@@ -189,8 +183,7 @@ namespace gpu{
                 d_numCandidatePositionsInSegments,
                 dataset_coverage,
                 numIterations,
-                stream,
-                kernelLaunchHandle
+                stream
             );
         }
 
@@ -348,7 +341,6 @@ namespace gpu{
         CachedDeviceUVector<MSAColumnProperties> d_columnProperties;
 
         GPUMultiMSA multiMSA{};
-        gpu::KernelLaunchHandle kernelLaunchHandle{};
     };
 
 

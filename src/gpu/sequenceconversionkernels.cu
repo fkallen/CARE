@@ -385,8 +385,7 @@ void callConversionKernel2BitTo2BitHiLoNN(
         const int* d_sequenceLengths,
         const int* d_numSequences,
         int /*maxNumSequences*/,
-        cudaStream_t stream,
-        KernelLaunchHandle& /*handle*/){
+        cudaStream_t stream){
 
     
     constexpr int groupsize = 8;        
@@ -441,8 +440,7 @@ void callConversionKernel2BitTo2BitHiLoNT(
         const int* d_sequenceLengths,
         const int* d_numSequences,
         int /*maxNumSequences*/,
-        cudaStream_t stream,
-        KernelLaunchHandle& /*handle*/){
+        cudaStream_t stream){
 
     constexpr int blocksize = 128;
     constexpr size_t smem = 0;
@@ -495,8 +493,7 @@ void callConversionKernel2BitTo2BitHiLoTT(
         const int* d_sequenceLengths,
         const int* d_numSequences,
         int /*maxNumSequences*/,
-        cudaStream_t stream,
-        KernelLaunchHandle& /*handle*/){
+        cudaStream_t stream){
 
     constexpr int blocksize = 128;
     constexpr size_t smem = 0;
