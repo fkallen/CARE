@@ -8,6 +8,7 @@
 #include <sequencehelpers.hpp>
 #include <hpc_helpers.cuh>
 #include <msa.hpp>
+#include <msasplits.hpp>
 #include <readextender_common.hpp>
 #include <qualityscoreweights.hpp>
 #include <hostdevicefunctions.cuh>
@@ -131,130 +132,8 @@ private:
         while(indicesOfActiveTasks.size() > 0){
             //perform one extension iteration for active tasks
 
-            #if 1
-
             doOneExtensionIteration(tasks, indicesOfActiveTasks);
 
-            #else
-
-            for(int indexOfActiveTask : indicesOfActiveTasks){
-                auto& task = tasks[indexOfActiveTask];
-
-                task.currentAnchor.resize(SequenceHelpers::getEncodedNumInts2Bit(task.currentAnchorLength));
-
-                SequenceHelpers::encodeSequence2Bit(
-                    task.currentAnchor.data(), 
-                    task.totalDecodedAnchors.back().data(), 
-                    task.currentAnchorLength
-                );
-            }
-
-            hashTimer.start();
-
-            getCandidateReadIds(tasks, indicesOfActiveTasks);
-
-            removeUsedIdsAndMateIds(tasks, indicesOfActiveTasks);
-            
-
-            hashTimer.stop();
-
-            computePairFlags(tasks, indicesOfActiveTasks);                
-
-            collectTimer.start();        
-
-            loadCandidateSequenceData(tasks, indicesOfActiveTasks);
-
-            eraseDataOfRemovedMates(tasks, indicesOfActiveTasks);
-
-
-            collectTimer.stop();
-
-            /*
-                Compute alignments
-            */
-
-            alignmentTimer.start();
-
-            calculateAlignments(tasks, indicesOfActiveTasks);
-
-            alignmentTimer.stop();
-
-            alignmentFilterTimer.start();
-
-            filterAlignments(tasks, indicesOfActiveTasks);
-
-            alignmentFilterTimer.stop();
-
-            msaTimer.start();
-
-            computeMSAsAndExtendTasks(tasks, indicesOfActiveTasks);
-
-            msaTimer.stop();       
-
-            //check early exit for tasks
-
-            for(int i = 0; i < int(indicesOfActiveTasks.size()); i++){ 
-                const int indexOfActiveTask = indicesOfActiveTasks[i];
-                const auto& task = tasks[indexOfActiveTask];
-
-                const int whichtype = task.id % 4;
-
-                assert(indexOfActiveTask % 4 == whichtype);
-
-                if(whichtype == 0){
-                    assert(task.direction == extension::ExtensionDirection::LR);
-                    assert(task.pairedEnd == true);
-
-                    if(task.mateHasBeenFound){                    
-                        tasks[indexOfActiveTask + 1].abort = true;
-                        tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
-                        tasks[indexOfActiveTask + 3].abort = true;
-                        tasks[indexOfActiveTask + 3].abortReason = extension::AbortReason::OtherStrandFoundMate;
-                    }else if(task.abort){
-                        tasks[indexOfActiveTask + 1].abort = true;
-                        tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
-                    }
-                }else if(whichtype == 2){
-                    assert(task.direction == extension::ExtensionDirection::RL);
-                    assert(task.pairedEnd == true);
-
-                    if(task.mateHasBeenFound){                    
-                        tasks[indexOfActiveTask - 1].abort = true;
-                        tasks[indexOfActiveTask - 1].abortReason = extension::AbortReason::OtherStrandFoundMate;
-                        tasks[indexOfActiveTask + 1].abort = true;
-                        tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
-                    }else if(task.abort){
-                        tasks[indexOfActiveTask + 1].abort = true;
-                        tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
-                    }
-                }
-            }    
-
-            /*
-                update book-keeping of used candidates
-            */  
-
-            for(int indexOfActiveTask : indicesOfActiveTasks){
-                auto& task = tasks[indexOfActiveTask];
-
-                std::vector<read_number> tmp(task.allUsedCandidateReadIdPairs.size() + task.candidateReadIds.size());
-                auto tmp_end = std::merge(
-                    task.allUsedCandidateReadIdPairs.begin(),
-                    task.allUsedCandidateReadIdPairs.end(),
-                    task.candidateReadIds.begin(),
-                    task.candidateReadIds.end(),
-                    tmp.begin()
-                );
-
-                tmp.erase(tmp_end, tmp.end());
-
-                std::swap(task.allUsedCandidateReadIdPairs, tmp);
-
-                task.iteration++;
-            }
-
-            #endif
-            
             //update list of active task indices
 
             indicesOfActiveTasks.erase(
@@ -1071,30 +950,6 @@ private:
 
         const bool useQualityScoresForMSA = true;
 
-        // std::vector<char> candidateQualities(task.numRemainingCandidates * qualityPitchInBytes);
-
-        // if(correctionOptions.useQualityScores){
-
-        //     activeReadStorage->gatherQualities(
-        //         candidateQualities.data(),
-        //         qualityPitchInBytes,
-        //         task.candidateReadIds.data(),
-        //         task.numRemainingCandidates
-        //     );
-
-        //     for(int c = 0; c < task.numRemainingCandidates; c++){
-        //         if(task.alignmentFlags[c] == AlignmentOrientation::ReverseComplement){
-        //             std::reverse(
-        //                 candidateQualities.data() + c * qualityPitchInBytes,
-        //                 candidateQualities.data() + c * qualityPitchInBytes + task.candidateSequenceLengths[c]
-        //             );
-        //         }
-        //     }
-
-        // }else{
-        //     std::fill(candidateQualities.begin(), candidateQualities.end(), 'I');
-        // }
-
         auto build = [&](){
 
             task.candidateShifts.resize(task.numRemainingCandidates);
@@ -1660,42 +1515,13 @@ private:
             auto& task = tasks[indexOfActiveTask];
 
             if(task.numRemainingCandidates > 0){
-                // std::vector<char> candidateQualitiesSingle(task.numRemainingCandidates * qualityPitchInBytes);
 
-                // if(correctionOptions.useQualityScores){
-
-                //     activeReadStorage->gatherQualities(
-                //         candidateQualitiesSingle.data(),
-                //         qualityPitchInBytes,
-                //         task.candidateReadIds.data(),
-                //         task.numRemainingCandidates
-                //     );
-
-                //     for(int c = 0; c < task.numRemainingCandidates; c++){
-                //         if(task.alignmentFlags[c] == AlignmentOrientation::ReverseComplement){
-                //             std::reverse(
-                //                 candidateQualitiesSingle.data() + c * qualityPitchInBytes,
-                //                 candidateQualitiesSingle.data() + c * qualityPitchInBytes + task.candidateSequenceLengths[c]
-                //             );
-                //         }
-                //     }
-
-                // }else{
-                //     std::fill(candidateQualitiesSingle.begin(), candidateQualitiesSingle.end(), 'I');
-                // }
-
-                // for(int x = 0; x < qualityPitchInBytes * task.numRemainingCandidates){
-                //     assert(candidateQualitiesSingle[x] == )
-                // }
-
-                //const auto msa = constructMSA(task, candidateQualitiesSingle.data());
-                //const auto msa = constructMSA(task, candidateQualities.data() + offsets[i] * qualityPitchInBytes);
                 const auto msa = constructMSA(task, candidateQualities.data() + offsets[&indexOfActiveTask - indicesOfActiveTasks.data()] * qualityPitchInBytes);
-                //const auto msa = constructMSA(task);
                 const auto result = extendWithMsa(task, msa);
 
                 task.abortReason = result.abortReason;
                 if(task.abortReason == extension::AbortReason::None){
+                    const int oldAccumExtensionLength = task.accumExtensionLengths;
                     task.mateHasBeenFound = result.mateHasBeenFound;
 
                     if(!task.mateHasBeenFound){
@@ -1727,6 +1553,20 @@ private:
                             task.totalAnchorQualityScores.emplace_back(task.mateQualityScoresReversed);
                         }
                     }
+
+                    if(!task.mateHasBeenFound){
+                        const int newAccumExtensionLength = task.accumExtensionLengths;
+                        const int extendBy = newAccumExtensionLength - oldAccumExtensionLength;
+
+                        CheckAmbiguousColumns columnChecker(msa);
+
+                        auto splitInfos = columnChecker.getSplitInfos(task.currentAnchorLength, task.currentAnchorLength + extendBy, 0.4f, 0.6f);
+                        int numSplits = columnChecker.getNumberOfSplits(
+                            splitInfos, msa
+                        );
+                        //printf("id %d, iteration %d, numSplits %d\n", task.id, task.iteration, numSplits);
+                        task.goodscore += numSplits;
+                    }
                 }
 
                 task.abort = task.abortReason != extension::AbortReason::None;
@@ -1752,6 +1592,7 @@ private:
             extendResult.originalLength = task.myLength;
             extendResult.originalMateLength = task.mateLength;
             extendResult.read1begin = 0;
+            extendResult.goodscore = task.goodscore;
 
             //construct extended read
             //build msa of all saved totalDecodedAnchors[0]

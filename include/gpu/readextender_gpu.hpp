@@ -2455,6 +2455,7 @@ struct GpuReadExtender{
         ); CUDACHECKASYNC;
 
         readextendergpukernels::computeExtensionStepQualityKernel<128><<<tasks->size(), 128, 0, stream>>>(
+            //tasks->iteration.data(),
             d_goodscores.data(),
             multiMSA.multiMSAView(),
             d_abortReasons.data(),

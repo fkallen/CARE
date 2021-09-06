@@ -260,8 +260,6 @@ SerializedObjectStorage extend_gpu_pairedend(
 
     SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, fileOptions.tempdirectory + "/");
 
-    std::vector<ExtendedRead> resultExtendedReads;
-
     BackgroundThread outputThread(true);
 
     const std::uint64_t totalNumReadPairs = gpuReadStorage.getNumberOfReads() / 2;
@@ -342,6 +340,26 @@ SerializedObjectStorage extend_gpu_pairedend(
 
                     partialResults.insert(tempbuffer.data(), end);
                 }
+
+                // auto debugcopy = vec;
+
+                // for(auto& er : debugcopy){
+                //     //debug, save canonical extended sequence
+                //     auto& origExtended = er.extendedSequence;
+                //     auto revcExtended = SequenceHelpers::reverseComplementSequenceDecoded(er.extendedSequence.data(), er.extendedSequence.size());
+                //     if(revcExtended < origExtended){
+                //         std::swap(origExtended, revcExtended);
+                //     }
+
+
+                //     const std::size_t serializedSize = er.getSerializedNumBytes();
+                //     tempbuffer.resize(serializedSize);
+
+                //     auto end = er.copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
+                //     assert(end != nullptr);
+
+                //     partialResults.insert(tempbuffer.data(), end);
+                // }
             }
         );
     };
@@ -423,7 +441,7 @@ SerializedObjectStorage extend_gpu_pairedend(
         gpuDataVector.push_back(std::move(gpudata));
     }
 
-    auto extenderThreadFunc = [&](int gpuIndex, int /*threadId*/, auto* idGenerator, bool isLastIteration, GpuReadExtender::IterationConfig iterationConfig){
+    auto extenderThreadFunc = [&](int gpuIndex, int /*threadId*/, auto* readIdGenerator, bool isLastIteration, GpuReadExtender::IterationConfig iterationConfig){
         //std::cerr << "extenderThreadFunc( " << gpuIndex << ", " << threadId << ")\n";
         auto& gpudata = gpuDataVector[gpuIndex];
         //auto stream = gpustreams[gpuIndex].back().getStream();
@@ -481,10 +499,10 @@ SerializedObjectStorage extend_gpu_pairedend(
             nvtx::pop_range();
         };
 
-        while(!(idGenerator->empty() && tasks.size() == 0)){
+        while(!(readIdGenerator->empty() && tasks.size() == 0)){
             if(int(tasks.size()) < (batchsizePairs * 4) / 2){
                 initializeExtenderInput(
-                    *idGenerator,
+                    *readIdGenerator,
                     batchsizePairs * 4,
                     gpuReadStorage,
                     readStorageHandle,
@@ -562,13 +580,18 @@ SerializedObjectStorage extend_gpu_pairedend(
     {
         std::vector<std::future<std::vector<read_number>>> futures;
 
-        const std::size_t numReadsToProcess = 500000;
+        const std::size_t numReadsToProcess = 50000;
         //const std::size_t numReadsToProcess = gpuReadStorage.getNumberOfReads();
 
-        IteratorRangeTraversal<thrust::counting_iterator<read_number>> idGenerator(
+        IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(
             thrust::make_counting_iterator<read_number>(0),
             thrust::make_counting_iterator<read_number>(0) + numReadsToProcess
         );
+
+        // IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(
+        //     thrust::make_counting_iterator<read_number>(0) + 0,
+        //     thrust::make_counting_iterator<read_number>(0) + 16
+        // );
 
         const int maxNumThreads = runtimeOptions.threads;
 
@@ -581,7 +604,7 @@ SerializedObjectStorage extend_gpu_pairedend(
                     extenderThreadFunc,
                     t % numDeviceIds,
                     t,
-                    &idGenerator,
+                    &readIdGenerator,
                     isLastIteration,
                     iterationConfig
                 )
@@ -606,7 +629,7 @@ SerializedObjectStorage extend_gpu_pairedend(
 
         isLastIteration = (iterationConfig.maxextensionPerStep <= 4);
 
-        auto idGenerator = makeIteratorRangeTraversal(
+        auto readIdGenerator = makeIteratorRangeTraversal(
             pairsWhichShouldBeRepeated.data(), 
             pairsWhichShouldBeRepeated.data() + pairsWhichShouldBeRepeated.size()
         );
@@ -624,7 +647,7 @@ SerializedObjectStorage extend_gpu_pairedend(
                     extenderThreadFunc,
                     t % numDeviceIds,
                     t,
-                    &idGenerator,
+                    &readIdGenerator,
                     isLastIteration,
                     iterationConfig
                 )
@@ -670,7 +693,6 @@ SerializedObjectStorage extend_gpu_pairedend(
 
 
     return partialResults;
-    //return resultExtendedReads;
 }
 
 

@@ -140,15 +140,18 @@ SerializedObjectStorage extend_cpu_pairedend(
 
     SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, fileOptions.tempdirectory + "/");
 
-    std::vector<ExtendedRead> resultExtendedReads;
-
-    const std::size_t numReadsToProcess = 500000;
+    const std::size_t numReadsToProcess = 50000;
     //const std::size_t numReadsToProcess = readStorage.getNumberOfReads();
 
     auto readIdGenerator = makeIteratorRangeTraversal(
         thrust::make_counting_iterator<read_number>(0),
         thrust::make_counting_iterator<read_number>(0) + numReadsToProcess
     );
+
+    // IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(
+    //     thrust::make_counting_iterator<read_number>(0) + 0,
+    //     thrust::make_counting_iterator<read_number>(0) + 16
+    // );
 
     BackgroundThread outputThread(true);
 
@@ -390,10 +393,30 @@ SerializedObjectStorage extend_cpu_pairedend(
                               
             }
 
-            auto outputfunc = [&, vec = std::move(extendedReads)](){
+            auto outputfunc = [&, vec = std::move(extendedReads)]() {
                 std::vector<std::uint8_t> tempbuffer(256);
 
-                for(const auto& er : vec){
+                // auto debugcopy = vec;
+
+                // for(auto& er : debugcopy){
+                //     //debug, save canonical extended sequence
+                //     auto& origExtended = er.extendedSequence;
+                //     auto revcExtended = SequenceHelpers::reverseComplementSequenceDecoded(er.extendedSequence.data(), er.extendedSequence.size());
+                //     if(revcExtended < origExtended){
+                //         std::swap(origExtended, revcExtended);
+                //     }
+
+
+                //     const std::size_t serializedSize = er.getSerializedNumBytes();
+                //     tempbuffer.resize(serializedSize);
+
+                //     auto end = er.copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
+                //     assert(end != nullptr);
+
+                //     partialResults.insert(tempbuffer.data(), end);
+                // }
+
+                for(auto& er : vec){
                     const std::size_t serializedSize = er.getSerializedNumBytes();
                     tempbuffer.resize(serializedSize);
 
@@ -497,7 +520,6 @@ SerializedObjectStorage extend_cpu_pairedend(
 
 
     return partialResults;
-    //return resultExtendedReads;
 }
 
 
