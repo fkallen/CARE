@@ -3,11 +3,11 @@
 #include <gpu/kernels.hpp>
 #include <hostdevicefunctions.cuh>
 #include <gpu/cudaerrorcheck.cuh>
+#include <gpu/groupmemcpy.cuh>
+#include <gpu/gpumsa.cuh>
 #include <alignmentorientation.hpp>
-
 #include <sequencehelpers.hpp>
 
-#include <gpu/gpumsa.cuh>
 
 
 #include <hpc_helpers.cuh>
@@ -321,18 +321,18 @@ namespace gpu{
                     float* const gmemWeights = multiMSA.getWeightsOfMSA(anchorIndex);
                     int* const gmemCoverages = multiMSA.getCoveragesOfMSA(anchorIndex);
 
-                    for(int index = tbGroup.thread_rank(); index < columnsToCheck; index += tbGroup.size()){
-                        for(int k = 0; k < 4; k++){
-                            const int* const srcCounts = msa.counts + k * msa.columnPitchInElements + index;
-                            int* const destCounts = gmemCounts + k * msa.columnPitchInElements + index;
-        
-                            const float* const srcWeights = msa.weights + k * msa.columnPitchInElements + index;
-                            float* const destWeights = gmemWeights + k * msa.columnPitchInElements + index;
-        
-                            *destCounts = *srcCounts;
-                            *destWeights = *srcWeights;
-                        }
-                        gmemCoverages[index] = msa.coverages[index];
+                    care::gpu::memcpy<int4>(tbGroup, gmemCoverages, msa.coverages, sizeof(int) * columnsToCheck);
+
+                    for(int k = 0; k < 4; k++){
+                        const int* const srcCounts = msa.counts + k * msa.columnPitchInElements;
+                        int* const destCounts = gmemCounts + k * msa.columnPitchInElements;
+                        care::gpu::memcpy<int4>(tbGroup, destCounts, srcCounts, sizeof(int) * columnsToCheck);
+                    }
+
+                    for(int k = 0; k < 4; k++){
+                        const float* const srcWeights = msa.weights + k * msa.columnPitchInElements;
+                        float* const destWeights = gmemWeights + k * msa.columnPitchInElements;
+                        care::gpu::memcpy<int4>(tbGroup, destWeights, srcWeights, sizeof(float) * columnsToCheck);
                     }
                 }
             //} 
@@ -575,23 +575,19 @@ namespace gpu{
                             int* const gmemCounts = multiMSA.getCountsOfMSA(anchorIndex);
                             float* const gmemWeights = multiMSA.getWeightsOfMSA(anchorIndex);
                             int* const gmemCoverages = multiMSA.getCoveragesOfMSA(anchorIndex);
-    
-                            for(int index = tbGroup.thread_rank(); index < columnsToCheck; index += tbGroup.size()){
-                                for(int k = 0; k < 4; k++){
-                                    const int* const srcCounts = msa.counts 
-                                        + k * msa.columnPitchInElements + index;
-                                    int* const destCounts = gmemCounts 
-                                        + k * msa.columnPitchInElements + index;
-                
-                                    const float* const srcWeights = msa.weights 
-                                        + k * msa.columnPitchInElements + index;
-                                    float* const destWeights = gmemWeights 
-                                        + k * msa.columnPitchInElements + index;
-                
-                                    *destCounts = *srcCounts;
-                                    *destWeights = *srcWeights;
-                                }
-                                gmemCoverages[index] = msa.coverages[index];
+
+                            care::gpu::memcpy<int4>(tbGroup, gmemCoverages, msa.coverages, sizeof(int) * columnsToCheck);
+
+                            for(int k = 0; k < 4; k++){
+                                const int* const srcCounts = msa.counts + k * msa.columnPitchInElements;
+                                int* const destCounts = gmemCounts + k * msa.columnPitchInElements;
+                                care::gpu::memcpy<int4>(tbGroup, destCounts, srcCounts, sizeof(int) * columnsToCheck);
+                            }
+
+                            for(int k = 0; k < 4; k++){
+                                const float* const srcWeights = msa.weights + k * msa.columnPitchInElements;
+                                float* const destWeights = gmemWeights + k * msa.columnPitchInElements;
+                                care::gpu::memcpy<int4>(tbGroup, destWeights, srcWeights, sizeof(float) * columnsToCheck);
                             }
 
                             tbGroup.sync();
@@ -718,14 +714,41 @@ namespace gpu{
                     msa.coverages = shared_coverages;
                 }
 
+                //TODO find out why memcpy path is slower
+
+                #if 0
                 if(useSmemMSA){
                     //load counts weights and coverages from gmem to smem
 
                     const int* const gmemCounts = multiMSA.getCountsOfMSA(anchorIndex);
                     const float* const gmemWeights = multiMSA.getWeightsOfMSA(anchorIndex);
                     const int* const gmemCoverages = multiMSA.getCoveragesOfMSA(anchorIndex);
+                    const int columns = msa.columnProperties->lastColumn_excl;
 
-                    for(int k = tbGroup.thread_rank(); k < msa.columnPitchInElements; k += tbGroup.size()){
+                    care::gpu::memcpy<int>(tbGroup, shared_coverages, gmemCoverages,  sizeof(int) * columns);
+
+                    for(int k = 0; k < 4; k++){
+                        int* const destCounts = shared_counts + k * msa.columnPitchInElements;
+                        const int* const srcCounts = gmemCounts + k * msa.columnPitchInElements;
+                        care::gpu::memcpy<int>(tbGroup, destCounts, srcCounts, sizeof(int) * columns);
+                    }
+
+                    for(int k = 0; k < 4; k++){
+                        float* const destWeights = shared_weights + k * msa.columnPitchInElements;
+                        const float* const srcWeights = gmemWeights + k * msa.columnPitchInElements;
+                        care::gpu::memcpy<int>(tbGroup, destWeights, srcWeights, sizeof(float) * columns);
+                    }
+                }
+                #else
+                if(useSmemMSA){
+                    //load counts weights and coverages from gmem to smem
+
+                    const int* const gmemCounts = multiMSA.getCountsOfMSA(anchorIndex);
+                    const float* const gmemWeights = multiMSA.getWeightsOfMSA(anchorIndex);
+                    const int* const gmemCoverages = multiMSA.getCoveragesOfMSA(anchorIndex);
+                    const int columns = msa.columnProperties->lastColumn_excl;
+
+                    for(int k = tbGroup.thread_rank(); k < columns; k += tbGroup.size()){
                         for(int i = 0; i < 4; i++){
                             shared_counts[k + i * msa.columnPitchInElements] 
                                 = gmemCounts[k + i * msa.columnPitchInElements];
@@ -736,12 +759,37 @@ namespace gpu{
                     }
                 }
 
+                #endif
+
+                #if 0
                 auto storeSmemMSAToGmem = [&](){
                     int* const gmemCounts = multiMSA.getCountsOfMSA(anchorIndex);
                     float* const gmemWeights = multiMSA.getWeightsOfMSA(anchorIndex);
                     int* const gmemCoverages = multiMSA.getCoveragesOfMSA(anchorIndex);
+                    const int columns = msa.columnProperties->lastColumn_excl;
 
-                    for(int k = tbGroup.thread_rank(); k < msa.columnPitchInElements; k += tbGroup.size()){
+                    care::gpu::memcpy<int>(tbGroup, gmemCoverages, shared_coverages, sizeof(int) * columns);
+
+                    for(int k = 0; k < 4; k++){
+                        const int* const srcCounts = shared_counts + k * msa.columnPitchInElements;
+                        int* const destCounts = gmemCounts + k * msa.columnPitchInElements;
+                        care::gpu::memcpy<int>(tbGroup, destCounts, srcCounts, sizeof(int) * columns);
+                    }
+
+                    for(int k = 0; k < 4; k++){
+                        const float* const srcWeights = shared_weights + k * msa.columnPitchInElements;
+                        float* const destWeights = gmemWeights + k * msa.columnPitchInElements;
+                        care::gpu::memcpy<int>(tbGroup, destWeights, srcWeights, sizeof(float) * columns);
+                    }
+                };
+                #else
+                auto storeSmemMSAToGmem = [&](){
+                    int* const gmemCounts = multiMSA.getCountsOfMSA(anchorIndex);
+                    float* const gmemWeights = multiMSA.getWeightsOfMSA(anchorIndex);
+                    int* const gmemCoverages = multiMSA.getCoveragesOfMSA(anchorIndex);
+                    const int columns = msa.columnProperties->lastColumn_excl;
+
+                    for(int k = tbGroup.thread_rank(); k < columns; k += tbGroup.size()){
                         for(int i = 0; i < 4; i++){
                             gmemCounts[k + i * msa.columnPitchInElements] 
                                 = shared_counts[k + i * msa.columnPitchInElements];
@@ -751,6 +799,7 @@ namespace gpu{
                         gmemCoverages[k] = shared_coverages[k];
                     }
                 };
+                #endif
 
                 const AlignmentOrientation* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
                 const int* const myShifts = shifts + globalOffset;
