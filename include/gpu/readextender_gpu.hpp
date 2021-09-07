@@ -2257,6 +2257,9 @@ struct GpuReadExtender{
         const int* const d_currentNumCandidates = d_numCandidatesPerAnchorPrefixSum.data() + tasks->size();
 
         readextendergpukernels::flagGoodAlignmentsKernel<128><<<tasks->size(), 128, 0, stream>>>(
+        //readextendergpukernels::flagGoodAlignmentsKernel<1><<<1, 1, 0, stream>>>(
+            tasks->id.data(),
+            tasks->iteration.data(),
             d_alignment_best_alignment_flags.data(),
             d_alignment_shifts.data(),
             d_alignment_overlaps.data(),
@@ -2294,6 +2297,43 @@ struct GpuReadExtender{
         CachedDeviceUVector<int> indices2(initialNumCandidates, stream, *cubAllocator);
         CachedDeviceUScalar<int> d_numCandidates2(1, stream, *cubAllocator);
 
+        // helpers::lambda_kernel<<<1,1,0, stream>>>([
+        //     numAnchors = tasks->size(),
+        //     ids = tasks->id.data(),
+        //     iterations = tasks->iteration.data(),
+        //     d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
+        //     d_usedReadIds = tasks->d_usedReadIds.data(),
+        //     d_numUsedReadIdsPerTask = tasks->d_numUsedReadIdsPerTask.data(),
+        //     d_numUsedReadIdsPerTaskPrefixSum = tasks->d_numUsedReadIdsPerTaskPrefixSum.data(),
+        //     d_fullyUsedReadIds = tasks->d_fullyUsedReadIds.data(),
+        //     d_numFullyUsedReadIdsPerTask = tasks->d_numFullyUsedReadIdsPerTask.data(),
+        //     d_numFullyUsedReadIdsPerTaskPrefixSum = tasks->d_numFullyUsedReadIdsPerTaskPrefixSum.data()
+        // ] __device__ (){
+        //     for(int i = 0; i < numAnchors; i++){
+        //         if(iterations[i] == 14 && ids[i] == 1){
+        //             printf("numCandidates: %d\n", d_numCandidatesPerAnchor[i]);
+
+        //             const int numUsed = d_numUsedReadIdsPerTask[i];
+        //             const int usedOffset = d_numUsedReadIdsPerTaskPrefixSum[i];
+
+        //             printf("used: %d\n", numUsed);
+        //             for(int k = 0; k < numUsed; k++){
+        //                 printf("%d, ", d_usedReadIds[usedOffset + k]);
+        //             }
+        //             printf("\n");
+
+        //             const int numFullyUsed = d_numFullyUsedReadIdsPerTask[i];
+        //             const int usedFullyOffset = d_numFullyUsedReadIdsPerTaskPrefixSum[i];
+
+        //             printf("fully used: %d\n", numFullyUsed);
+        //             for(int k = 0; k < numFullyUsed; k++){
+        //                 printf("%d, ", d_fullyUsedReadIds[usedFullyOffset + k]);
+        //             }
+        //             printf("\n");
+        //         }
+        //     }
+        // });
+
         const int threads = 32 * tasks->size();
         readextendergpukernels::segmentedIotaKernel<32><<<SDIV(threads, 128), 128, 0, stream>>>(
             indices1.data(),
@@ -2303,6 +2343,29 @@ struct GpuReadExtender{
         ); CUDACHECKASYNC;
 
         *h_numAnchors = tasks->size();
+
+        // helpers::lambda_kernel<<<1,1,0,stream>>>(
+        //     [
+        //         number = 0,
+        //         iterations = tasks->iteration.data(),
+        //         ids = tasks->id.data(),
+        //         numAnchors = tasks->size(),
+        //         d_alignment_shifts = d_alignment_shifts.data(),
+        //         d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
+        //         d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data()
+        //     ] __device__ (){
+        //         printf("kernel number %d\n", number);
+        //         for(int a = 0; a < numAnchors; a++){
+        //             if(iterations[a] == 0){
+        //                 printf("shifts id %d\n", ids[a]);
+        //                 for(int i = 0; i < d_numCandidatesPerAnchor[a]; i++){
+        //                     printf("%d, ", d_alignment_shifts[d_numCandidatesPerAnchorPrefixSum[a] + i]);
+        //                 }
+        //                 printf("\n");
+        //             }
+        //         }
+        //     }
+        // );
 
         const bool useQualityScoresForMSA = true;
 
@@ -2387,6 +2450,29 @@ struct GpuReadExtender{
             false,
             stream
         );
+
+        // helpers::lambda_kernel<<<1,1,0,stream>>>(
+        //     [
+        //         number = 1,
+        //         iterations = tasks->iteration.data(),
+        //         ids = tasks->id.data(),
+        //         numAnchors = tasks->size(),
+        //         d_alignment_shifts = d_alignment_shifts.data(),
+        //         d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
+        //         d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data()
+        //     ] __device__ (){
+        //         printf("kernel number %d\n", number);
+        //         for(int a = 0; a < numAnchors; a++){
+        //             if(iterations[a] == 0){
+        //                 printf("shifts id %d\n", ids[a]);
+        //                 for(int i = 0; i < d_numCandidatesPerAnchor[a]; i++){
+        //                     printf("%d, ", d_alignment_shifts[d_numCandidatesPerAnchorPrefixSum[a] + i]);
+        //                 }
+        //                 printf("\n");
+        //             }
+        //         }
+        //     }
+        // );
         
         setState(GpuReadExtender::State::BeforeExtend);
     }
@@ -2475,6 +2561,10 @@ struct GpuReadExtender{
 
         readextendergpukernels::flagFullyUsedCandidatesKernel<128>
         <<<tasks->size(), 128, 0, stream>>>(
+        // readextendergpukernels::flagFullyUsedCandidatesKernel<1>
+        // <<<1,1,0,stream>>>(
+            tasks->id.data(),
+            tasks->iteration.data(),
             tasks->size(),
             d_numCandidatesPerAnchor.data(),
             d_numCandidatesPerAnchorPrefixSum.data(),
@@ -2540,27 +2630,29 @@ struct GpuReadExtender{
         assert(tasks->qualityPitchInBytes >= outputAnchorQualityPitchInBytes);
 
         readextendergpukernels::makeSoAIterationResultsKernel<128><<<tasks->size(), 128, 0, stream>>>(
-                tasks->size(),
-                outputAnchorPitchInBytes,
-                outputAnchorQualityPitchInBytes,
-                d_addNumEntriesPerTask.data(),
-                d_addNumEntriesPerTaskPrefixSum.data(),
-                d_addTotalDecodedAnchorsFlat.data(),
-                d_addTotalAnchorQualityScoresFlat.data(),
-                d_addAnchorLengths.data(),
-                d_addAnchorBeginsInExtendedRead.data(),
-                tasks->decodedSequencePitchInBytes,
-                tasks->qualityPitchInBytes,
-                tasks->abortReason.data(),
-                tasks->mateHasBeenFound.data(),
-                tasks->soainputdecodedMateRevC.data(),
-                tasks->soainputmateQualityScoresReversed.data(),
-                tasks->soainputmateLengths.data(),
-                d_sizeOfGapToMate.data(),
-                d_outputAnchorLengths.data(),
-                d_outputAnchors.data(),
-                d_outputAnchorQualities.data(),
-                d_accumExtensionsLengthsOUT.data()
+            tasks->id.data(),
+            tasks->iteration.data(),
+            tasks->size(),
+            outputAnchorPitchInBytes,
+            outputAnchorQualityPitchInBytes,
+            d_addNumEntriesPerTask.data(),
+            d_addNumEntriesPerTaskPrefixSum.data(),
+            d_addTotalDecodedAnchorsFlat.data(),
+            d_addTotalAnchorQualityScoresFlat.data(),
+            d_addAnchorLengths.data(),
+            d_addAnchorBeginsInExtendedRead.data(),
+            tasks->decodedSequencePitchInBytes,
+            tasks->qualityPitchInBytes,
+            tasks->abortReason.data(),
+            tasks->mateHasBeenFound.data(),
+            tasks->soainputdecodedMateRevC.data(),
+            tasks->soainputmateQualityScoresReversed.data(),
+            tasks->soainputmateLengths.data(),
+            d_sizeOfGapToMate.data(),
+            d_outputAnchorLengths.data(),
+            d_outputAnchors.data(),
+            d_outputAnchorQualities.data(),
+            d_accumExtensionsLengthsOUT.data()
         ); CUDACHECKASYNC;
 
         tasks->addSoAIterationResultData(
@@ -2587,6 +2679,40 @@ struct GpuReadExtender{
             stream,
             h_tempForMemcopies.data()
         );
+
+        // helpers::lambda_kernel<<<1,1,0, stream>>>([
+        //     numAnchors = tasks->size(),
+        //     ids = tasks->id.data(),
+        //     iterations = tasks->iteration.data(),
+        //     d_usedReadIds = tasks->d_usedReadIds.data(),
+        //     d_numUsedReadIdsPerTask = tasks->d_numUsedReadIdsPerTask.data(),
+        //     d_numUsedReadIdsPerTaskPrefixSum = tasks->d_numUsedReadIdsPerTaskPrefixSum.data(),
+        //     d_fullyUsedReadIds = tasks->d_fullyUsedReadIds.data(),
+        //     d_numFullyUsedReadIdsPerTask = tasks->d_numFullyUsedReadIdsPerTask.data(),
+        //     d_numFullyUsedReadIdsPerTaskPrefixSum = tasks->d_numFullyUsedReadIdsPerTaskPrefixSum.data()
+        // ] __device__ (){
+        //     for(int i = 0; i < numAnchors; i++){
+        //         printf("id %d, after iteration %d\n", ids[i], iterations[i]);
+
+        //         const int numUsed = d_numUsedReadIdsPerTask[i];
+        //         const int usedOffset = d_numUsedReadIdsPerTaskPrefixSum[i];
+
+        //         printf("used %d: ", numUsed);
+        //         for(int k = 0; k < numUsed; k++){
+        //             printf("%d, ", d_usedReadIds[usedOffset + k]);
+        //         }
+        //         printf("\n");
+
+        //         const int numFullyUsed = d_numFullyUsedReadIdsPerTask[i];
+        //         const int usedFullyOffset = d_numFullyUsedReadIdsPerTaskPrefixSum[i];
+
+        //         printf("fully used %d: ", numFullyUsed);
+        //         for(int k = 0; k < numFullyUsed; k++){
+        //             printf("%d, ", d_fullyUsedReadIds[usedFullyOffset + k]);
+        //         }
+        //         printf("\n");
+        //     }
+        // });
 
         //increment iteration and check early exit of tasks
         tasks->iterationIsFinished(stream);

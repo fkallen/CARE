@@ -602,6 +602,8 @@ namespace readextendergpukernels{
     template<int blocksize>
     __global__
     void flagFullyUsedCandidatesKernel(
+        const int* ids,
+        const int* iterations,
         int numTasks,
         const int* __restrict__ d_numCandidatesPerAnchor,
         const int* __restrict__ d_numCandidatesPerAnchorPrefixSum,
@@ -628,11 +630,21 @@ namespace readextendergpukernels{
                 const int lengthOfExtension = newAccumExtensionsLength - oldAccumExtensionsLength;
 
                 for(int c = threadIdx.x; c < numCandidates; c += blockDim.x){
-                    const int candidateLength = d_candidateSequencesLengths[c];
-                    const int shift = d_alignment_shifts[c];
+                    const int candidateLength = d_candidateSequencesLengths[offset + c];
+                    const int shift = d_alignment_shifts[offset + c];
+                    // if(ids[task] == 1 && iterations[task] == 0){
+                    //     printf("%d %d, %d", c , shift, lengthOfExtension);
+                    // }
 
                     if(candidateLength + shift <= anchorLength + lengthOfExtension){
                         d_isFullyUsedCandidate[offset + c] = true;
+                        // if(ids[task] == 1 && iterations[task] == 0){
+                        //     printf(", fully used\n");
+                        // }
+                    }else{
+                        // if(ids[task] == 1 && iterations[task] == 0){
+                        //     printf("\n");
+                        // }
                     }
                 }
             }
@@ -741,6 +753,8 @@ namespace readextendergpukernels{
     template<int blocksize>
     __global__
     void makeSoAIterationResultsKernel(
+        const int* ids,
+        const int* iterations,
         int numTasks,
         std::size_t outputAnchorPitchInBytes,
         std::size_t outputAnchorQualityPitchInBytes,
@@ -763,6 +777,18 @@ namespace readextendergpukernels{
         const char* __restrict__ d_outputAnchorQualities,
         const int* __restrict__ d_accumExtensionsLengths
     ){
+        // if(threadIdx.x == 0 && blockIdx.x == 0){
+        //     for(int i = 0; i < numTasks; i += 1){
+        //         printf("id: %d, iter: %d, mateHasBeenFound: %d, abort: %4d, newaccum: %d, newanchor: ", ids[i], iterations[i], 
+        //             task_mateHasBeenFound[i], int(task_abortReason[i]), d_accumExtensionsLengths[i]);
+                    
+        //         for(int k = 0; k < d_outputAnchorLengths[i]; k++){
+        //             printf("%c", d_outputAnchors[i * outputAnchorPitchInBytes + k]);
+        //         }
+        //         printf("\n");
+        //     }
+        // }
+
         for(int i = blockIdx.x; i < numTasks; i += gridDim.x){
             if(task_abortReason[i] == extension::AbortReason::None){                
                 const int offset = d_addNumEntriesPerTaskPrefixSum[i];
@@ -1011,6 +1037,8 @@ namespace readextendergpukernels{
     template<int blocksize>
     __global__
     void flagGoodAlignmentsKernel(
+        const int* ids,
+        const int* iterations,
         const AlignmentOrientation* __restrict__ d_alignment_best_alignment_flags,
         const int* __restrict__ d_alignment_shifts,
         const int* __restrict__ d_alignment_overlaps,
@@ -1024,8 +1052,8 @@ namespace readextendergpukernels{
         const int* __restrict__ currentNumCandidatesPtr,
         int initialNumCandidates
     ){
-        using BlockReduceFloat = cub::BlockReduce<float, 128>;
-        using BlockReduceInt = cub::BlockReduce<int, 128>;
+        using BlockReduceFloat = cub::BlockReduce<float, blocksize>;
+        using BlockReduceInt = cub::BlockReduce<int, blocksize>;
 
         __shared__ union {
             typename BlockReduceFloat::TempStorage floatreduce;
@@ -1062,6 +1090,9 @@ namespace readextendergpukernels{
                             threadReducedGoodAlignmentExists = 1;
                             const float tmp = floorf(relativeOverlap * 10.0f) / 10.0f;
                             threadReducedRelativeOverlapThreshold = fmaxf(threadReducedRelativeOverlapThreshold, tmp);
+                            // if(ids[a] == 1 && iterations[a] == 14){
+                            //     printf("%d %f %f %f\n", c, relativeOverlap, tmp, threadReducedRelativeOverlapThreshold);
+                            // }
                         }
                     }
                 }else{
@@ -1091,6 +1122,12 @@ namespace readextendergpukernels{
 
                 blockreducedRelativeOverlapThreshold = floatbroadcast;
 
+                // if(ids[a] == 1 && iterations[a] == 14){
+                //     printf("blockreducedRelativeOverlapThreshold %f\n", blockreducedRelativeOverlapThreshold);
+                //     printf("ispaired %d, keep %d, overlap %f, relative overlap %f\n", 
+                //         d_isPairedCandidate[offset+35], d_keepflags[offset + 35], float(d_alignment_overlaps[offset + 35]), float(d_alignment_overlaps[offset + 35]) / anchorLength);
+                // }
+
                 // loop over candidates and remove those with an alignment overlap threshold smaller than the computed threshold
                 for(int c = threadIdx.x; c < num; c += blockDim.x){
                     if(!d_isPairedCandidate[offset+c]){
@@ -1113,6 +1150,16 @@ namespace readextendergpukernels{
             }
 
             __syncthreads();
+
+            // if(ids[a] == 1 && iterations[a] == 14){
+            //     if(threadIdx.x == 0){
+            //         printf("keepflags\n");
+            //         for(int c = 0; c < num; c += 1){
+            //             printf("%d, ", d_keepflags[offset + c]);
+            //         }
+            //         printf("\n");
+            //     }
+            // }
         }
     
         const int tid = threadIdx.x + blockIdx.x * blockDim.x;

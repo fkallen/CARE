@@ -300,6 +300,14 @@ private:
                 assert(task.allFullyUsedCandidateReadIdPairs.size() <= task.allUsedCandidateReadIdPairs.size());
             }
 
+            // std::cerr << "id " << task.id << ", after iteration " << task.iteration << "\n";
+            // std::cerr << "used " << task.allUsedCandidateReadIdPairs.size() << ": ";
+            // std::copy(task.allUsedCandidateReadIdPairs.begin(), task.allUsedCandidateReadIdPairs.end(), std::ostream_iterator<read_number>(std::cerr, ", "));
+            // std::cerr << "\n";
+            // std::cerr << "fully used " << task.allFullyUsedCandidateReadIdPairs.size() << ": ";
+            // std::copy(task.allFullyUsedCandidateReadIdPairs.begin(), task.allFullyUsedCandidateReadIdPairs.end(), std::ostream_iterator<read_number>(std::cerr, ", "));
+            // std::cerr << "\n";
+
             // std::cerr << "task readid " << task.myReadId << "iteration " << task.iteration << " fullyused\n";
             // std::copy(task.allFullyUsedCandidateReadIdPairs.begin(), task.allFullyUsedCandidateReadIdPairs.end(), std::ostream_iterator<read_number>(std::cerr, " "));
             // std::cerr << "\n";
@@ -622,34 +630,89 @@ private:
             assert(tasks[taskindex2].isPairedCandidate.size() ==  tasks[taskindex2].candidateReadIds.size());
 
             if(areConsecutiveTasks && arePairedTasks){
-                const int begin1 = 0;
-                const int end1 = tasks[taskindex1].candidateReadIds.size();
-                const int begin2 = 0;
-                const int end2 = tasks[taskindex2].candidateReadIds.size();
+                //check for pairs in current candidates
+                {
+                    const int begin1 = 0;
+                    const int end1 = tasks[taskindex1].candidateReadIds.size();
+                    const int begin2 = 0;
+                    const int end2 = tasks[taskindex2].candidateReadIds.size();
 
-                // assert(std::is_sorted(pairIds + begin1, pairIds + end1));
-                // assert(std::is_sorted(pairIds + begin2, pairIds + end2));
+                    // assert(std::is_sorted(pairIds + begin1, pairIds + end1));
+                    // assert(std::is_sorted(pairIds + begin2, pairIds + end2));
 
-                std::vector<int> pairedPositions(std::min(end1-begin1, end2-begin2));
-                std::vector<int> pairedPositions2(std::min(end1-begin1, end2-begin2));
+                    std::vector<int> pairedPositions(std::min(end1-begin1, end2-begin2));
+                    std::vector<int> pairedPositions2(std::min(end1-begin1, end2-begin2));
 
-                auto endIters = findPositionsOfPairedReadIds(
-                    tasks[taskindex1].candidateReadIds.begin() + begin1,
-                    tasks[taskindex1].candidateReadIds.begin() + end1,
-                    tasks[taskindex2].candidateReadIds.begin() + begin2,
-                    tasks[taskindex2].candidateReadIds.begin() + end2,
-                    pairedPositions.begin(),
-                    pairedPositions2.begin()
-                );
+                    auto endIters = findPositionsOfPairedReadIds(
+                        tasks[taskindex1].candidateReadIds.begin() + begin1,
+                        tasks[taskindex1].candidateReadIds.begin() + end1,
+                        tasks[taskindex2].candidateReadIds.begin() + begin2,
+                        tasks[taskindex2].candidateReadIds.begin() + end2,
+                        pairedPositions.begin(),
+                        pairedPositions2.begin()
+                    );
 
-                pairedPositions.erase(endIters.first, pairedPositions.end());
-                pairedPositions2.erase(endIters.second, pairedPositions2.end());
-                
-                for(auto i : pairedPositions){
-                    tasks[taskindex1].isPairedCandidate[begin1 + i] = true;
+                    pairedPositions.erase(endIters.first, pairedPositions.end());
+                    pairedPositions2.erase(endIters.second, pairedPositions2.end());
+                    
+                    for(auto i : pairedPositions){
+                        tasks[taskindex1].isPairedCandidate[begin1 + i] = true;
+                    }
+                    for(auto i : pairedPositions2){
+                        tasks[taskindex2].isPairedCandidate[begin2 + i] = true;
+                    }
                 }
-                for(auto i : pairedPositions2){
-                    tasks[taskindex2].isPairedCandidate[begin2 + i] = true;
+
+                //check for pairs in candidates of previous extension iterations
+                {
+                    const int end1 = tasks[taskindex1].candidateReadIds.size();
+                    const int end2 =  tasks[taskindex2].allUsedCandidateReadIdPairs.size();
+
+                    const int maxNumPositions = std::min(end1, end2);
+
+                    std::vector<int> pairedPositions(maxNumPositions);
+                    std::vector<int> pairedPositions2(maxNumPositions);
+
+                    auto endIters = findPositionsOfPairedReadIds(
+                        tasks[taskindex1].candidateReadIds.begin(),
+                        tasks[taskindex1].candidateReadIds.begin() + end1,
+                        tasks[taskindex2].allUsedCandidateReadIdPairs.begin(),
+                        tasks[taskindex2].allUsedCandidateReadIdPairs.begin() + end2,
+                        pairedPositions.begin(),
+                        pairedPositions2.begin()
+                    );
+
+                    pairedPositions.erase(endIters.first, pairedPositions.end());
+                    
+                    for(auto i : pairedPositions){
+                        tasks[taskindex1].isPairedCandidate[i] = true;
+                    }
+                }
+
+                //check for pairs in candidates of previous extension iterations
+                {
+                    const int end1 = tasks[taskindex2].candidateReadIds.size();
+                    const int end2 =  tasks[taskindex1].allUsedCandidateReadIdPairs.size();
+
+                    const int maxNumPositions = std::min(end1, end2);
+
+                    std::vector<int> pairedPositions(maxNumPositions);
+                    std::vector<int> pairedPositions2(maxNumPositions);
+
+                    auto endIters = findPositionsOfPairedReadIds(
+                        tasks[taskindex2].candidateReadIds.begin(),
+                        tasks[taskindex2].candidateReadIds.begin() + end1,
+                        tasks[taskindex1].allUsedCandidateReadIdPairs.begin(),
+                        tasks[taskindex1].allUsedCandidateReadIdPairs.begin() + end2,
+                        pairedPositions.begin(),
+                        pairedPositions2.begin()
+                    );
+
+                    pairedPositions.erase(endIters.first, pairedPositions.end());
+                    
+                    for(auto i : pairedPositions){
+                        tasks[taskindex2].isPairedCandidate[i] = true;
+                    }
                 }
                 
                 first += 2; second += 2;
@@ -838,6 +901,9 @@ private:
                             goodAlignmentExists = true;
                             const float tmp = floorf(relativeOverlap * 10.0f) / 10.0f;
                             relativeOverlapThreshold = fmaxf(relativeOverlapThreshold, tmp);
+                            // if(task.id == 1 && task.iteration == 14){
+                            //     printf("%d %f %f %f\n", c, relativeOverlap, tmp, relativeOverlapThreshold);
+                            // }
                         }
                     }
                 }else{
@@ -1515,9 +1581,17 @@ private:
             auto& task = tasks[indexOfActiveTask];
 
             if(task.numRemainingCandidates > 0){
+                // if(task.id == 1 && task.iteration == 14){
+                //     std::cerr << "task.numRemainingCandidates = " << task.numRemainingCandidates << "\n";
+                // }
 
                 const auto msa = constructMSA(task, candidateQualities.data() + offsets[&indexOfActiveTask - indicesOfActiveTasks.data()] * qualityPitchInBytes);
                 const auto result = extendWithMsa(task, msa);
+
+                // //if(task.id == 1){
+                //     std::cerr << "id: " << task.id << ", iter: " << task.iteration << ", mateHasBeenFound: " << result.mateHasBeenFound << ", abort: " << to_string(result.abortReason)
+                //         << ", newaccum: " << result.newAccumExtensionLength << ", newanchor: " << result.newAnchor << "\n";
+                // //}
 
                 task.abortReason = result.abortReason;
                 if(task.abortReason == extension::AbortReason::None){
