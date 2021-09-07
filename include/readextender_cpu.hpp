@@ -1431,7 +1431,7 @@ private:
                 result.newLength = anchorLength;
                 result.newAnchor = std::string(msa.consensus.data() + extendBy, anchorLength);
                 result.newQuality.resize(anchorLength);
-                std::transform(msa.support.begin(), msa.support.begin() + anchorLength, result.newQuality.begin(),
+                std::transform(msa.support.begin() + extendBy, msa.support.begin() + extendBy + anchorLength, result.newQuality.begin(),
                     [](const float f){
                         return getQualityChar(f);
                     }
