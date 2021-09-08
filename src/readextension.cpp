@@ -140,7 +140,7 @@ SerializedObjectStorage extend_cpu_pairedend(
 
     SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, fileOptions.tempdirectory + "/");
 
-    const std::size_t numReadsToProcess = 50000;
+    const std::size_t numReadsToProcess = 200000;
     //const std::size_t numReadsToProcess = readStorage.getNumberOfReads();
 
     auto readIdGenerator = makeIteratorRangeTraversal(
