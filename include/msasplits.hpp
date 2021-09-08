@@ -129,8 +129,8 @@ struct CheckAmbiguousColumns{
                     
                     //column range check for row
                     if(candidateColumnsBegin_incl <= psc0.column && psc0.column < candidateColumnsEnd_excl){                        
-
-                        const char nuc = myCandidate[psc0.column];
+                        const int positionInCandidate = psc0.column - candidateColumnsBegin_incl;
+                        const char nuc = myCandidate[positionInCandidate];
 
                         if(nuc == psc0.nuc){
                             flags = flags | 0b10;
