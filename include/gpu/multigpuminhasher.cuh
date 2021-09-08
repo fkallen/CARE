@@ -695,6 +695,10 @@ namespace gpu{
             }
         }
 
+        int getKmerSize() const noexcept override{
+            return kmerSize;
+        }
+
         void destroy(){
             for(auto& minhasher : sgpuMinhashers){
                 DeviceSwitcher sd(minhasher->getDeviceId());
@@ -1356,9 +1360,6 @@ private:
             compact();
         }
 
-        constexpr int getKmerSize() const noexcept{
-            return kmerSize;
-        }
 
         std::uint64_t getKmerMask() const{
             constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;

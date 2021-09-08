@@ -614,16 +614,16 @@ namespace gpu{
             minhashTables.clear();
         }
 
+        int getKmerSize() const noexcept override{
+            return kmerSize;
+        }
+
         bool hasGpuTables() const noexcept override {
             return false;
         }
 
         void finalize(cudaStream_t stream = 0){
             compact(stream);
-        }
-
-        int getKmerSize() const{
-            return kmerSize;
         }
 
         std::uint64_t getKmerMask() const{

@@ -1129,6 +1129,10 @@ namespace gpu{
             CUDACHECK(cudaMemcpyAsync(d_offsets, d_newOffsets, sizeof(int) * (numSequences+1), D2D, stream));
         }
 
+        int getKmerSize() const noexcept override{
+            return kmerSize;
+        }
+
 
         constexpr int getDeviceId() const noexcept{
             return deviceId;
@@ -1138,10 +1142,6 @@ private:
 
         void finalize(cudaStream_t stream = 0){
             compact(stream);
-        }
-
-        constexpr int getKmerSize() const noexcept{
-            return kmerSize;
         }
 
         std::uint64_t getKmerMask() const{
