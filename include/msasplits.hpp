@@ -158,7 +158,7 @@ struct CheckAmbiguousColumns{
 
         numEncodedRows = std::distance(&encodedRows[0], uniqueEnd);
 
-        int numNoEqualEncodedRow = 0;
+        int numNoEqualEncodedRow = 1;
         for(int i = 0; i < numEncodedRows - 1; i++){
             const std::uint64_t encodedRow = encodedRows[i];
 
