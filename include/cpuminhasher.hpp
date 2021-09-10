@@ -50,6 +50,8 @@ public:
     
     virtual int getNumberOfMaps() const noexcept = 0;
 
+    virtual int getKmerSize() const noexcept = 0;
+
     //virtual void destroy() = 0;
 
 protected:

@@ -459,17 +459,16 @@ namespace care{
             return minhashTables.size();
         }
 
+        int getKmerSize() const noexcept override{
+            return kmerSize;
+        }
+
         void destroy() {
             minhashTables.clear();
         }
 
         void finalize(){
             compact();
-        }
-
-
-        int getKmerSize() const{
-            return kmerSize;
         }
 
         std::uint64_t getKmerMask() const{
