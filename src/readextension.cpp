@@ -434,8 +434,6 @@ SerializedObjectStorage extend_cpu_pairedend(
             progressThread.addProgress(extensionResults.size() - repeated);
         };
         
-
-        isLastIteration = false;
         while(!(readIdGenerator.empty())){
             auto inputs = init();
 

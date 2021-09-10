@@ -166,7 +166,11 @@ private:
 
         hashTimer.start();
 
+        #if 0
         getCandidateReadIds(tasks, indicesOfActiveTasks);
+        #else
+        getCandidateReadIdsWithExtraExtensionHash(tasks, indicesOfActiveTasks);
+        #endif
 
         // for(auto indexOfActiveTask : indicesOfActiveTasks){
         //     const auto& task = tasks[indexOfActiveTask];
@@ -442,6 +446,100 @@ private:
             }
 
         #endif
+    }
+
+    void getCandidateReadIdsWithExtraExtensionHash(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) const{
+
+        //for each task, two strings will be hashed. the current sequence, and the part which has been extended by the previous iteration
+        const int numAnchors = indicesOfActiveTasks.size();        
+        const int numSequences = 2 * numAnchors;
+
+        int totalNumValues = 0;
+        std::vector<int> numValuesPerSequence(numSequences);
+
+        {
+            std::vector<unsigned int> sequences(encodedSequencePitchInInts * numSequences);
+            std::vector<int> lengths(numSequences);
+
+            for(int i = 0; i < numAnchors; i++){
+                const auto& task = tasks[indicesOfActiveTasks[i]];
+                std::copy(task.currentAnchor.begin(), task.currentAnchor.end(), sequences.begin() + i * encodedSequencePitchInInts);
+                lengths[i] = task.currentAnchorLength;
+            }
+
+            const int kmersize = activeMinhasher->getKmerSize();
+            const int extralength = SDIV(maxextensionPerStep + kmersize - 1, 4) * 4; //rounded up to multiple of 4
+
+            std::vector<char> buffer(encodedSequencePitchInInts * SequenceHelpers::basesPerInt2Bit());
+
+            for(int i = 0; i < numAnchors; i++){
+                const auto& task = tasks[indicesOfActiveTasks[i]];
+                const int dataIndex = numAnchors + i;
+
+                if(task.iteration > 0){
+                    const int end = task.currentAnchorLength;
+                    const int begin = std::max(0, end - extralength);
+                    SequenceHelpers::decode2BitSequence(
+                        buffer.data(), 
+                        task.currentAnchor.data(), 
+                        task.currentAnchorLength
+                    );
+                    SequenceHelpers::encodeSequence2Bit(
+                        sequences.data() + dataIndex * encodedSequencePitchInInts,
+                        buffer.data() + begin,
+                        end - begin
+                    );
+
+                    lengths[dataIndex] = end - begin;
+                }else{
+                    lengths[dataIndex] = 0;
+                }
+            }
+
+
+            activeMinhasher->determineNumValues(
+                minhashHandle,
+                sequences.data(),
+                encodedSequencePitchInInts,
+                lengths.data(),
+                numSequences,
+                numValuesPerSequence.data(),
+                totalNumValues
+            );
+        }
+
+        std::vector<read_number> allCandidates(totalNumValues);
+        std::vector<int> offsets(numSequences + 1);
+
+        activeMinhasher->retrieveValues(
+            minhashHandle,
+            nullptr, //do not remove selfid
+            numSequences,
+            totalNumValues,
+            allCandidates.data(),
+            numValuesPerSequence.data(),
+            offsets.data()
+        );
+
+        for(int i = 0; i < numAnchors; i++){
+            auto& task = tasks[indicesOfActiveTasks[i]];
+
+            //merge both lists of hash values per task
+            const int numNormal = numValuesPerSequence[i];
+            const int numExtra = numValuesPerSequence[numAnchors + i];
+            const int offsetNormal = offsets[i];
+            const int offsetExtra = offsets[numAnchors + i];
+
+            task.candidateReadIds.resize(numNormal + numExtra);
+            auto newend = std::set_union(
+                allCandidates.begin() + offsetNormal,
+                allCandidates.begin() + offsetNormal + numNormal,
+                allCandidates.begin() + offsetExtra,
+                allCandidates.begin() + offsetExtra + numExtra,
+                task.candidateReadIds.begin()
+            );
+            task.candidateReadIds.erase(newend, task.candidateReadIds.end());
+        }
     }
 
     void removeUsedIdsAndMateIds(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) const{
