@@ -5,6 +5,7 @@
 #include <hpc_helpers.cuh>
 
 #include <optional>
+#include <thread>
 
 namespace care{
 
@@ -119,7 +120,7 @@ namespace care{
                 capacity_ = newcapacity;
 
                 if(previousAllocStream.has_value() && stream != *previousAllocStream){
-                    std::cerr << "reserveUninitialized streamchange\n";
+                    //std::cerr << std::this_thread::get_id() << " reserveUninitialized streamchange " << *previousAllocStream << " -> " << stream << "\n";
                 } 
                 previousAllocStream = stream;
 
@@ -168,7 +169,7 @@ namespace care{
                 capacity_ = newcapacity;
 
                 if(previousAllocStream.has_value() && stream != *previousAllocStream){
-                    std::cerr << "reserve streamchange\n";
+                    //std::cerr << "reserve streamchange\n";
                 }
                 previousAllocStream = stream;
 
@@ -198,7 +199,7 @@ namespace care{
             assert(last <= end());
 
             if(previousAllocStream.has_value() && stream != *previousAllocStream){
-                std::cerr << "erase not on previousAllocStream\n";
+                //std::cerr << "erase not on previousAllocStream\n";
             }
 
             if(last < end()){

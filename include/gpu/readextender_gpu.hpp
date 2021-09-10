@@ -59,6 +59,9 @@ namespace care{
 namespace gpu{
 
 
+// std::mutex someGlobalMutex;
+// std::mutex someGlobalMutex2;
+
 cudaError_t cudaEventRecordWrapper(cudaEvent_t event, cudaStream_t stream){
     //std::cerr << "record event " << event << " on stream " << stream << "\n";
     return cudaEventRecord(event, stream);
@@ -109,6 +112,44 @@ struct ThrustTupleAddition<3>{
     }
 };
 
+
+
+
+__global__
+void checkSortedSegmentsKernel(
+    int numAnchors, 
+    int numCandidates,
+    const read_number* d_candidateReadIds,
+    const int* d_numCandidatesPerAnchor,
+    const int* d_numCandidatesPerAnchorPrefixSum
+){
+    for(int a = blockIdx.x; a < numAnchors; a += gridDim.x){
+        __syncthreads();
+
+        for(int i = 1 + threadIdx.x; i < numAnchors + 1; i+=blockDim.x){
+            assert(d_numCandidatesPerAnchor[i-1] == 
+                (d_numCandidatesPerAnchorPrefixSum[i] - d_numCandidatesPerAnchorPrefixSum[i - 1]));
+        }
+        if(!(numCandidates == d_numCandidatesPerAnchorPrefixSum[numAnchors])){
+            if(threadIdx.x == 0){
+                printf("a %d, numCandidates %d, lastps %d\n", a, numCandidates, d_numCandidatesPerAnchorPrefixSum[numAnchors]);
+            }
+            __syncthreads();
+            assert(numCandidates == d_numCandidatesPerAnchorPrefixSum[numAnchors]);
+        }
+
+        __syncthreads();
+
+        const int offset = d_numCandidatesPerAnchorPrefixSum[a];
+        const int num = d_numCandidatesPerAnchor[a];
+
+        for(int i = 1 + threadIdx.x; i < num; i+=blockDim.x){
+            assert(d_candidateReadIds[offset + i - 1] < d_candidateReadIds[offset + i]);
+        }
+
+        __syncthreads();
+    }
+}
 
 
 struct GpuReadExtender{
@@ -1116,6 +1157,8 @@ struct GpuReadExtender{
             CachedDeviceUVector<int> positions(entries, stream, *cubAllocator);
             CachedDeviceUScalar<int> d_numSelected(1, stream, *cubAllocator);
 
+            CUDACHECKASYNC; //DEBUG
+
             CubCallWrapper(*cubAllocator).cubSelectFlagged(
                 thrust::make_counting_iterator(0),
                 d_selectionFlags,
@@ -1124,6 +1167,8 @@ struct GpuReadExtender{
                 entries,
                 stream
             );
+
+            CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
 
             int* numSelected = reinterpret_cast<int*>(hostTempStorage);
             CUDACHECK(cudaMemcpyAsync(numSelected, d_numSelected.data(), sizeof(int), D2H, stream));
@@ -1731,6 +1776,510 @@ struct GpuReadExtender{
                 results.d_candidateReadIds.erase(results.d_candidateReadIds.begin() + (*h_numCandidates), results.d_candidateReadIds.end(), stream);
             }
         }
+    
+        template<class Flags>
+        void getCandidateReadIdsWithExtraExtensionHash(
+            cub::CachingDeviceAllocator& cubAlloc,
+            const AnchorData& anchorData, 
+            AnchorHashResult& results, 
+            const IterationConfig& iterationConfig, 
+            Flags d_extraFlags,
+            cudaStream_t stream
+        ){
+            //std::lock_guard<std::mutex> lg(someGlobalMutex2);
+
+            //Compute the extra sequences
+            const int numAnchors = anchorData.d_anchorSequencesLength.size();
+            const int kmersize = gpuMinhasher->getKmerSize();
+            const int extralength = SDIV(iterationConfig.maxextensionPerStep + kmersize - 1, 4) * 4; //rounded up to multiple of 4
+            assert(extralength > 0);
+            const std::size_t extraDecodedPitch = SDIV(extralength, 256) * 256; //rounded up to multiple of 256            
+
+            CachedDeviceUVector<char> extraDecodedSequences(extraDecodedPitch * numAnchors, stream, cubAlloc);
+            CachedDeviceUVector<int> extraSequenceLengths(numAnchors, stream, cubAlloc);
+
+            readextendergpukernels::copyLastNCharactersOfStrings<256>
+            <<<SDIV(numAnchors, (256 / 32)), 256, 0, stream>>>(
+                numAnchors,
+                anchorData.d_anchorSequencesDataDecoded.data(),
+                anchorData.d_anchorSequencesLength.data(),
+                anchorData.decodedSequencePitchInBytes,
+                extraDecodedSequences.data(),
+                extraSequenceLengths.data(),
+                extraDecodedPitch,
+                d_extraFlags,
+                extralength
+            );
+
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+            const std::size_t extraEncodedPitchInInts = SequenceHelpers::getEncodedNumInts2Bit(extralength);
+
+            CachedDeviceUVector<unsigned int> extraEncodedSequences(extraEncodedPitchInInts * numAnchors, stream, cubAlloc);
+
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+            readextendergpukernels::encodeSequencesTo2BitKernel<8>
+            <<<SDIV(numAnchors, (128 / 8)), 128, 0, stream>>>(
+                extraEncodedSequences.data(),
+                extraDecodedSequences.data(),
+                extraSequenceLengths.data(),
+                extraDecodedPitch,
+                extraEncodedPitchInInts,
+                numAnchors
+            ); CUDACHECKASYNC;
+
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+            // std::vector<int> aaalengths(numAnchors);
+            // CUDACHECK(cudaMemcpy(aaalengths.data(), extraSequenceLengths.data(), sizeof(int) * numAnchors, D2H));
+            // for(auto x : aaalengths){
+            //     std::cerr << x << ",";
+            // }
+            // std::cerr << "\n";
+
+            extraDecodedSequences.destroy();
+
+
+            //hash extra sequences
+
+            CachedDeviceUVector<int> d_numCandidatesPerAnchorExtra(numAnchors, stream, cubAlloc);
+
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+            
+            int totalNumValuesExtraSequences = 0;
+
+            gpuMinhasher->determineNumValues(
+                minhashHandle,
+                extraEncodedSequences.data(),
+                extraEncodedPitchInInts,
+                extraSequenceLengths.data(),
+                numAnchors,
+                d_numCandidatesPerAnchorExtra.data(),
+                totalNumValuesExtraSequences,
+                stream
+            );
+
+            CUDACHECK(cudaStreamSynchronizeWrapper(stream));
+
+            extraEncodedSequences.destroy();
+            extraSequenceLengths.destroy();
+
+            CachedDeviceUVector<read_number> d_candidateReadIdsExtra(totalNumValuesExtraSequences, stream, cubAlloc);
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+            CachedDeviceUVector<int> d_numCandidatesPerAnchorPrefixSumExtra(numAnchors + 1, stream, cubAlloc);
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+            //std::cerr << std::this_thread::get_id() << " numextrabefore: " << totalNumValuesExtraSequences << "\n";
+
+            if(totalNumValuesExtraSequences == 0){
+                CUDACHECK(cudaMemsetAsync(d_numCandidatesPerAnchorExtra.data(), 0, sizeof(int) * numAnchors , stream));
+                CUDACHECK(cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSumExtra.data(), 0, sizeof(int) * (1 + numAnchors), stream));
+
+            //     CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+            }else{
+
+                // CUDACHECKASYNC; //DEBUG
+                // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+                gpuMinhasher->retrieveValues(
+                    minhashHandle,
+                    nullptr,
+                    numAnchors,              
+                    totalNumValuesExtraSequences,
+                    d_candidateReadIdsExtra.data(),
+                    d_numCandidatesPerAnchorExtra.data(),
+                    d_numCandidatesPerAnchorPrefixSumExtra.data(),
+                    stream
+                );
+
+                // CUDACHECKASYNC; //DEBUG
+                // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+
+                CUDACHECK(cudaMemcpyAsync(
+                    h_numCandidates.data(),
+                    d_numCandidatesPerAnchorPrefixSumExtra.data() + numAnchors,
+                    sizeof(int),
+                    D2H,
+                    stream
+                ));
+
+                CUDACHECK(cudaStreamSynchronizeWrapper(stream));
+                totalNumValuesExtraSequences = *h_numCandidates;
+
+                //d_candidateReadIdsExtra.erase(d_candidateReadIdsExtra.begin() + totalNumValuesExtraSequences, d_candidateReadIdsExtra.end(), stream);
+
+                //std::cerr << std::this_thread::get_id() << " numextraafter: " << totalNumValuesExtraSequences << "\n";
+            }
+
+            // checkSortedSegmentsKernel<<<numAnchors, 128, 0, stream>>>(
+            //     numAnchors, 
+            //     totalNumValuesExtraSequences,
+            //     d_candidateReadIdsExtra.data(),
+            //     d_numCandidatesPerAnchorExtra.data(),
+            //     d_numCandidatesPerAnchorPrefixSumExtra.data()
+            // );
+
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+
+
+
+            //hash anchor sequences
+
+            CachedDeviceUVector<int> d_numCandidatesPerAnchor(numAnchors, stream, cubAlloc);
+
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+            
+            int totalNumValuesAnchorSequences = 0;
+
+            gpuMinhasher->determineNumValues(
+                minhashHandle,
+                anchorData.d_anchorSequencesData.data(),
+                anchorData.encodedSequencePitchInInts,
+                anchorData.d_anchorSequencesLength.data(),
+                numAnchors,
+                d_numCandidatesPerAnchor.data(),
+                totalNumValuesAnchorSequences,
+                stream
+            );
+
+            CUDACHECK(cudaStreamSynchronizeWrapper(stream));
+
+            CachedDeviceUVector<read_number> d_candidateReadIds(totalNumValuesAnchorSequences, stream, cubAlloc);
+            CachedDeviceUVector<int> d_numCandidatesPerAnchorPrefixSum(numAnchors + 1, stream, cubAlloc);
+
+            //std::cerr << std::this_thread::get_id() << " numnormalbefore: " << totalNumValuesAnchorSequences << "\n";
+
+            if(totalNumValuesAnchorSequences == 0){
+                CUDACHECK(cudaMemsetAsync(d_numCandidatesPerAnchor.data(), 0, sizeof(int) * numAnchors , stream));
+                CUDACHECK(cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.data(), 0, sizeof(int) * (1 + numAnchors), stream));
+
+                // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+            }else{
+
+                // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+                gpuMinhasher->retrieveValues(
+                    minhashHandle,
+                    nullptr,
+                    numAnchors,              
+                    totalNumValuesAnchorSequences,
+                    d_candidateReadIds.data(),
+                    d_numCandidatesPerAnchor.data(),
+                    d_numCandidatesPerAnchorPrefixSum.data(),
+                    stream
+                );
+
+               // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+
+                CUDACHECK(cudaMemcpyAsync(
+                    h_numCandidates.data(),
+                    d_numCandidatesPerAnchorPrefixSum.data() + numAnchors,
+                    sizeof(int),
+                    D2H,
+                    stream
+                ));
+
+                CUDACHECK(cudaStreamSynchronizeWrapper(stream));
+                totalNumValuesAnchorSequences = *h_numCandidates;
+
+                //d_candidateReadIds.erase(d_candidateReadIds.begin() + totalNumValuesAnchorSequences, d_candidateReadIds.end(), stream);
+
+                //std::cerr << std::this_thread::get_id() << " numextraafter: " << totalNumValuesExtraSequences << "\n";
+            }
+
+            // checkSortedSegmentsKernel<<<numAnchors, 128, 0, stream>>>(
+            //     numAnchors, 
+            //     totalNumValuesAnchorSequences,
+            //     d_candidateReadIds.data(),
+            //     d_numCandidatesPerAnchor.data(),
+            //     d_numCandidatesPerAnchorPrefixSum.data()
+            // );
+
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+            //for each anchor compute set_union with extra candidates
+
+            results.d_numCandidatesPerAnchor.resizeUninitialized(numAnchors, stream);
+            //std::cerr << std::this_thread::get_id() << " results.d_numCandidatesPerAnchor = " << results.d_numCandidatesPerAnchor.data() << "\n";
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+            // std::cerr << std::this_thread::get_id() << " resize to " 
+            //     << totalNumValuesAnchorSequences << " + " << totalNumValuesExtraSequences 
+            //     << " = " << (totalNumValuesAnchorSequences + totalNumValuesExtraSequences) << "\n";
+            results.d_candidateReadIds.resizeUninitialized(totalNumValuesAnchorSequences + totalNumValuesExtraSequences, stream);
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+            int deviceId = 0;
+            CUDACHECK(cudaGetDevice(&deviceId));
+            
+            ThrustCachingAllocator<char> thrustCachingAllocator(deviceId, &cubAlloc, stream);
+
+            CUDACHECKASYNC; //DEBUG
+            CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+            auto newend = GpuSegmentedSetOperation::set_union(
+                thrustCachingAllocator,
+                d_candidateReadIds.data(),
+                d_numCandidatesPerAnchor.data(),
+                d_numCandidatesPerAnchorPrefixSum.data(),
+                totalNumValuesAnchorSequences,
+                numAnchors,
+                d_candidateReadIdsExtra.data(),
+                d_numCandidatesPerAnchorExtra.data(),
+                d_numCandidatesPerAnchorPrefixSumExtra.data(),
+                totalNumValuesExtraSequences,
+                numAnchors,
+                results.d_candidateReadIds.data(),
+                results.d_numCandidatesPerAnchor.data(),
+                numAnchors,
+                stream
+            );
+
+            // if(!(newend <= results.d_candidateReadIds.end())){
+            //     std::cerr << std::this_thread::get_id() << " newend " << newend 
+            //         << ", results.d_candidateReadIds.end() " << results.d_candidateReadIds.end() << "\n"; 
+            // }
+
+            assert(newend <= results.d_candidateReadIds.end());
+
+           // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+            results.d_candidateReadIds.erase(newend, results.d_candidateReadIds.end(), stream);
+            //std::cerr << std::this_thread::get_id() << " size after erase " << results.d_candidateReadIds.size() << "\n";
+
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+            d_candidateReadIdsExtra.destroy();
+            d_numCandidatesPerAnchorExtra.destroy();
+            d_numCandidatesPerAnchorPrefixSumExtra.destroy();
+
+            d_candidateReadIds.destroy();
+            d_numCandidatesPerAnchor.destroy();
+            d_numCandidatesPerAnchorPrefixSum.destroy();
+
+            results.d_numCandidatesPerAnchorPrefixSum.resizeUninitialized(numAnchors + 1, stream);
+
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+
+            CUDACHECK(cudaMemsetAsync(results.d_numCandidatesPerAnchorPrefixSum.data(), 0, sizeof(int), stream));
+
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+
+            CubCallWrapper(cubAlloc).cubInclusiveSum(
+                results.d_numCandidatesPerAnchor.data(),
+                results.d_numCandidatesPerAnchorPrefixSum.data() + 1,
+                numAnchors,
+                stream
+            );
+
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+
+
+            // {
+            //     std::vector<read_number> h_candidateReadIds(d_candidateReadIds.size());
+            //     CUDACHECK(cudaMemcpy(h_candidateReadIds.data(), d_candidateReadIds.data(), sizeof(read_number) * d_candidateReadIds.size(), D2H));
+
+            //     std::vector<int> h_numCandidatesPerAnchor(d_numCandidatesPerAnchor.size());
+            //     CUDACHECK(cudaMemcpy(h_numCandidatesPerAnchor.data(), d_numCandidatesPerAnchor.data(), sizeof(int) * d_numCandidatesPerAnchor.size(), D2H));
+
+            //     std::vector<int> h_numCandidatesPerAnchorPrefixSum(d_numCandidatesPerAnchorPrefixSum.size());
+            //     CUDACHECK(cudaMemcpy(h_numCandidatesPerAnchorPrefixSum.data(), d_numCandidatesPerAnchorPrefixSum.data(), sizeof(int) * d_numCandidatesPerAnchorPrefixSum.size(), D2H));
+
+            //     std::vector<read_number> h_candidateReadIdsExtra(d_candidateReadIdsExtra.size());
+            //     CUDACHECK(cudaMemcpy(h_candidateReadIdsExtra.data(), d_candidateReadIdsExtra.data(), sizeof(read_number) * d_candidateReadIdsExtra.size(), D2H));
+
+            //     std::vector<int> h_numCandidatesPerAnchorExtra(d_numCandidatesPerAnchorExtra.size());
+            //     CUDACHECK(cudaMemcpy(h_numCandidatesPerAnchorExtra.data(), d_numCandidatesPerAnchorExtra.data(), sizeof(int) * d_numCandidatesPerAnchorExtra.size(), D2H));
+
+            //     std::vector<int> h_numCandidatesPerAnchorPrefixSumExtra(d_numCandidatesPerAnchorPrefixSumExtra.size());
+            //     CUDACHECK(cudaMemcpy(h_numCandidatesPerAnchorPrefixSumExtra.data(), d_numCandidatesPerAnchorPrefixSumExtra.data(), sizeof(int) * d_numCandidatesPerAnchorPrefixSumExtra.size(), D2H));
+
+            //     std::vector<read_number> h_resultIds(results.d_candidateReadIds.size());
+            //     CUDACHECK(cudaMemcpy(h_resultIds.data(), results.d_candidateReadIds.data(), sizeof(read_number) * results.d_candidateReadIds.size(), D2H));
+
+            //     std::vector<int> h_nums(results.d_numCandidatesPerAnchor.size());
+            //     CUDACHECK(cudaMemcpy(h_nums.data(), results.d_numCandidatesPerAnchor.data(), sizeof(int) * results.d_numCandidatesPerAnchor.size(), D2H));
+
+            //     std::vector<int> h_prefixsums(results.d_numCandidatesPerAnchorPrefixSum.size());
+            //     CUDACHECK(cudaMemcpy(h_prefixsums.data(), results.d_numCandidatesPerAnchorPrefixSum.data(), sizeof(int) * results.d_numCandidatesPerAnchorPrefixSum.size(), D2H));
+
+            //     for(int a = 0; a < numAnchors; a++){
+            //         const int num1 = h_numCandidatesPerAnchor[a];
+            //         const int offset1 = h_numCandidatesPerAnchorPrefixSum[a];
+            //         const int num2 = h_numCandidatesPerAnchorExtra[a];
+            //         const int offset2 = h_numCandidatesPerAnchorPrefixSumExtra[a];
+
+            //         const read_number* ids1 = h_candidateReadIds.data() + offset1;
+            //         const read_number* ids2 = h_candidateReadIdsExtra.data() + offset2;
+
+            //         std::vector<read_number> vecresult(num1 + num2);
+
+            //         vecresult.erase(
+            //             std::set_union(ids1, ids1 + num1, ids2, ids2 + num2, vecresult.begin()),
+            //             vecresult.end()
+            //         );
+
+            //         const int num3 = h_nums[a];
+            //         const int offset3 = h_prefixsums[a];
+            //         const read_number* ids3 = h_resultIds.data() + offset3;
+            //         bool equal = std::equal(vecresult.begin(), vecresult.end(), ids3, ids3 + num3);
+
+            //         if(!equal){
+            //             std::lock_guard<std::mutex> lg(someGlobalMutex);
+            //             std::ofstream os1("output1.txt");
+
+            //             os1 << "a: " << a << " not equal. " << num1 << ", " << num2 << ", " << num3 << ", " << vecresult.size() << "\n";
+            //             std::copy(ids1, ids1 + num1, std::ostream_iterator<read_number>(os1, ","));
+            //             os1 << "\n";
+            //             std::copy(ids2, ids2 + num2, std::ostream_iterator<read_number>(os1, ","));
+            //             os1 << "\n";
+            //             std::copy(ids3, ids3 + num3, std::ostream_iterator<read_number>(os1, ","));
+            //             os1 << "\n";
+            //             std::copy(vecresult.begin(), vecresult.end(), std::ostream_iterator<read_number>(os1, ","));
+            //             os1 << "\n";
+
+            //             os1.flush();
+
+            //             std::ofstream os2("output2.txt");
+            //             std::copy(h_candidateReadIds.begin(), h_candidateReadIds.end(), std::ostream_iterator<read_number>(os2, ","));
+            //             os2 << "\n";
+
+            //             std::copy(h_numCandidatesPerAnchor.begin(), h_numCandidatesPerAnchor.end(), std::ostream_iterator<int>(os2, ","));
+            //             os2 << "\n";
+
+            //             std::copy(h_numCandidatesPerAnchorPrefixSum.begin(), h_numCandidatesPerAnchorPrefixSum.end(), std::ostream_iterator<int>(os2, ","));
+            //             os2 << "\n";
+
+            //             std::copy(h_candidateReadIdsExtra.begin(), h_candidateReadIdsExtra.end(), std::ostream_iterator<read_number>(os2, ","));
+            //             os2 << "\n";
+
+            //             std::copy(h_numCandidatesPerAnchorExtra.begin(), h_numCandidatesPerAnchorExtra.end(), std::ostream_iterator<int>(os2, ","));
+            //             os2 << "\n";
+
+            //             std::copy(h_numCandidatesPerAnchorPrefixSumExtra.begin(), h_numCandidatesPerAnchorPrefixSumExtra.end(), std::ostream_iterator<int>(os2, ","));
+            //             os2 << "\n";
+
+            //             std::copy(h_resultIds.begin(), h_resultIds.end(), std::ostream_iterator<read_number>(os2, ","));
+            //             os2 << "\n";
+
+            //             std::copy(h_nums.begin(), h_nums.end(), std::ostream_iterator<int>(os2, ","));
+            //             os2 << "\n";
+
+            //             std::copy(h_prefixsums.begin(), h_prefixsums.end(), std::ostream_iterator<int>(os2, ","));
+            //             os2 << "\n";
+
+            //             os2.flush();
+
+            //             std::cerr << std::this_thread::get_id() << " assert false, results.d_numCandidatesPerAnchor = " << results.d_numCandidatesPerAnchor.data() << "\n";
+            //             assert(false);
+            //         }
+            //     }
+            // }
+
+            // checkSortedSegmentsKernel<<<numAnchors, 128, 0, stream>>>(
+            //     numAnchors, 
+            //     results.d_candidateReadIds.size(),
+            //     results.d_candidateReadIds.data(),
+            //     results.d_numCandidatesPerAnchor.data(),
+            //     results.d_numCandidatesPerAnchorPrefixSum.data()
+            // );
+
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+
+
+
+
+
+
+            // helpers::lambda_kernel<<<numAnchors, 128, 0, stream>>>(
+            //     [
+            //         numAnchors = numAnchors,
+            //         numCandidates = int(results.d_candidateReadIds.size()),
+            //         d_candidateReadIds = results.d_candidateReadIds.data(),
+            //         d_numCandidatesPerAnchor = results.d_numCandidatesPerAnchor.data(),
+            //         d_numCandidatesPerAnchorPrefixSum = results.d_numCandidatesPerAnchorPrefixSum.data()
+            //     ] __device__(){
+            //         for(int a = blockIdx.x; a < numAnchors; a += gridDim.x){
+            //             __syncthreads();
+
+            //             for(int i = 1 + threadIdx.x; i < numAnchors + 1; i+=blockDim.x){
+            //                 assert(d_numCandidatesPerAnchor[i-1] == 
+            //                     (d_numCandidatesPerAnchorPrefixSum[i] - d_numCandidatesPerAnchorPrefixSum[i - 1]));
+            //             }
+            //             if(!(numCandidates == d_numCandidatesPerAnchorPrefixSum[numAnchors])){
+            //                 if(threadIdx.x == 0){
+            //                     printf("a %d, numCandidates %d, lastps %d\n", a, numCandidates, d_numCandidatesPerAnchorPrefixSum[numAnchors]);
+            //                 }
+            //                 __syncthreads();
+            //                 assert(numCandidates == d_numCandidatesPerAnchorPrefixSum[numAnchors]);
+            //             }
+
+            //             __syncthreads();
+            //         }
+            //     }
+            // );
+
+
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+            // helpers::lambda_kernel<<<numAnchors, 128, 0, stream>>>(
+            //     [
+            //         numAnchors = numAnchors,
+            //         numCandidates = int(results.d_candidateReadIds.size()),
+            //         d_candidateReadIds = results.d_candidateReadIds.data(),
+            //         d_numCandidatesPerAnchor = results.d_numCandidatesPerAnchor.data(),
+            //         d_numCandidatesPerAnchorPrefixSum = results.d_numCandidatesPerAnchorPrefixSum.data()
+            //     ] __device__(){
+            //         for(int a = blockIdx.x; a < numAnchors; a += gridDim.x){
+
+            //             __syncthreads();
+
+            //             const int offset = d_numCandidatesPerAnchorPrefixSum[a];
+            //             const int num = d_numCandidatesPerAnchor[a];
+
+            //             for(int i = 1 + threadIdx.x; i < num; i+=blockDim.x){
+            //                 assert(d_candidateReadIds[offset + i - 1] < d_candidateReadIds[offset + i]);
+            //             }
+
+            //             __syncthreads();
+            //         }
+            //     }
+            // );
+
+
+            // CUDACHECKASYNC; //DEBUG
+            // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
+
+        }
     };
 
 
@@ -1805,8 +2354,6 @@ struct GpuReadExtender{
         goodAlignmentProperties(&gap),
         qualityConversion(&qualityConversion_),
         readStorageHandle(gpuReadStorage->makeHandle()),
-        d_numAnchors(cubAllocator_),
-        d_numCandidates(cubAllocator_),
         d_mateIdHasBeenRemoved(cubAllocator_),
         d_candidateSequencesData(cubAllocator_),
         d_candidateSequencesLength(cubAllocator_),    
@@ -1835,8 +2382,6 @@ struct GpuReadExtender{
         h_minmax.resize(2);
         h_numPositions.resize(2);
 
-        d_numAnchors.resize(1, cudaStreamPerThread);
-        d_numCandidates.resize(1, cudaStreamPerThread);
 
         *h_numAnchors = 0;
         *h_numCandidates = 0;
@@ -1847,7 +2392,6 @@ struct GpuReadExtender{
         qualityPitchInBytes = qualityPitchInBytes_;
         msaColumnPitchInElements = msaColumnPitchInElements_;
 
-        CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
     }
 
     ~GpuReadExtender(){
@@ -2334,6 +2878,7 @@ struct GpuReadExtender{
         //     }
         // });
 
+        //std::cerr << std::this_thread::get_id() << " segmentedIotaKernel ptr " << indices1.data() << " " << __LINE__ << "\n";
         const int threads = 32 * tasks->size();
         readextendergpukernels::segmentedIotaKernel<32><<<SDIV(threads, 128), 128, 0, stream>>>(
             indices1.data(),
@@ -2907,6 +3452,8 @@ struct GpuReadExtender{
             finishedTasks.size()
         ); CUDACHECKASYNC;
 
+        //std::cerr << std::this_thread::get_id() << " iotaKernel ptr " << d_indices1.data() << " " << __LINE__ << "\n";
+
         readextendergpukernels::iotaKernel<<<SDIV(finishedTasks.size(), 128), 128, 0, stream>>>(
             d_indices1.begin(), 
             d_indices1.end(), 
@@ -3122,8 +3669,6 @@ struct GpuReadExtender{
             rawResults.noCandidates = true;
             rawResults.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
 
-            std::cerr << "numcandidates = 0. exit thread " << std::this_thread::get_id() << "\n";
-
             return;
         }
 
@@ -3169,6 +3714,8 @@ struct GpuReadExtender{
         CachedDeviceUVector<int> indices1(numCandidates, stream, *cubAllocator);
 
         const int threads = 32 * numFinishedTasks;
+
+        //std::cerr << std::this_thread::get_id() << " segmentedIotaKernel ptr " << indices1.data() << " " << __LINE__ << "\n";
 
         readextendergpukernels::segmentedIotaKernel<32><<<SDIV(threads, 128), 128, 0, stream>>>(
             indices1.data(),
@@ -3885,8 +4432,6 @@ struct GpuReadExtender{
     PinnedBuffer<int> h_minmax{};
     PinnedBuffer<int> h_numPositions{};
 
-    CachedDeviceUScalar<int> d_numAnchors{};
-    CachedDeviceUScalar<int> d_numCandidates{};
     CachedDeviceUVector<bool> d_mateIdHasBeenRemoved{};
 
     void destroyDeviceBuffers(){

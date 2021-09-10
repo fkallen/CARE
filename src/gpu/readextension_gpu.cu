@@ -36,10 +36,25 @@
 
 #include <omp.h>
 #include <cub/cub.cuh>
+#include <thrust/iterator/transform_iterator.h>
 
 
 namespace care{
 namespace gpu{
+
+template<class T>
+struct IsGreaterThan{
+    T value;
+
+    __host__ __device__
+    IsGreaterThan(T t) : value(t){}
+
+    template<class V>
+    __host__ __device__
+    bool operator()(V item) const noexcept{
+        return item > value;
+    }
+};
 
 template<class IdGenerator>
 void initializeExtenderInput(
@@ -392,7 +407,7 @@ SerializedObjectStorage extend_gpu_pairedend(
         }
     };
 
-    std::vector<std::array<CudaStream, 4>> gpustreams;
+    std::vector<std::array<CudaStream, 16>> gpustreams;
 
     std::vector<GpuData> gpuDataVector;
 
@@ -441,11 +456,12 @@ SerializedObjectStorage extend_gpu_pairedend(
         gpuDataVector.push_back(std::move(gpudata));
     }
 
-    auto extenderThreadFunc = [&](int gpuIndex, int /*threadId*/, auto* readIdGenerator, bool isLastIteration, GpuReadExtender::IterationConfig iterationConfig){
+    auto extenderThreadFunc = [&](int gpuIndex, int threadId, auto* readIdGenerator, bool isLastIteration, GpuReadExtender::IterationConfig iterationConfig){
         //std::cerr << "extenderThreadFunc( " << gpuIndex << ", " << threadId << ")\n";
         auto& gpudata = gpuDataVector[gpuIndex];
-        //auto stream = gpustreams[gpuIndex].back().getStream();
-        cudaStream_t stream = cudaStreamPerThread;
+        const int numStreams = gpustreams[gpuIndex].size();
+        cudaStream_t stream = gpustreams[gpuIndex][threadId % numStreams].getStream();
+        //cudaStream_t stream = cudaStreamPerThread;
 
         CUDACHECK(cudaSetDevice(gpudata.deviceId));
 
@@ -521,11 +537,25 @@ SerializedObjectStorage extend_gpu_pairedend(
             tasks.aggregateAnchorData(anchorData, stream);
             
             nvtx::push_range("getCandidateReadIds", 4);
+            #if 0
             anchorHasher.getCandidateReadIds(anchorData, anchorHashResult, stream);
+            #else
+            anchorHasher.getCandidateReadIdsWithExtraExtensionHash(
+                *gpudata.dataAllocator,
+                anchorData, 
+                anchorHashResult,
+                iterationConfig, 
+                thrust::make_transform_iterator(
+                    tasks.iteration.data(),
+                    IsGreaterThan<int>{0}
+                ),
+                stream
+            );
+            #endif
             nvtx::pop_range();
 
             gpudata.gpuReadExtender->processOneIteration(
-                tasks, 
+                tasks,
                 anchorData, 
                 anchorHashResult, 
                 finishedTasks, 
@@ -568,7 +598,7 @@ SerializedObjectStorage extend_gpu_pairedend(
         return pairsWhichShouldBeRepeated;
     };
 
-    bool isLastIteration = false;
+    bool isLastIteration = true;
     GpuReadExtender::IterationConfig iterationConfig;
     iterationConfig.maxextensionPerStep = 20;
     iterationConfig.minCoverageForExtension = 3;
@@ -580,7 +610,7 @@ SerializedObjectStorage extend_gpu_pairedend(
     {
         std::vector<std::future<std::vector<read_number>>> futures;
 
-        const std::size_t numReadsToProcess = 200000;
+        const std::size_t numReadsToProcess = 2000000;
         //const std::size_t numReadsToProcess = gpuReadStorage.getNumberOfReads();
 
         IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(

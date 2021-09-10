@@ -2,6 +2,7 @@
 #define CARE_READEXTENDER_GPU_KERNELS_CUH
 
 #include <gpu/cudaerrorcheck.cuh>
+#include <gpu/groupmemcpy.cuh>
 #include <msasplits.hpp>
 
 #include <cassert>
@@ -595,8 +596,47 @@ namespace readextendergpukernels{
     }
 
 
+    /*
+        For each string with flag == true, copy its last N characters. 
+        If string length is less than N the full string is copied.
+        If flag == false, outputLength is set to 0
+    */
+    template<int blocksize, class Flags>
+    __global__
+    void copyLastNCharactersOfStrings(
+        int numStrings,
+        const char* __restrict__ inputStrings,
+        const int* __restrict__ inputLengths,
+        std::size_t inputPitchInBytes,
+        char* __restrict__ outputStrings,
+        int* __restrict__ outputLengths,
+        std::size_t outputPitchInBytes,
+        Flags flags,
+        int N
+    ){
+        static_assert(blocksize >= 32, "");
 
+        auto tile = cg::tiled_partition<32>(cg::this_thread_block());
+        const int tileId = (threadIdx.x + blockIdx.x * blockDim.x) / 32;
+        const int numTiles = (blockDim.x * gridDim.x) / 32;
 
+        for(int s = tileId; s < numStrings; s += numTiles){
+            if(flags[s]){
+                const int inputLength = inputLengths[s];
+                const char* const inputString = inputStrings + s * inputPitchInBytes;
+                char* const outputString = outputStrings + s * outputPitchInBytes;
+
+                const int end = inputLength;
+                const int begin = max(0, inputLength - N);
+
+                outputLengths[s] = end - begin;
+                care::gpu::memcpy<int>(tile, outputString, inputString + begin, sizeof(char) * (end - begin));
+            }else{
+                outputLengths[s] = 0;
+            }
+        }
+
+    }
 
 
     template<int blocksize>
