@@ -125,7 +125,7 @@ private:
             newptr = mremap(rawtotaldata, memoryCapacity, newcapacity, MREMAP_MAYMOVE);
         }else{
             //neither memory mapping nor file mapping. make a fresh range
-            newptr = mmap(0, newcapacity, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            newptr = mmap(0, newcapacity, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
         }
 
         return newptr;
