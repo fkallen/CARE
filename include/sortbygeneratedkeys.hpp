@@ -16,6 +16,67 @@
 #include <cub/cub.cuh>
 #endif
 
+struct CudaDataTransfer{
+    std::size_t pinnedbytes;
+    CudaEvent event{cudaEventDisableTiming};
+    std::array<CudaStream, 2> streams{};
+    helpers::SimpleAllocationPinnedHost<char, 0> h_temp;
+
+    CudaDataTransfer(std::size_t pinnedMemory = 16ull * 1024ull) 
+        : pinnedbytes(pinnedMemory), h_temp(pinnedMemory){
+    }
+
+    template<class Func>
+    cudaError_t transferH2D(Func generator, std::size_t elements, void* d_dest, cudaStream_t stream){
+        using T = decltype(generator(std::size_t(0)));
+
+        T* const d_dest_typed = reinterpret_cast<T*>(d_dest);
+
+        const std::size_t numPinnedTs = pinnedbytes / sizeof(T);
+        assert(numPinnedTs >= 2);
+        const std::size_t numPinnedTsHalf = numPinnedTs / 2;
+
+        T* const h_temp1 = reinterpret_cast<T*>(h_temp.data());
+        T* const h_temp2 = reinterpret_cast<T*>(h_temp.data()) + numPinnedTsHalf;
+
+        CUDACHECK(cudaEventRecord(event, stream));
+        CUDACHECK(cudaStreamWaitEvent(streams[0], event, 0));
+        CUDACHECK(cudaStreamWaitEvent(streams[1], event, 0));
+
+        int which = 0;
+        for(std::size_t i = 0; i < elements; i += numPinnedTsHalf){
+            const std::size_t chunksize = std::min(numPinnedTsHalf, elements - i);
+            T* const pinnedPtr = which == 0 ? h_temp1 : h_temp2;
+            cudaStreamSynchronize(streams[which]);
+
+            for(std::size_t k = 0; k < chunksize; k++){
+                pinnedPtr[k] = generator(i+k);
+            }
+            CUDACHECK(cudaMemcpyAsync(d_dest_typed + i, pinnedPtr, sizeof(T) * chunksize, H2D, streams[which]));
+
+            which = 1 - which;     
+        }
+
+        CUDACHECK(cudaEventRecord(event, streams[0]));
+        CUDACHECK(cudaStreamWaitEvent(stream, event, 0));
+        CUDACHECK(cudaEventRecord(event, streams[1]));
+        CUDACHECK(cudaStreamWaitEvent(stream, event, 0));
+
+        return cudaSuccess;
+    }
+
+    template<class Iter>
+    cudaError_t transferH2D(Iter first, Iter last, void* d_dest, cudaStream_t stream){
+        const std::size_t elements = std::distance(first, last);
+
+        auto generator = [&](auto i){
+            return *(first + i);
+        };
+
+        return transferH2D(generator, elements, d_dest, stream);
+    }
+};
+
 /*
     KeyType KeyGenerator::operator()(IndexType i)  returns i-th key
 */
@@ -181,6 +242,7 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     KeyGenerator keyGenerator
 ){
     using KeyType = decltype(keyGenerator(IndexType{0}));
+    constexpr std::size_t pinnedTransferBufferSize = 512ull * 1024ull;
 
     std::cerr << "sortValuesByGeneratedKeysViaSortByKeyDevice \n";
 
@@ -188,20 +250,16 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
         std::cerr << numValues << " > " << std::numeric_limits<int>::max() << "\n";
         return false;
     }
-
-    if(std::size_t(std::numeric_limits<int>::max()) < std::size_t(numValues)){
-        std::cerr << numValues << " > " << std::numeric_limits<int>::max() << "\n";
+    
+    if(pinnedTransferBufferSize > memoryLimitBytes){
         return false;
     }
+
+    CudaDataTransfer transfer(pinnedTransferBufferSize);
+    memoryLimitBytes -= pinnedTransferBufferSize;
 
     std::size_t sizeOfKeys = SDIV(sizeof(KeyType) * numValues, sizeof(std::size_t)) * sizeof(std::size_t);
     std::size_t sizeOfValues = SDIV(sizeof(ValueType) * numValues, sizeof(std::size_t)) * sizeof(std::size_t);
-
-    //check if keys can be materialized in memory
-    if(sizeOfKeys >= memoryLimitBytes){
-        std::cerr << sizeOfKeys << " " << memoryLimitBytes << "\n";
-        return false;
-    }
 
     // Need to explicitly instanciate radix sort for OffsetT = IndexType. 
     // The default API only uses OffsetT = int which may be insufficient to enumerate keys
@@ -261,15 +319,15 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     );
     if(cubstatus != cudaSuccess) return false;
 
-    std::size_t freeMem,totalMem;
-    CUDACHECK(cudaMemGetInfo(&freeMem, &totalMem));
+    std::size_t freeGpuMem, totalGpuMem;
+    CUDACHECK(cudaMemGetInfo(&freeGpuMem, &totalGpuMem));
 
-    //std::cerr << "free gpu mem: " << freeMem << ", memoryLimitBytes: " << memoryLimitBytes << ", sizeOfKeys: " << sizeOfKeys << ", temp_storage_bytes: " << temp_storage_bytes << "\n";
+    //std::cerr << "free gpu mem: " << freeGpuMem << ", memoryLimitBytes: " << memoryLimitBytes << ", sizeOfKeys: " << sizeOfKeys << ", temp_storage_bytes: " << temp_storage_bytes << "\n";
 
     void* temp_storage = nullptr;
-    if(freeMem > temp_storage_bytes){
+    if(freeGpuMem > temp_storage_bytes){
         cudaMalloc(&temp_storage, temp_storage_bytes);
-    }else if(freeMem + memoryLimitBytes - sizeOfKeys > temp_storage_bytes){
+    }else if(freeGpuMem + memoryLimitBytes > temp_storage_bytes){
         cudaMallocManaged(&temp_storage, temp_storage_bytes);
         int deviceId = 0;
         cudaGetDevice(&deviceId);
@@ -298,38 +356,13 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
         return false;
     }
 
-    auto keys = std::make_unique<KeyType[]>(numValues);
-
-    helpers::CpuTimer timer1("extractkeys");
-
-    for(IndexType i = 0; i < numValues; i++){
-        keys[i] = keyGenerator(i);
-    }
-
-    // {
-    //     std::ofstream os("keys_2");
-    //     os.write((char*)keys.get(), sizeof(KeyType) * numValues);
-    // }
-
-    timer1.stop();
-    //timer1.print();
-
     d_keys_dbl = cub::DoubleBuffer<KeyType>{(KeyType*)temp_allocations[0], (KeyType*)temp_allocations[1]};
     d_values_dbl = cub::DoubleBuffer<ValueType>{(ValueType*)temp_allocations[2], (ValueType*)temp_allocations[3]};
 
-    helpers::CpuTimer timer2("copy to device");
+    CUDACHECK(transfer.transferH2D(keyGenerator, numValues, d_keys_dbl.Current(), 0));
 
-    CUDACHECK(cudaMemcpy(d_keys_dbl.Current(), keys.get(), sizeof(KeyType) * numValues, H2D));
-    keys = nullptr;
     CUDACHECK(cudaMemcpy(d_values_dbl.Current(), values, sizeof(ValueType) * numValues, H2D));
 
-    // {
-    //     std::ofstream os("offsets_2");
-    //     os.write((char*)keys.get(), sizeof(ValueType) * numValues);
-    // }
-
-    timer2.stop();
-    //timer2.print();
 
     helpers::CpuTimer timer3("cub sort");
 
