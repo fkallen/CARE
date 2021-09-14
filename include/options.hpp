@@ -95,6 +95,8 @@ namespace care
     {
         int insertSize;
         int insertSizeStddev;
+        int fixedStddev;
+        int fixedStepsize;
     };
 
     struct RuntimeOptions

@@ -164,6 +164,13 @@ int main(int argc, char** argv){
 			"Default: " + std::to_string(MemoryOptions{}.hashtableLoadfactor), cxxopts::value<float>())
 		("replicateGpuData", "If a GPU data structure fits into the memory of a single GPU, allow its replication to other GPUs. This can improve the runtime when multiple GPUs are used."
 			"Default: " + std::to_string(RuntimeOptions{}.replicateGpuData), cxxopts::value<bool>())
+
+		("fixedStepsize", "fixedStepsize "
+			"Default: " + tostring(ExtensionOptions{}.fixedStepsize),
+		cxxopts::value<int>())
+		("fixedStddev", "fixedStddev "
+			"Default: " + tostring(ExtensionOptions{}.fixedStddev),
+		cxxopts::value<int>())
 	;
 
 	//options.parse_positional({"deviceIds"});
@@ -301,6 +308,8 @@ int main(int argc, char** argv){
 	}
 	std::cout << "\n";
 	std::cout << "Merged output: " << fileOptions.mergedoutput << "\n";
+	std::cout << "fixedStddev: " << extensionOptions.fixedStddev << "\n";
+	std::cout << "fixedStepsize: " << extensionOptions.fixedStepsize << "\n";
 	std::cout << "----------------------------------------\n";
 	std::cout << std::noboolalpha;
 
