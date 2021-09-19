@@ -368,8 +368,7 @@ namespace shd{
 
         const int newanchorInts = SequenceHelpers::getEncodedNumInts2BitHiLo(anchorLength);
 
-        handle.anchorConversionBuffer.resize(newanchorInts);
-        handle.candidateConversionBuffer.resize(candidatePitchInInts);
+        handle.anchorConversionBuffer.resize(newanchorInts);        
 
         SequenceHelpers::convert2BitTo2BitHiLo(
             handle.anchorConversionBuffer.data(),
@@ -382,6 +381,9 @@ namespace shd{
         for(int candidateIndex = 0; candidateIndex < numCandidates; candidateIndex++, ++curIter){
             const unsigned int* candidate2Bit = candidates2Bit + candidatePitchInInts * candidateIndex;
             const int candidateLength = candidateLengths[candidateIndex];
+
+            const int candidateIntsHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(candidateLength);
+            handle.candidateConversionBuffer.resize(candidateIntsHiLo);
 
             SequenceHelpers::convert2BitTo2BitHiLo(
                 handle.candidateConversionBuffer.data(),
@@ -424,7 +426,6 @@ namespace shd{
         const int newanchorInts = SequenceHelpers::getEncodedNumInts2BitHiLo(anchorLength);
 
         handle.anchorConversionBuffer.resize(newanchorInts);
-        handle.candidateConversionBuffer.resize(candidatePitchInInts);
 
         SequenceHelpers::convert2BitTo2BitHiLo(
             handle.anchorConversionBuffer.data(),
@@ -437,6 +438,9 @@ namespace shd{
         for(int candidateIndex = 0; candidateIndex < numCandidates; candidateIndex++, ++curIter){
             const unsigned int* candidate2Bit = candidates2Bit + candidatePitchInInts * candidateIndex;
             const int candidateLength = candidateLengths[candidateIndex];
+
+            const int candidateIntsHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(candidateLength);
+            handle.candidateConversionBuffer.resize(candidateIntsHiLo);
 
             SequenceHelpers::convert2BitTo2BitHiLo(
                 handle.candidateConversionBuffer.data(),
