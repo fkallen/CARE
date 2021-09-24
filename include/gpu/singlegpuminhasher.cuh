@@ -376,8 +376,8 @@ namespace gpu{
             void* temp_allocations[3];
             std::size_t temp_allocation_sizes[3];
             
-            temp_allocation_sizes[0] = sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences; // d_sig
-            temp_allocation_sizes[1] = sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences; // d_sig_trans
+            temp_allocation_sizes[0] = sizeof(kmer_type) * signaturesRowPitchElements * numSequences; // d_sig
+            temp_allocation_sizes[1] = sizeof(kmer_type) * signaturesRowPitchElements * numSequences; // d_sig_trans
             temp_allocation_sizes[2] = sizeof(int) * numHashfunctions; // d_hashFunctionNumbers
             
             cudaError_t cubstatus = cub::AliasTemporaries(
@@ -396,8 +396,8 @@ namespace gpu{
 
             DeviceSwitcher ds(deviceId);
 
-            std::uint64_t* const d_signatures = static_cast<std::uint64_t*>(temp_allocations[0]);
-            std::uint64_t* const d_signatures_transposed = static_cast<std::uint64_t*>(temp_allocations[1]);
+            kmer_type* const d_signatures = static_cast<kmer_type*>(temp_allocations[0]);
+            kmer_type* const d_signatures_transposed = static_cast<kmer_type*>(temp_allocations[1]);
             int* const d_hashFunctionNumbers = static_cast<int*>(temp_allocations[2]);
             
             CUDACHECK(cudaMemcpyAsync(
@@ -408,7 +408,7 @@ namespace gpu{
                 stream
             ));
 
-            callMinhashSignaturesKernel(
+            callMinhashSignatures3264Kernel(
                 d_signatures,
                 signaturesRowPitchElements,
                 d_sequenceData2Bit,
@@ -692,7 +692,7 @@ namespace gpu{
             void* persistent_allocations[3]{};
             std::size_t persistent_allocation_sizes[3]{};
 
-            persistent_allocation_sizes[0] = sizeof(std::uint64_t) * numHashfunctions * numSequences; // d_sig_trans
+            persistent_allocation_sizes[0] = sizeof(kmer_type) * numHashfunctions * numSequences; // d_sig_trans
             persistent_allocation_sizes[1] = sizeof(int) * numSequences * numHashfunctions; // d_numValuesPerSequencePerHash
             persistent_allocation_sizes[2] = sizeof(int) * numSequences * numHashfunctions; // d_numValuesPerSequencePerHashExclPSVert
 
@@ -718,7 +718,7 @@ namespace gpu{
             
             temp_allocation_sizes[0] = sizeof(int) * numHashfunctions; // d_hashFunctionNumbers
             temp_allocation_sizes[1] = cubtempbytes; // d_cub_temp
-            temp_allocation_sizes[2] = sizeof(std::uint64_t) * numHashfunctions * numSequences; // d_sig
+            temp_allocation_sizes[2] = sizeof(kmer_type) * numHashfunctions * numSequences; // d_sig
             temp_allocation_sizes[3] = sizeof(int); // d_cub_sum
             
             CUDACHECK(cub::AliasTemporaries(
@@ -732,13 +732,13 @@ namespace gpu{
                 return;
             }
 
-            std::uint64_t* const d_signatures_transposed = static_cast<std::uint64_t*>(persistent_allocations[0]);
+            kmer_type* const d_signatures_transposed = static_cast<kmer_type*>(persistent_allocations[0]);
             int* const d_numValuesPerSequencePerHash = static_cast<int*>(persistent_allocations[1]);
             int* const d_numValuesPerSequencePerHashExclPSVert = static_cast<int*>(persistent_allocations[2]);
 
             int* const d_hashFunctionNumbers = static_cast<int*>(temp_allocations[0]);
             void* const d_cubTemp = temp_allocations[1];
-            std::uint64_t* const d_signatures = static_cast<std::uint64_t*>(temp_allocations[2]);
+            kmer_type* const d_signatures = static_cast<kmer_type*>(temp_allocations[2]);
             int* const d_cub_sum = static_cast<int*>(temp_allocations[3]);
 
             DeviceSwitcher ds(deviceId);
@@ -754,7 +754,7 @@ namespace gpu{
             dim3 block(128,1,1);
             dim3 grid(SDIV(numHashfunctions * numSequences, block.x),1,1);
 
-            callMinhashSignaturesKernel(
+            callMinhashSignatures3264Kernel(
                 d_signatures,
                 signaturesRowPitchElements,
                 d_sequenceData2Bit,
@@ -936,7 +936,7 @@ namespace gpu{
             void* persistent_allocations[3]{};
             std::size_t persistent_allocation_sizes[3]{};
 
-            persistent_allocation_sizes[0] = sizeof(std::uint64_t) * numHashfunctions * numSequences; // d_sig_trans
+            persistent_allocation_sizes[0] = sizeof(kmer_type) * numHashfunctions * numSequences; // d_sig_trans
             persistent_allocation_sizes[1] = sizeof(int) * numSequences * numHashfunctions; // d_numValuesPerSequencePerHash
             persistent_allocation_sizes[2] = sizeof(int) * numSequences * numHashfunctions; // d_numValuesPerSequencePerHashExclPSVert
 
@@ -949,7 +949,7 @@ namespace gpu{
 
             DeviceSwitcher ds(deviceId);
 
-            std::uint64_t* const d_signatures_transposed = static_cast<std::uint64_t*>(persistent_allocations[0]);
+            kmer_type* const d_signatures_transposed = static_cast<kmer_type*>(persistent_allocations[0]);
             int* const d_numValuesPerSequencePerHash = static_cast<int*>(persistent_allocations[1]);
             int* const d_numValuesPerSequencePerHashExclPSVert = static_cast<int*>(persistent_allocations[2]);
 

@@ -1086,7 +1086,7 @@ namespace gpu{
             allRanges.resize(getNumberOfMaps() * numSequences);
 
             const std::size_t hashValuesPitchInElements = getNumberOfMaps();
-            const int firstHashFunc = 0;
+            //const int firstHashFunc = 0;
 
             int* d_hashFunctionNumbers = nullptr;
             CUDACHECK(cudaMallocAsync(&d_hashFunctionNumbers, sizeof(int) * getNumberOfMaps(), stream));
