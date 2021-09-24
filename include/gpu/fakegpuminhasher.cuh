@@ -73,9 +73,9 @@ namespace gpu{
             std::vector<Range_t> ranges{};
             SetUnionHandle suHandle{};
 
-            DeviceBuffer<std::uint64_t> d_minhashSignatures{};
-            DeviceBuffer<std::uint64_t> d_minhashSignatures_transposed{};
-            PinnedBuffer<std::uint64_t> h_minhashSignatures{};            
+            DeviceBuffer<kmer_type> d_minhashSignatures{};
+            DeviceBuffer<kmer_type> d_minhashSignatures_transposed{};
+            PinnedBuffer<kmer_type> h_minhashSignatures{};            
 
             PinnedBuffer<read_number> h_candidate_read_ids_tmp{};
             DeviceBuffer<read_number> d_candidate_read_ids_tmp{};
@@ -690,8 +690,8 @@ namespace gpu{
 
             void* d_temp_allocations[3]{};
             std::size_t d_temp_allocation_sizes[3]{};            
-            d_temp_allocation_sizes[0] = sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences; // d_sig
-            d_temp_allocation_sizes[1] = sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences; // d_sig_trans
+            d_temp_allocation_sizes[0] = sizeof(kmer_type) * signaturesRowPitchElements * numSequences; // d_sig
+            d_temp_allocation_sizes[1] = sizeof(kmer_type) * signaturesRowPitchElements * numSequences; // d_sig_trans
             d_temp_allocation_sizes[2] = sizeof(int) * numHashfunctions; // d_hashFunctionNumbers
             
             cudaError_t cubstatus = cub::AliasTemporaries(
@@ -704,7 +704,7 @@ namespace gpu{
 
             void* h_temp_allocations[1]{};
             std::size_t h_temp_allocation_sizes[1]{};            
-            h_temp_allocation_sizes[0] = sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences; // h_signatures_transposed
+            h_temp_allocation_sizes[0] = sizeof(kmer_type) * signaturesRowPitchElements * numSequences; // h_signatures_transposed
     
             cubstatus = cub::AliasTemporaries(
                 h_temp,
@@ -720,8 +720,8 @@ namespace gpu{
 
             assert(firstHashfunction + numHashfunctions <= int(minhashTables.size()));
 
-            std::uint64_t* const d_signatures = static_cast<std::uint64_t*>(d_temp_allocations[0]);
-            std::uint64_t* const d_signatures_transposed = static_cast<std::uint64_t*>(d_temp_allocations[1]);
+            kmer_type* const d_signatures = static_cast<kmer_type*>(d_temp_allocations[0]);
+            kmer_type* const d_signatures_transposed = static_cast<kmer_type*>(d_temp_allocations[1]);
             int* const d_hashFunctionNumbers = static_cast<int*>(d_temp_allocations[2]);
 
             CUDACHECK(cudaMemcpyAsync(
@@ -732,7 +732,7 @@ namespace gpu{
                 stream
             ));
 
-            callMinhashSignaturesKernel(
+            callMinhashSignatures3264Kernel(
                 d_signatures,
                 signaturesRowPitchElements,
                 d_sequenceData2Bit,
@@ -754,12 +754,12 @@ namespace gpu{
                 stream
             );
 
-            std::uint64_t* const h_signatures_transposed = static_cast<std::uint64_t*>(h_temp_allocations[0]);
+            kmer_type* const h_signatures_transposed = static_cast<kmer_type*>(h_temp_allocations[0]);
 
             CUDACHECK(cudaMemcpyAsync(
                 h_signatures_transposed, 
                 d_signatures_transposed, 
-                sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences, 
+                sizeof(kmer_type) * signaturesRowPitchElements * numSequences, 
                 D2H, 
                 stream
             ));
@@ -769,14 +769,14 @@ namespace gpu{
             auto loopbody = [&](auto begin, auto end, int /*threadid*/){
                 for(int h = begin; h < end; h++){
 
-                    std::uint64_t* const hashesBegin = &h_signatures_transposed[h * numSequences];
+                    kmer_type* const hashesBegin = &h_signatures_transposed[h * numSequences];
 
-                    std::for_each(
-                        hashesBegin, hashesBegin + numSequences,
-                        [kmermask = getKmerMask()](auto& hash){
-                            hash &= kmermask;
-                        }
-                    );
+                    // std::for_each(
+                    //     hashesBegin, hashesBegin + numSequences,
+                    //     [kmermask = getKmerMask()](auto& hash){
+                    //         hash &= kmermask;
+                    //     }
+                    // );
 
                     minhashTables[firstHashfunction + h]->insert(
                         hashesBegin, h_readIds, numSequences
@@ -843,8 +843,8 @@ namespace gpu{
 
             queryData->d_minhashSignatures.resize(
                 std::max(
-                    int(SDIV(segmentedUniqueTempBytes, sizeof(std::uint64_t))),
-                    int(SDIV(cubtempbytes, sizeof(std::uint64_t)))
+                    int(SDIV(segmentedUniqueTempBytes, sizeof(kmer_type))),
+                    int(SDIV(cubtempbytes, sizeof(kmer_type)))
                 )
             );
 
@@ -1038,7 +1038,7 @@ namespace gpu{
         }
 
 
-    private:
+    public: //private:
 
         void determineNumValuesOnGpu(
             MinhasherHandle& queryHandle,
@@ -1069,7 +1069,7 @@ namespace gpu{
             queryData->d_minhashSignatures.resize(
                 std::max(
                     getNumberOfMaps() * numSequences, 
-                    int(SDIV(cubtempbytes, sizeof(std::uint64_t)))
+                    int(SDIV(cubtempbytes, sizeof(kmer_type)))
                 )
             );
             queryData->d_minhashSignatures_transposed.resize(getNumberOfMaps() * numSequences);
@@ -1088,7 +1088,17 @@ namespace gpu{
             const std::size_t hashValuesPitchInElements = getNumberOfMaps();
             const int firstHashFunc = 0;
 
-            callMinhashSignaturesKernel(
+            int* d_hashFunctionNumbers = nullptr;
+            CUDACHECK(cudaMallocAsync(&d_hashFunctionNumbers, sizeof(int) * getNumberOfMaps(), stream));
+
+            helpers::lambda_kernel<<<1,64,0,stream>>>([d_hashFunctionNumbers, num = getNumberOfMaps()] __device__(){
+                for(int i = threadIdx.x; i < num; i += blockDim.x){
+                    d_hashFunctionNumbers[i] = i;
+                }
+            }); 
+            CUDACHECKASYNC;
+
+            callMinhashSignatures3264Kernel(
                 queryData->d_minhashSignatures.get(),
                 hashValuesPitchInElements,
                 d_sequenceData2Bit,
@@ -1097,9 +1107,11 @@ namespace gpu{
                 d_sequenceLengths,
                 getKmerSize(),
                 getNumberOfMaps(),
-                firstHashFunc,
+                d_hashFunctionNumbers,
                 stream
             );
+
+            CUDACHECK(cudaFreeAsync(d_hashFunctionNumbers, stream));
 
             helpers::call_transpose_kernel(
                 queryData->d_minhashSignatures_transposed.data(), 
@@ -1132,7 +1144,7 @@ namespace gpu{
                 for(int i = 0; i < numSequences; i++){
                     FakeGpuMinhasher::Range_t* const range = &allRanges[i * getNumberOfMaps()];
                 
-                    kmer_type key = queryData->h_minhashSignatures[map * numSequences + i] & kmer_mask;
+                    kmer_type key = queryData->h_minhashSignatures[map * numSequences + i];/* & kmer_mask*/;
                     auto entries_range = queryMap(map, key);
                     const int num = std::distance(entries_range.first, entries_range.second);
                     if(num <= getNumResultsPerMapThreshold()){

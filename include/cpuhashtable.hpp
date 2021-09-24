@@ -80,8 +80,9 @@ namespace care{
         void insert(const Key& key, const Value& value){
             using hasher = hashers::MurmurHash<std::uint64_t>;
 
+            const std::uint64_t key64 = std::uint64_t(key);
             std::size_t probes = 0;
-            std::size_t pos = hasher::hash(key) % capacity;
+            std::size_t pos = hasher::hash(key64) % capacity;
             while(storage[pos] != emptySlot){
                 pos++;
                 //wrap-around
@@ -99,8 +100,9 @@ namespace care{
         QueryResult query(const Key& key) const{
             using hasher = hashers::MurmurHash<std::uint64_t>;
             
+            const std::uint64_t key64 = std::uint64_t(key);
             std::size_t probes = 0;
-            std::size_t pos = hasher::hash(key) % capacity;
+            std::size_t pos = hasher::hash(key64) % capacity;
             while(storage[pos].first != key){
                 if(storage[pos] == emptySlot){
                     return {false, Value{}};
