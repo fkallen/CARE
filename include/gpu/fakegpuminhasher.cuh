@@ -71,7 +71,6 @@ namespace gpu{
             int deviceId;
             Stage previousStage = Stage::None;
 
-            std::vector<Range_t> ranges{};
             SetUnionHandle suHandle{};
 
             DeviceBuffer<kmer_type> d_minhashSignatures{};
@@ -88,55 +87,10 @@ namespace gpu{
             PinnedBuffer<int> h_numValuesPerSequence{};
             DeviceBuffer<int> d_global_begin_offsets{};
 
-            DeviceBuffer<char> d_cub_temp{};
-
             std::vector<Range_t> allRanges{};
-            std::vector<int> idsPerChunk{};   
-            std::vector<int> numAnchorsPerChunk{};
-            std::vector<int> idsPerChunkPrefixSum{};
-            std::vector<int> numAnchorsPerChunkPrefixSum{};
-
-            DeviceBuffer<std::uint64_t> d_temp{};
-            DeviceBuffer<int> d_signatureSizePerSequence{};
-            PinnedBuffer<int> h_signatureSizePerSequence{};
-            DeviceBuffer<int> d_hashFuncIds{};
-            PinnedBuffer<int> h_hashFuncIds{};
-
             DeviceBuffer<int> d_hashFunctionNumbers{};
 
             GpuSegmentedUnique::Handle segmentedUniqueHandle;
-            std::vector<GpuSegmentedUnique::Handle> segmentedUniqueHandles;
-
-
-            // void resize(const FakeGpuMinhasher& minhasher, std::size_t numSequences, int numThreads = 1){
-            //     const std::size_t maximumResultSize 
-            //         = minhasher.getNumResultsPerMapThreshold() * minhasher.getNumberOfMaps() * numSequences;
-
-            //     d_minhashSignatures.resize(minhasher.getNumberOfMaps() * numSequences);
-            //     h_minhashSignatures.resize(minhasher.getNumberOfMaps() * numSequences);
-            //     h_candidate_read_ids_tmp.resize(maximumResultSize);
-            //     d_candidate_read_ids_tmp.resize(maximumResultSize);
-
-            //     h_begin_offsets.resize(numSequences+1);
-            //     d_begin_offsets.resize(numSequences+1);
-            //     h_end_offsets.resize(numSequences+1);
-            //     d_end_offsets.resize(numSequences+1);
-            //     h_numValuesPerSequence.resize(numSequences);
-            //     d_global_begin_offsets.resize(numSequences);
-            
-            //     allRanges.resize(minhasher.getNumberOfMaps() * numSequences);
-            //     idsPerChunk.resize(numThreads, 0);   
-            //     numAnchorsPerChunk.resize(numThreads, 0);
-            //     idsPerChunkPrefixSum.resize(numThreads, 0);
-            //     numAnchorsPerChunkPrefixSum.resize(numThreads, 0);
-
-            //     d_temp.resize(minhasher.getNumberOfMaps() * numSequences);
-            //     d_signatureSizePerSequence.resize(numSequences);
-            //     h_signatureSizePerSequence.resize(numSequences);
-
-            //     d_hashFuncIds.resize(minhasher.getNumberOfMaps() * numSequences);
-            //     h_hashFuncIds.resize(minhasher.getNumberOfMaps() * numSequences);
-            // }
 
             MemoryUsage getMemoryInfo() const{
                 MemoryUsage info;
@@ -169,27 +123,10 @@ namespace gpu{
                 handledevice(d_end_offsets);
                 handledevice(d_global_begin_offsets);
 
-                handledevice(d_cub_temp);
-
                 handlevector(allRanges);
-                handlevector(idsPerChunk);
-                handlevector(numAnchorsPerChunk);
-                handlevector(idsPerChunkPrefixSum);
-                handlevector(numAnchorsPerChunkPrefixSum);
-
-                handledevice(d_temp);
-                handledevice(d_signatureSizePerSequence);
-                handledevice(d_hashFuncIds);
-                handlehost(h_signatureSizePerSequence);
-                handlehost(h_hashFuncIds);
-
                 handledevice(d_hashFunctionNumbers);
 
                 info += segmentedUniqueHandle->getMemoryInfo();
-
-                for(const auto& h : segmentedUniqueHandles){
-                    info += h->getMemoryInfo();
-                }
     
                 return info;
             }
@@ -209,24 +146,12 @@ namespace gpu{
                 h_numValuesPerSequence.destroy();
                 d_global_begin_offsets.destroy();
 
-                d_cub_temp.destroy();
-
                 allRanges.clear();
                 allRanges.shrink_to_fit();
-
-                d_temp.destroy();
-                d_signatureSizePerSequence.destroy();
-                h_signatureSizePerSequence.destroy();
-
-                d_hashFuncIds.destroy();
-                h_hashFuncIds.destroy();
 
                 d_hashFunctionNumbers.destroy();
 
                 segmentedUniqueHandle = nullptr;
-                for(auto& h : segmentedUniqueHandles){
-                    h = nullptr;
-                }
 
                 isInitialized = false;
             }
