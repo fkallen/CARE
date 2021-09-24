@@ -64,8 +64,6 @@ namespace gpu{
             int* d_numValuesPerSequence{};
             DeviceBuffer<char> d_singletempbuffer{};
             DeviceBuffer<char> d_singlepersistentbuffer{};
-            DeviceBuffer<char> d_cubTemp{};
-
 
             MemoryUsage getMemoryInfo() const{
                 MemoryUsage mem{};
