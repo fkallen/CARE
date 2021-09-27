@@ -133,7 +133,7 @@ namespace care{
             int remainingHashFunctions = requestedNumberOfMaps;
             bool keepGoing = true;
 
-            std::vector<std::uint64_t> tempvector{};
+            std::vector<kmer_type> tempvector{};
 
             while(remainingHashFunctions > 0 && keepGoing){
 
@@ -260,7 +260,7 @@ namespace care{
 
             totalNumValues = 0;
 
-            std::vector<std::uint64_t> allHashValues(numSequences * getNumberOfMaps());
+            std::vector<kmer_type> allHashValues(numSequences * getNumberOfMaps());
 
             for(int s = 0; s < numSequences; s++){
                 const int length = h_sequenceLengths[s];
@@ -275,12 +275,10 @@ namespace care{
                         0
                     );
 
-                    std::transform(
-                        hashValues.begin(), hashValues.begin() + getNumberOfMaps(),
-                        allHashValues.begin() + getNumberOfMaps() * s,
-                        [kmermask = getKmerMask()](const auto& hash){
-                            return hash & kmermask;
-                        }
+                    std::copy(
+                        hashValues.begin(), 
+                        hashValues.begin() + getNumberOfMaps(),
+                        allHashValues.begin() + getNumberOfMaps() * s
                     );
                 }
             }
@@ -549,7 +547,7 @@ namespace care{
         } 
 
         void insert(
-            std::vector<std::uint64_t>& tempvector,
+            std::vector<kmer_type>& tempvector,
             const unsigned int* h_sequenceData2Bit,
             int numSequences,
             const int* h_sequenceLengths,
@@ -566,7 +564,7 @@ namespace care{
             ForLoopExecutor forLoopExecutor(threadPool, &pforHandle);
 
             auto& allHashValues = tempvector;
-            allHashValues.resize(numSequences * getNumberOfMaps());
+            allHashValues.resize(numSequences * getNumberOfMaps());            
 
             auto hashloopbody = [&](auto begin, auto end, int /*threadid*/){
                 for(int s = begin; s < end; s++){
@@ -581,12 +579,6 @@ namespace care{
                         0
                     );
 
-                    std::for_each(
-                        hashValues.begin(), hashValues.end(),
-                        [kmermask = getKmerMask()](auto& hash){
-                            hash &= kmermask;
-                        }
-                    );
 
                     for(int h = 0; h < getNumberOfMaps(); h++){
                         allHashValues[h * numSequences + s] = hashValues[h];
