@@ -537,7 +537,7 @@ SerializedObjectStorage extend_gpu_pairedend(
             tasks.aggregateAnchorData(anchorData, stream);
             
             nvtx::push_range("getCandidateReadIds", 4);
-            #if 0
+            #if 1
             anchorHasher.getCandidateReadIds(anchorData, anchorHashResult, stream);
             #else
             anchorHasher.getCandidateReadIdsWithExtraExtensionHash(
@@ -598,7 +598,7 @@ SerializedObjectStorage extend_gpu_pairedend(
         return pairsWhichShouldBeRepeated;
     };
 
-    bool isLastIteration = true;
+    bool isLastIteration = false;
     GpuReadExtender::IterationConfig iterationConfig;
     iterationConfig.maxextensionPerStep = 20;
     iterationConfig.minCoverageForExtension = 3;
