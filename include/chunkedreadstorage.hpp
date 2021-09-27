@@ -586,6 +586,21 @@ public: //inherited interface
         for(const auto& s : qualityStorage){
             result.host += sizeof(char) * s.qualities.capacity();
         }
+
+        result.host += sizeof(StoredEncodedSequencesAppend) * lengthdataAppend.capacity();
+        result.host += sizeof(StoredSequenceLengthsAppend) * sequenceStorageAppend.capacity();
+        result.host += sizeof(StoredQualitiesAppend) * qualityStorageAppend.size();
+
+        for(const auto& s : lengthdataAppend){
+            result.host += sizeof(int) * s.sequenceLengths.capacity();
+        }
+        for(const auto& s : sequenceStorageAppend){
+            result.host += sizeof(unsigned int) * s.data.encodedSequences.capacity();
+        }
+        for(const auto& s : qualityStorageAppend){
+            result.host += sizeof(char) * s.data.qualities.capacity();
+        }
+
         return result;
     }
 
@@ -645,9 +660,9 @@ public:
 
         encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maxLength);
 
-        if(availableMem >= numSequences * encodedSequencePitchInInts){
+        if(availableMem >= sizeof(unsigned int) * numSequences * encodedSequencePitchInInts){
             shrinkedEncodedSequences.resize(numSequences * encodedSequencePitchInInts);
-            availableMem -= numSequences * encodedSequencePitchInInts * sizeof(unsigned int);
+            availableMem -= sizeof(unsigned int) * numSequences * encodedSequencePitchInInts;
 
             for(std::size_t chunk = 0; chunk < sequenceStorage.size(); chunk++){
                 const auto& s = sequenceStorage[chunk];
@@ -655,12 +670,17 @@ public:
                 const std::size_t pitchInts = s.encodedSequencePitchInInts;
                 const std::size_t num = s.encodedSequences.size() / pitchInts;
 
-                for(std::size_t i = 0; i < num; i++){
-                    std::copy(
-                        s.encodedSequences.begin() + i * pitchInts,
-                        s.encodedSequences.begin() + (i+1) * pitchInts,
-                        shrinkedEncodedSequences.begin() + (offset + i) * encodedSequencePitchInInts
-                    );
+                if(pitchInts != encodedSequencePitchInInts){
+
+                    for(std::size_t i = 0; i < num; i++){
+                        std::copy(
+                            s.encodedSequences.begin() + i * pitchInts,
+                            s.encodedSequences.begin() + (i+1) * pitchInts,
+                            shrinkedEncodedSequences.begin() + (offset + i) * encodedSequencePitchInInts
+                        );
+                    }
+                }else{
+                    std::copy(s.encodedSequences.begin(), s.encodedSequences.end(), shrinkedEncodedSequences.begin() + offset * encodedSequencePitchInInts);
                 }
 
                 availableMem += pitchInts * num * sizeof(unsigned int);
@@ -699,12 +719,17 @@ public:
                 const std::size_t pitchBytes = s.qualityPitchInBytes;
                 const std::size_t num = s.qualities.size() / pitchBytes;
 
-                for(std::size_t i = 0; i < num; i++){
-                    std::copy(
-                        s.qualities.begin() + i * pitchBytes,
-                        s.qualities.begin() + (i+1) * pitchBytes,
-                        shrinkedQualities.begin() + (offset + i) * pitchBytes
-                    );
+                if(pitchBytes != qualityPitchInBytes){
+
+                    for(std::size_t i = 0; i < num; i++){
+                        std::copy(
+                            s.qualities.begin() + i * pitchBytes,
+                            s.qualities.begin() + (i+1) * pitchBytes,
+                            shrinkedQualities.begin() + (offset + i) * qualityPitchInBytes
+                        );
+                    }
+                }else{
+                    std::copy(s.qualities.begin(), s.qualities.end(), shrinkedQualities.begin() + offset * qualityPitchInBytes);
                 }
 
                 availableMem += pitchBytes * num;
