@@ -11,6 +11,8 @@
 #include <gpu/gpubitarray.cuh>
 #include <sharedmutex.hpp>
 
+#include <qualityscorecompression.hpp>
+
 
 #include <vector>
 #include <cstdint>
@@ -21,12 +23,14 @@
 
 #include <cub/cub.cuh>
 
+#include <thrust/iterator/constant_iterator.h>
+
 namespace care{
 namespace gpu{
 
 
 class MultiGpuReadStorage : public GpuReadStorage {
-public:
+public:    
 
     template<class W>
     using HostBuffer = helpers::SimpleAllocationPinnedHost<W>;
@@ -73,14 +77,16 @@ public:
         const CpuReadStorage& cpuReadStorage_, 
         std::vector<int> deviceIds_, 
         std::vector<std::size_t> memoryLimitsPerDevice_,
-        std::size_t memoryLimitHost
+        std::size_t memoryLimitHost,
+        int numQualBits
     ){
 
         rebuild(
             cpuReadStorage_,
             deviceIds_,
             memoryLimitsPerDevice_,
-            memoryLimitHost
+            memoryLimitHost,
+            numQualBits
         );
 
     }
@@ -89,7 +95,8 @@ public:
         const CpuReadStorage& cpuReadStorage_, 
         std::vector<int> deviceIds_, 
         std::vector<std::size_t> memoryLimitsPerDevice,
-        std::size_t memoryLimitHost
+        std::size_t memoryLimitHost,
+        int numQualBits
     ){
         assert(deviceIds_.size() > 0);
 
@@ -106,6 +113,7 @@ public:
         sequenceLengthLowerBound = cpuReadStorage->getSequenceLengthLowerBound();
         sequenceLengthUpperBound = cpuReadStorage->getSequenceLengthUpperBound();
         pairedEnd = cpuReadStorage->isPairedEnd();
+        numQualityBits = numQualBits;
 
         gpuLengthStorage = std::move(
             GPULengthStore3<std::uint32_t>(
@@ -324,13 +332,14 @@ public:
         //std::fill(memoryLimitsPerDevice.begin(), memoryLimitsPerDevice.end(), 0); //DEBUG
 
         const int numColumnsQualitiesInts = SDIV(cpuReadStorage->getSequenceLengthUpperBound(), sizeof(unsigned int));
+        const int numColumnsCompressedQualitiesInts = QualityCompressionHelper::getNumInts(cpuReadStorage->getSequenceLengthUpperBound(), numQualityBits);
 
         if(canUseQualityScores()){
 
             qualitiesGpu = std::move(
                 MultiGpu2dArray<unsigned int, IndexType>(
                     numReads,
-                    numColumnsQualitiesInts,
+                    numColumnsCompressedQualitiesInts,
                     sizeof(unsigned int),
                     deviceIds,
                     memoryLimitsPerDevice,
@@ -350,22 +359,26 @@ public:
                 std::array<helpers::SimpleAllocationDevice<IndexType>, numbuffers> deviceindexbuffers{};
                 std::array<helpers::SimpleAllocationPinnedHost<unsigned int>, numbuffers> hostdatabuffers{};
                 std::array<helpers::SimpleAllocationDevice<unsigned int>, numbuffers> devicedatabuffers{};
+                std::array<helpers::SimpleAllocationDevice<unsigned int>, numbuffers> devicecompresseddatabuffers{};
 
                 std::array<IndexType*, numbuffers> indexarray{};
                 std::array<IndexType*, numbuffers> deviceindexarray{};
                 std::array<unsigned int*, numbuffers> hostdataarray{};
                 std::array<unsigned int*, numbuffers> dataarray{};
+                std::array<unsigned int*, numbuffers> compresseddataarray{};
 
                 for(int i = 0; i < numbuffers; i++){
                     indexbuffers[i].resize(batchsize);
                     deviceindexbuffers[i].resize(batchsize);
                     hostdatabuffers[i].resize(batchsize * numColumnsQualitiesInts);
                     devicedatabuffers[i].resize(batchsize * numColumnsQualitiesInts);
+                    devicecompresseddatabuffers[i].resize(batchsize * numColumnsCompressedQualitiesInts);
 
                     indexarray[i] = indexbuffers[i].data();
                     deviceindexarray[i] = deviceindexbuffers[i].data();
                     hostdataarray[i] = hostdatabuffers[i].data();
                     dataarray[i] = devicedatabuffers[i].data();
+                    compresseddataarray[i] = devicecompresseddatabuffers[i].data();
                 }
 
                 for(std::size_t i = 0, iteration = 0; i < qualitiesGpu.getNumRows(); i += batchsize, iteration++){
@@ -398,10 +411,21 @@ public:
                         streams[bufferIndex]
                     ));
 
+                    callCompressQualityScoresKernel(
+                        compresseddataarray[bufferIndex], 
+                        numColumnsCompressedQualitiesInts,
+                        (const char*)dataarray[bufferIndex], 
+                        sizeof(unsigned int) * numColumnsQualitiesInts,
+                        thrust::make_constant_iterator(sizeof(unsigned int) * numColumnsQualitiesInts),
+                        currentBatchsize,
+                        numQualityBits,
+                        streams[bufferIndex]
+                    );
+
                     qualitiesGpu.scatter(
                         arrayhandle, 
-                        dataarray[bufferIndex], 
-                        numColumnsQualitiesInts * sizeof(unsigned int), 
+                        compresseddataarray[bufferIndex], 
+                        numColumnsCompressedQualitiesInts * sizeof(unsigned int), 
                         deviceindexarray[bufferIndex], 
                         currentBatchsize, 
                         streams[bufferIndex]
@@ -837,15 +861,76 @@ public: //inherited GPUReadStorage interface
         auto gpuGather = [&](){
             nvtx::push_range("qualitiesGpu.gather", 5);
 
+            const int numColumnsCompressedQualitiesInts = qualitiesGpu.getNumColumns();
+
+            unsigned int* compressed;
+            CUDACHECK(cudaMallocAsync(&compressed, numSequences * numColumnsCompressedQualitiesInts * sizeof(unsigned int), stream));
+
             qualitiesGpu.gather(
                 tempData->handleQualities,
-                (unsigned int*)d_quality_data,
-                out_quality_pitch,
+                compressed,
+                numColumnsCompressedQualitiesInts * sizeof(unsigned int),
                 d_readIds,
                 numSequences,
                 hasHostQualities(),
                 stream
             );
+
+            const int maxLengthCompressedPitch = numColumnsCompressedQualitiesInts * sizeof(unsigned int) * 8 / numQualityBits;
+            const int maxLengthUncompressedPitch = out_quality_pitch;
+            const int l = std::min(maxLengthCompressedPitch, maxLengthUncompressedPitch);
+
+            // helpers::SimpleAllocationPinnedHost<unsigned int> h_compressed(numSequences * numColumnsCompressedQualitiesInts);
+            // CUDACHECK(cudaMemcpyAsync(
+            //     h_compressed.data(),
+            //     compressed,
+            //     numSequences * numColumnsCompressedQualitiesInts * sizeof(unsigned int),
+            //     D2H,
+            //     stream
+            // ));
+            // CUDACHECK(cudaDeviceSynchronize());
+
+
+            // std::cerr << "maxLengthCompressedPitch: " << maxLengthCompressedPitch << ", maxLengthUncompressedPitch: " 
+            //     << maxLengthUncompressedPitch << ", numColumnsCompressedQualitiesInts: " << numColumnsCompressedQualitiesInts << "\n";
+            // std::cerr << "Compressed:\n";
+            // for(int k = 0; k < numSequences; k++){
+            //     for(int i = 0; i < maxLengthCompressedPitch; i++){
+            //         std::cerr << ((char*)(&h_compressed[numColumnsCompressedQualitiesInts * k]))[i];
+            //     }
+            //     std::cerr << "\n";
+            // }
+
+            // std::cerr << "Compressed end\n";
+
+
+
+            callDecompressQualityScoresKernel(
+                d_quality_data, 
+                out_quality_pitch,
+                compressed, 
+                numColumnsCompressedQualitiesInts,
+                thrust::make_constant_iterator(l),
+                numSequences,
+                numQualityBits,
+                stream
+            );
+
+            CUDACHECK(cudaFreeAsync(compressed, stream));
+
+            //const int numColumnsCompressedQualitiesInts = QualityCompressionHelper::getNumInts(cpuReadStorage->getSequenceLengthUpperBound(), numQualityBits);
+
+            // qualitiesGpu.gather(
+            //     tempData->handleQualities,
+            //     (unsigned int*)d_quality_data,
+            //     out_quality_pitch,
+            //     d_readIds,
+            //     numSequences,
+            //     hasHostQualities(),
+            //     stream
+            // );
+
+            
 
             nvtx::pop_range();
         };
@@ -1319,6 +1404,7 @@ private:
     bool useQualityScores{};
     int sequenceLengthLowerBound{};
     int sequenceLengthUpperBound{};
+    int numQualityBits = 8;
     read_number numberOfReads{};
     std::int64_t numberOfAmbiguousReads{};
 

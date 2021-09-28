@@ -25,6 +25,7 @@
 #include <iostream>
 #include <memory>
 #include <vector>
+#include <numeric>
 
 #include <experimental/filesystem>
 
@@ -137,6 +138,14 @@ namespace care{
         helpers::PeerAccessDebug peerAccess(runtimeOptions.deviceIds, true);
         peerAccess.enableAllPeerAccesses();
 
+        //set up memory pools for malloc_async
+        for(auto id : runtimeOptions.deviceIds){
+            cudaMemPool_t defaultMemoryPool;
+            cudaDeviceGetDefaultMemPool(&defaultMemoryPool, id);
+            uint64_t threshold = UINT64_MAX;
+            cudaMemPoolSetAttribute(defaultMemoryPool, cudaMemPoolAttrReleaseThreshold, &threshold);
+        }
+
         
         /*
             Step 1: 
@@ -201,12 +210,15 @@ namespace care{
 
         // std::vector<int> tempids2(gpumemorylimits.size(), 0);
 
+        const int numQualityBits = 2;
+
         gpu::MultiGpuReadStorage gpuReadStorage(
             *cpuReadStorage, 
             runtimeOptions.deviceIds,
             //tempids2,
             gpumemorylimits,
-            0
+            0,
+            numQualityBits
         );
 
         std::vector<gpu::GpuForest> anchorForests;
@@ -313,7 +325,8 @@ namespace care{
             runtimeOptions.deviceIds, 
             //tempids,
             gpumemorylimits,
-            memoryLimitHost
+            memoryLimitHost,
+            numQualityBits
         );
         cpugputimer.print();
 
@@ -327,6 +340,32 @@ namespace care{
             cpuReadStorage.reset();
         }
 
+
+        // {
+        //     auto rshandle = gpuReadStorage.makeHandle();
+        //     helpers::SimpleAllocationPinnedHost<char> d_quality_data(128 * 10);
+        //     helpers::SimpleAllocationPinnedHost<read_number> readIds(10);
+        //     std::iota(readIds.begin(), readIds.end(), 0);
+
+        //     gpuReadStorage.gatherQualities(
+        //         rshandle,
+        //         d_quality_data,
+        //         128,
+        //         AsyncConstBufferWrapper<read_number>(readIds.data()),
+        //         readIds.data(),
+        //         10,
+        //         0
+        //     );
+        //     CUDACHECK(cudaDeviceSynchronize());
+
+        //     for(int k = 0; k < 10; k++){
+        //         for(int i = 0; i < 101; i++){
+        //             std::cerr << d_quality_data[128 * k + i];
+        //         }
+        //         std::cerr << "\n";
+        //     }
+        //     std::exit(0);
+        // }
 
 
         std::cout << "STEP 2: Error correction" << std::endl;
