@@ -321,6 +321,8 @@ public:
             }
         }
 
+        //std::fill(memoryLimitsPerDevice.begin(), memoryLimitsPerDevice.end(), 0); //DEBUG
+
         const int numColumnsQualitiesInts = SDIV(cpuReadStorage->getSequenceLengthUpperBound(), sizeof(unsigned int));
 
         if(canUseQualityScores()){
@@ -1080,7 +1082,7 @@ public: //inherited GPUReadStorage interface
         }
 
         result.host += sizeof(unsigned int) * hostsequences.capacity();
-        result.host += sizeof(char) * hostqualities.capacity();
+        result.host += sizeof(unsigned int) * hostqualities.capacity();
 
         result += sequencesGpu.getMemoryInfo();
 
