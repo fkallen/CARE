@@ -20,163 +20,69 @@ struct QualityCompressionHelper{
     }
 };
 
+
 template<int numBits>
-struct QualityCompressor{};
+struct QualityCompressorConfig;
 
 template<>
-struct QualityCompressor<1>{
-
+struct QualityCompressorConfig<1>{
     HOSTDEVICEQUALIFIER INLINEQUALIFIER
-    static constexpr int bitsPerQual(){
+    static constexpr int bitsPerQual() noexcept{
         return 1;
     }
 
     HOSTDEVICEQUALIFIER INLINEQUALIFIER
-    static constexpr int getNumInts(int lengths){
-        return QualityCompressionHelper::getNumInts(lengths, bitsPerQual());
+    static constexpr int binBoundary(int binNumber) noexcept{
+        constexpr int boundaries[2]{13, 256};
+
+        return boundaries[binNumber];
     }
 
     HOSTDEVICEQUALIFIER INLINEQUALIFIER
-    static void encodeQualityString(unsigned int* out, const char* quality, int length){
-        constexpr int ASCII_BASE = 33;
+    static constexpr int binQuality(int binNumber) noexcept{
+        constexpr char binsQualities[2]{'(', '5'};
 
-        const int numInts = getNumInts(length);
-        constexpr int numQualsPerInts = sizeof(unsigned int) / bitsPerQual() * 8;
-
-        for(int n = 0; n < numInts; n++){
-
-            unsigned int data = 0;
-            const int pend = min(length, (n+1) * numQualsPerInts);
-
-            for(int p = n * numQualsPerInts; p < pend; p++){
-                if((int(quality[p]) - ASCII_BASE) <= 13){
-                    data = (data << bitsPerQual()) | 0b0;
-                }else{
-                    data = (data << bitsPerQual()) | 0b1;
-                }
-            }
-
-            if(n == numInts-1){
-                const int remaining = (n+1) * numQualsPerInts - length;
-                data <<= remaining;
-            }
-
-            out[n] = data;
-        }
+        return binsQualities[binNumber];
     }
-
-    HOSTDEVICEQUALIFIER INLINEQUALIFIER
-    static void decodeQualityToString(char* quality, const unsigned int* encoded, int length){
-        constexpr int ASCII_BASE = 33;
-
-        const int numInts = getNumInts(length);
-        constexpr int numQualsPerInts = sizeof(unsigned int) / bitsPerQual() * 8;
-        constexpr unsigned int mask = 1u << 31;
-
-        for(int n = 0; n < numInts; n++){
-
-            unsigned int data = encoded[n];
-            const int pend = min(length, (n+1) * numQualsPerInts);
-
-            for(int p = n * numQualsPerInts; p < pend; p++){
-                const unsigned int bit = data & mask;
-                if(bit == mask){
-                    quality[p] = char(20 + ASCII_BASE);
-                }else{
-                    quality[p] = char(7 + ASCII_BASE);
-                }
-                data <<= bitsPerQual();
-            }
-        }
-    }
-
-    #ifdef __CUDACC__
-
-    template<class Group>
-    DEVICEQUALIFIER INLINEQUALIFIER
-    static void encodeQualityString(Group& group, unsigned int* out, const char* quality, int length){
-        constexpr int ASCII_BASE = 33;
-
-        const int numInts = getNumInts(length);
-        constexpr int numQualsPerInts = sizeof(unsigned int) / bitsPerQual() * 8;
-
-        for(int n = group.thread_rank(); n < numInts; n += group.size()){
-
-            unsigned int data = 0;
-            const int pend = min(length, (n+1) * numQualsPerInts);
-
-            for(int p = n * numQualsPerInts; p < pend; p++){
-                if((int(quality[p]) - ASCII_BASE) <= 13){
-                    data = (data << bitsPerQual()) | 0b0;
-                }else{
-                    data = (data << bitsPerQual()) | 0b1;
-                }
-            }
-
-            if(n == numInts-1){
-                const int remaining = (n+1) * numQualsPerInts - length;
-                data <<= remaining;
-            }
-
-            out[n] = data;
-        }
-    }
-
-    template<class Group>
-    DEVICEQUALIFIER INLINEQUALIFIER
-    static void decodeQualityToString(Group& group, char* quality, const unsigned int* encoded, int length){
-        constexpr int ASCII_BASE = 33;
-
-        const int numInts = getNumInts(length);
-        constexpr int numQualsPerInts = sizeof(unsigned int) / bitsPerQual() * 8;
-
-        const int iters = SDIV(length, 4);
-
-        for(int i = group.thread_rank(); i < iters; i += group.size()){
-            __align__(4) char temp[4];
-
-            #pragma unroll
-            for(int k = 0; k < 4; k++){
-                const int pos = i * 4 + k;
-                if(pos < length){
-                    const int whichInt = pos / numQualsPerInts;
-                    const int whichBit = pos - whichInt * numQualsPerInts;
-                    const unsigned int mask = 1 << (31-whichBit);
-                    const unsigned int bit = encoded[whichInt] & mask;
-                    if(bit == mask){
-                        temp[k] = char(20 + ASCII_BASE);
-                    }else{
-                        temp[k] = char(7 + ASCII_BASE);
-                    }
-                }
-            }
-
-            if(i < iters - 1){
-                ((unsigned int*)quality)[i] = *((const unsigned int*)&temp[0]);
-            }else{
-                #pragma unroll
-                for(int k = 0; k < 4; k++){
-                    const int pos = i * 4 + k;
-                    if(pos < length){
-                        quality[pos] = temp[k];
-                    }
-                }
-            }
-        }
-    }
-
-    #endif
 };
 
 template<>
-struct QualityCompressor<2>{
-
+struct QualityCompressorConfig<2>{
     HOSTDEVICEQUALIFIER INLINEQUALIFIER
-    static constexpr int bitsPerQual(){
+    static constexpr int bitsPerQual() noexcept{
         return 2;
     }
 
     HOSTDEVICEQUALIFIER INLINEQUALIFIER
+    static constexpr int binBoundary(int binNumber) noexcept{
+        constexpr int boundaries[4]{4,13,20,256};
+
+        return boundaries[binNumber];
+    }
+
+    HOSTDEVICEQUALIFIER INLINEQUALIFIER
+    static constexpr int binQuality(int binNumber) noexcept{
+        constexpr char binsQualities[4]{'$', '(', '1', '9'};
+
+        return binsQualities[binNumber];
+    }
+};
+
+
+
+template<class Config>
+struct QualityCompressorImpl{
+    HOSTDEVICEQUALIFIER INLINEQUALIFIER
+    static constexpr int bitsPerQual(){
+        return Config::bitsPerQual();
+    }
+
+    HOSTDEVICEQUALIFIER INLINEQUALIFIER
+    static constexpr int numBins() noexcept{
+        return 1 << bitsPerQual();
+    }
+
+    HOSTDEVICEQUALIFIER INLINEQUALIFIER
     static constexpr int getNumInts(int lengths){
         return QualityCompressionHelper::getNumInts(lengths, bitsPerQual());
     }
@@ -187,8 +93,6 @@ struct QualityCompressor<2>{
 
         const int numInts = getNumInts(length);
         constexpr int numQualsPerInts = sizeof(unsigned int) / bitsPerQual() * 8;
-
-        constexpr int boundaries[4]{4,13,20,256};
 
         for(int n = 0; n < numInts; n++){
 
@@ -198,8 +102,8 @@ struct QualityCompressor<2>{
             for(int p = n * numQualsPerInts; p < pend; p++){
                 const int Q = int(quality[p]) - ASCII_BASE;
 
-                for(unsigned int x = 0; x < 4u; x++){
-                    if(Q <= boundaries[x]){
+                for(unsigned int x = 0; x < (unsigned int)numBins(); x++){
+                    if(Q <= Config::binBoundary(x)){
                         data = (data << bitsPerQual()) | x;
                         break;
                     }
@@ -217,12 +121,9 @@ struct QualityCompressor<2>{
 
     HOSTDEVICEQUALIFIER INLINEQUALIFIER
     static void decodeQualityToString(char* quality, const unsigned int* encoded, int length){
-        constexpr int ASCII_BASE = 33;
 
         const int numInts = getNumInts(length);
         constexpr int numQualsPerInts = sizeof(unsigned int) / bitsPerQual() * 8;
-
-        constexpr char bins[4]{3 + ASCII_BASE, 7 + ASCII_BASE, 16 + ASCII_BASE, 24 + ASCII_BASE};
 
         for(int n = 0; n < numInts; n++){
 
@@ -232,10 +133,10 @@ struct QualityCompressor<2>{
             for(int p = n * numQualsPerInts; p < pend; p++){
                 const int posInInt = p - n * numQualsPerInts;
 
-                const unsigned int bits = (data >> ((32 - bitsPerQual()) - (posInInt * bitsPerQual()))) & 3u;
+                const unsigned int bits = (data >> ((32 - bitsPerQual()) - (posInInt * bitsPerQual()))) & ((unsigned int)numBins() - 1);
                 for(unsigned int x = 0; x < 4; x++){
                     if(bits == x){
-                        quality[p] = bins[x];
+                        quality[p] = Config::binQuality(x);
                         break;
                     }
                 }
@@ -253,8 +154,6 @@ struct QualityCompressor<2>{
         const int numInts = getNumInts(length);
         constexpr int numQualsPerInts = sizeof(unsigned int) / bitsPerQual() * 8;
 
-        constexpr int boundaries[4]{4,13,20,256};
-
         for(int n = group.thread_rank(); n < numInts; n += group.size()){
 
             unsigned int data = 0;
@@ -263,8 +162,8 @@ struct QualityCompressor<2>{
             for(int p = n * numQualsPerInts; p < pend; p++){
                 const int Q = int(quality[p]) - ASCII_BASE;
 
-                for(unsigned int x = 0; x < 4u; x++){
-                    if(Q <= boundaries[x]){
+                for(unsigned int x = 0; x < (unsigned int)numBins(); x++){
+                    if(Q <= Config::binBoundary(x)){
                         data = (data << bitsPerQual()) | x;
                         break;
                     }
@@ -283,14 +182,10 @@ struct QualityCompressor<2>{
     template<class Group>
     DEVICEQUALIFIER INLINEQUALIFIER
     static void decodeQualityToString(Group& group, char* quality, const unsigned int* encoded, int length){
-        constexpr int ASCII_BASE = 33;
-
         const int numInts = getNumInts(length);
         constexpr int numQualsPerInts = sizeof(unsigned int) / bitsPerQual() * 8;
 
         const int iters = SDIV(length, 4);
-
-        constexpr char bins[4]{3 + ASCII_BASE, 7 + ASCII_BASE, 16 + ASCII_BASE, 24 + ASCII_BASE};
 
         for(int i = group.thread_rank(); i < iters; i += group.size()){
             __align__(4) char temp[4];
@@ -302,10 +197,10 @@ struct QualityCompressor<2>{
                     const int whichInt = pos / numQualsPerInts;
                     const int whichBit = pos - whichInt * numQualsPerInts;
 
-                    const unsigned int bits = (encoded[whichInt] >> ((32 - bitsPerQual()) - (whichBit * bitsPerQual()))) & 3u;
+                    const unsigned int bits = (encoded[whichInt] >> ((32 - bitsPerQual()) - (whichBit * bitsPerQual()))) & ((unsigned int)numBins() - 1);
                     for(unsigned int x = 0; x < 4; x++){
                         if(bits == x){
-                            temp[k] = bins[x];
+                            temp[k] = Config::binQuality(x);
                             break;
                         }
                     }
@@ -330,6 +225,53 @@ struct QualityCompressor<2>{
 };
 
 
+
+
+
+template<int numBits>
+struct QualityCompressor{
+
+    using Impl = QualityCompressorImpl<QualityCompressorConfig<numBits>>;
+
+    HOSTDEVICEQUALIFIER INLINEQUALIFIER
+    static constexpr int bitsPerQual(){
+        return Impl::bitsPerQual();
+    }
+
+    HOSTDEVICEQUALIFIER INLINEQUALIFIER
+    static constexpr int getNumInts(int length){
+        return Impl::getNumInts(length);
+    }
+
+    HOSTDEVICEQUALIFIER INLINEQUALIFIER
+    static void encodeQualityString(unsigned int* out, const char* quality, int length){
+        Impl::encodeQualityString(out, quality, length);
+    }
+
+    HOSTDEVICEQUALIFIER INLINEQUALIFIER
+    static void decodeQualityToString(char* quality, const unsigned int* encoded, int length){
+        Impl::decodeQualityToString(quality, encoded, length);
+    }
+
+    #ifdef __CUDACC__
+
+    template<class Group>
+    DEVICEQUALIFIER INLINEQUALIFIER
+    static void encodeQualityString(Group& group, unsigned int* out, const char* quality, int length){
+        Impl::encodeQualityString(group, out, quality, length);
+    }
+
+    template<class Group>
+    DEVICEQUALIFIER INLINEQUALIFIER
+    static void decodeQualityToString(Group& group, char* quality, const unsigned int* encoded, int length){
+        Impl::decodeQualityToString(group, quality, encoded, length);
+    }
+
+    #endif
+};
+
+
+//8-bit "compression" is identity operation, i.e. memcpy
 template<>
 struct QualityCompressor<8>{
 
