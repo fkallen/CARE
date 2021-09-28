@@ -157,6 +157,14 @@ namespace args{
             result.insertSizeStddev = pr["insertsizedev"].as<int>();
         }
 
+        if(pr.count("fixedStddev")){
+            result.fixedStddev = pr["fixedStddev"].as<int>();
+        }
+
+        if(pr.count("fixedStepsize")){
+            result.fixedStepsize = pr["fixedStepsize"].as<int>();
+        }
+
         return result;
 	}
 
@@ -406,6 +414,18 @@ namespace args{
             valid = false;
             std::cout << "Error: insert size deviation must be >= 0, is " 
                 << opt.insertSizeStddev << std::endl;
+        }
+
+        if(opt.fixedStddev < 0){
+            valid = false;
+            std::cout << "Error: fixedStddev must be >= 0, is " 
+                << opt.fixedStddev << std::endl;
+        }
+
+        if(opt.fixedStepsize < 0){
+            valid = false;
+            std::cout << "Error: fixedStepsize must be >= 0, is " 
+                << opt.fixedStepsize << std::endl;
         }
 
         return valid;

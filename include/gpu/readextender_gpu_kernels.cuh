@@ -2657,10 +2657,8 @@ namespace readextendergpukernels{
             for(int i = group.thread_rank(); i < nInts; i += group.size()){
                 unsigned int data = 0;
 
-                const int loopend = min((i+1) * basesPerInt, length);
-                
-                for(int nucIndex = i * basesPerInt; nucIndex < loopend; nucIndex++){
-                    switch(in[nucIndex]) {
+                auto encodeNuc = [&](char nuc){
+                    switch(nuc) {
                     case 'A':
                         data = (data << 2) | SequenceHelpers::encodedbaseA();
                         break;
@@ -2677,14 +2675,28 @@ namespace readextendergpukernels{
                         data = (data << 2) | SequenceHelpers::encodedbaseA();
                         break;
                     }
-                }
+                };
 
-                if(i == nInts-1){
+                if(i < nInts - 1){
+                    //not last iteration. int encodes 16 chars
+                    __align__(16) char nucs[16];
+                    ((int4*)nucs)[0] = *((const int4*)&in[i * 16]);
+
+                    #pragma unroll
+                    for(int p = 0; p < 16; p++){
+                        encodeNuc(nucs[p]);
+                    }
+                }else{        
+                    for(int nucIndex = i * basesPerInt; nucIndex < length; nucIndex++){
+                        encodeNuc(in[nucIndex]);
+                    }
+
                     //pack bits of last integer into higher order bits
                     int leftoverbits = 2 * (nInts * basesPerInt - length);
                     if(leftoverbits > 0){
                         data <<= leftoverbits;
                     }
+
                 }
 
                 out[i] = data;

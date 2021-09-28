@@ -456,7 +456,7 @@ SerializedObjectStorage extend_gpu_pairedend(
         gpuDataVector.push_back(std::move(gpudata));
     }
 
-    auto extenderThreadFunc = [&](int gpuIndex, int threadId, auto* readIdGenerator, bool isLastIteration, GpuReadExtender::IterationConfig iterationConfig){
+    auto extenderThreadFunc = [&](int gpuIndex, int threadId, auto* readIdGenerator, bool isLastIteration, bool extraHashing, GpuReadExtender::IterationConfig iterationConfig){
         //std::cerr << "extenderThreadFunc( " << gpuIndex << ", " << threadId << ")\n";
         auto& gpudata = gpuDataVector[gpuIndex];
         const int numStreams = gpustreams[gpuIndex].size();
@@ -537,21 +537,37 @@ SerializedObjectStorage extend_gpu_pairedend(
             tasks.aggregateAnchorData(anchorData, stream);
             
             nvtx::push_range("getCandidateReadIds", 4);
-            #if 1
-            anchorHasher.getCandidateReadIds(anchorData, anchorHashResult, stream);
-            #else
-            anchorHasher.getCandidateReadIdsWithExtraExtensionHash(
-                *gpudata.dataAllocator,
-                anchorData, 
-                anchorHashResult,
-                iterationConfig, 
-                thrust::make_transform_iterator(
-                    tasks.iteration.data(),
-                    IsGreaterThan<int>{0}
-                ),
-                stream
-            );
-            #endif
+            if(extraHashing){
+            //if(false){
+                anchorHasher.getCandidateReadIdsWithExtraExtensionHash(
+                    *gpudata.dataAllocator,
+                    anchorData, 
+                    anchorHashResult,
+                    iterationConfig, 
+                    thrust::make_transform_iterator(
+                        tasks.iteration.data(),
+                        IsGreaterThan<int>{0}
+                    ),
+                    stream
+                );
+            }else{
+                anchorHasher.getCandidateReadIds(anchorData, anchorHashResult, stream);
+            }
+            // #if 0
+            // anchorHasher.getCandidateReadIds(anchorData, anchorHashResult, stream);
+            // #else
+            // anchorHasher.getCandidateReadIdsWithExtraExtensionHash(
+            //     *gpudata.dataAllocator,
+            //     anchorData, 
+            //     anchorHashResult,
+            //     iterationConfig, 
+            //     thrust::make_transform_iterator(
+            //         tasks.iteration.data(),
+            //         IsGreaterThan<int>{0}
+            //     ),
+            //     stream
+            // );
+            // #endif
             nvtx::pop_range();
 
             gpudata.gpuReadExtender->processOneIteration(
@@ -600,11 +616,15 @@ SerializedObjectStorage extend_gpu_pairedend(
 
     bool isLastIteration = false;
     GpuReadExtender::IterationConfig iterationConfig;
-    iterationConfig.maxextensionPerStep = 20;
+    iterationConfig.maxextensionPerStep = extensionOptions.fixedStepsize == 0 ? 20 : extensionOptions.fixedStepsize;
     iterationConfig.minCoverageForExtension = 3;
 
     std::vector<read_number> pairsWhichShouldBeRepeated;
     std::vector<read_number> pairsWhichShouldBeRepeatedTmp;
+
+    for(auto& x : gpuDataVector){
+        x.gpuReadExtender->insertSizeStddev = extensionOptions.fixedStddev == 0 ? 40 : extensionOptions.fixedStddev;
+    }
 
 
     {
@@ -624,6 +644,13 @@ SerializedObjectStorage extend_gpu_pairedend(
         // );
 
         const int maxNumThreads = runtimeOptions.threads;
+        const bool extraHashing = false;
+
+        std::cerr << "First iteration. insertsizedev: " << gpuDataVector[0].gpuReadExtender->insertSizeStddev 
+        << ", maxextensionPerStep: " << iterationConfig.maxextensionPerStep
+        << ", minCoverageForExtension: " << iterationConfig.minCoverageForExtension
+        << ", isLastIteration: " << isLastIteration 
+        << ", extraHashing: " << extraHashing << "\n";
 
         std::cerr << "use " << maxNumThreads << " threads\n";
 
@@ -636,6 +663,7 @@ SerializedObjectStorage extend_gpu_pairedend(
                     t,
                     &readIdGenerator,
                     isLastIteration,
+                    extraHashing,
                     iterationConfig
                 )
             );
@@ -650,50 +678,71 @@ SerializedObjectStorage extend_gpu_pairedend(
         pairsWhichShouldBeRepeatedTmp.clear();
         std::sort(pairsWhichShouldBeRepeated.begin(), pairsWhichShouldBeRepeated.end());
 
-        iterationConfig.maxextensionPerStep -= 4;
+        //iterationConfig.maxextensionPerStep -= 4;
     }
 
-    while(pairsWhichShouldBeRepeated.size() > 0 && (iterationConfig.maxextensionPerStep > 0)){
-        const int numPairsToRepeat = pairsWhichShouldBeRepeated.size() / 2;
-        std::cerr << "Will repeat extension of " << numPairsToRepeat << " read pairs with fixedStepsize = " << iterationConfig.maxextensionPerStep << "\n";
+    if(!isLastIteration){
 
-        isLastIteration = (iterationConfig.maxextensionPerStep <= 4);
+        for(auto& x : gpuDataVector){
+            x.gpuReadExtender->insertSizeStddev = extensionOptions.fixedStddev == 0 ? 40 : extensionOptions.fixedStddev;
+            //x.gpuReadExtender->insertSizeStddev = extensionOptions.fixedStddev == 0 ? 40 : 40;
+        }
 
-        auto readIdGenerator = makeIteratorRangeTraversal(
-            pairsWhichShouldBeRepeated.data(), 
-            pairsWhichShouldBeRepeated.data() + pairsWhichShouldBeRepeated.size()
-        );
+        const bool extraHashing = true;
 
-        const int threadsForPairs = SDIV(numPairsToRepeat, batchsizePairs);
-        const int maxNumThreads = std::min(threadsForPairs, runtimeOptions.threads);
-        std::cerr << "use " << maxNumThreads << " threads\n";
+        isLastIteration = true;
+        //iterationConfig.maxextensionPerStep = 16;
 
-        std::vector<std::future<std::vector<read_number>>> futures;
+        //while(pairsWhichShouldBeRepeated.size() > 0 && (iterationConfig.maxextensionPerStep > 0))
+        {
+            const int numPairsToRepeat = pairsWhichShouldBeRepeated.size() / 2;
+            std::cerr << "Will repeat extension of " << numPairsToRepeat << " read pairs with fixedStepsize = " << iterationConfig.maxextensionPerStep << "\n";
 
-        for(int t = 0; t < maxNumThreads; t++){
-            futures.emplace_back(
-                std::async(
-                    std::launch::async,
-                    extenderThreadFunc,
-                    t % numDeviceIds,
-                    t,
-                    &readIdGenerator,
-                    isLastIteration,
-                    iterationConfig
-                )
+            std::cerr << "Second iteration. insertsizedev: " << gpuDataVector[0].gpuReadExtender->insertSizeStddev 
+            << ", maxextensionPerStep: " << iterationConfig.maxextensionPerStep
+            << ", minCoverageForExtension: " << iterationConfig.minCoverageForExtension
+            << ", isLastIteration: " << isLastIteration 
+            << ", extraHashing: " << extraHashing << "\n";
+
+            //isLastIteration = (iterationConfig.maxextensionPerStep <= 4);
+
+            auto readIdGenerator = makeIteratorRangeTraversal(
+                pairsWhichShouldBeRepeated.data(), 
+                pairsWhichShouldBeRepeated.data() + pairsWhichShouldBeRepeated.size()
             );
+
+            const int threadsForPairs = SDIV(numPairsToRepeat, batchsizePairs);
+            const int maxNumThreads = std::min(threadsForPairs, runtimeOptions.threads);
+            std::cerr << "use " << maxNumThreads << " threads\n";
+
+            std::vector<std::future<std::vector<read_number>>> futures;
+
+            for(int t = 0; t < maxNumThreads; t++){
+                futures.emplace_back(
+                    std::async(
+                        std::launch::async,
+                        extenderThreadFunc,
+                        t % numDeviceIds,
+                        t,
+                        &readIdGenerator,
+                        isLastIteration,
+                        extraHashing,
+                        iterationConfig
+                    )
+                );
+            }
+
+            for(auto& f : futures){
+                auto vec = f.get();
+                pairsWhichShouldBeRepeatedTmp.insert(pairsWhichShouldBeRepeatedTmp.end(), vec.begin(), vec.end());
+            }
+
+            std::swap(pairsWhichShouldBeRepeated, pairsWhichShouldBeRepeatedTmp);
+            pairsWhichShouldBeRepeatedTmp.clear();
+            std::sort(pairsWhichShouldBeRepeated.begin(), pairsWhichShouldBeRepeated.end());
+
+            iterationConfig.maxextensionPerStep -= 4;
         }
-
-        for(auto& f : futures){
-            auto vec = f.get();
-            pairsWhichShouldBeRepeatedTmp.insert(pairsWhichShouldBeRepeatedTmp.end(), vec.begin(), vec.end());
-        }
-
-        std::swap(pairsWhichShouldBeRepeated, pairsWhichShouldBeRepeatedTmp);
-        pairsWhichShouldBeRepeatedTmp.clear();
-        std::sort(pairsWhichShouldBeRepeated.begin(), pairsWhichShouldBeRepeated.end());
-
-        iterationConfig.maxextensionPerStep -= 4;
     }
    
 
