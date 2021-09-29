@@ -174,9 +174,7 @@ public:
         stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthLowerBound), sizeof(int));
         stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthUpperBound), sizeof(int));            
         stream.read(reinterpret_cast<char*>(&loaded_hasQualityScores), sizeof(bool));
-        stream.read(reinterpret_cast<char*>(&loaded_numQualityBits), sizeof(int));
-
-        numQualityBits = loaded_numQualityBits;
+        stream.read(reinterpret_cast<char*>(&loaded_numQualityBits), sizeof(int));        
 
         std::size_t lengthsBytes = 0;
         std::size_t sequencesBytes = 0;
@@ -204,6 +202,11 @@ public:
         if(canUseQualityScores() && loaded_hasQualityScores){
             //std::cerr << "load qualities\n";
 
+            if(loaded_numQualityBits != numQualityBits){
+                throw std::runtime_error("preprocessed reads file uses " + std::to_string(loaded_numQualityBits) 
+                    + " bits per quality score, but setting requires " + std::to_string(numQualityBits) + " bits. Abort.");
+            }
+
             hasShrinkedQualities = true;
             stream.read(reinterpret_cast<char*>(&encodedqualityPitchInInts), sizeof(std::size_t));
             std::size_t numqualitydataelements = 0;
@@ -211,16 +214,22 @@ public:
             shrinkedEncodedQualities.resize(numqualitydataelements);
             stream.read(reinterpret_cast<char*>(shrinkedEncodedQualities.data()), numqualitydataelements * sizeof(unsigned int));
 
+            numQualityBits = loaded_numQualityBits;
+
         }else if(canUseQualityScores() && !loaded_hasQualityScores){
                 //std::cerr << "no q in bin file\n";
                 throw std::runtime_error("Quality scores expected in preprocessed reads file to load, but none are present. Abort.");
         }else if(!canUseQualityScores() && loaded_hasQualityScores){
                 //std::cerr << "skip qualities\n";
                 stream.ignore(qualitiesBytes);
+
+                numQualityBits = loaded_numQualityBits;
         }else{
             //!canUseQualityScores() && !loaded_hasQualityScores
             //std::cerr << "no q in file, and no q required. Ok\n";
             stream.ignore(qualitiesBytes);
+
+            numQualityBits = loaded_numQualityBits;
         }
         
 
