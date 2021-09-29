@@ -16,6 +16,8 @@
 #include <cub/cub.cuh>
 #endif
 
+#ifdef __CUDACC__
+
 struct CudaDataTransfer{
     std::size_t pinnedbytes;
     CudaEvent event{cudaEventDisableTiming};
@@ -76,6 +78,8 @@ struct CudaDataTransfer{
         return transferH2D(generator, elements, d_dest, stream);
     }
 };
+
+#endif
 
 /*
     KeyType KeyGenerator::operator()(IndexType i)  returns i-th key
