@@ -241,12 +241,10 @@ struct QualityCompressor{
         return Impl::getNumInts(length);
     }
 
-    HOSTDEVICEQUALIFIER INLINEQUALIFIER
     static void encodeQualityString(unsigned int* out, const char* quality, int length){
         Impl::encodeQualityString(out, quality, length);
     }
 
-    HOSTDEVICEQUALIFIER INLINEQUALIFIER
     static void decodeQualityToString(char* quality, const unsigned int* encoded, int length){
         Impl::decodeQualityToString(quality, encoded, length);
     }
@@ -348,7 +346,6 @@ struct QualityCompressorWrapper{
         return QualityCompressionHelper::getNumInts(lengths, bitsPerQual());
     }
 
-    HOSTDEVICEQUALIFIER INLINEQUALIFIER
     void encodeQualityString(unsigned int* out, const char* quality, int length){
         switch(numBits){
             case 1: QualityCompressor<1>::encodeQualityString(out, quality, length); break;
@@ -358,7 +355,6 @@ struct QualityCompressorWrapper{
         }
     }
 
-    HOSTDEVICEQUALIFIER INLINEQUALIFIER
     void decodeQualityToString(char* quality, const unsigned int* encoded, int length){
         switch(numBits){
             case 1: QualityCompressor<1>::decodeQualityToString(quality, encoded, length); break;

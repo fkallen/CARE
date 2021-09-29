@@ -156,7 +156,7 @@ namespace care{
         helpers::CpuTimer step1timer("STEP1");
 
         std::cout << "STEP 1: Database construction" << std::endl;
-        
+
         const int numQualityBits = 8;
 
         helpers::CpuTimer buildReadStorageTimer("build_readstorage");
@@ -165,7 +165,8 @@ namespace care{
             runtimeOptions,
             memoryOptions,
             fileOptions,
-            correctionOptions.useQualityScores
+            correctionOptions.useQualityScores,
+            numQualityBits
         );
 
         buildReadStorageTimer.print();
