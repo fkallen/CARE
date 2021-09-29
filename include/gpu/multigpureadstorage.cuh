@@ -444,7 +444,6 @@ public:
 
         //std::fill(memoryLimitsPerDevice.begin(), memoryLimitsPerDevice.end(), 0); //DEBUG
 
-        const int numColumnsQualitiesInts = SDIV(cpuReadStorage->getSequenceLengthUpperBound(), sizeof(unsigned int));
         const int numColumnsCompressedQualitiesInts = QualityCompressionHelper::getNumInts(cpuReadStorage->getSequenceLengthUpperBound(), numQualityBits);
 
         if(canUseQualityScores()){
@@ -543,7 +542,7 @@ public:
         numHostSequences = numReads - sequencesGpu.getNumRows();
         numHostQualities = canUseQualityScores() ? numReads - qualitiesGpu.getNumRows() : 0;
         hostSequencePitchBytes = numColumnsSequences * sizeof(unsigned int);
-        hostQualityPitchBytes = numColumnsQualitiesInts * sizeof(unsigned int);
+        hostQualityPitchBytes = numColumnsCompressedQualitiesInts * sizeof(unsigned int);
 
         std::size_t memoryOfHostSequences = numHostSequences * hostSequencePitchBytes;
         std::size_t memoryOfHostQualities = numHostQualities * hostQualityPitchBytes;
@@ -574,7 +573,7 @@ public:
 
                 if(canUseQualityScores()){
 
-                    hostqualities.resize(numHostQualities * numColumnsQualitiesInts);
+                    hostqualities.resize(numHostQualities * numColumnsCompressedQualitiesInts);
 
                     const std::size_t numQualitiesToCopy = numReads - qualitiesGpu.getNumRows();
                     const std::size_t batchsizeq = 100000;
@@ -585,8 +584,8 @@ public:
                         std::iota(indices.begin(), indices.end(), qualitiesGpu.getNumRows() + i);
 
                         cpuReadStorage->gatherEncodedQualities(
-                            hostqualities.data() + i * numColumnsQualitiesInts,
-                            numColumnsQualitiesInts,
+                            hostqualities.data() + i * numColumnsCompressedQualitiesInts,
+                            numColumnsCompressedQualitiesInts,
                             indices.data(),
                             currentBatchsize
                         );
