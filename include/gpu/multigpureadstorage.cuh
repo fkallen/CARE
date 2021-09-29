@@ -861,74 +861,53 @@ public: //inherited GPUReadStorage interface
         auto gpuGather = [&](){
             nvtx::push_range("qualitiesGpu.gather", 5);
 
-            const int numColumnsCompressedQualitiesInts = qualitiesGpu.getNumColumns();
+            if(numQualityBits != 8){
 
-            unsigned int* compressed;
-            CUDACHECK(cudaMallocAsync(&compressed, numSequences * numColumnsCompressedQualitiesInts * sizeof(unsigned int), stream));
+                const int numColumnsCompressedQualitiesInts = qualitiesGpu.getNumColumns();
 
-            qualitiesGpu.gather(
-                tempData->handleQualities,
-                compressed,
-                numColumnsCompressedQualitiesInts * sizeof(unsigned int),
-                d_readIds,
-                numSequences,
-                hasHostQualities(),
-                stream
-            );
+                unsigned int* compressed;
+                CUDACHECK(cudaMallocAsync(&compressed, numSequences * numColumnsCompressedQualitiesInts * sizeof(unsigned int), stream));
 
-            const int maxLengthCompressedPitch = numColumnsCompressedQualitiesInts * sizeof(unsigned int) * 8 / numQualityBits;
-            const int maxLengthUncompressedPitch = out_quality_pitch;
-            const int l = std::min(maxLengthCompressedPitch, maxLengthUncompressedPitch);
+                qualitiesGpu.gather(
+                    tempData->handleQualities,
+                    compressed,
+                    numColumnsCompressedQualitiesInts * sizeof(unsigned int),
+                    d_readIds,
+                    numSequences,
+                    hasHostQualities(),
+                    stream
+                );
 
-            // helpers::SimpleAllocationPinnedHost<unsigned int> h_compressed(numSequences * numColumnsCompressedQualitiesInts);
-            // CUDACHECK(cudaMemcpyAsync(
-            //     h_compressed.data(),
-            //     compressed,
-            //     numSequences * numColumnsCompressedQualitiesInts * sizeof(unsigned int),
-            //     D2H,
-            //     stream
-            // ));
-            // CUDACHECK(cudaDeviceSynchronize());
+                const int maxLengthCompressedPitch = numColumnsCompressedQualitiesInts * sizeof(unsigned int) * 8 / numQualityBits;
+                const int maxLengthUncompressedPitch = out_quality_pitch;
+                const int l = std::min(maxLengthCompressedPitch, maxLengthUncompressedPitch);
 
+                callDecompressQualityScoresKernel(
+                    d_quality_data, 
+                    out_quality_pitch,
+                    compressed, 
+                    numColumnsCompressedQualitiesInts,
+                    thrust::make_constant_iterator(l),
+                    numSequences,
+                    numQualityBits,
+                    stream
+                );
 
-            // std::cerr << "maxLengthCompressedPitch: " << maxLengthCompressedPitch << ", maxLengthUncompressedPitch: " 
-            //     << maxLengthUncompressedPitch << ", numColumnsCompressedQualitiesInts: " << numColumnsCompressedQualitiesInts << "\n";
-            // std::cerr << "Compressed:\n";
-            // for(int k = 0; k < numSequences; k++){
-            //     for(int i = 0; i < maxLengthCompressedPitch; i++){
-            //         std::cerr << ((char*)(&h_compressed[numColumnsCompressedQualitiesInts * k]))[i];
-            //     }
-            //     std::cerr << "\n";
-            // }
+                CUDACHECK(cudaFreeAsync(compressed, stream));
 
-            // std::cerr << "Compressed end\n";
+            }else{
 
+                qualitiesGpu.gather(
+                    tempData->handleQualities,
+                    (unsigned int*)d_quality_data,
+                    out_quality_pitch,
+                    d_readIds,
+                    numSequences,
+                    hasHostQualities(),
+                    stream
+                );
 
-
-            callDecompressQualityScoresKernel(
-                d_quality_data, 
-                out_quality_pitch,
-                compressed, 
-                numColumnsCompressedQualitiesInts,
-                thrust::make_constant_iterator(l),
-                numSequences,
-                numQualityBits,
-                stream
-            );
-
-            CUDACHECK(cudaFreeAsync(compressed, stream));
-
-            //const int numColumnsCompressedQualitiesInts = QualityCompressionHelper::getNumInts(cpuReadStorage->getSequenceLengthUpperBound(), numQualityBits);
-
-            // qualitiesGpu.gather(
-            //     tempData->handleQualities,
-            //     (unsigned int*)d_quality_data,
-            //     out_quality_pitch,
-            //     d_readIds,
-            //     numSequences,
-            //     hasHostQualities(),
-            //     stream
-            // );
+            }
 
             
 
