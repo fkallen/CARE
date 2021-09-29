@@ -60,19 +60,20 @@ namespace care{
 
         std::cout << "Running CARE EXTEND CPU" << std::endl;
 
-        std::cout << "STEP 1: Database construction" << std::endl;
-
-
         helpers::CpuTimer step1Timer("STEP1");
 
+        std::cout << "STEP 1: Database construction" << std::endl;
 
         helpers::CpuTimer buildReadStorageTimer("build_readstorage");
+
+        const int numQualityBits = memoryOptions.qualityScoreBits;
 
         std::unique_ptr<ChunkedReadStorage> cpuReadStorage = constructChunkedReadStorageFromFiles(
             runtimeOptions,
             memoryOptions,
             fileOptions,
-            correctionOptions.useQualityScores
+            correctionOptions.useQualityScores,
+            numQualityBits
         );
 
         buildReadStorageTimer.print();

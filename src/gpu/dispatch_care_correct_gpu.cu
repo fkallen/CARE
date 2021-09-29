@@ -157,10 +157,10 @@ namespace care{
 
         std::cout << "STEP 1: Database construction" << std::endl;
 
-        const int numQualityBits = 8;
-
         helpers::CpuTimer buildReadStorageTimer("build_readstorage");
 
+        const int numQualityBits = memoryOptions.qualityScoreBits;
+        
         std::unique_ptr<ChunkedReadStorage> cpuReadStorage = constructChunkedReadStorageFromFiles(
             runtimeOptions,
             memoryOptions,

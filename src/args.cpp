@@ -264,9 +264,10 @@ namespace args{
         if(pr.count("hashloadfactor")){
             result.hashtableLoadfactor = pr["hashloadfactor"].as<float>();
         }
-        
 
-        
+        if(pr.count("qualityScoreBits")){
+            result.qualityScoreBits = pr["qualityScoreBits"].as<int>();
+        } 
 
         return result;
 	}
@@ -444,8 +445,13 @@ namespace args{
     }
 
     template<>
-    bool isValid<MemoryOptions>(const MemoryOptions& /*opt*/){
+    bool isValid<MemoryOptions>(const MemoryOptions& opt){
         bool valid = true;
+
+        if(opt.qualityScoreBits != 1 && opt.qualityScoreBits != 2 && opt.qualityScoreBits != 8){
+            valid = false;
+            std::cout << "Error: qualityScoreBits must be 1,2,or 8, is " + std::to_string(opt.qualityScoreBits) << std::endl;
+        }
 
         return valid;
     }

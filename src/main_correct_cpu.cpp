@@ -168,6 +168,8 @@ int main(int argc, char** argv){
 		("pairedthreshold1", "pairedthreshold1", cxxopts::value<float>())
 		("hashloadfactor", "Load factor of hashtables. 0.0 < hashloadfactor < 1.0. Smaller values can improve the runtime at the expense of greater memory usage."
 			"Default: " + std::to_string(MemoryOptions{}.hashtableLoadfactor), cxxopts::value<float>())
+		("qualityScoreBits", "How many bits should be used to store a single quality score. Allowed values: 1,2,8. If not 8, a lossy compression via binning is used."
+			"Default: " + tostring(MemoryOptions{}.qualityScoreBits), cxxopts::value<int>())
 	;
 
 	//options.parse_positional({"deviceIds"});
@@ -275,6 +277,7 @@ int main(int argc, char** argv){
 	std::cout << "Maximum memory for hash tables: " << memoryOptions.memoryForHashtables << "\n";
 	std::cout << "Maximum memory total: " << memoryOptions.memoryTotalLimit << "\n";
 	std::cout << "Hashtable load factor: " << memoryOptions.hashtableLoadfactor << "\n";
+	std::cout << "Bits per quality score: " << memoryOptions.qualityScoreBits << "\n";
 
 	std::cout << "Paired mode: " << to_string(fileOptions.pairType) << "\n";
 	std::cout << "Output directory: " << fileOptions.outputdirectory << "\n";

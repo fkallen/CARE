@@ -132,11 +132,14 @@ namespace care{
 
         helpers::CpuTimer buildReadStorageTimer("build_readstorage");
 
+        const int numQualityBits = memoryOptions.qualityScoreBits;
+        
         std::unique_ptr<ChunkedReadStorage> cpuReadStorage = constructChunkedReadStorageFromFiles(
             runtimeOptions,
             memoryOptions,
             fileOptions,
-            correctionOptions.useQualityScores
+            correctionOptions.useQualityScores,
+            numQualityBits
         );
 
         buildReadStorageTimer.print();
@@ -188,7 +191,8 @@ namespace care{
             runtimeOptions.deviceIds,
             //tempids2,
             gpumemorylimits,
-            0
+            0,
+            numQualityBits
         );
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
@@ -281,7 +285,8 @@ namespace care{
             runtimeOptions.deviceIds, 
             //tempids,
             gpumemorylimits,
-            memoryLimitHost
+            memoryLimitHost,
+            numQualityBits
         );
 
         gpumemorylimits = getGpuMemoryLimits();
