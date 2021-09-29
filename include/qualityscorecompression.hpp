@@ -87,7 +87,6 @@ struct QualityCompressorImpl{
         return QualityCompressionHelper::getNumInts(lengths, bitsPerQual());
     }
 
-    HOSTDEVICEQUALIFIER INLINEQUALIFIER
     static void encodeQualityString(unsigned int* out, const char* quality, int length){
         constexpr int ASCII_BASE = 33;
 
@@ -97,7 +96,7 @@ struct QualityCompressorImpl{
         for(int n = 0; n < numInts; n++){
 
             unsigned int data = 0;
-            const int pend = min(length, (n+1) * numQualsPerInts);
+            const int pend = std::min(length, (n+1) * numQualsPerInts);
 
             for(int p = n * numQualsPerInts; p < pend; p++){
                 const int Q = int(quality[p]) - ASCII_BASE;
@@ -119,7 +118,6 @@ struct QualityCompressorImpl{
         }
     }
 
-    HOSTDEVICEQUALIFIER INLINEQUALIFIER
     static void decodeQualityToString(char* quality, const unsigned int* encoded, int length){
 
         const int numInts = getNumInts(length);
@@ -128,7 +126,7 @@ struct QualityCompressorImpl{
         for(int n = 0; n < numInts; n++){
 
             unsigned int data = encoded[n];
-            const int pend = min(length, (n+1) * numQualsPerInts);
+            const int pend = std::min(length, (n+1) * numQualsPerInts);
 
             for(int p = n * numQualsPerInts; p < pend; p++){
                 const int posInInt = p - n * numQualsPerInts;
@@ -330,6 +328,45 @@ struct QualityCompressor<8>{
     }
 
     #endif
+};
+
+
+struct QualityCompressorWrapper{
+    int numBits = 8;
+
+    QualityCompressorWrapper(int numQualityBits) : numBits(numQualityBits){}
+
+    //8bits for quality scores means leave them as is
+
+    HOSTDEVICEQUALIFIER INLINEQUALIFIER
+    int bitsPerQual(){
+        return numBits;
+    }
+
+    HOSTDEVICEQUALIFIER INLINEQUALIFIER
+    int getNumInts(int lengths){
+        return QualityCompressionHelper::getNumInts(lengths, bitsPerQual());
+    }
+
+    HOSTDEVICEQUALIFIER INLINEQUALIFIER
+    void encodeQualityString(unsigned int* out, const char* quality, int length){
+        switch(numBits){
+            case 1: QualityCompressor<1>::encodeQualityString(out, quality, length); break;
+            case 2: QualityCompressor<2>::encodeQualityString(out, quality, length); break;
+            case 8: QualityCompressor<8>::encodeQualityString(out, quality, length); break;
+            default: assert(false); break;
+        }
+    }
+
+    HOSTDEVICEQUALIFIER INLINEQUALIFIER
+    void decodeQualityToString(char* quality, const unsigned int* encoded, int length){
+        switch(numBits){
+            case 1: QualityCompressor<1>::decodeQualityToString(quality, encoded, length); break;
+            case 2: QualityCompressor<2>::decodeQualityToString(quality, encoded, length); break;
+            case 8: QualityCompressor<8>::decodeQualityToString(quality, encoded, length); break;
+            default: assert(false); break;
+        }
+    }
 };
 
 

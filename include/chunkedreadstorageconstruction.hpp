@@ -11,6 +11,7 @@
 #include <lengthstorage.hpp>
 #include <chunkedreadstorage.hpp>
 #include <options.hpp>
+#include <qualityscorecompression.hpp>
 
 #include <vector>
 #include <array>
@@ -30,12 +31,13 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
     RuntimeOptions runtimeOptions,
     MemoryOptions memoryOptions,
     FileOptions fileOptions,
-    bool useQualityScores
+    bool useQualityScores,
+    int numQualityBits
 ){
 
     if(fileOptions.load_binary_reads_from != ""){
         const bool pairedEnd = fileOptions.pairType == SequencePairType::PairedEnd;
-        std::unique_ptr<ChunkedReadStorage> readStorage = std::make_unique<ChunkedReadStorage>(pairedEnd, useQualityScores);
+        std::unique_ptr<ChunkedReadStorage> readStorage = std::make_unique<ChunkedReadStorage>(pairedEnd, useQualityScores, numQualityBits);
 
         readStorage->loadFromFile(fileOptions.load_binary_reads_from);
         std::cerr << "Loaded readstorage from file " << fileOptions.load_binary_reads_from << "\n";
@@ -43,7 +45,7 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
         return readStorage;
     }else{
         const bool pairedEnd = fileOptions.pairType == SequencePairType::PairedEnd;
-        std::unique_ptr<ChunkedReadStorage> readStorage = std::make_unique<ChunkedReadStorage>(pairedEnd, useQualityScores);
+        std::unique_ptr<ChunkedReadStorage> readStorage = std::make_unique<ChunkedReadStorage>(pairedEnd, useQualityScores, numQualityBits);
 
         const bool showProgress = runtimeOptions.showProgress;
 
@@ -222,10 +224,12 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
             int validItems = 0;
             read_number firstReadId = 0;
             std::size_t encodedSequencePitchInInts = 0;
-            std::size_t qualityPitchInBytes = 0;
+            //std::size_t qualityPitchInBytes = 0;
+            std::size_t encodedQualityPitchInInts = 0;
             std::vector<int> sequenceLengths{};
             std::vector<unsigned int> encodedSequences{};
-            std::vector<char> qualities{};
+            //std::vector<char> qualities{};
+            std::vector<unsigned int> encodedQualities{};
             std::vector<read_number> ambiguousReadIds{};
         };
 
@@ -236,7 +240,9 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
             BatchFromFile* sbatch = unprocessedBatchFromFile.pop();
             EncodedBatch* encbatch = nullptr;
 
-            auto initEncBatch = [&](auto sequencepitchInInts, auto qualitypitchInBytes){
+            QualityCompressorWrapper qualityCompressor(numQualityBits);
+
+            auto initEncBatch = [&](auto sequencepitchInInts, auto qualityPitchInInts){
                 encbatch = freeEncodedBatches.pop();
                 assert(encbatch != nullptr);
 
@@ -246,8 +252,8 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
                 encbatch->sequenceLengths.resize(encbatch->validItems);
                 encbatch->encodedSequences.resize(encbatch->validItems * sequencepitchInInts);
                 if(useQualityScores){
-                    encbatch->qualityPitchInBytes = qualitypitchInBytes;
-                    encbatch->qualities.resize(encbatch->validItems * qualitypitchInBytes);
+                    encbatch->encodedQualityPitchInInts = qualityPitchInInts;
+                    encbatch->encodedQualities.resize(encbatch->validItems * qualityPitchInInts);
                 }
                 encbatch->ambiguousReadIds.clear();
             };
@@ -262,9 +268,9 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
                 }
 
                 const std::size_t sequencepitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maxLength);
-                const std::size_t qualitypitchInBytes = maxLength;
+                const std::size_t qualityPitchInInts = QualityCompressionHelper::getNumInts(maxLength, numQualityBits);
 
-                initEncBatch(sequencepitchInInts, qualitypitchInBytes);
+                initEncBatch(sequencepitchInInts, qualityPitchInInts);
 
                 for(int i = 0; i < sbatch->validItems; i++){
                     const int length = sbatch->sequences[i].length();
@@ -283,10 +289,10 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
                     );
 
                     if(useQualityScores){
-                        std::copy(
-                            sbatch->qualities[i].begin(),
-                            sbatch->qualities[i].end(),
-                            encbatch->qualities.data() + i * qualitypitchInBytes
+                        qualityCompressor.encodeQualityString(
+                            encbatch->encodedQualities.data() + i * qualityPitchInInts,
+                            sbatch->qualities[i].data(),
+                            length
                         );
                     }
                     
@@ -318,8 +324,8 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
                     std::move(sbatch->sequenceLengths),
                     std::move(sbatch->encodedSequences),
                     sbatch->encodedSequencePitchInInts,
-                    std::move(sbatch->qualities),
-                    sbatch->qualityPitchInBytes
+                    std::move(sbatch->encodedQualities),
+                    sbatch->encodedQualityPitchInInts
                 );
 
                 progressThread.addProgress(numSequences);

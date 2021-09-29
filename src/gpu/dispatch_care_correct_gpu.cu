@@ -156,6 +156,8 @@ namespace care{
         helpers::CpuTimer step1timer("STEP1");
 
         std::cout << "STEP 1: Database construction" << std::endl;
+        
+        const int numQualityBits = 8;
 
         helpers::CpuTimer buildReadStorageTimer("build_readstorage");
 
@@ -210,7 +212,6 @@ namespace care{
 
         // std::vector<int> tempids2(gpumemorylimits.size(), 0);
 
-        const int numQualityBits = 2;
 
         gpu::MultiGpuReadStorage gpuReadStorage(
             *cpuReadStorage, 

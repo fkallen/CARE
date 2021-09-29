@@ -11,6 +11,7 @@
 #include <lengthstorage.hpp>
 #include <cpureadstorage.hpp>
 #include <memorymanagement.hpp>
+#include <qualityscorecompression.hpp>
 
 #include <unordered_set>
 #include <vector>
@@ -29,8 +30,8 @@ namespace care{
 
 class ChunkedReadStorage : public CpuReadStorage{
 public:
-    ChunkedReadStorage(bool pairedEnd_, bool hasQualityScores_) 
-    : pairedEnd(pairedEnd_), hasQualityScores(hasQualityScores_){
+    ChunkedReadStorage(bool pairedEnd_, bool hasQualityScores_, int qualityBits) 
+    : pairedEnd(pairedEnd_), hasQualityScores(hasQualityScores_), numQualityBits(qualityBits){
         offsetsPrefixSum.emplace_back(0);
     }
 
@@ -46,8 +47,8 @@ public:
         std::vector<int> sequenceLengths,
         std::vector<unsigned int> encodedSequences,
         std::size_t sequencePitchInInts,
-        std::vector<char> qualities,
-        std::size_t qualityPitchBytes
+        std::vector<unsigned int> encodedqualities,
+        std::size_t encodedqualityPitchInInts
     ){
         StoredEncodedSequencesAppend s;
         s.firstReadId = firstReadId;
@@ -69,8 +70,8 @@ public:
             StoredQualitiesAppend q;
             q.firstReadId = firstReadId;
             q.numReads = numReads;
-            q.data.qualityPitchInBytes = qualityPitchBytes;
-            q.data.qualities = std::move(qualities);
+            q.data.encodedqualityPitchInInts = encodedqualityPitchInInts;
+            q.data.encodedqualities = std::move(encodedqualities);
 
             qualityStorageAppend.emplace_back(std::move(q));
         }
@@ -167,14 +168,18 @@ public:
         int loaded_sequenceLengthLowerBound = 0;
         int loaded_sequenceLengthUpperBound = 0;
         bool loaded_hasQualityScores = false;        
+        int loaded_numQualityBits = 0;
 
         stream.read(reinterpret_cast<char*>(&loaded_numreads), sizeof(std::size_t));
         stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthLowerBound), sizeof(int));
         stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthUpperBound), sizeof(int));            
         stream.read(reinterpret_cast<char*>(&loaded_hasQualityScores), sizeof(bool));
+        stream.read(reinterpret_cast<char*>(&loaded_numQualityBits), sizeof(int));
+
+        numQualityBits = loaded_numQualityBits;
 
         std::size_t lengthsBytes = 0;
-        std::size_t sequencesBytes = 0;      
+        std::size_t sequencesBytes = 0;
         std::size_t qualitiesBytes = 0;       
         std::size_t ambigBytes = 0;
 
@@ -200,11 +205,11 @@ public:
             //std::cerr << "load qualities\n";
 
             hasShrinkedQualities = true;
-            stream.read(reinterpret_cast<char*>(&qualityPitchInBytes), sizeof(std::size_t));
+            stream.read(reinterpret_cast<char*>(&encodedqualityPitchInInts), sizeof(std::size_t));
             std::size_t numqualitydataelements = 0;
             stream.read(reinterpret_cast<char*>(&numqualitydataelements), sizeof(std::size_t));
-            shrinkedQualities.resize(numqualitydataelements);
-            stream.read(reinterpret_cast<char*>(shrinkedQualities.data()), numqualitydataelements * sizeof(char));
+            shrinkedEncodedQualities.resize(numqualitydataelements);
+            stream.read(reinterpret_cast<char*>(shrinkedEncodedQualities.data()), numqualitydataelements * sizeof(unsigned int));
 
         }else if(canUseQualityScores() && !loaded_hasQualityScores){
                 //std::cerr << "no q in bin file\n";
@@ -241,6 +246,7 @@ public:
         stream.write(reinterpret_cast<const char*>(&sequenceLengthUpperBound), sizeof(int));
         stream.write(reinterpret_cast<const char*>(&sequenceLengthLowerBound), sizeof(int));
         stream.write(reinterpret_cast<const char*>(&qual), sizeof(bool));
+        stream.write(reinterpret_cast<const char*>(&numQualityBits), sizeof(int));
 
         auto pos = stream.tellp();
 
@@ -311,15 +317,15 @@ public:
         std::size_t writtenQualityBytes = 0;
         if(hasShrinkedQualities){
 
-            std::size_t pitch = qualityPitchInBytes;
+            std::size_t pitch = encodedqualityPitchInInts;
             stream.write(reinterpret_cast<const char*>(&pitch), sizeof(std::size_t));
             writtenQualityBytes += sizeof(std::size_t); //pitch
 
-            std::size_t numelements = shrinkedQualities.size();
+            std::size_t numelements = shrinkedEncodedQualities.size();
             stream.write(reinterpret_cast<const char*>(&numelements), sizeof(std::size_t));
             writtenQualityBytes += sizeof(std::size_t); //numdataelements
 
-            stream.write(reinterpret_cast<const char*>(shrinkedQualities.data()), numelements * sizeof(char));            
+            stream.write(reinterpret_cast<const char*>(shrinkedEncodedQualities.data()), numelements * sizeof(unsigned int));            
             writtenQualityBytes += numelements * sizeof(char); //dataelements
 
             assert(numelements == getNumberOfReads() * pitch);
@@ -327,7 +333,7 @@ public:
 
             std::size_t pitch = 0;
             for(const auto& q : qualityStorage){
-                pitch = std::max(pitch, q.qualityPitchInBytes);
+                pitch = std::max(pitch, q.encodedqualityPitchInInts);
             }
             stream.write(reinterpret_cast<const char*>(&pitch), sizeof(std::size_t));
             writtenQualityBytes += sizeof(std::size_t); //pitch
@@ -339,20 +345,20 @@ public:
 
             for(std::size_t c = 0; c < qualityStorage.size(); c++){
                 const auto& q = qualityStorage[c];
-                const std::size_t numsequencesInChunk = q.qualities.size() / q.qualityPitchInBytes;
+                const std::size_t numsequencesInChunk = q.encodedqualities.size() / q.encodedqualityPitchInInts;
                 
 
-                if(q.qualityPitchInBytes == pitch){
-                    stream.write(reinterpret_cast<const char*>(q.qualities.data()), q.qualities.size() * sizeof(char));
-                    writtenQualityBytes += q.qualities.size() * sizeof(char); //dataelements
-                    numelements += q.qualities.size();
+                if(q.encodedqualityPitchInInts == pitch){
+                    stream.write(reinterpret_cast<const char*>(q.encodedqualities.data()), q.encodedqualities.size() * sizeof(unsigned int));
+                    writtenQualityBytes += q.encodedqualities.size() * sizeof(unsigned int); //dataelements
+                    numelements += q.encodedqualities.size();
                 }else{
-                    std::vector<char> temp(pitch);
+                    std::vector<unsigned int> temp(pitch);
 
                     for(std::size_t i = 0; i < numsequencesInChunk; i++){
-                        std::copy_n(q.qualities.data() + i * q.qualityPitchInBytes, q.qualityPitchInBytes, temp.begin());
-                        stream.write(reinterpret_cast<const char*>(temp.data()), temp.size() * sizeof(char));
-                        writtenQualityBytes += temp.size() * sizeof(char); //dataelements
+                        std::copy_n(q.encodedqualities.data() + i * q.encodedqualityPitchInInts, q.encodedqualityPitchInInts, temp.begin());
+                        stream.write(reinterpret_cast<const char*>(temp.data()), temp.size() * sizeof(unsigned int));
+                        writtenQualityBytes += temp.size() * sizeof(unsigned int); //dataelements
                         numelements += temp.size();
                     }
                 }
@@ -487,11 +493,14 @@ public: //inherited interface
 
         constexpr int prefetch_distance = 4;
 
+        QualityCompressorWrapper qualityCompressor(numQualityBits);
+        const int maxLengthCompressedPitch = encodedqualityPitchInInts * sizeof(unsigned int) * 8 / numQualityBits;
+
         if(hasShrinkedQualities){
             for(int i = 0; i < numSequences && i < prefetch_distance; ++i) {
                 const int index = i;
                 const std::size_t nextReadId = readIds[index];
-                const char* const nextData = shrinkedQualities.data() + qualityPitchInBytes * nextReadId;
+                const unsigned int* const nextData = shrinkedEncodedQualities.data() + encodedqualityPitchInInts * nextReadId;
                 __builtin_prefetch(nextData, 0, 0);
             }
 
@@ -501,23 +510,27 @@ public: //inherited interface
                 if(i + prefetch_distance < numSequences) {
                     const int index = i + prefetch_distance;
                     const std::size_t nextReadId = readIds[index];
-                    const char* const nextData = shrinkedQualities.data() + qualityPitchInBytes * nextReadId;
+                    const unsigned int* const nextData = shrinkedEncodedQualities.data() + encodedqualityPitchInInts * nextReadId;
                     __builtin_prefetch(nextData, 0, 0);
                 }
 
                 const std::size_t readId = readIds[i];
 
-                const char* const data = shrinkedQualities.data() + qualityPitchInBytes * readId;
-
+                const unsigned int* const data = shrinkedEncodedQualities.data() + encodedqualityPitchInInts * readId;
                 char* const destData = (char*)(((char*)quality_data) + destinationPitchBytes * i);
-                std::copy_n(data, qualityPitchInBytes, destData);
+
+                const int maxLengthUncompressedPitch = out_quality_pitch;
+                const int l = std::min(maxLengthCompressedPitch, maxLengthUncompressedPitch);
+                //const int l = lengthStorage.getLength(readId);
+
+                qualityCompressor.decodeQualityToString(destData, data, l);
             }
         }else{
 
             for(int i = 0; i < numSequences && i < prefetch_distance; ++i) {
                 const int index = i;
                 const std::size_t nextReadId = readIds[index];
-                const char* const nextData = getPointerToQualityRow(nextReadId);
+                const unsigned int* const nextData = getPointerToQualityRow(nextReadId);
                 __builtin_prefetch(nextData, 0, 0);
             }
 
@@ -527,19 +540,19 @@ public: //inherited interface
                 if(i + prefetch_distance < numSequences) {
                     const int index = i + prefetch_distance;
                     const std::size_t nextReadId = readIds[index];
-                    const char* const nextData = getPointerToQualityRow(nextReadId);
+                    const unsigned int* const nextData = getPointerToQualityRow(nextReadId);
                     __builtin_prefetch(nextData, 0, 0);
                 }
 
                 const std::size_t readId = readIds[i];
-                const std::size_t chunkIndex = getChunkIndexOfRow(readId);
-                const std::size_t rowInChunk = getRowIndexInChunk(chunkIndex, readId);
-
-                const char* const data = qualityStorage[chunkIndex].qualities.data()
-                    + rowInChunk * qualityStorage[chunkIndex].qualityPitchInBytes;
+                const unsigned int* const data = getPointerToQualityRow(readId);
 
                 char* const destData = (char*)(((char*)quality_data) + destinationPitchBytes * i);
-                std::copy_n(data, qualityStorage[chunkIndex].qualityPitchInBytes, destData);
+                const int maxLengthUncompressedPitch = out_quality_pitch;
+                const int l = std::min(maxLengthCompressedPitch, maxLengthUncompressedPitch);
+                //const int l = lengthStorage.getLength(readId);
+
+                qualityCompressor.decodeQualityToString(destData, data, l);
             }
 
         }
@@ -574,7 +587,7 @@ public: //inherited interface
 
         result.host += sizeof(std::size_t) * offsetsPrefixSum.capacity();
         result.host += sizeof(unsigned int) * shrinkedEncodedSequences.capacity();
-        result.host += sizeof(char) * shrinkedQualities.capacity();
+        result.host += sizeof(unsigned int) * shrinkedEncodedQualities.capacity();
 
         result.host += sizeof(StoredEncodedSequences) * sequenceStorage.capacity();
         result.host += sizeof(StoredQualities) * qualityStorage.capacity();
@@ -584,7 +597,7 @@ public: //inherited interface
             result.host += sizeof(unsigned int) * s.encodedSequences.capacity();
         }
         for(const auto& s : qualityStorage){
-            result.host += sizeof(char) * s.qualities.capacity();
+            result.host += sizeof(unsigned int) * s.encodedqualities.capacity();
         }
 
         result.host += sizeof(StoredEncodedSequencesAppend) * lengthdataAppend.capacity();
@@ -598,7 +611,7 @@ public: //inherited interface
             result.host += sizeof(unsigned int) * s.data.encodedSequences.capacity();
         }
         for(const auto& s : qualityStorageAppend){
-            result.host += sizeof(char) * s.data.qualities.capacity();
+            result.host += sizeof(unsigned int) * s.data.encodedqualities.capacity();
         }
 
         return result;
@@ -638,13 +651,13 @@ public: //inherited interface
         deallocVector(qualityStorage);
         deallocVector(ambigReadIds);
         deallocVector(shrinkedEncodedSequences);
-        deallocVector(shrinkedQualities);
+        deallocVector(shrinkedEncodedQualities);
         //deallocVector(tempdataVector);
 
         hasShrinkedSequences = false;
         encodedSequencePitchInInts = 0;
         hasShrinkedQualities = false;
-        qualityPitchInBytes = 0;
+        encodedqualityPitchInInts = 0;
 
         counter = 0;
 
@@ -707,32 +720,32 @@ public:
         std::size_t maxLength = lengthStorage.getMaxLength();
         std::size_t numSequences = totalNumberOfReads;
 
-        qualityPitchInBytes = maxLength;
+        encodedqualityPitchInInts = QualityCompressionHelper::getNumInts(maxLength, numQualityBits);
 
-        if(availableMem >= numSequences * qualityPitchInBytes){
-            shrinkedQualities.resize(numSequences * qualityPitchInBytes);
-            availableMem -= numSequences * qualityPitchInBytes;
+        if(availableMem >= numSequences * encodedqualityPitchInInts * sizeof(unsigned int)){
+            shrinkedEncodedQualities.resize(numSequences * encodedqualityPitchInInts);
+            availableMem -= numSequences * encodedqualityPitchInInts * sizeof(unsigned int);
 
             for(std::size_t chunk = 0; chunk < qualityStorage.size(); chunk++){
                 const auto& s = qualityStorage[chunk];
                 const std::size_t offset = offsetsPrefixSum[chunk];
-                const std::size_t pitchBytes = s.qualityPitchInBytes;
-                const std::size_t num = s.qualities.size() / pitchBytes;
+                const std::size_t pitchInts = s.encodedqualityPitchInInts;
+                const std::size_t num = s.encodedqualities.size() / pitchInts;
 
-                if(pitchBytes != qualityPitchInBytes){
+                if(pitchInts != encodedqualityPitchInInts){
 
                     for(std::size_t i = 0; i < num; i++){
                         std::copy(
-                            s.qualities.begin() + i * pitchBytes,
-                            s.qualities.begin() + (i+1) * pitchBytes,
-                            shrinkedQualities.begin() + (offset + i) * qualityPitchInBytes
+                            s.encodedqualities.begin() + i * pitchInts,
+                            s.encodedqualities.begin() + (i+1) * pitchInts,
+                            shrinkedEncodedQualities.begin() + (offset + i) * encodedqualityPitchInInts
                         );
                     }
                 }else{
-                    std::copy(s.qualities.begin(), s.qualities.end(), shrinkedQualities.begin() + offset * qualityPitchInBytes);
+                    std::copy(s.encodedqualities.begin(), s.encodedqualities.end(), shrinkedEncodedQualities.begin() + offset * encodedqualityPitchInInts);
                 }
 
-                availableMem += pitchBytes * num;
+                availableMem += pitchInts * num * sizeof(unsigned int);
             }
 
             auto deallocVector = [](auto& vec){
@@ -787,12 +800,12 @@ private:
         return data;
     }
 
-    const char* getPointerToQualityRow(std::size_t row) const noexcept{
+    const unsigned int* getPointerToQualityRow(std::size_t row) const noexcept{
         const std::size_t chunkIndex = getChunkIndexOfRow(row);
         const std::size_t rowInChunk = getRowIndexInChunk(chunkIndex, row);
 
-        const char* const data = qualityStorage[chunkIndex].qualities.data()
-            + rowInChunk * qualityStorage[chunkIndex].qualityPitchInBytes;
+        const unsigned int* const data = qualityStorage[chunkIndex].encodedqualities.data()
+            + rowInChunk * qualityStorage[chunkIndex].encodedqualityPitchInInts;
 
         return data;
     }
@@ -803,8 +816,8 @@ private:
     };
 
     struct StoredQualities{
-        std::size_t qualityPitchInBytes = 0;
-        std::vector<char> qualities{};
+        std::size_t encodedqualityPitchInInts = 0;
+        std::vector<unsigned int> encodedqualities{};
     };
 
     struct StoredEncodedSequencesAppend{
@@ -828,6 +841,7 @@ private:
     bool pairedEnd{};
 
     bool hasQualityScores{};
+    int numQualityBits = 8;
     std::size_t totalNumberOfReads{};
 
     std::vector<std::size_t> offsetsPrefixSum{};
@@ -845,8 +859,8 @@ private:
     std::vector<unsigned int> shrinkedEncodedSequences{};
 
     bool hasShrinkedQualities = false;
-    std::size_t qualityPitchInBytes{};
-    std::vector<char> shrinkedQualities{};
+    std::size_t encodedqualityPitchInInts{};
+    std::vector<unsigned int> shrinkedEncodedQualities{};
 
     mutable int counter = 0;
     mutable SharedMutex sharedmutex{};

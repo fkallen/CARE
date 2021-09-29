@@ -67,11 +67,14 @@ namespace care{
 
         helpers::CpuTimer buildReadStorageTimer("build_readstorage");
 
+        const int numQualityBits = 1;
+
         std::unique_ptr<ChunkedReadStorage> cpuReadStorage = constructChunkedReadStorageFromFiles(
             runtimeOptions,
             memoryOptions,
             fileOptions,
-            correctionOptions.useQualityScores
+            correctionOptions.useQualityScores,
+            numQualityBits
         );
 
         buildReadStorageTimer.print();
