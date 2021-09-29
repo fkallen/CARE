@@ -21,14 +21,21 @@ public:
 
     virtual void gatherSequences(
         unsigned int* sequence_data,
-        size_t outSequencePitchInInts,
+        std::size_t outSequencePitchInInts,
         const read_number* readIds,
         int numSequences
     ) const = 0;
 
     virtual void gatherQualities(
         char* quality_data,
-        size_t out_quality_pitch,
+        std::size_t out_quality_pitch,
+        const read_number* readIds,
+        int numSequences
+    ) const = 0;
+
+    virtual void gatherEncodedQualities(
+        unsigned int* encodedQualities,
+        std::size_t outputPitchInInts,
         const read_number* readIds,
         int numSequences
     ) const = 0;
@@ -56,6 +63,8 @@ public:
     virtual int getSequenceLengthUpperBound() const = 0;
 
     virtual bool isPairedEnd() const = 0;
+
+    virtual int getQualityBits() const = 0;
 
     //virtual void destroy() = 0;
 };

@@ -567,6 +567,71 @@ public: //inherited interface
         }
     }
 
+    void gatherEncodedQualities(
+        unsigned int* encodedQualities,
+        std::size_t outputPitchInInts,
+        const read_number* readIds,
+        int numSequences
+    ) const override{
+        if(numSequences == 0){
+            return;
+        }
+
+        constexpr int prefetch_distance = 4;
+
+        if(hasShrinkedQualities){
+            for(int i = 0; i < numSequences && i < prefetch_distance; ++i) {
+                const int index = i;
+                const std::size_t nextReadId = readIds[index];
+                const unsigned int* const nextData = shrinkedEncodedQualities.data() + encodedqualityPitchInInts * nextReadId;
+                __builtin_prefetch(nextData, 0, 0);
+            }
+
+            for(int i = 0; i < numSequences; i++){
+                if(i + prefetch_distance < numSequences) {
+                    const int index = i + prefetch_distance;
+                    const std::size_t nextReadId = readIds[index];
+                    const unsigned int* const nextData = shrinkedEncodedQualities.data() + encodedqualityPitchInInts * nextReadId;
+                    __builtin_prefetch(nextData, 0, 0);
+                }
+
+                const std::size_t readId = readIds[i];
+
+                const unsigned int* const data = shrinkedEncodedQualities.data() + encodedqualityPitchInInts * readId;
+                unsigned int* const destData = encodedQualities + outputPitchInInts * i;
+
+                const int l = std::min(outputPitchInInts, encodedqualityPitchInInts);
+                std::copy_n(data, l, destData);
+            }
+        }else{
+
+            for(int i = 0; i < numSequences && i < prefetch_distance; ++i) {
+                const int index = i;
+                const std::size_t nextReadId = readIds[index];
+                const unsigned int* const nextData = getPointerToQualityRow(nextReadId);
+                __builtin_prefetch(nextData, 0, 0);
+            }
+
+            for(int i = 0; i < numSequences; i++){
+                if(i + prefetch_distance < numSequences) {
+                    const int index = i + prefetch_distance;
+                    const std::size_t nextReadId = readIds[index];
+                    const unsigned int* const nextData = getPointerToQualityRow(nextReadId);
+                    __builtin_prefetch(nextData, 0, 0);
+                }
+
+                const std::size_t readId = readIds[i];
+                const unsigned int* const data = getPointerToQualityRow(readId);
+                unsigned int* const destData = encodedQualities + outputPitchInInts * i;
+
+                const int l = std::min(outputPitchInInts, encodedqualityPitchInInts);
+                std::copy_n(data, l, destData);
+            }
+
+        }
+    }
+
+
     void gatherSequenceLengths(
         int* lengths,
         const read_number* readIds,
@@ -644,6 +709,10 @@ public: //inherited interface
 
     bool isPairedEnd() const override{
         return pairedEnd;
+    }
+
+    int getQualityBits() const override{
+        return numQualityBits;
     }
 
     void destroy() {

@@ -96,7 +96,7 @@ public:
         std::vector<int> deviceIds_, 
         std::vector<std::size_t> memoryLimitsPerDevice,
         std::size_t memoryLimitHost,
-        int numQualBits
+        int /*numQualBits*/
     ){
         assert(deviceIds_.size() > 0);
 
@@ -113,7 +113,8 @@ public:
         sequenceLengthLowerBound = cpuReadStorage->getSequenceLengthLowerBound();
         sequenceLengthUpperBound = cpuReadStorage->getSequenceLengthUpperBound();
         pairedEnd = cpuReadStorage->isPairedEnd();
-        numQualityBits = numQualBits;
+        
+        numQualityBits = cpuReadStorage->getQualityBits();
 
         gpuLengthStorage = std::move(
             GPULengthStore3<std::uint32_t>(
@@ -358,26 +359,22 @@ public:
                 std::array<helpers::SimpleAllocationPinnedHost<IndexType>, numbuffers> indexbuffers{};
                 std::array<helpers::SimpleAllocationDevice<IndexType>, numbuffers> deviceindexbuffers{};
                 std::array<helpers::SimpleAllocationPinnedHost<unsigned int>, numbuffers> hostdatabuffers{};
-                std::array<helpers::SimpleAllocationDevice<unsigned int>, numbuffers> devicedatabuffers{};
                 std::array<helpers::SimpleAllocationDevice<unsigned int>, numbuffers> devicecompresseddatabuffers{};
 
                 std::array<IndexType*, numbuffers> indexarray{};
                 std::array<IndexType*, numbuffers> deviceindexarray{};
                 std::array<unsigned int*, numbuffers> hostdataarray{};
-                std::array<unsigned int*, numbuffers> dataarray{};
                 std::array<unsigned int*, numbuffers> compresseddataarray{};
 
                 for(int i = 0; i < numbuffers; i++){
                     indexbuffers[i].resize(batchsize);
                     deviceindexbuffers[i].resize(batchsize);
-                    hostdatabuffers[i].resize(batchsize * numColumnsQualitiesInts);
-                    devicedatabuffers[i].resize(batchsize * numColumnsQualitiesInts);
+                    hostdatabuffers[i].resize(batchsize * numColumnsCompressedQualitiesInts);
                     devicecompresseddatabuffers[i].resize(batchsize * numColumnsCompressedQualitiesInts);
 
                     indexarray[i] = indexbuffers[i].data();
                     deviceindexarray[i] = deviceindexbuffers[i].data();
                     hostdataarray[i] = hostdatabuffers[i].data();
-                    dataarray[i] = devicedatabuffers[i].data();
                     compresseddataarray[i] = devicecompresseddatabuffers[i].data();
                 }
 
@@ -396,31 +393,20 @@ public:
                         streams[bufferIndex]
                     ));
 
-                    cpuReadStorage->gatherQualities(
-                        (char*)hostdataarray[bufferIndex],
-                        numColumnsQualitiesInts * sizeof(unsigned int),
+                    cpuReadStorage->gatherEncodedQualities(
+                        hostdataarray[bufferIndex],
+                        numColumnsCompressedQualitiesInts,
                         indexarray[bufferIndex],
                         currentBatchsize
                     );
 
                     CUDACHECK(cudaMemcpyAsync(
-                        dataarray[bufferIndex],
+                        compresseddataarray[bufferIndex],
                         hostdataarray[bufferIndex],
-                        numColumnsQualitiesInts * currentBatchsize * sizeof(unsigned int),
+                        numColumnsCompressedQualitiesInts * currentBatchsize * sizeof(unsigned int),
                         H2D,
                         streams[bufferIndex]
                     ));
-
-                    callCompressQualityScoresKernel(
-                        compresseddataarray[bufferIndex], 
-                        numColumnsCompressedQualitiesInts,
-                        (const char*)dataarray[bufferIndex], 
-                        sizeof(unsigned int) * numColumnsQualitiesInts,
-                        thrust::make_constant_iterator(sizeof(unsigned int) * numColumnsQualitiesInts),
-                        currentBatchsize,
-                        numQualityBits,
-                        streams[bufferIndex]
-                    );
 
                     qualitiesGpu.scatter(
                         arrayhandle, 
