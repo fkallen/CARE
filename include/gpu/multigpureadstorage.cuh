@@ -177,6 +177,7 @@ public:
 
         int deviceId{};
         CudaEvent event{};
+        CudaEvent dependencyevent{};
         DeviceBuffer<char> tempbuffer{};
         HostBuffer<char> pinnedBuffer{};
         std::array<CudaStream,2> streams{};
@@ -623,6 +624,7 @@ public: //inherited GPUReadStorage interface
         data->handleSequences = sequencesGpu.makeHandle();
         data->handleQualities = qualitiesGpu.makeHandle();
         data->event = CudaEvent{cudaEventDisableTiming};
+        data->dependencyevent = CudaEvent{cudaEventDisableTiming};
 
         std::unique_lock<SharedMutex> lock(sharedmutex);
         const int handleid = counter++;
@@ -957,57 +959,33 @@ public: //inherited GPUReadStorage interface
 
         const int numColumnsCompressedQualitiesInts = qualitiesGpu.getNumColumns();
 
+        unsigned int* d_compressed;
+        unsigned int* d_gatherdestination;
+        std::size_t gatherdestinationPitchInBytes = 0;
+        if(numQualityBits == 8){
+            d_gatherdestination = reinterpret_cast<unsigned int*>(d_quality_data);
+            gatherdestinationPitchInBytes = out_quality_pitch;
+        }else{
+            CUDACHECK(cudaMallocAsync(&d_compressed, numSequences * numColumnsCompressedQualitiesInts * sizeof(unsigned int), stream));
+            d_gatherdestination = d_compressed;
+            gatherdestinationPitchInBytes = numColumnsCompressedQualitiesInts * sizeof(unsigned int);
+        }
+
+        CUDACHECK(cudaEventRecord(tempData->dependencyevent, stream));
+        std::array<bool, 2> didWaitEvent{false, false};
+
         auto gpuGather = [&](){
             nvtx::push_range("qualitiesGpu.gather", 5);
 
-            if(numQualityBits != 8){
-
-
-                unsigned int* compressed;
-                CUDACHECK(cudaMallocAsync(&compressed, numSequences * numColumnsCompressedQualitiesInts * sizeof(unsigned int), stream));
-
-                qualitiesGpu.gather(
-                    tempData->handleQualities,
-                    compressed,
-                    numColumnsCompressedQualitiesInts * sizeof(unsigned int),
-                    d_readIds,
-                    numSequences,
-                    hasHostQualities(),
-                    stream
-                );
-
-                const int maxLengthCompressedPitch = numColumnsCompressedQualitiesInts * sizeof(unsigned int) * 8 / numQualityBits;
-                const int maxLengthUncompressedPitch = out_quality_pitch;
-                const int l = std::min(maxLengthCompressedPitch, maxLengthUncompressedPitch);
-
-                callDecompressQualityScoresKernel(
-                    d_quality_data, 
-                    out_quality_pitch,
-                    compressed, 
-                    numColumnsCompressedQualitiesInts,
-                    thrust::make_constant_iterator(l),
-                    numSequences,
-                    numQualityBits,
-                    stream
-                );
-
-                CUDACHECK(cudaFreeAsync(compressed, stream));
-
-            }else{
-
-                qualitiesGpu.gather(
-                    tempData->handleQualities,
-                    (unsigned int*)d_quality_data,
-                    out_quality_pitch,
-                    d_readIds,
-                    numSequences,
-                    hasHostQualities(),
-                    stream
-                );
-
-            }
-
-            
+            qualitiesGpu.gather(
+                tempData->handleQualities,
+                d_gatherdestination,
+                gatherdestinationPitchInBytes,
+                d_readIds,
+                numSequences,
+                hasHostQualities(),
+                stream
+            );
 
             nvtx::pop_range();
         };
@@ -1110,22 +1088,36 @@ public: //inherited GPUReadStorage interface
                             tempData->streams[bufferIndex]
                         ));
 
-                        const int maxLengthCompressedPitch = numColumnsCompressedQualitiesInts * sizeof(unsigned int) * 8 / numQualityBits;
-                        const int maxLengthUncompressedPitch = out_quality_pitch;
-                        const int l = std::min(maxLengthCompressedPitch, maxLengthUncompressedPitch);
+                        if(!didWaitEvent[bufferIndex]){
+                            CUDACHECK(cudaStreamWaitEvent(tempData->streams[bufferIndex], tempData->dependencyevent, 0));
+                            didWaitEvent[bufferIndex] = true;
+                        }
 
-                        auto lengthIterator = thrust::make_constant_iterator(l);
-                        multigpureadstoragekernels::callDecompressAndScatterEncodedQualitiesKernel(
-                            d_quality_data, 
-                            out_quality_pitch, 
-                            d_hostdataArr[bufferIndex], 
-                            numColumnsCompressedQualitiesInts, 
-                            lengthIterator, 
-                            d_outputpositionsArr[bufferIndex], 
-                            k, 
-                            numQualityBits,
-                            tempData->streams[bufferIndex]
-                        );                       
+                        const int intsToScatter = k * numColumnsCompressedQualitiesInts;
+
+                        helpers::lambda_kernel<<<SDIV(intsToScatter, 128), 128, 0, tempData->streams[bufferIndex]>>>(
+                            [
+                                intsToScatter,
+                                d_gatherdestination,
+                                gatherdestinationPitchInBytes,
+                                numColumnsCompressedQualitiesInts,
+                                d_outputpositions = d_outputpositionsArr[bufferIndex],
+                                d_gatheredhost = d_hostdataArr[bufferIndex]
+                            ] __device__ (){
+                                const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                                const int stride = blockDim.x * gridDim.x;
+
+                                for(int i = tid; i < intsToScatter; i += stride){
+                                    const int inputrow = i / numColumnsCompressedQualitiesInts;
+                                    const int inputcol = i % numColumnsCompressedQualitiesInts;
+                                    const int outputcol = inputcol;
+                                    const int outputrow = d_outputpositions[inputrow];
+
+                                    ((unsigned int*)(((char*)d_gatherdestination) + outputrow * gatherdestinationPitchInBytes))[outputcol] 
+                                        = d_gatheredhost[inputrow * numColumnsCompressedQualitiesInts + inputcol];
+                                }
+                            }
+                        ); CUDACHECKASYNC;                   
 
                         bufferIndex = (bufferIndex + 1) % 2;
                         k = 0;
@@ -1136,8 +1128,6 @@ public: //inherited GPUReadStorage interface
                 CUDACHECK(cudaStreamWaitEvent(stream, tempData->event, 0));
                 CUDACHECK(cudaEventRecord(tempData->event, tempData->streams[1]));
                 CUDACHECK(cudaStreamWaitEvent(stream, tempData->event, 0));
-
-                
             }else{
                 const std::size_t compressedMemoryForOneSeq = numColumnsCompressedQualitiesInts * sizeof(unsigned int);
                 const int batchsize = std::min(SDIV(memorylimitbatch, compressedMemoryForOneSeq), std::size_t(numSequences));
@@ -1149,11 +1139,6 @@ public: //inherited GPUReadStorage interface
                     reinterpret_cast<unsigned int*>(tempData->pinnedBuffer.data()) + batchsize * numColumnsCompressedQualitiesInts
                 };
                 assert(hostpointers.size() == tempData->streams.size());
-
-                std::array<unsigned int*, 2> devicepointers;
-                for(int i = 0; i < 2; i++){
-                    CUDACHECK(cudaMallocAsync(&devicepointers[i], batchsize * numColumnsCompressedQualitiesInts * sizeof(unsigned int), tempData->streams[i]));
-                }
 
                 const int numBatches = SDIV(numSequences, batchsize);
                 for(int b = 0; b < numBatches; b++){
@@ -1172,43 +1157,32 @@ public: //inherited GPUReadStorage interface
                         hostpointers[bufferIndex],
                         numColumnsCompressedQualitiesInts
                     );
-                    CUDACHECK(cudaMemcpyAsync(
-                        devicepointers[bufferIndex],
+
+                    if(!didWaitEvent[bufferIndex]){
+                        CUDACHECK(cudaStreamWaitEvent(tempData->streams[bufferIndex], tempData->dependencyevent, 0));
+                        didWaitEvent[bufferIndex] = true;
+                    }
+
+                    CUDACHECK(cudaMemcpy2DAsync(
+                        ((char*)d_gatherdestination) + gatherdestinationPitchInBytes * begin,
+                        gatherdestinationPitchInBytes,
                         hostpointers[bufferIndex],
-                        sizeof(unsigned int) * numColumnsCompressedQualitiesInts * sizeOfCurrentBatch,
+                        sizeof(unsigned int) * numColumnsCompressedQualitiesInts,
+                        sizeof(unsigned int) * numColumnsCompressedQualitiesInts,
+                        sizeOfCurrentBatch,
                         H2D,
                         tempData->streams[bufferIndex]
                     ));
-
-                    const int maxLengthCompressedPitch = numColumnsCompressedQualitiesInts * sizeof(unsigned int) * 8 / numQualityBits;
-                    const int maxLengthUncompressedPitch = out_quality_pitch;
-                    const int l = std::min(maxLengthCompressedPitch, maxLengthUncompressedPitch);
-
-                    callDecompressQualityScoresKernel(
-                        d_quality_data + out_quality_pitch * begin, 
-                        out_quality_pitch,
-                        devicepointers[bufferIndex], 
-                        numColumnsCompressedQualitiesInts,
-                        thrust::make_constant_iterator(l),
-                        sizeOfCurrentBatch,
-                        numQualityBits,
-                        tempData->streams[bufferIndex]
-                    );
-                }
-
-                for(int i = 0; i < 2; i++){
-                    CUDACHECK(cudaFreeAsync(devicepointers[i], tempData->streams[i]));
                 }
 
                 CUDACHECK(cudaEventRecord(tempData->event, tempData->streams[0]));
                 CUDACHECK(cudaStreamWaitEvent(stream, tempData->event, 0));
                 CUDACHECK(cudaEventRecord(tempData->event, tempData->streams[1]));
                 CUDACHECK(cudaStreamWaitEvent(stream, tempData->event, 0));
+
             }
 
-        };
-
-        
+        };        
 
         if(hasGpuQualities()){
             if(hasHostQualities()){
@@ -1219,6 +1193,28 @@ public: //inherited GPUReadStorage interface
             }
         }else{
             hostGather();
+        }
+
+        if(numQualityBits != 8){
+
+            const int maxLengthCompressedPitch = numColumnsCompressedQualitiesInts * sizeof(unsigned int) * 8 / numQualityBits;
+            const int maxLengthUncompressedPitch = out_quality_pitch;
+            const int l = std::min(maxLengthCompressedPitch, maxLengthUncompressedPitch);
+
+            callDecompressQualityScoresKernel(
+                d_quality_data, 
+                out_quality_pitch,
+                d_compressed, 
+                numColumnsCompressedQualitiesInts,
+                thrust::make_constant_iterator(l),
+                numSequences,
+                numQualityBits,
+                stream
+            );
+
+            CUDACHECK(cudaFreeAsync(d_compressed, stream));
+        }else{
+            //all good
         }
 
         CUDACHECK(cudaEventRecord(tempData->event, stream));

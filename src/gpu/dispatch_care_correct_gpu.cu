@@ -26,6 +26,7 @@
 #include <memory>
 #include <vector>
 #include <numeric>
+#include <random>
 
 #include <experimental/filesystem>
 
@@ -332,11 +333,13 @@ namespace care{
         );
         cpugputimer.print();
 
+        printDataStructureMemoryUsage(gpuReadStorage, "reads");
+
         //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after gpureadstorage");
 
         //std::cout << "constructed gpu readstorage " << std::endl;
 
-        printDataStructureMemoryUsage(gpuReadStorage, "reads");
+        
 
         if(gpuReadStorage.isStandalone()){
             cpuReadStorage.reset();
