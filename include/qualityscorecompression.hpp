@@ -499,8 +499,23 @@ void callDecompressQualityScoresKernel(
     constexpr int groupsize = QualityDecompressionGroupSize<numBits>::value;
     constexpr int blocksize = 128;
     constexpr int groupsPerBlock = blocksize / groupsize;
+    const std::size_t smem = 0;
 
-    const int numBlocks = SDIV(numSequences, groupsPerBlock);
+    int deviceId = 0;
+    int numSMs = 0;
+    int maxBlocksPerSM = 0;
+    CUDACHECK(cudaGetDevice(&deviceId));
+    CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &maxBlocksPerSM,
+        decompressQualityScoresKernel<numBits, LengthIterator>,
+        blocksize, 
+        smem
+    ));
+
+    const int maxBlocks = maxBlocksPerSM * numSMs;
+
+    const int numBlocks = std::min(maxBlocks, SDIV(numSequences, groupsPerBlock));
 
     decompressQualityScoresKernel<numBits><<<numBlocks, blocksize, 0, stream>>>(
         quality,
