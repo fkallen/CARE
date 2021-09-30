@@ -10,7 +10,7 @@
 #include <gpu/gpulengthstorage.hpp>
 #include <gpu/gpubitarray.cuh>
 #include <sharedmutex.hpp>
-
+#include <gpu/asyncdeviceallocation.cuh>
 #include <qualityscorecompression.hpp>
 
 
@@ -167,7 +167,6 @@ public:
             MemoryUsage result{};
 
             result.host += pinnedBuffer.capacityInBytes();
-            result.device[deviceId] += tempbuffer.capacityInBytes();
 
             result += handleSequences->getMemoryInfo();
             result += handleQualities->getMemoryInfo();
@@ -178,7 +177,6 @@ public:
         int deviceId{};
         CudaEvent event{};
         CudaEvent dependencyevent{};
-        DeviceBuffer<char> tempbuffer{};
         HostBuffer<char> pinnedBuffer{};
         std::array<CudaStream,2> streams{};
 
@@ -711,6 +709,11 @@ public: //inherited GPUReadStorage interface
             data.resize(size);
         };
 
+        CUDACHECK(cudaEventRecord(tempData->dependencyevent, stream));
+        for(int i = 0; i < 2; i++){
+            CUDACHECK(cudaStreamWaitEvent(tempData->streams[i], tempData->dependencyevent, 0));
+        }
+
         auto gpuGather = [&](){
 
             nvtx::push_range("sequencesGpu.gather", 5);
@@ -765,15 +768,7 @@ public: //inherited GPUReadStorage interface
                     temp_allocation_sizes
                 ));
 
-                resizeWithSync(tempData->tempbuffer, temp_storage_bytes);
                 resizeWithSync(tempData->pinnedBuffer, temp_storage_bytes);
-
-                CUDACHECK(cub::AliasTemporaries(
-                    tempData->tempbuffer.data(),
-                    temp_storage_bytes,
-                    temp_allocations_device,
-                    temp_allocation_sizes
-                ));
 
                 CUDACHECK(cub::AliasTemporaries(
                     tempData->pinnedBuffer.data(),
@@ -787,9 +782,16 @@ public: //inherited GPUReadStorage interface
                 hostindicesarray[1].resize(numSequences);
 
                 std::array<unsigned int*, 2> h_hostdataArr{(unsigned int*)temp_allocations_host[0], (unsigned int*)temp_allocations_host[1]};
-                std::array<unsigned int*, 2> d_hostdataArr{(unsigned int*)temp_allocations_device[0], (unsigned int*)temp_allocations_device[1]};
                 std::array<int*, 2> h_outputpositionsArr{(int*)temp_allocations_host[2], (int*)temp_allocations_host[3]};
-                std::array<int*, 2> d_outputpositionsArr{(int*)temp_allocations_device[2], (int*)temp_allocations_device[3]};
+
+                AsyncDeviceAllocation d_gatheredData1(sizeof(char) * sequencepitch * batchsize, tempData->streams[0]);
+                AsyncDeviceAllocation d_gatheredData2(sizeof(char) * sequencepitch * batchsize, tempData->streams[1]);
+
+                AsyncDeviceAllocation d_outputPositions1(sizeof(int) * batchsize, tempData->streams[0]);
+                AsyncDeviceAllocation d_outputPositions2(sizeof(int) * batchsize, tempData->streams[1]);
+
+                std::array<unsigned int*, 2> d_hostdataArr{d_gatheredData1.get<unsigned int>(), d_gatheredData2.get<unsigned int>()};
+                std::array<int*, 2> d_outputpositionsArr{d_outputPositions1.get<int>(), d_outputPositions2.get<int>()};
 
                 for(int i = 0,k = 0, bufferIndex = 0; i < numSequences; i++){
 
@@ -972,7 +974,9 @@ public: //inherited GPUReadStorage interface
         }
 
         CUDACHECK(cudaEventRecord(tempData->dependencyevent, stream));
-        std::array<bool, 2> didWaitEvent{false, false};
+        for(int i = 0; i < 2; i++){
+            CUDACHECK(cudaStreamWaitEvent(tempData->streams[i], tempData->dependencyevent, 0));
+        }
 
         auto gpuGather = [&](){
             nvtx::push_range("qualitiesGpu.gather", 5);
@@ -1026,15 +1030,7 @@ public: //inherited GPUReadStorage interface
                     temp_allocation_sizes
                 ));
 
-                resizeWithSync(tempData->tempbuffer, temp_storage_bytes);
                 resizeWithSync(tempData->pinnedBuffer, temp_storage_bytes);
-
-                CUDACHECK(cub::AliasTemporaries(
-                    tempData->tempbuffer.data(),
-                    temp_storage_bytes,
-                    temp_allocations_device,
-                    temp_allocation_sizes
-                ));
 
                 CUDACHECK(cub::AliasTemporaries(
                     tempData->pinnedBuffer.data(),
@@ -1048,9 +1044,16 @@ public: //inherited GPUReadStorage interface
                 hostindicesarray[1].resize(numSequences);
 
                 std::array<unsigned int*, 2> h_hostdataArr{(unsigned int*)temp_allocations_host[0], (unsigned int*)temp_allocations_host[1]};
-                std::array<unsigned int*, 2> d_hostdataArr{(unsigned int*)temp_allocations_device[0], (unsigned int*)temp_allocations_device[1]};
                 std::array<int*, 2> h_outputpositionsArr{(int*)temp_allocations_host[2], (int*)temp_allocations_host[3]};
-                std::array<int*, 2> d_outputpositionsArr{(int*)temp_allocations_device[2], (int*)temp_allocations_device[3]};
+
+                AsyncDeviceAllocation d_gatheredData1(sizeof(unsigned int) * numColumnsCompressedQualitiesInts * batchsize, tempData->streams[0]);
+                AsyncDeviceAllocation d_gatheredData2(sizeof(unsigned int) * numColumnsCompressedQualitiesInts * batchsize, tempData->streams[1]);
+
+                AsyncDeviceAllocation d_outputPositions1(sizeof(int) * batchsize, tempData->streams[0]);
+                AsyncDeviceAllocation d_outputPositions2(sizeof(int) * batchsize, tempData->streams[1]);
+
+                std::array<unsigned int*, 2> d_hostdataArr{d_gatheredData1.get<unsigned int>(), d_gatheredData2.get<unsigned int>()};
+                std::array<int*, 2> d_outputpositionsArr{d_outputPositions1.get<int>(), d_outputPositions2.get<int>()};
 
                 for(int i = 0,k = 0, bufferIndex = 0; i < numSequences; i++){
 
@@ -1087,11 +1090,6 @@ public: //inherited GPUReadStorage interface
                             H2D,
                             tempData->streams[bufferIndex]
                         ));
-
-                        if(!didWaitEvent[bufferIndex]){
-                            CUDACHECK(cudaStreamWaitEvent(tempData->streams[bufferIndex], tempData->dependencyevent, 0));
-                            didWaitEvent[bufferIndex] = true;
-                        }
 
                         const int intsToScatter = k * numColumnsCompressedQualitiesInts;
 
@@ -1157,11 +1155,6 @@ public: //inherited GPUReadStorage interface
                         hostpointers[bufferIndex],
                         numColumnsCompressedQualitiesInts
                     );
-
-                    if(!didWaitEvent[bufferIndex]){
-                        CUDACHECK(cudaStreamWaitEvent(tempData->streams[bufferIndex], tempData->dependencyevent, 0));
-                        didWaitEvent[bufferIndex] = true;
-                    }
 
                     CUDACHECK(cudaMemcpy2DAsync(
                         ((char*)d_gatherdestination) + gatherdestinationPitchInBytes * begin,
