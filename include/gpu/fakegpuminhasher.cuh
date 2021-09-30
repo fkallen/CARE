@@ -90,8 +90,6 @@ namespace gpu{
             std::vector<Range_t> allRanges{};
             DeviceBuffer<int> d_hashFunctionNumbers{};
 
-            GpuSegmentedUnique::Handle segmentedUniqueHandle;
-
             MemoryUsage getMemoryInfo() const{
                 MemoryUsage info;
                 info.host = 0;
@@ -125,8 +123,6 @@ namespace gpu{
 
                 handlevector(allRanges);
                 handledevice(d_hashFunctionNumbers);
-
-                info += segmentedUniqueHandle->getMemoryInfo();
     
                 return info;
             }
@@ -150,8 +146,6 @@ namespace gpu{
                 allRanges.shrink_to_fit();
 
                 d_hashFunctionNumbers.destroy();
-
-                segmentedUniqueHandle = nullptr;
 
                 isInitialized = false;
             }
@@ -369,7 +363,6 @@ namespace gpu{
 
         MinhasherHandle makeMinhasherHandle() const override {
             auto data = std::make_unique<QueryData>();
-            data->segmentedUniqueHandle = GpuSegmentedUnique::makeHandle();
             data->d_hashFunctionNumbers.resize(getNumberOfMaps());
 
             thrust::sequence(thrust::device, data->d_hashFunctionNumbers.begin(), data->d_hashFunctionNumbers.end(), 0);
@@ -903,7 +896,6 @@ namespace gpu{
             );
 
             GpuSegmentedUnique::unique(
-                queryData->segmentedUniqueHandle,
                 d_values_dblbuf.Current(), //input
                 totalNumValues,
                 d_values_dblbuf.Alternate(), //output
