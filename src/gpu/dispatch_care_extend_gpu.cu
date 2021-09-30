@@ -126,6 +126,14 @@ namespace care{
         helpers::PeerAccessDebug peerAccess(runtimeOptions.deviceIds, true);
         peerAccess.enableAllPeerAccesses();
 
+        //set up memory pools for malloc_async
+        for(auto id : runtimeOptions.deviceIds){
+            cudaMemPool_t defaultMemoryPool;
+            CUDACHECK(cudaDeviceGetDefaultMemPool(&defaultMemoryPool, id));
+            uint64_t threshold = UINT64_MAX;
+            CUDACHECK(cudaMemPoolSetAttribute(defaultMemoryPool, cudaMemPoolAttrReleaseThreshold, &threshold));
+        }
+
         helpers::CpuTimer step1timer("STEP1");
 
         std::cout << "STEP 1: Database construction" << std::endl;

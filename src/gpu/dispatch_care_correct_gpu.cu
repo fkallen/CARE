@@ -142,9 +142,9 @@ namespace care{
         //set up memory pools for malloc_async
         for(auto id : runtimeOptions.deviceIds){
             cudaMemPool_t defaultMemoryPool;
-            cudaDeviceGetDefaultMemPool(&defaultMemoryPool, id);
+            CUDACHECK(cudaDeviceGetDefaultMemPool(&defaultMemoryPool, id));
             uint64_t threshold = UINT64_MAX;
-            cudaMemPoolSetAttribute(defaultMemoryPool, cudaMemPoolAttrReleaseThreshold, &threshold);
+            CUDACHECK(cudaMemPoolSetAttribute(defaultMemoryPool, cudaMemPoolAttrReleaseThreshold, &threshold));
         }
 
         
