@@ -137,7 +137,7 @@ void initializeExtenderInput(
 
 
 std::pair< std::vector<ExtendedRead>, std::vector<read_number> >
-makeAndSplitExtensionOutput(GpuReadExtender::TaskData& finishedTasks, GpuReadExtender::RawExtendResult& rawExtendResult, const GpuReadExtender* gpuReadExtender, bool collectPairsToRepeat, cudaStream_t stream){
+makeAndSplitExtensionOutput(GpuReadExtender::TaskData& finishedTasks, GpuReadExtender::RawExtendResult& rawExtendResult, const GpuReadExtender* gpuReadExtender, bool isRepeatedIteration, bool collectPairsToRepeat, cudaStream_t stream){
 
     nvtx::push_range("constructRawResults", 4);
     gpuReadExtender->constructRawResults(finishedTasks, rawExtendResult, stream);
@@ -200,7 +200,11 @@ makeAndSplitExtensionOutput(GpuReadExtender::TaskData& finishedTasks, GpuReadExt
                 }else{
                     er.status = ExtendedReadStatus::LengthAbort;
                 }
-            }  
+            }
+
+            if(isRepeatedIteration){
+                reinterpret_cast<unsigned char&>(er.status) |= static_cast<unsigned char>(ExtendedReadStatus::Repeated);
+            }
             
             extendedReads.emplace_back(std::move(er));
 
@@ -456,7 +460,7 @@ SerializedObjectStorage extend_gpu_pairedend(
         gpuDataVector.push_back(std::move(gpudata));
     }
 
-    auto extenderThreadFunc = [&](int gpuIndex, int threadId, auto* readIdGenerator, bool isLastIteration, bool extraHashing, GpuReadExtender::IterationConfig iterationConfig){
+    auto extenderThreadFunc = [&](int gpuIndex, int threadId, auto* readIdGenerator, bool isRepeatedIteration, bool isLastIteration, bool extraHashing, GpuReadExtender::IterationConfig iterationConfig){
         //std::cerr << "extenderThreadFunc( " << gpuIndex << ", " << threadId << ")\n";
         auto& gpudata = gpuDataVector[gpuIndex];
         const int numStreams = gpustreams[gpuIndex].size();
@@ -502,7 +506,7 @@ SerializedObjectStorage extend_gpu_pairedend(
 
             nvtx::push_range("output", 5);
 
-            auto [extendedReads, pairsTmp] = makeAndSplitExtensionOutput(finishedTasks, rawExtendResult, gpudata.gpuReadExtender.get(), !isLastIteration, stream);
+            auto [extendedReads, pairsTmp] = makeAndSplitExtensionOutput(finishedTasks, rawExtendResult, gpudata.gpuReadExtender.get(), isRepeatedIteration, !isLastIteration, stream);
 
             pairsWhichShouldBeRepeated.insert(pairsWhichShouldBeRepeated.end(), pairsTmp.begin(), pairsTmp.end());
 
@@ -623,15 +627,15 @@ SerializedObjectStorage extend_gpu_pairedend(
     std::vector<read_number> pairsWhichShouldBeRepeatedTmp;
 
     for(auto& x : gpuDataVector){
-        x.gpuReadExtender->insertSizeStddev = extensionOptions.fixedStddev == 0 ? 40 : extensionOptions.fixedStddev;
+        x.gpuReadExtender->insertSizeStddev = extensionOptions.fixedStddev == 0 ? extensionOptions.insertSizeStddev : extensionOptions.fixedStddev;
     }
 
 
     {
         std::vector<std::future<std::vector<read_number>>> futures;
 
-        const std::size_t numReadsToProcess = 2000000;
-        //const std::size_t numReadsToProcess = gpuReadStorage.getNumberOfReads();
+        //const std::size_t numReadsToProcess = 2000000;
+        const std::size_t numReadsToProcess = gpuReadStorage.getNumberOfReads();
 
         IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(
             thrust::make_counting_iterator<read_number>(0),
@@ -654,6 +658,8 @@ SerializedObjectStorage extend_gpu_pairedend(
 
         std::cerr << "use " << maxNumThreads << " threads\n";
 
+        constexpr bool isRepeatedIteration = false;
+
         for(int t = 0; t < maxNumThreads; t++){
             futures.emplace_back(
                 std::async(
@@ -662,6 +668,7 @@ SerializedObjectStorage extend_gpu_pairedend(
                     t % numDeviceIds,
                     t,
                     &readIdGenerator,
+                    isRepeatedIteration,
                     isLastIteration,
                     extraHashing,
                     iterationConfig
@@ -691,6 +698,7 @@ SerializedObjectStorage extend_gpu_pairedend(
         const bool extraHashing = true;
 
         isLastIteration = true;
+        constexpr bool isRepeatedIteration = true;
         //iterationConfig.maxextensionPerStep = 16;
 
         //while(pairsWhichShouldBeRepeated.size() > 0 && (iterationConfig.maxextensionPerStep > 0))
@@ -725,6 +733,7 @@ SerializedObjectStorage extend_gpu_pairedend(
                         t % numDeviceIds,
                         t,
                         &readIdGenerator,
+                        isRepeatedIteration,
                         isLastIteration,
                         extraHashing,
                         iterationConfig

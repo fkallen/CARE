@@ -16,11 +16,22 @@
 namespace care{
 
     enum class ExtendedReadStatus : unsigned char{
-        FoundMate,
-        MSANoExtension,
-        LengthAbort,
-        CandidateAbort
+        FoundMate = 1,
+        MSANoExtension = 2,
+        LengthAbort = 4,
+        CandidateAbort = 8,
+        Repeated = 16
     };
+
+    // struct ExtendedReadStatus{
+    //     static constexpr unsigned char FoundMate = 1;
+    //     static constexpr unsigned char MSANoExtension = 2;
+    //     static constexpr unsigned char LengthAbort = 4;
+    //     static constexpr unsigned char CandidateAbort = 8;
+    //     static constexpr unsigned char Repeated = 16;
+
+    //     unsigned char status;
+    // };
 
     // struct EncodedExtendedRead{
     //     std::uint32_t encodedflags{}; //contains size of data in bytes, and boolean flags

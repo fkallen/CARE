@@ -439,6 +439,9 @@ void writeExtensionResultsToFile(
 
     std::map<ExtendedReadStatus, std::int64_t> statusHistogram;
 
+    std::int64_t pairsFound = 0;
+    std::int64_t pairsRepeated = 0;
+
     const int expectedNumber = partialResults.size();
     int actualNumber = 0;
 
@@ -447,10 +450,17 @@ void writeExtensionResultsToFile(
         ExtendedRead extendedRead;
         extendedRead.copyFromContiguousMemory(serializedPtr);
 
+        constexpr unsigned char foundMateStatus = static_cast<unsigned char>(ExtendedReadStatus::FoundMate);
+        constexpr unsigned char repeatedStatus = static_cast<unsigned char>(ExtendedReadStatus::Repeated);
+        unsigned char status = static_cast<unsigned char>(extendedRead.status);
+        const bool foundMate = (status & foundMateStatus) == foundMateStatus;
+        const bool repeated = (status & repeatedStatus) == repeatedStatus;
+
         std::stringstream sstream;
         sstream << extendedRead.readId;
-        sstream << ' ' << (extendedRead.status == ExtendedReadStatus::FoundMate ? "reached:1" : "reached:0");
+        sstream << ' ' << (foundMate ? "reached:1" : "reached:0");
         sstream << ' ' << (extendedRead.mergedFromReadsWithoutMate ? "m:1" : "m:0");
+        sstream << ' ' << (repeated ? "a:1" : "a:0");
         sstream << ' ';
         sstream << "lens:" << extendedRead.read1begin << ',' << extendedRead.read1end << ',' << extendedRead.read2begin << ',' << extendedRead.read2end;
         // if(extendedRead.status == ExtendedReadStatus::LengthAbort){
@@ -473,7 +483,14 @@ void writeExtensionResultsToFile(
 
         writer->writeRead(res.header, res.sequence, res.quality);
 
-        statusHistogram[extendedRead.status]++;
+        //statusHistogram[extendedRead.status]++;
+        if(foundMate){
+            pairsFound++;
+        }
+
+        if(repeated){
+            pairsRepeated++;
+        }
 
         actualNumber++;
     }
@@ -482,17 +499,19 @@ void writeExtensionResultsToFile(
         std::cerr << "Error actualNumber " << actualNumber << ", expectedNumber " << expectedNumber << "\n";
     }
 
+    std::cerr << "Found mate: " << pairsFound << ", repeated: " << pairsRepeated << "\n";
+
     //assert(actualNumber == expectedNumber);
 
-    for(const auto& pair : statusHistogram){
-        switch(pair.first){
-            case ExtendedReadStatus::FoundMate: std::cout << "Found Mate: " << pair.second << "\n"; break;
-            case ExtendedReadStatus::LengthAbort: 
-            case ExtendedReadStatus::CandidateAbort: 
-            case ExtendedReadStatus::MSANoExtension: 
-            default: break;
-        }
-    }
+    // for(const auto& pair : statusHistogram){
+    //     switch(pair.first){
+    //         case ExtendedReadStatus::FoundMate: std::cout << "Found Mate: " << pair.second << "\n"; break;
+    //         case ExtendedReadStatus::LengthAbort: 
+    //         case ExtendedReadStatus::CandidateAbort: 
+    //         case ExtendedReadStatus::MSANoExtension: 
+    //         default: break;
+    //     }
+    // }
 }
 
 
@@ -596,14 +615,14 @@ void constructOutputFileFromExtensionResults(
             origIdResultIdLessThan
         );
 
-        for(const auto& pair : statusHistogram){
-            switch(pair.first){
-                case ExtendedReadStatus::FoundMate: std::cout << "Found Mate: " << pair.second << "\n"; break;
-                case ExtendedReadStatus::LengthAbort: std::cout << "Too long: " << pair.second << "\n"; break;
-                case ExtendedReadStatus::CandidateAbort: std::cout << "Empty candidate list: " << pair.second << "\n"; break;
-                case ExtendedReadStatus::MSANoExtension: std::cout << "Did not grow: " << pair.second << "\n"; break;
-            }
-        }
+        // for(const auto& pair : statusHistogram){
+        //     switch(pair.first){
+        //         case ExtendedReadStatus::FoundMate: std::cout << "Found Mate: " << pair.second << "\n"; break;
+        //         case ExtendedReadStatus::LengthAbort: std::cout << "Too long: " << pair.second << "\n"; break;
+        //         case ExtendedReadStatus::CandidateAbort: std::cout << "Empty candidate list: " << pair.second << "\n"; break;
+        //         case ExtendedReadStatus::MSANoExtension: std::cout << "Did not grow: " << pair.second << "\n"; break;
+        //     }
+        // }
     }
 
 }
