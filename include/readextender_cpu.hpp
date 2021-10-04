@@ -72,10 +72,10 @@ public:
         msaTimer.print();
     }
 
-    std::vector<extension::ExtendResult> extend(std::vector<extension::ExtendInput> inputs){
+    std::vector<extension::ExtendResult> extend(std::vector<extension::ExtendInput> inputs, bool isRepetition){
         auto tasks = makePairedEndTasksFromInput4(inputs.begin(), inputs.end());
         
-        auto extendedTasks = processPairedEndTasks(tasks);
+        auto extendedTasks = processPairedEndTasks(tasks, isRepetition);
 
         auto extendResults = constructResults(
             extendedTasks
@@ -123,7 +123,8 @@ private:
     };    
 
     std::vector<extension::Task>& processPairedEndTasks(
-        std::vector<extension::Task>& tasks
+        std::vector<extension::Task>& tasks,
+        bool isRepetition
     ) const{
  
         std::vector<int> indicesOfActiveTasks(tasks.size());
@@ -132,7 +133,7 @@ private:
         while(indicesOfActiveTasks.size() > 0){
             //perform one extension iteration for active tasks
 
-            doOneExtensionIteration(tasks, indicesOfActiveTasks);
+            doOneExtensionIteration(tasks, indicesOfActiveTasks, isRepetition);
 
             //update list of active task indices
 
@@ -151,7 +152,7 @@ private:
         return tasks;
     }
 
-    void doOneExtensionIteration(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) const{
+    void doOneExtensionIteration(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks, bool isRepetition) const{
         for(int indexOfActiveTask : indicesOfActiveTasks){
             auto& task = tasks[indexOfActiveTask];
 
@@ -166,11 +167,11 @@ private:
 
         hashTimer.start();
 
-        #if 0
-        getCandidateReadIds(tasks, indicesOfActiveTasks);
-        #else
-        getCandidateReadIdsWithExtraExtensionHash(tasks, indicesOfActiveTasks);
-        #endif
+        if(!isRepetition){
+            getCandidateReadIds(tasks, indicesOfActiveTasks);
+        }else{
+            getCandidateReadIdsWithExtraExtensionHash(tasks, indicesOfActiveTasks);
+        }
 
         // for(auto indexOfActiveTask : indicesOfActiveTasks){
         //     const auto& task = tasks[indexOfActiveTask];

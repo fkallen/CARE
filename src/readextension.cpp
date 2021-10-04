@@ -140,7 +140,7 @@ SerializedObjectStorage extend_cpu_pairedend(
 
     SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, fileOptions.tempdirectory + "/");
 
-    const std::size_t numReadsToProcess = 200000;
+    const std::size_t numReadsToProcess = 100;
     //const std::size_t numReadsToProcess = readStorage.getNumberOfReads();
 
     auto readIdGenerator = makeIteratorRangeTraversal(
@@ -249,7 +249,8 @@ SerializedObjectStorage extend_cpu_pairedend(
 
         std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeated;
         std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeatedTemp;
-        bool isLastIteration = true;
+        bool isLastIteration = false;
+        bool isRepeatedIteration = false;
 
         auto init = [&](){
             int numReadsInBatch = 0;
@@ -385,7 +386,11 @@ SerializedObjectStorage extend_cpu_pairedend(
                         }else{
                             er.status = ExtendedReadStatus::LengthAbort;
                         }
-                    }  
+                    }
+
+                    if(isRepeatedIteration){
+                        reinterpret_cast<unsigned char&>(er.status) |= static_cast<unsigned char>(ExtendedReadStatus::Repeated);
+                    }
                     
                     extendedReads.emplace_back(std::move(er));
 
@@ -433,40 +438,59 @@ SerializedObjectStorage extend_cpu_pairedend(
 
             progressThread.addProgress(extensionResults.size() - repeated);
         };
+
+        isRepeatedIteration = false;
+
+        std::cerr << "First iteration. insertsizedev: " << extensionOptions.insertSizeStddev 
+            << ", maxextensionPerStep: " << fixedStepsize
+            << ", minCoverageForExtension: " << minCoverageForExtension
+            << ", isLastIteration: " << isLastIteration 
+            << ", extraHashing: " << true << "\n";
         
         while(!(readIdGenerator.empty())){
             auto inputs = init();
 
             if(inputs.size() > 0){
-                auto extensionResults = readExtender.extend(std::move(inputs));
+                auto extensionResults = readExtender.extend(std::move(inputs), isRepeatedIteration);
 
                 output(std::move(extensionResults));
             }
         }
 
-        fixedStepsize -= 4;
+        //fixedStepsize -= 4;
         //minCoverageForExtension += increment;
         std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
 
-        while(pairsWhichShouldBeRepeated.size() > 0 && (fixedStepsize > 0)){
+        isRepeatedIteration = true;
+        isLastIteration = true;
+
+        //while(pairsWhichShouldBeRepeated.size() > 0 && (fixedStepsize > 0))
+        {
 
             readExtender.setMaxExtensionPerStep(fixedStepsize);
             //std::cerr << "fixedStepsize = " << fixedStepsize << "\n";
 
             std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
-            isLastIteration = (fixedStepsize <= 4);
+
+            std::cerr << "Second iteration. insertsizedev: " << extensionOptions.insertSizeStddev 
+            << ", maxextensionPerStep: " << fixedStepsize
+            << ", minCoverageForExtension: " << minCoverageForExtension
+            << ", isLastIteration: " << isLastIteration 
+            << ", extraHashing: " << true << "\n";
+
+            //isLastIteration = (fixedStepsize <= 4);
 
             while(pairsWhichShouldBeRepeated.size() > 0){
                 auto inputs = init();
 
                 if(inputs.size() > 0){
-                    auto extensionResults = readExtender.extend(std::move(inputs));
+                    auto extensionResults = readExtender.extend(std::move(inputs), isRepeatedIteration);
 
                     output(std::move(extensionResults));
                 }
             }
 
-            fixedStepsize -= 4;
+            //fixedStepsize -= 4;
             std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
         }
 
