@@ -634,8 +634,8 @@ SerializedObjectStorage extend_gpu_pairedend(
     {
         std::vector<std::future<std::vector<read_number>>> futures;
 
-        const std::size_t numReadsToProcess = 100;
-        //const std::size_t numReadsToProcess = gpuReadStorage.getNumberOfReads();
+        //const std::size_t numReadsToProcess = 100;
+        const std::size_t numReadsToProcess = gpuReadStorage.getNumberOfReads();
 
         IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(
             thrust::make_counting_iterator<read_number>(0),
