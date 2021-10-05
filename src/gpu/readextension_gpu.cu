@@ -38,6 +38,8 @@
 #include <cub/cub.cuh>
 #include <thrust/iterator/transform_iterator.h>
 
+#include <rmm/mr/device/cuda_async_memory_resource.hpp>
+
 
 namespace care{
 namespace gpu{
@@ -459,6 +461,16 @@ SerializedObjectStorage extend_gpu_pairedend(
 
         gpuDataVector.push_back(std::move(gpudata));
     }
+
+    std::vector<std::unique_ptr<rmm::mr::cuda_async_memory_resource>> rmmCudaAsyncResources;
+    for(int d = 0; d < numDeviceIds; d++){
+        cub::SwitchDevice sd(runtimeOptions.deviceIds[d]);
+
+        rmmCudaAsyncResources.push_back(std::make_unique<rmm::mr::cuda_async_memory_resource>());
+
+        set_per_device_resource(rmm::cuda_device_id(runtimeOptions.deviceIds[d]), rmmCudaAsyncResources.back().get());
+    }
+
 
     auto extenderThreadFunc = [&](int gpuIndex, int threadId, auto* readIdGenerator, bool isRepeatedIteration, bool isLastIteration, bool extraHashing, GpuReadExtender::IterationConfig iterationConfig){
         //std::cerr << "extenderThreadFunc( " << gpuIndex << ", " << threadId << ")\n";

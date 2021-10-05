@@ -28,6 +28,10 @@
 #include <gpu/cubwrappers.cuh>
 #include <gpu/readextender_gpu_kernels.cuh>
 
+
+#include <rmm/device_uvector.hpp>
+#include <gpu/rmm_utilities.cuh>
+
 #include <algorithm>
 #include <vector>
 #include <numeric>
@@ -47,11 +51,21 @@
 
 #if 0
     #define DEBUGDEVICESYNC { \
-        cudaDeviceSynchronize()); \
+        CUDACHECK(cudaDeviceSynchronize()); \
     }
 
 #else 
     #define DEBUGDEVICESYNC {}
+
+#endif
+
+#if 0
+    #define DEBUGSTREAMSYNC(stream) { \
+        CUDACHECK(cudaStreamSynchronize(stream)); \
+    }
+
+#else 
+    #define DEBUGSTREAMSYNC(stream) {}
 
 #endif
 
@@ -3843,7 +3857,8 @@ struct GpuReadExtender{
 
         const int outputPitch = SDIV(minmaxPairResultLengths[1], 4) * 4; //round up maximum output size to 4 bytes
 
-        CachedDeviceUVector<bool> d_pairResultAnchorIsLR(numResults, stream, *cubAllocator);
+        //CachedDeviceUVector<bool> d_pairResultAnchorIsLR(numResults, stream, *cubAllocator);
+        rmm::device_uvector<bool> d_pairResultAnchorIsLR(numResults, stream);
         CachedDeviceUVector<char> d_pairResultSequences(numResults * outputPitch, stream, *cubAllocator);
         CachedDeviceUVector<char> d_pairResultQualities(numResults * outputPitch, stream, *cubAllocator);
         CachedDeviceUVector<int> d_pairResultRead1Begins(numResults, stream, *cubAllocator);
