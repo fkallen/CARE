@@ -8,6 +8,11 @@
 #include <gpu/cudaerrorcheck.cuh>
 
 #include <cub/cub.cuh>
+#include <rmm/mr/device/device_memory_resource.hpp>
+#include <rmm/device_uvector.hpp>
+#include <rmm/device_scalar.hpp>
+#include <gpu/rmm_utilities.cuh>
+
 
 #include <cstdint>
 #include <limits>
@@ -42,16 +47,16 @@ namespace gpu{
 
     struct ManagedGPUMultiMSA{
     public:
-        ManagedGPUMultiMSA(cub::CachingDeviceAllocator& alloc) 
-            : cubAllocator(&alloc),
-            d_consensusEncoded(alloc),
-            d_counts(alloc),
-            d_coverages(alloc),
-            d_origCoverages(alloc),
-            d_weights(alloc),
-            d_support(alloc),
-            d_origWeights(alloc),
-            d_columnProperties(alloc){
+        ManagedGPUMultiMSA(cudaStream_t stream, rmm::mr::device_memory_resource* mr_) 
+            : mr(mr_),
+            d_consensusEncoded(0, stream, mr),
+            d_counts(0, stream, mr),
+            d_coverages(0, stream, mr),
+            d_origCoverages(0, stream, mr),
+            d_weights(0, stream, mr),
+            d_support(0, stream, mr),
+            d_origWeights(0, stream, mr),
+            d_columnProperties(0, stream, mr){
 
             pinnedValue.resize(1);
         }
@@ -152,7 +157,7 @@ namespace gpu{
         ){
             //std::cerr << "thread " << std::this_thread::get_id() << " msa refine, stream " << stream << "\n";
 
-            CachedDeviceUVector<bool> d_temp(maxNumCandidates, stream, *cubAllocator);
+            rmm::device_uvector<bool> d_temp(maxNumCandidates, stream, mr);
 
             callMsaCandidateRefinementKernel_multiiter_async(
                 d_newCandidatePositionsInSegments,
@@ -224,15 +229,15 @@ namespace gpu{
             );
         }
 
-        void destroy(){
-            d_consensusEncoded.destroy();
-            d_counts.destroy();
-            d_coverages.destroy();
-            d_origCoverages.destroy();
-            d_weights.destroy();
-            d_support.destroy();
-            d_origWeights.destroy();
-            d_columnProperties.destroy();
+        void destroy(cudaStream_t stream){
+            ::destroy(d_consensusEncoded, stream);
+            ::destroy(d_counts, stream);
+            ::destroy(d_coverages, stream);
+            ::destroy(d_origCoverages, stream);
+            ::destroy(d_weights, stream);
+            ::destroy(d_support, stream);
+            ::destroy(d_origWeights, stream);
+            ::destroy(d_columnProperties, stream);
 
             multiMSA.numMSAs = 0;
             multiMSA.columnPitchInElements = 0;
@@ -267,7 +272,7 @@ namespace gpu{
             cudaStream_t stream
         ){
             if(maximumMsaWidth == MSAColumnCount::unknown()){
-                CachedDeviceUVector<int> d_maxMsaWidth(1, stream, *cubAllocator);
+                rmm::device_scalar<int> d_maxMsaWidth(stream, mr);
 
                 gpu::callComputeMaximumMsaWidthKernel(
                     d_maxMsaWidth.data(),
@@ -301,14 +306,14 @@ namespace gpu{
             //pad to 128
             columnPitchInElements = SDIV(columnPitchInElements, 128) * 128;
 
-            d_consensusEncoded.resizeUninitialized(columnPitchInElements * numAnchors, stream);
-            d_counts.resizeUninitialized(4 * columnPitchInElements * numAnchors, stream);
-            d_coverages.resizeUninitialized(columnPitchInElements * numAnchors, stream);
-            d_origCoverages.resizeUninitialized(columnPitchInElements * numAnchors, stream);
-            d_weights.resizeUninitialized(4 * columnPitchInElements * numAnchors, stream);
-            d_support.resizeUninitialized(columnPitchInElements * numAnchors, stream);
-            d_origWeights.resizeUninitialized(columnPitchInElements * numAnchors, stream);
-            d_columnProperties.resizeUninitialized(numAnchors, stream);
+            resizeUninitialized(d_consensusEncoded, columnPitchInElements * numAnchors, stream);
+            resizeUninitialized(d_counts, 4 * columnPitchInElements * numAnchors, stream);
+            resizeUninitialized(d_coverages, columnPitchInElements * numAnchors, stream);
+            resizeUninitialized(d_origCoverages, columnPitchInElements * numAnchors, stream);
+            resizeUninitialized(d_weights, 4 * columnPitchInElements * numAnchors, stream);
+            resizeUninitialized(d_support, columnPitchInElements * numAnchors, stream);
+            resizeUninitialized(d_origWeights, columnPitchInElements * numAnchors, stream);
+            resizeUninitialized(d_columnProperties, numAnchors, stream);
 
             multiMSA.numMSAs = numMSAs;
             multiMSA.columnPitchInElements = columnPitchInElements;
@@ -329,16 +334,16 @@ namespace gpu{
         helpers::SimpleAllocationPinnedHost<int, 0> pinnedValue{};
         CudaEvent event{cudaEventDisableTiming};
 
-        cub::CachingDeviceAllocator* cubAllocator{};
+        rmm::mr::device_memory_resource* mr;
 
-        CachedDeviceUVector<std::uint8_t> d_consensusEncoded;
-        CachedDeviceUVector<int> d_counts;
-        CachedDeviceUVector<int> d_coverages;
-        CachedDeviceUVector<int> d_origCoverages;
-        CachedDeviceUVector<float> d_weights;
-        CachedDeviceUVector<float> d_support;
-        CachedDeviceUVector<float> d_origWeights;
-        CachedDeviceUVector<MSAColumnProperties> d_columnProperties;
+        rmm::device_uvector<std::uint8_t> d_consensusEncoded;
+        rmm::device_uvector<int> d_counts;
+        rmm::device_uvector<int> d_coverages;
+        rmm::device_uvector<int> d_origCoverages;
+        rmm::device_uvector<float> d_weights;
+        rmm::device_uvector<float> d_support;
+        rmm::device_uvector<float> d_origWeights;
+        rmm::device_uvector<MSAColumnProperties> d_columnProperties;
 
         GPUMultiMSA multiMSA{};
     };

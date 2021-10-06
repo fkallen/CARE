@@ -2362,36 +2362,35 @@ struct GpuReadExtender{
         const cpu::QualityScoreConversion& qualityConversion_,
         int insertSize_,
         int insertSizeStddev_,
-        cub::CachingDeviceAllocator& cubAllocator_,
+        cudaStream_t stream,
         rmm::mr::device_memory_resource* mr_
     ) : 
         pairedEnd(isPairedEnd_),
         insertSize(insertSize_),
         insertSizeStddev(insertSizeStddev_),
-        cubAllocator(&cubAllocator_),
         mr(mr_),
         gpuReadStorage(&rs),
         correctionOptions(&coropts),
         goodAlignmentProperties(&gap),
         qualityConversion(&qualityConversion_),
         readStorageHandle(gpuReadStorage->makeHandle()),
-        d_mateIdHasBeenRemoved(0, cudaStreamPerThread),
-        d_candidateSequencesData(0, cudaStreamPerThread),
-        d_candidateSequencesLength(0, cudaStreamPerThread),    
-        d_candidateReadIds(0, cudaStreamPerThread),
-        d_isPairedCandidate(0, cudaStreamPerThread),
-        d_alignment_overlaps(0, cudaStreamPerThread),
-        d_alignment_shifts(0, cudaStreamPerThread),
-        d_alignment_nOps(0, cudaStreamPerThread),
-        d_alignment_best_alignment_flags(0, cudaStreamPerThread),
-        d_numCandidatesPerAnchor(0, cudaStreamPerThread),
-        d_numCandidatesPerAnchorPrefixSum(0, cudaStreamPerThread),
-        d_anchorSequencesDataDecoded(0, cudaStreamPerThread),
-        d_anchorQualityScores(0, cudaStreamPerThread),
-        d_anchorSequencesLength(0, cudaStreamPerThread),
-        d_anchorSequencesData(0, cudaStreamPerThread),
-        d_accumExtensionsLengths(0, cudaStreamPerThread),
-        multiMSA(cubAllocator_)
+        d_mateIdHasBeenRemoved(0, stream, mr),
+        d_candidateSequencesData(0, stream, mr),
+        d_candidateSequencesLength(0, stream, mr),    
+        d_candidateReadIds(0, stream, mr),
+        d_isPairedCandidate(0, stream, mr),
+        d_alignment_overlaps(0, stream, mr),
+        d_alignment_shifts(0, stream, mr),
+        d_alignment_nOps(0, stream, mr),
+        d_alignment_best_alignment_flags(0, stream, mr),
+        d_numCandidatesPerAnchor(0, stream, mr),
+        d_numCandidatesPerAnchorPrefixSum(0, stream, mr),
+        d_anchorSequencesDataDecoded(0, stream, mr),
+        d_anchorQualityScores(0, stream, mr),
+        d_anchorSequencesLength(0, stream, mr),
+        d_anchorSequencesData(0, stream, mr),
+        d_accumExtensionsLengths(0, stream, mr),
+        multiMSA(stream, mr)
     {
 
         CUDACHECK(cudaGetDevice(&deviceId));
@@ -3750,7 +3749,7 @@ struct GpuReadExtender{
         *rawResults.h_tmp = numFinishedTasks;
         CUDACHECK(cudaMemcpyAsync(d_numFinishedTasks.data(), rawResults.h_tmp.data(), sizeof(int), H2D, stream));
 
-        gpu::ManagedGPUMultiMSA finishedTasksMSA(*cubAllocator);
+        gpu::ManagedGPUMultiMSA finishedTasksMSA(stream, mr);
 
         finishedTasksMSA.construct(
             d_alignment_overlaps_tmp.data(),
@@ -3811,7 +3810,7 @@ struct GpuReadExtender{
             stream
         );
 
-        finishedTasksMSA.destroy();
+        finishedTasksMSA.destroy(stream);
 
 
         const int numResults = numFinishedTasks / 4;
@@ -4437,7 +4436,6 @@ struct GpuReadExtender{
     int insertSizeStddev{};
 
     rmm::mr::device_memory_resource* mr{};
-    cub::CachingDeviceAllocator* cubAllocator{};
     const gpu::GpuReadStorage* gpuReadStorage{};
     const CorrectionOptions* correctionOptions{};
     const GoodAlignmentProperties* goodAlignmentProperties{};
@@ -4485,7 +4483,7 @@ struct GpuReadExtender{
         ::destroy(d_anchorSequencesData, stream);
         ::destroy(d_accumExtensionsLengths, stream);
 
-        multiMSA.destroy();
+        multiMSA.destroy(stream);
 
         CUDACHECK(cudaStreamSynchronize(stream));
     }

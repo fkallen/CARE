@@ -233,9 +233,6 @@ SerializedObjectStorage extend_gpu_pairedend(
     const GpuMinhasher& minhasher,
     const GpuReadStorage& gpuReadStorage
 ){
-    constexpr unsigned int cub_CachingDeviceAllocator_INVALID_BIN = (unsigned int) -1;
-    constexpr size_t cub_CachingDeviceAllocator_INVALID_SIZE = (size_t) -1;
-
     const auto rsMemInfo = gpuReadStorage.getMemoryInfo();
     const auto mhMemInfo = minhasher.getMemoryInfo();
 
@@ -406,7 +403,6 @@ SerializedObjectStorage extend_gpu_pairedend(
 
     struct GpuData{
         int deviceId;
-        std::unique_ptr<cub::CachingDeviceAllocator> extenderAllocator;
         std::unique_ptr<GpuReadExtender> gpuReadExtender;
 
         GpuData() = default;
@@ -420,31 +416,17 @@ SerializedObjectStorage extend_gpu_pairedend(
         ~GpuData(){
             cub::SwitchDevice ds(deviceId);
             gpuReadExtender = nullptr;
-            extenderAllocator = nullptr;
         }
     };
-
-    std::vector<std::array<CudaStream, 16>> gpustreams;
 
     std::vector<GpuData> gpuDataVector;
 
     for(int d = 0; d < numDeviceIds; d++){
         const int deviceId = runtimeOptions.deviceIds[d];
-        CUDACHECK(cudaSetDevice(deviceId));
-
-        gpustreams.emplace_back();
+        cub::SwitchDevice sd(deviceId);
 
         GpuData gpudata;
         gpudata.deviceId = deviceId;
-
-        gpudata.extenderAllocator = std::make_unique<cub::CachingDeviceAllocator>(
-            2, //bin_growth
-            1, //min_bin
-            cub_CachingDeviceAllocator_INVALID_BIN, //max_bin
-            cub_CachingDeviceAllocator_INVALID_SIZE, //max_cached_bytes
-            false, //skip_cleanup 
-            false //debug
-        );
 
         gpudata.gpuReadExtender = std::make_unique<GpuReadExtender>(
             encodedSequencePitchInInts,
@@ -458,9 +440,11 @@ SerializedObjectStorage extend_gpu_pairedend(
             qualityConversion,
             insertSize,
             insertSizeStddev,
-            *gpudata.extenderAllocator,
+            cudaStreamPerThread,
             rmm::mr::get_current_device_resource()
         );
+
+        CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
 
         gpuDataVector.push_back(std::move(gpudata));
     }
@@ -471,9 +455,8 @@ SerializedObjectStorage extend_gpu_pairedend(
     auto extenderThreadFunc = [&](int gpuIndex, int threadId, auto* readIdGenerator, bool isRepeatedIteration, bool isLastIteration, bool extraHashing, GpuReadExtender::IterationConfig iterationConfig){
         //std::cerr << "extenderThreadFunc( " << gpuIndex << ", " << threadId << ")\n";
         auto& gpudata = gpuDataVector[gpuIndex];
-        const int numStreams = gpustreams[gpuIndex].size();
-        cudaStream_t stream = gpustreams[gpuIndex][threadId % numStreams].getStream();
-        //cudaStream_t stream = cudaStreamPerThread;
+
+        cudaStream_t stream = cudaStreamPerThread;
 
         CUDACHECK(cudaSetDevice(gpudata.deviceId));
 
