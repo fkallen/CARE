@@ -1757,7 +1757,8 @@ struct GpuReadExtender{
                 numAnchors,
                 results.d_numCandidatesPerAnchor.data(),
                 totalNumValues,
-                stream
+                stream,
+                mr
             );
 
             CUDACHECK(cudaStreamSynchronizeWrapper(stream));
@@ -1781,7 +1782,8 @@ struct GpuReadExtender{
                     results.d_candidateReadIds.data(),
                     results.d_numCandidatesPerAnchor.data(),
                     results.d_numCandidatesPerAnchorPrefixSum.data(),
-                    stream
+                    stream,
+                    mr
                 );
 
                 CUDACHECK(cudaMemcpyAsync(
@@ -1887,7 +1889,8 @@ struct GpuReadExtender{
                 numAnchors,
                 d_numCandidatesPerAnchorExtra.data(),
                 totalNumValuesExtraSequences,
-                stream
+                stream,
+                mr
             );
 
             CUDACHECK(cudaStreamSynchronizeWrapper(stream));
@@ -1922,7 +1925,8 @@ struct GpuReadExtender{
                     d_candidateReadIdsExtra.data(),
                     d_numCandidatesPerAnchorExtra.data(),
                     d_numCandidatesPerAnchorPrefixSumExtra.data(),
-                    stream
+                    stream,
+                    mr
                 );
 
                 DEBUGSTREAMSYNC(stream);
@@ -1977,7 +1981,8 @@ struct GpuReadExtender{
                 numAnchors,
                 d_numCandidatesPerAnchor.data(),
                 totalNumValuesAnchorSequences,
-                stream
+                stream,
+                mr
             );
 
             CUDACHECK(cudaStreamSynchronizeWrapper(stream));
@@ -2005,7 +2010,8 @@ struct GpuReadExtender{
                     d_candidateReadIds.data(),
                     d_numCandidatesPerAnchor.data(),
                     d_numCandidatesPerAnchorPrefixSum.data(),
-                    stream
+                    stream,
+                    mr
                 );
 
                 DEBUGSTREAMSYNC(stream);

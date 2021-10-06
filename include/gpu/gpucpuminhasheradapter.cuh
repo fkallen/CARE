@@ -14,6 +14,7 @@ namespace care{
 namespace gpu{
 
 
+#if 0
 class GPUCPUMinhasherAdapter : public CpuMinhasher{
 public:
     using Key_t = CpuMinhasher::Key;
@@ -224,6 +225,7 @@ private:
 
 };
 
+#endif
 
 } //namespace gpu
 } //namespace care

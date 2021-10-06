@@ -404,7 +404,8 @@ public:
         AnchorHasher gpuAnchorHasher(
             *readStorage,
             *minhasher,
-            threadPool
+            threadPool,
+            rmm::mr::get_current_device_resource()
         );
 
         GpuErrorCorrector gpuErrorCorrector{
@@ -685,7 +686,8 @@ public:
         AnchorHasher gpuAnchorHasher(
             *readStorage,
             *minhasher,
-            threadPool
+            threadPool,
+            rmm::mr::get_current_device_resource()
         );
 
         GpuErrorCorrector gpuErrorCorrector{
@@ -1030,7 +1032,8 @@ public:
         AnchorHasher gpuAnchorHasher(
             *readStorage,
             *minhasher,
-            nullptr//threadPool
+            nullptr, //threadPool,
+            rmm::mr::get_current_device_resource()
         );
 
         CudaStream hasherStream;

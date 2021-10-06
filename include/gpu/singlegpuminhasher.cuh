@@ -544,7 +544,8 @@ namespace gpu{
             int numSequences,
             int* d_numValuesPerSequence,
             int& totalNumValues,
-            cudaStream_t stream
+            cudaStream_t stream,
+            rmm::mr::device_memory_resource* mr = nullptr //unused for now
         ) const override {
 
             QueryData* const queryData = getQueryDataFromHandle(queryHandle);
@@ -595,7 +596,8 @@ namespace gpu{
             read_number* d_values,
             int* d_numValuesPerSequence,
             int* d_offsets, //numSequences + 1
-            cudaStream_t stream
+            cudaStream_t stream,
+            rmm::mr::device_memory_resource* mr = nullptr //unused for now
         ) const override {
             QueryData* const queryData = getQueryDataFromHandle(queryHandle);
 

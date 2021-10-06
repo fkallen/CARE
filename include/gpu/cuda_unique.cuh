@@ -6,11 +6,16 @@
 
 #include <gpu/cuda_block_select.cuh>
 #include <gpu/cudaerrorcheck.cuh>
-#include <gpu/asyncdeviceallocation.cuh>
+
 
 #include <memory>
 #include <cassert>
 #include <cmath>
+
+#include <rmm/mr/device/device_memory_resource.hpp>
+#include <rmm/mr/device/per_device_resource.hpp>
+#include <rmm/device_uvector.hpp>
+#include <gpu/rmm_utilities.cuh>
 
 
 //#define CARE_CUDA_UNIQUE_CHECK_UNIQUENESS
@@ -451,7 +456,8 @@ struct GpuSegmentedUnique{
         int* h_end_offsets,
         int begin_bit = 0,
         int end_bit = sizeof(T) * 8,
-        cudaStream_t stream = 0
+        cudaStream_t stream = 0,
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
     ){
 
         int sizeOfLargestSegment = 0;
@@ -482,10 +488,10 @@ struct GpuSegmentedUnique{
             stream
         );
 
-        AsyncDeviceAllocation d_temp_storage(requiredTempBytes, stream);
+        rmm::device_uvector<char> d_temp_storage(requiredTempBytes, stream, mr);
 
         unique(
-            d_temp_storage.get(),
+            d_temp_storage.data(),
             requiredTempBytes,
             d_items,
             numItems,
@@ -514,7 +520,8 @@ struct GpuSegmentedUnique{
         int* d_end_offsets,
         int begin_bit = 0,
         int end_bit = sizeof(T) * 8,
-        cudaStream_t stream = 0
+        cudaStream_t stream = 0,
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
     ){
 
         std::size_t requiredTempBytes = 0;
@@ -535,10 +542,10 @@ struct GpuSegmentedUnique{
             stream
         );
 
-        AsyncDeviceAllocation d_temp_storage(requiredTempBytes, stream);
+        rmm::device_uvector<char> d_temp_storage(requiredTempBytes, stream, mr);
 
         unique(
-            d_temp_storage.get(),
+            d_temp_storage.data(),
             requiredTempBytes,
             d_items,
             numItems,

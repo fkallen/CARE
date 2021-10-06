@@ -30,6 +30,10 @@
 
 #include <experimental/filesystem>
 
+#include <rmm/mr/device/per_device_resource.hpp>
+#include <rmm/mr/device/cuda_async_memory_resource.hpp>
+#include <gpu/rmm_utilities.cuh>
+
 namespace filesys = std::experimental::filesystem;
 
 namespace care{
@@ -145,6 +149,19 @@ namespace care{
             CUDACHECK(cudaDeviceGetDefaultMemPool(&defaultMemoryPool, id));
             uint64_t threshold = UINT64_MAX;
             CUDACHECK(cudaMemPoolSetAttribute(defaultMemoryPool, cudaMemPoolAttrReleaseThreshold, &threshold));
+        }
+
+        //set up rmm resources
+        std::vector<std::unique_ptr<MyRMMCudaAsyncResource>> rmmCudaAsyncResources;
+        for(auto id : runtimeOptions.deviceIds){
+            cub::SwitchDevice sd(id);
+
+            cudaMemPool_t defaultMemoryPool;
+            CUDACHECK(cudaDeviceGetDefaultMemPool(&defaultMemoryPool, id));
+
+            rmmCudaAsyncResources.push_back(std::make_unique<MyRMMCudaAsyncResource>(defaultMemoryPool));
+
+            rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), rmmCudaAsyncResources.back().get());
         }
 
         

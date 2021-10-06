@@ -10,6 +10,8 @@
 
 #include <cstdint>
 
+#include <rmm/mr/device/device_memory_resource.hpp>
+
 namespace care{
 namespace gpu{
 
@@ -32,7 +34,8 @@ public:
         int numSequences,
         int* d_numValuesPerSequence,
         int& totalNumValues,
-        cudaStream_t stream
+        cudaStream_t stream,
+        rmm::mr::device_memory_resource* mr
     ) const = 0;
 
     virtual void retrieveValues(
@@ -43,7 +46,8 @@ public:
         read_number* d_values,
         int* d_numValuesPerSequence,
         int* d_offsets, //numSequences + 1
-        cudaStream_t stream
+        cudaStream_t stream,
+        rmm::mr::device_memory_resource* mr
     ) const = 0;
 
     //virtual void compact(cudaStream_t stream) = 0;

@@ -37,6 +37,10 @@
 #include <thrust/iterator/constant_iterator.h>
 #include <thrust/binary_search.h>
 
+#include <rmm/mr/device/per_device_resource.hpp>
+#include <rmm/mr/device/cuda_async_memory_resource.hpp>
+#include <gpu/rmm_utilities.cuh>
+
 
 namespace care{
 namespace gpu{
@@ -228,13 +232,15 @@ namespace gpu{
         GpuAnchorHasher(
             const GpuReadStorage& gpuReadStorage_,
             const GpuMinhasher& gpuMinhasher_,
-            ThreadPool* threadPool_
+            ThreadPool* threadPool_,
+            rmm::mr::device_memory_resource* mr_
         ) : 
             gpuReadStorage{&gpuReadStorage_},
             gpuMinhasher{&gpuMinhasher_},
             threadPool{threadPool_},
             minhashHandle{gpuMinhasher->makeMinhasherHandle()},
-            readstorageHandle{gpuReadStorage->makeHandle()}
+            readstorageHandle{gpuReadStorage->makeHandle()},
+            mr{mr_}
         {
             CUDACHECK(cudaGetDevice(&deviceId));            
 
@@ -367,7 +373,8 @@ namespace gpu{
                 (*ecinput.h_numAnchors.get()),
                 ecinput.d_candidates_per_anchor.get(),
                 totalNumValues,
-                stream
+                stream,
+                mr
             );
 
             CUDACHECK(cudaStreamSynchronize(stream));
@@ -389,7 +396,8 @@ namespace gpu{
                 ecinput.d_candidate_read_ids.get(),
                 ecinput.d_candidates_per_anchor.get(),
                 ecinput.d_candidates_per_anchor_prefixsum.get(),
-                stream
+                stream,
+                mr
             );
 
             gpucorrectorkernels::copyMinhashResultsKernel<<<640, 256, 0, stream>>>(
@@ -413,6 +421,7 @@ namespace gpu{
         ThreadPool::ParallelForHandle pforHandle;
         MinhasherHandle minhashHandle;
         ReadStorageHandle readstorageHandle;
+        rmm::mr::device_memory_resource* mr;
     };
 
 
