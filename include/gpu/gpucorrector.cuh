@@ -944,7 +944,6 @@ namespace gpu{
             d_editsPerCorrectedanchor{0, cudaStreamPerThread, mr},
             d_numEditsPerCorrectedanchor{0, cudaStreamPerThread, mr},
             d_editsPerCorrectedCandidate{0, cudaStreamPerThread, mr},
-            d_editsPerCorrectedCandidate2{0, cudaStreamPerThread, mr},
             d_numEditsPerCorrectedCandidate{0, cudaStreamPerThread, mr},
             d_indices_of_corrected_anchors{0, cudaStreamPerThread, mr},
             d_num_indices_of_corrected_anchors{0, cudaStreamPerThread, mr},
@@ -1384,7 +1383,7 @@ namespace gpu{
             d_indices_tmp.resize(maxCandidates + 1, stream);
             d_corrected_candidates.resize(maxCandidates * decodedSequencePitchInBytes, stream);
             d_editsPerCorrectedCandidate.resize(numEditsCandidates, stream);
-            d_editsPerCorrectedCandidate2.resize(numEditsCandidates, stream);
+
             d_numEditsPerCorrectedCandidate.resize(maxCandidates, stream);
             d_indices_of_corrected_candidates.resize(maxCandidates, stream);
 
@@ -1678,10 +1677,12 @@ namespace gpu{
             );
 
             //compact edits
-            auto* const d_editsPerCorrectedanchor2 = d_editsPerCorrectedCandidate2.data();
+            std::size_t numEditsAnchors = SDIV(editsPitchInBytes * currentNumAnchors, sizeof(EncodedCorrectionEdit));
+            rmm::device_uvector<EncodedCorrectionEdit> d_editsPerCorrectedanchor2(numEditsAnchors, stream, mr);
+
             gpucorrectorkernels::compactEditsKernel<<<SDIV(currentNumAnchors, 128), 128, 0, stream>>>(
                 d_editsPerCorrectedanchor.data(),
-                d_editsPerCorrectedanchor2,
+                d_editsPerCorrectedanchor2.data(),
                 d_editsOffsetsTmp,
                 d_numAnchors.data(),
                 d_numEditsPerCorrectedanchor.data(),
@@ -1691,7 +1692,7 @@ namespace gpu{
 
             //copy compacted edits to host
             helpers::call_copy_n_kernel(
-                (const int*)d_editsPerCorrectedanchor2, 
+                (const int*)d_editsPerCorrectedanchor2.data(), 
                 thrust::make_transform_iterator(d_totalNumberOfEdits, [] __device__ (const int num){return SDIV(num * sizeof(EncodedCorrectionEdit), sizeof(int));}),//d_totalNumberOfEdits, 
                 (int*)currentOutput->h_editsPerCorrectedanchor.data(), 
                 currentNumAnchors, 
@@ -1850,6 +1851,9 @@ namespace gpu{
             );
 
             //compact edits
+            std::size_t numEditsCandidates = SDIV(editsPitchInBytes * currentNumCandidates, sizeof(EncodedCorrectionEdit));
+            rmm::device_uvector<EncodedCorrectionEdit> d_editsPerCorrectedCandidate2(numEditsCandidates, stream, mr);
+
             gpucorrectorkernels::compactEditsKernel<<<SDIV(currentNumCandidates, 128), 128, 0, stream>>>(
                 d_editsPerCorrectedCandidate.data(),
                 d_editsPerCorrectedCandidate2.data(),
@@ -3125,7 +3129,7 @@ namespace gpu{
         rmm::device_uvector<EncodedCorrectionEdit> d_editsPerCorrectedanchor;
         rmm::device_uvector<int> d_numEditsPerCorrectedanchor;
         rmm::device_uvector<EncodedCorrectionEdit> d_editsPerCorrectedCandidate;
-        rmm::device_uvector<EncodedCorrectionEdit> d_editsPerCorrectedCandidate2;
+        
         rmm::device_uvector<int> d_numEditsPerCorrectedCandidate;
         rmm::device_uvector<int> d_indices_of_corrected_anchors;
         rmm::device_uvector<int> d_num_indices_of_corrected_anchors;
