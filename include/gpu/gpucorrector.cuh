@@ -934,7 +934,6 @@ namespace gpu{
             d_weights{0, cudaStreamPerThread, mr},
             d_corrected_anchors{0, cudaStreamPerThread, mr},
             d_corrected_candidates{0, cudaStreamPerThread, mr},
-            d_corrected_candidates2{0, cudaStreamPerThread, mr},
             d_num_corrected_candidates_per_anchor{0, cudaStreamPerThread, mr},
             d_num_corrected_candidates_per_anchor_prefixsum{0, cudaStreamPerThread, mr},
             d_num_total_corrected_candidates{0, cudaStreamPerThread, mr},
@@ -958,14 +957,9 @@ namespace gpu{
             d_anchor_sequences_data{0, cudaStreamPerThread, mr},
             d_anchor_sequences_lengths{0, cudaStreamPerThread, mr},
             d_candidate_read_ids{0, cudaStreamPerThread, mr},
-            d_candidate_read_ids2{0, cudaStreamPerThread, mr},
             d_candidates_per_anchor{0, cudaStreamPerThread, mr},
             d_candidates_per_anchor_prefixsum{0, cudaStreamPerThread, mr}, 
-            d_candidatesBeginOffsets{0, cudaStreamPerThread, mr},
-            d_flagsCandidates{0, cudaStreamPerThread, mr},
-            d_alignment_shifts2{0, cudaStreamPerThread, mr},
-            d_anchorIndicesOfCandidates2{0, cudaStreamPerThread, mr},
-            d_candidate_sequences_lengths2{0, cudaStreamPerThread, mr}
+            d_candidatesBeginOffsets{0, cudaStreamPerThread, mr}
         {
             if(correctionOptions->correctionType != CorrectionType::Classic){
                 assert(gpuForestAnchor != nullptr);
@@ -1364,14 +1358,12 @@ namespace gpu{
             d_anchorIndicesOfCandidates.resize(maxCandidates, stream);
             d_candidateContainsN.resize(maxCandidates, stream);
             d_candidate_read_ids.resize(maxCandidates, stream);
-            d_candidate_read_ids2.resize(maxCandidates, stream);
             d_candidate_sequences_lengths.resize(maxCandidates, stream);
             d_candidate_sequences_data.resize(maxCandidates * encodedSequencePitchInInts, stream);
             d_transposedCandidateSequencesData.resize(maxCandidates * encodedSequencePitchInInts, stream);
             d_isPairedCandidate.resize(maxCandidates, stream);
             h_isPairedCandidate.resize(maxCandidates);
 
-            d_flagsCandidates.resize(maxCandidates, stream);
             h_flagsCandidates.resize(maxCandidates);
             
             if(correctionOptions->useQualityScores){
@@ -1391,15 +1383,10 @@ namespace gpu{
             d_indices.resize(maxCandidates + 1, stream);
             d_indices_tmp.resize(maxCandidates + 1, stream);
             d_corrected_candidates.resize(maxCandidates * decodedSequencePitchInBytes, stream);
-            d_corrected_candidates2.resize(maxCandidates * decodedSequencePitchInBytes, stream);
             d_editsPerCorrectedCandidate.resize(numEditsCandidates, stream);
             d_editsPerCorrectedCandidate2.resize(numEditsCandidates, stream);
             d_numEditsPerCorrectedCandidate.resize(maxCandidates, stream);
             d_indices_of_corrected_candidates.resize(maxCandidates, stream);
-
-            d_alignment_shifts2.resize(maxCandidates, stream);
-            d_anchorIndicesOfCandidates2.resize(maxCandidates, stream);
-            d_candidate_sequences_lengths2.resize(maxCandidates, stream);
 
             // if(maxCandidatesDidChange){
             //     std::cerr << "maxCandidates changed to " << maxCandidates << "\n";
@@ -1466,6 +1453,9 @@ namespace gpu{
 
 
                     //remove candidates which are not paired
+                    rmm::device_uvector<read_number> d_candidate_read_ids2(currentNumCandidates, stream, mr);
+                    rmm::device_uvector<int> d_anchorIndicesOfCandidates2(currentNumCandidates, stream, mr);
+
                     CubCallWrapper(mr).cubSelectFlagged(
                         thrust::make_zip_iterator(thrust::make_tuple(
                             d_candidate_read_ids.data(),
@@ -1530,14 +1520,15 @@ namespace gpu{
 
                     if(currentNumCandidates > 0){
 
-                        int* d_uniqueAnchorIndices = d_anchorIndicesOfCandidates2.data();
-                        int* d_aggregates_out = d_indices.data();
+                        rmm::device_uvector<int> d_uniqueAnchorIndices(maxNumAnchors, stream, mr);
+                        rmm::device_uvector<int> d_aggregates_out(maxNumAnchors, stream, mr);
+                        rmm::device_scalar<int> d_numRuns(stream, mr);
 
                         CubCallWrapper(mr).cubReduceByKey(
                             d_anchorIndicesOfCandidates.data(), 
-                            d_uniqueAnchorIndices, 
+                            d_uniqueAnchorIndices.data(), 
                             thrust::make_constant_iterator(1), 
-                            d_aggregates_out, 
+                            d_aggregates_out.data(), 
                             d_num_indices.data(), 
                             cub::Sum(), 
                             currentNumCandidates, 
@@ -1548,16 +1539,16 @@ namespace gpu{
 
                         helpers::lambda_kernel<<<SDIV(currentNumAnchors, 256), 256, 0, stream>>>(
                             [
-                                d_uniqueAnchorIndices,
-                                d_aggregates_out,
+                                d_uniqueAnchorIndices = d_uniqueAnchorIndices.data(),
+                                d_aggregates_out = d_aggregates_out.data(),
                                 d_candidates_per_anchor = d_candidates_per_anchor.data(),
-                                d_num_indices = this->d_num_indices.data()
+                                d_numRuns = d_numRuns.data()
                             ] __device__ (){
                                 
                                 const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                                 const int stride = blockDim.x * gridDim.x;
 
-                                for(int i = tid; i < *d_num_indices; i += stride){
+                                for(int i = tid; i < *d_numRuns; i += stride){
                                     d_candidates_per_anchor[d_uniqueAnchorIndices[i]]
                                         = d_aggregates_out[i];
                                 }
@@ -1752,11 +1743,11 @@ namespace gpu{
                 stream
             );
 
-            auto* const d_corrected_anchors2 = d_corrected_candidates2.data();
+            rmm::device_uvector<char> d_corrected_anchors2(decodedSequencePitchInBytes * currentNumAnchors, stream, mr);
 
             gpucorrectorkernels::compactCorrectedSequencesKernel<32><<<SDIV(currentNumAnchors, 128), 128, 0, stream>>>(
                 d_corrected_anchors.data(),
-                d_corrected_anchors2,
+                d_corrected_anchors2.data(),
                 this->decodedSequencePitchInBytes,
                 d_num_indices_of_corrected_anchors.data(),
                 d_numEditsPerCorrectedanchor.data(),
@@ -1769,7 +1760,7 @@ namespace gpu{
 
             //copy compacted anchor corrections to host
             helpers::call_copy_n_kernel(
-                (const int*)d_corrected_anchors2, 
+                (const int*)d_corrected_anchors2.data(),
                 thrust::make_transform_iterator(d_totalCorrectedSequencesBytes, [] __device__ (const int num){return SDIV(num, sizeof(int));}),
                 (int*)currentOutput->h_corrected_anchors.data(), 
                 currentNumAnchors * decodedSequencePitchInBytes / sizeof(int),
@@ -1819,6 +1810,10 @@ namespace gpu{
                 )),
                 stream
             );
+
+            rmm::device_uvector<int> d_alignment_shifts2(currentNumCandidates, stream, mr);
+            rmm::device_uvector<read_number> d_candidate_read_ids2(currentNumCandidates, stream, mr);
+            rmm::device_uvector<int> d_candidate_sequences_lengths2(currentNumCandidates, stream, mr);
 
             helpers::call_compact_kernel_async(
                 thrust::make_zip_iterator(thrust::make_tuple(
@@ -1921,6 +1916,8 @@ namespace gpu{
                 currentNumCandidates,
                 stream
             );
+
+            rmm::device_uvector<char> d_corrected_candidates2(decodedSequencePitchInBytes * currentNumCandidates, stream, mr);
 
             gpucorrectorkernels::compactCorrectedSequencesKernel<32><<<SDIV(currentNumCandidates, 128), 128, 0, stream>>>(
                 d_corrected_candidates.data(),
@@ -2728,6 +2725,7 @@ namespace gpu{
             multiMSA.columnProperties = d_msa_column_properties.data();
 
             #if 0
+                rmm::device_uvector<bool> d_flagsCandidates(currentNumCandidates, stream, mr);
                 bool* d_excludeFlags = d_flagsCandidates.data();
                 bool* h_excludeFlags = h_flagsCandidates.data();
 
@@ -2913,6 +2911,7 @@ namespace gpu{
             multiMSA.columnProperties = d_msa_column_properties.data();
 
             #if 1
+                rmm::device_uvector<bool> d_flagsCandidates(currentNumCandidates, stream, mr);
                 bool* d_excludeFlags = d_flagsCandidates.data();
                 bool* h_excludeFlags = h_flagsCandidates.data();
 
@@ -3116,7 +3115,6 @@ namespace gpu{
         rmm::device_uvector<float> d_weights;
         rmm::device_uvector<char> d_corrected_anchors;
         rmm::device_uvector<char> d_corrected_candidates;
-        rmm::device_uvector<char> d_corrected_candidates2;
         rmm::device_uvector<int> d_num_corrected_candidates_per_anchor;
         rmm::device_uvector<int> d_num_corrected_candidates_per_anchor_prefixsum;
         rmm::device_uvector<int> d_num_total_corrected_candidates;
@@ -3142,7 +3140,6 @@ namespace gpu{
         rmm::device_uvector<unsigned int> d_anchor_sequences_data;
         rmm::device_uvector<int> d_anchor_sequences_lengths;
         rmm::device_uvector<read_number> d_candidate_read_ids;
-        rmm::device_uvector<read_number> d_candidate_read_ids2;
         rmm::device_uvector<int> d_candidates_per_anchor;
         rmm::device_uvector<int> d_candidates_per_anchor_prefixsum; 
         rmm::device_uvector<int> d_candidatesBeginOffsets;
@@ -3150,13 +3147,7 @@ namespace gpu{
         PinnedBuffer<int> h_candidates_per_anchor_prefixsum; 
         PinnedBuffer<int> h_indices;
 
-        PinnedBuffer<bool> h_flagsCandidates;
-        rmm::device_uvector<bool> d_flagsCandidates;
-        rmm::device_uvector<int> d_alignment_shifts2;
-        rmm::device_uvector<int> d_anchorIndicesOfCandidates2;
-        rmm::device_uvector<int> d_candidate_sequences_lengths2;
-
-
+        PinnedBuffer<bool> h_flagsCandidates;        
         
         std::map<GpuErrorCorrectorRawOutput*, CudaGraph> graphMap;
     };
