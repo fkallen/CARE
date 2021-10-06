@@ -4,16 +4,23 @@
 #include <gpu/cubvector.cuh>
 
 #include <cub/cub.cuh>
+#include <rmm/mr/device/device_memory_resource.hpp>
+#include <rmm/mr/device/per_device_resource.hpp>
+#include <rmm/device_uvector.hpp>
 
 #include <cassert>
+
 
 namespace care{
 
     class CubCallWrapper{
     private:
-        cub::CachingDeviceAllocator* cubAllocator{};
+        rmm::mr::device_memory_resource* mr{};
     public:
-        CubCallWrapper(cub::CachingDeviceAllocator& alloc) : cubAllocator(&alloc){ }
+        CubCallWrapper(rmm::mr::device_memory_resource* memoryResource) 
+            : mr(memoryResource){ 
+            assert(mr != nullptr);
+        }
 
         template<typename InputIteratorT , typename OutputIteratorT >
         void cubExclusiveSum(
@@ -37,7 +44,7 @@ namespace care{
             );
             assert(status == cudaSuccess);
 
-            CachedDeviceUVector<char> temp(bytes, stream, *cubAllocator);
+            rmm::device_uvector<char> temp(bytes, stream, mr);
 
             status = cub::DeviceScan::ExclusiveSum(
                 temp.data(),
@@ -73,7 +80,7 @@ namespace care{
             );
             assert(status == cudaSuccess);
 
-            CachedDeviceUVector<char> temp(bytes, stream, *cubAllocator);
+            rmm::device_uvector<char> temp(bytes, stream, mr);
 
             status = cub::DeviceScan::InclusiveSum(
                 temp.data(),
@@ -111,7 +118,7 @@ namespace care{
             );
             assert(status == cudaSuccess);
 
-            CachedDeviceUVector<char> temp(bytes, stream, *cubAllocator);
+            rmm::device_uvector<char> temp(bytes, stream, mr);
 
             status = cub::DeviceScan::InclusiveScan(
                 temp.data(),
@@ -148,7 +155,7 @@ namespace care{
             );
             assert(status == cudaSuccess);
 
-            CachedDeviceUVector<char> temp(bytes, stream, *cubAllocator);
+            rmm::device_uvector<char> temp(bytes, stream, mr);
 
             status = cub::DeviceReduce::Sum(
                 temp.data(),
@@ -188,7 +195,7 @@ namespace care{
             );
             assert(status == cudaSuccess);
 
-            CachedDeviceUVector<char> temp(bytes, stream, *cubAllocator);
+            rmm::device_uvector<char> temp(bytes, stream, mr);
 
             status = cub::DeviceSelect::Flagged(
                 temp.data(), 
@@ -230,7 +237,7 @@ namespace care{
             );
             assert(status == cudaSuccess);
 
-            CachedDeviceUVector<char> temp(bytes, stream, *cubAllocator);
+            rmm::device_uvector<char> temp(bytes, stream, mr);
 
             status = cub::DeviceSegmentedReduce::Sum(
                 temp.data(), 
@@ -276,7 +283,7 @@ namespace care{
             );
             assert(status == cudaSuccess);
 
-            CachedDeviceUVector<char> temp(bytes, stream, *cubAllocator);
+            rmm::device_uvector<char> temp(bytes, stream, mr);
 
             status = cub::DeviceReduce::ReduceByKey(
                 temp.data(), 

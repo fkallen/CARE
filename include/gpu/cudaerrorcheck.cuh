@@ -1,3 +1,6 @@
+#ifndef CARE_CUDAERRORCHECK_CUH
+#define CARE_CUDAERRORCHECK_CUH
+
 #include <string>
 #include <iostream>
 
@@ -58,5 +61,19 @@
 
 #define CUDACHECK(ANS) (ANS)
 #define CUDACHECKASYNC 
+
+#endif
+
+
+#if 0
+    #define DEBUGSTREAMSYNC(stream) { \
+        CUDACHECK(cudaStreamSynchronize(stream)); \
+    }
+
+#else 
+    #define DEBUGSTREAMSYNC(stream) {}
+
+#endif
+
 
 #endif

@@ -717,6 +717,8 @@ namespace gpu{
         ) const {
             QueryData* const queryData = getQueryDataFromHandle(queryHandle);
 
+            DEBUGSTREAMSYNC(stream);
+
             assert(queryData->isInitialized);
             if(numSequences == 0) return;
 
@@ -729,6 +731,8 @@ namespace gpu{
                 cudaMemsetAsync(d_offsets, 0, sizeof(int) * (numSequences + 1), stream);
 
                 queryData->previousStage = QueryData::Stage::Retrieve;
+
+                DEBUGSTREAMSYNC(stream);
 
                 return;
             }
@@ -807,6 +811,8 @@ namespace gpu{
 
             copyHitsToPinnedMemory();
 
+            DEBUGSTREAMSYNC(stream);
+
             CUDACHECK(cudaMemcpyAsync(
                 d_values_dblbuf.Current(),
                 queryData->h_candidate_read_ids_tmp.data(),
@@ -815,9 +821,13 @@ namespace gpu{
                 stream
             ));
 
+            DEBUGSTREAMSYNC(stream);
+
             AsyncDeviceAllocation d_begin_offsets(sizeof(int) * (numSequences + 1), stream);
             AsyncDeviceAllocation d_end_offsets(sizeof(int) * (numSequences + 1), stream);
             AsyncDeviceAllocation d_global_begin_offsets(sizeof(int) * (numSequences), stream);
+
+            DEBUGSTREAMSYNC(stream);
 
             //copy h_endoffsets to d_endoffsets.
             //Then copy d_endoffsets to d_begin_offsets shifted to the right by 1.
@@ -849,6 +859,8 @@ namespace gpu{
                 }
             );
 
+            DEBUGSTREAMSYNC(stream);
+
             GpuSegmentedUnique::unique(
                 d_values_dblbuf.Current(), //input
                 totalNumValues,
@@ -863,6 +875,8 @@ namespace gpu{
                 sizeof(read_number) * 8,
                 stream
             );
+
+            DEBUGSTREAMSYNC(stream);
 
             d_begin_offsets.destroy(stream);
             d_end_offsets.destroy(stream);
@@ -880,11 +894,15 @@ namespace gpu{
                     stream
                 );
 
+                DEBUGSTREAMSYNC(stream);
+
             }
 
             int* d_newOffsets = d_offsets;
 
             CUDACHECK(cudaMemsetAsync(d_newOffsets, 0, sizeof(int), stream));
+
+            DEBUGSTREAMSYNC(stream);
 
             std::size_t cubtempbytes = 0;
             CUDACHECK(cub::DeviceScan::InclusiveSum(
@@ -906,6 +924,8 @@ namespace gpu{
                 numSequences,
                 stream
             ));
+
+            DEBUGSTREAMSYNC(stream);
 
             d_cubTemp.destroy(stream);
 
@@ -932,6 +952,8 @@ namespace gpu{
                 }
             ); CUDACHECKASYNC;
 
+            DEBUGSTREAMSYNC(stream);
+
             queryData->previousStage = QueryData::Stage::Retrieve;
         }
 
@@ -949,6 +971,8 @@ namespace gpu{
             cudaStream_t stream
         ) const {
             QueryData* const queryData = getQueryDataFromHandle(queryHandle);
+
+            DEBUGSTREAMSYNC(stream);
 
             assert(queryData->isInitialized);
             if(numSequences == 0) return;
@@ -968,6 +992,8 @@ namespace gpu{
                 stream
             );
 
+            DEBUGSTREAMSYNC(stream);
+
             callMinhashSignatures3264Kernel(
                 d_minhashSignatures.get<kmer_type>(),
                 hashValuesPitchInElements,
@@ -980,6 +1006,8 @@ namespace gpu{
                 queryData->d_hashFunctionNumbers.data(),
                 stream
             );
+
+            DEBUGSTREAMSYNC(stream);
 
             AsyncDeviceAllocation d_minhashSignatures_transposed(
                 sizeof(kmer_type) * getNumberOfMaps() * numSequences,
@@ -995,6 +1023,8 @@ namespace gpu{
                 stream
             );
 
+            DEBUGSTREAMSYNC(stream);
+
             CUDACHECK(cudaMemcpyAsync(
                 queryData->h_minhashSignatures.get(),
                 d_minhashSignatures_transposed.get<kmer_type>(),
@@ -1002,6 +1032,8 @@ namespace gpu{
                 H2D,
                 stream
             ));
+
+            DEBUGSTREAMSYNC(stream);
 
             d_minhashSignatures_transposed.destroy(stream);
             d_minhashSignatures.destroy(stream);
@@ -1049,7 +1081,11 @@ namespace gpu{
             // }
             nvtx::pop_range();
 
+            DEBUGSTREAMSYNC(stream);
+
             CUDACHECK(cudaMemcpyAsync(d_numValuesPerSequence, h_numValuesPerSequence, sizeof(int) * numSequences, H2D, stream));
+
+            DEBUGSTREAMSYNC(stream);
 
             // std::vector<int> numValuesPerSequence(numSequences);
 
