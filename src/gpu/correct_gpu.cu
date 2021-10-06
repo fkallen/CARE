@@ -380,7 +380,7 @@ public:
         constexpr int numextra = 1;
         constexpr int numStreams = 1 + numextra;
 
-        std::array<CudaStream, numStreams> streams{};
+        std::array<CudaStream, numStreams> streams{}; //this will cause issues when rmm tries to synchronize the streams to free cached memory
         int streamIndex = 0;
 
         std::array<GpuErrorCorrectorInput, 1 + numextra> inputArray;
@@ -679,7 +679,7 @@ public:
 
         //constexpr int numextra = 1;
 
-        CudaStream stream;
+        cudaStream_t stream = cudaStreamPerThread;
         GpuErrorCorrectorInput input;
 
         GpuErrorCorrectorRawOutput rawOutput;
@@ -1044,7 +1044,7 @@ public:
             mr
         );
 
-        CudaStream hasherStream;
+        cudaStream_t hasherStream = cudaStreamPerThread;
         ThreadPool::ParallelForHandle pforHandle;
 
 
@@ -1126,7 +1126,7 @@ public:
             gpuForestCandidate
         };
 
-        CudaStream stream;
+        cudaStream_t stream = cudaStreamPerThread;
 
         // GpuErrorCorrectorInput* inputPtr = unprocessedInputs.popOrDefault(
         //     [&](){
@@ -1254,7 +1254,7 @@ public:
             myFreeOutputsQueue.push(rawOutputPtr);
         };
 
-        CudaStream stream;
+        cudaStream_t stream = cudaStreamPerThread;
 
         std::queue<std::pair<GpuErrorCorrectorInput*,
             GpuErrorCorrectorRawOutput*>> dataInFlight;
@@ -1677,7 +1677,7 @@ SerializedObjectStorage correct_gpu_impl(
         }
 
         const int numHashersPerCorrectorByTime = std::ceil(runStatistics.hasherTimeAverage / runStatistics.correctorTimeAverage);
-        //std::cerr << runStatistics.hasherTimeAverage << " " << runStatistics.correctorTimeAverage << "\n";
+        std::cerr << runStatistics.hasherTimeAverage << " " << runStatistics.correctorTimeAverage << "\n";
 
         auto runSimpleGpuPipeline = [&](int deviceId,
             const GpuForest* gpuForestAnchor, 

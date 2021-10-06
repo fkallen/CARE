@@ -112,20 +112,37 @@ namespace gpu{
 
         CudaEvent event{cudaEventDisableTiming};
 
+        rmm::mr::device_memory_resource* mr;
+
         PinnedBuffer<int> h_numAnchors;
         PinnedBuffer<int> h_numCandidates;
         PinnedBuffer<read_number> h_anchorReadIds;
         PinnedBuffer<read_number> h_candidate_read_ids;
 
-        DeviceBuffer<int> d_numAnchors;
-        DeviceBuffer<int> d_numCandidates;
-        DeviceBuffer<read_number> d_anchorReadIds;
-        DeviceBuffer<unsigned int> d_anchor_sequences_data;
-        DeviceBuffer<int> d_anchor_sequences_lengths;
-        DeviceBuffer<read_number> d_candidate_read_ids;
-        DeviceBuffer<int> d_candidates_per_anchor;
-        DeviceBuffer<int> d_candidates_per_anchor_prefixsum;  
-        DeviceBuffer<int> d_candidatesBeginOffsets;
+        rmm::device_uvector<int> d_numAnchors;
+        rmm::device_uvector<int> d_numCandidates;
+        rmm::device_uvector<read_number> d_anchorReadIds;
+        rmm::device_uvector<unsigned int> d_anchor_sequences_data;
+        rmm::device_uvector<int> d_anchor_sequences_lengths;
+        rmm::device_uvector<read_number> d_candidate_read_ids;
+        rmm::device_uvector<int> d_candidates_per_anchor;
+        rmm::device_uvector<int> d_candidates_per_anchor_prefixsum;  
+        rmm::device_uvector<int> d_candidatesBeginOffsets;
+
+        GpuErrorCorrectorInput()
+        : mr(rmm::mr::get_current_device_resource()),
+            d_numAnchors(0, cudaStreamPerThread, mr),
+            d_numCandidates(0, cudaStreamPerThread, mr),
+            d_anchorReadIds(0, cudaStreamPerThread, mr),
+            d_anchor_sequences_data(0, cudaStreamPerThread, mr),
+            d_anchor_sequences_lengths(0, cudaStreamPerThread, mr),
+            d_candidate_read_ids(0, cudaStreamPerThread, mr),
+            d_candidates_per_anchor(0, cudaStreamPerThread, mr),
+            d_candidates_per_anchor_prefixsum(0, cudaStreamPerThread, mr),
+            d_candidatesBeginOffsets(0, cudaStreamPerThread, mr)
+        {
+            CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
+        }
 
         MemoryUsage getMemoryInfo() const{
             MemoryUsage info{};
@@ -133,7 +150,8 @@ namespace gpu{
                 info.host += h.sizeInBytes();
             };
             auto handleDevice = [&](const auto& d){
-                info.device[event.getDeviceId()] += d.sizeInBytes();
+                using ElementType = typename std::remove_reference<decltype(d)>::type::value_type;
+                info.device[event.getDeviceId()] += d.size() * sizeof(ElementType);
             };
 
             handleHost(h_numAnchors);
@@ -246,7 +264,6 @@ namespace gpu{
 
             maxCandidatesPerRead = gpuMinhasher->getNumResultsPerMapThreshold() * gpuMinhasher->getNumberOfMaps();
 
-            backgroundStream = CudaStream{};
             previousBatchFinishedEvent = CudaEvent{};
 
             encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(gpuReadStorage->getSequenceLengthUpperBound());
@@ -276,23 +293,23 @@ namespace gpu{
             assert(cudaSuccess == ecinput.event.query());
             CUDACHECK(previousBatchFinishedEvent.synchronize());
 
-            resizeBuffers(ecinput, numIds);
+            resizeBuffers(ecinput, numIds, stream);
     
             //copy input to pinned memory
             *ecinput.h_numAnchors.get() = numIds;
             std::copy_n(anchorIds, numIds, ecinput.h_anchorReadIds.get());
 
             CUDACHECK(cudaMemcpyAsync(
-                ecinput.d_numAnchors.get(),
-                ecinput.h_numAnchors.get(),
+                ecinput.d_numAnchors.data(),
+                ecinput.h_numAnchors.data(),
                 sizeof(int),
                 H2D,
                 stream
             ));
 
             CUDACHECK(cudaMemcpyAsync(
-                ecinput.d_anchorReadIds.get(),
-                ecinput.h_anchorReadIds.get(),
+                ecinput.d_anchorReadIds.data(),
+                ecinput.h_anchorReadIds.data(),
                 sizeof(read_number) * (*ecinput.h_numAnchors.get()),
                 H2D,
                 stream
@@ -322,33 +339,33 @@ namespace gpu{
         } 
 
     public: //private:
-        void resizeBuffers(GpuErrorCorrectorInput& ecinput, int numAnchors){
+        void resizeBuffers(GpuErrorCorrectorInput& ecinput, int numAnchors, cudaStream_t stream){
             const std::size_t maxCandidates = maxCandidatesPerRead * numAnchors;
             // large enough to store all minhash results
             ecinput.h_candidate_read_ids.resize(maxCandidates);
-            ecinput.d_candidate_read_ids.resize(maxCandidates); 
+            ecinput.d_candidate_read_ids.resize(maxCandidates, stream); 
 
             ecinput.h_numAnchors.resize(1);
             ecinput.h_numCandidates.resize(1);
             ecinput.h_anchorReadIds.resize(numAnchors);
 
-            ecinput.d_numAnchors.resize(1);
-            ecinput.d_numCandidates.resize(1);
-            ecinput.d_anchorReadIds.resize(numAnchors);
-            ecinput.d_anchor_sequences_data.resize(encodedSequencePitchInInts * numAnchors);
-            ecinput.d_anchor_sequences_lengths.resize(numAnchors);
-            ecinput.d_candidates_per_anchor.resize(numAnchors);
-            ecinput.d_candidates_per_anchor_prefixsum.resize(numAnchors + 1);
-            ecinput.d_candidatesBeginOffsets.resize(numAnchors);
+            ecinput.d_numAnchors.resize(1, stream);
+            ecinput.d_numCandidates.resize(1, stream);
+            ecinput.d_anchorReadIds.resize(numAnchors, stream);
+            ecinput.d_anchor_sequences_data.resize(encodedSequencePitchInInts * numAnchors, stream);
+            ecinput.d_anchor_sequences_lengths.resize(numAnchors, stream);
+            ecinput.d_candidates_per_anchor.resize(numAnchors, stream);
+            ecinput.d_candidates_per_anchor_prefixsum.resize(numAnchors + 1, stream);
+            ecinput.d_candidatesBeginOffsets.resize(numAnchors, stream);
         }
         
         void getAnchorReads(GpuErrorCorrectorInput& ecinput, cudaStream_t stream){
             gpuReadStorage->gatherSequences(
                 readstorageHandle,
-                ecinput.d_anchor_sequences_data.get(),
+                ecinput.d_anchor_sequences_data.data(),
                 encodedSequencePitchInInts,
                 makeAsyncConstBufferWrapper(ecinput.h_anchorReadIds.get()),
-                ecinput.d_anchorReadIds.get(),
+                ecinput.d_anchorReadIds.data(),
                 (*ecinput.h_numAnchors.get()),
                 stream,
                 mr
@@ -356,8 +373,8 @@ namespace gpu{
 
             gpuReadStorage->gatherSequenceLengths(
                 readstorageHandle,
-                ecinput.d_anchor_sequences_lengths.get(),
-                ecinput.d_anchorReadIds.get(),
+                ecinput.d_anchor_sequences_lengths.data(),
+                ecinput.d_anchorReadIds.data(),
                 (*ecinput.h_numAnchors.get()),
                 stream
             );
@@ -368,11 +385,11 @@ namespace gpu{
 
             gpuMinhasher->determineNumValues(
                 minhashHandle,
-                ecinput.d_anchor_sequences_data.get(),
+                ecinput.d_anchor_sequences_data.data(),
                 encodedSequencePitchInInts,
-                ecinput.d_anchor_sequences_lengths.get(),
+                ecinput.d_anchor_sequences_lengths.data(),
                 (*ecinput.h_numAnchors.get()),
-                ecinput.d_candidates_per_anchor.get(),
+                ecinput.d_candidates_per_anchor.data(),
                 totalNumValues,
                 stream,
                 mr
@@ -380,33 +397,33 @@ namespace gpu{
 
             CUDACHECK(cudaStreamSynchronize(stream));
 
-            ecinput.d_candidate_read_ids.resize(totalNumValues);
+            ecinput.d_candidate_read_ids.resize(totalNumValues, stream);
             ecinput.h_candidate_read_ids.resize(totalNumValues);
 
             if(totalNumValues == 0){
-                CUDACHECK(cudaMemsetAsync(ecinput.d_candidates_per_anchor.get(), 0, sizeof(int) * (*ecinput.h_numAnchors), stream));
-                CUDACHECK(cudaMemsetAsync(ecinput.d_candidates_per_anchor_prefixsum.get(), 0, sizeof(int) * (1 + (*ecinput.h_numAnchors)), stream));
+                CUDACHECK(cudaMemsetAsync(ecinput.d_candidates_per_anchor.data(), 0, sizeof(int) * (*ecinput.h_numAnchors), stream));
+                CUDACHECK(cudaMemsetAsync(ecinput.d_candidates_per_anchor_prefixsum.data(), 0, sizeof(int) * (1 + (*ecinput.h_numAnchors)), stream));
                 return;
             }
 
             gpuMinhasher->retrieveValues(
                 minhashHandle,
-                ecinput.d_anchorReadIds.get(),
+                ecinput.d_anchorReadIds.data(),
                 (*ecinput.h_numAnchors.get()),                
                 totalNumValues,
-                ecinput.d_candidate_read_ids.get(),
-                ecinput.d_candidates_per_anchor.get(),
-                ecinput.d_candidates_per_anchor_prefixsum.get(),
+                ecinput.d_candidate_read_ids.data(),
+                ecinput.d_candidates_per_anchor.data(),
+                ecinput.d_candidates_per_anchor_prefixsum.data(),
                 stream,
                 mr
             );
 
             gpucorrectorkernels::copyMinhashResultsKernel<<<640, 256, 0, stream>>>(
-                ecinput.d_numCandidates.get(),
+                ecinput.d_numCandidates.data(),
                 ecinput.h_numCandidates.get(),
                 ecinput.h_candidate_read_ids.get(),
-                ecinput.d_candidates_per_anchor_prefixsum.get(),
-                ecinput.d_candidate_read_ids.get(),
+                ecinput.d_candidates_per_anchor_prefixsum.data(),
+                ecinput.d_candidate_read_ids.data(),
                 *ecinput.h_numAnchors.get()
             ); CUDACHECKASYNC;
         }
@@ -414,7 +431,6 @@ namespace gpu{
         int deviceId;
         int maxCandidatesPerRead;
         std::size_t encodedSequencePitchInInts;
-        CudaStream backgroundStream;
         CudaEvent previousBatchFinishedEvent;
         const GpuReadStorage* gpuReadStorage;
         const GpuMinhasher* gpuMinhasher;
@@ -910,7 +926,7 @@ namespace gpu{
             for(auto& event: events){
                 event = std::move(CudaEvent{cudaEventDisableTiming});
             }
-            backgroundStream = CudaStream{};
+
             previousBatchFinishedEvent = CudaEvent{};
 
             encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(gpuReadStorage->getSequenceLengthUpperBound());
@@ -990,12 +1006,12 @@ namespace gpu{
                 encodedSequencePitchInInts,
                 currentNumAnchors,
                 currentNumCandidates,
-                currentInput->d_anchorReadIds,
-                currentInput->d_anchor_sequences_data,
-                currentInput->d_anchor_sequences_lengths,
-                currentInput->d_candidate_read_ids,
-                currentInput->d_candidates_per_anchor,
-                currentInput->d_candidates_per_anchor_prefixsum
+                currentInput->d_anchorReadIds.data(),
+                currentInput->d_anchor_sequences_data.data(),
+                currentInput->d_anchor_sequences_lengths.data(),
+                currentInput->d_candidate_read_ids.data(),
+                currentInput->d_candidates_per_anchor.data(),
+                currentInput->d_candidates_per_anchor_prefixsum.data()
             ); CUDACHECKASYNC;
 
             //after gpu data has been copied to local working set, the gpu data of currentInput can be reused
@@ -1614,17 +1630,13 @@ namespace gpu{
             nvtx::pop_range();
 
             if(correctionOptions->useQualityScores) {
-                CUDACHECK(events[0].record(stream));
-                CUDACHECK(backgroundStream.waitEvent(events[0], 0));
                 
                 nvtx::push_range("getQualities", 4);
 
-                getQualities(backgroundStream);
+                getQualities(stream);
 
                 nvtx::pop_range();
 
-                CUDACHECK(events[0].record(backgroundStream));
-                CUDACHECK(cudaStreamWaitEvent(stream, events[0], 0));
             }
 
             nvtx::push_range("buildMultipleSequenceAlignment", 6);
@@ -3031,7 +3043,7 @@ namespace gpu{
 
         int deviceId;
         std::array<CudaEvent, 2> events;
-        CudaStream backgroundStream;
+
         CudaEvent previousBatchFinishedEvent;
 
         std::size_t msaColumnPitchInElements;
