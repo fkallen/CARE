@@ -177,6 +177,8 @@ namespace gpu{
             auto sequencehandle = gpuReadStorage.makeHandle();
             const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
 
+            rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
+
             constexpr read_number parallelReads = 1000000;
             const int numIters = SDIV(numReads, parallelReads);
 
@@ -290,7 +292,8 @@ namespace gpu{
                         makeAsyncConstBufferWrapper(h_indices.data()),
                         d_indices,
                         curBatchsize,
-                        stream
+                        stream,
+                        mr
                     );
                 
                     gpuReadStorage.gatherSequenceLengths(

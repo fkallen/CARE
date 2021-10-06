@@ -72,7 +72,8 @@ void initializeExtenderInput(
     std::size_t encodedSequencePitchInInts,
     std::size_t qualityPitchInBytes,
     GpuReadExtender::TaskData& tasks,
-    cudaStream_t stream
+    cudaStream_t stream,
+    rmm::mr::device_memory_resource* mr
 ){
     nvtx::push_range("init", 2);
 
@@ -101,7 +102,8 @@ void initializeExtenderInput(
             makeAsyncConstBufferWrapper(currentIds),
             currentIds, //device accessible
             numNewReadsInBatch,
-            stream
+            stream,
+            mr
         );
 
         gpuReadStorage.gatherSequenceLengths(
@@ -120,7 +122,8 @@ void initializeExtenderInput(
                 makeAsyncConstBufferWrapper(currentIds),
                 currentIds, //device accessible
                 numNewReadsInBatch,
-                stream
+                stream,
+                mr
             );
         }
         
@@ -514,7 +517,8 @@ SerializedObjectStorage extend_gpu_pairedend(
                     encodedSequencePitchInInts,
                     qualityPitchInBytes,
                     tasks,
-                    stream
+                    stream,
+                    rmmDeviceResource
                 );
             }
 

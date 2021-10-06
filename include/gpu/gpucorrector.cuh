@@ -350,7 +350,8 @@ namespace gpu{
                 makeAsyncConstBufferWrapper(ecinput.h_anchorReadIds.get()),
                 ecinput.d_anchorReadIds.get(),
                 (*ecinput.h_numAnchors.get()),
-                stream
+                stream,
+                mr
             );
 
             gpuReadStorage->gatherSequenceLengths(
@@ -879,6 +880,7 @@ namespace gpu{
             const CorrectionOptions& correctionOptions_,
             const GoodAlignmentProperties& goodAlignmentProperties_,
             int maxAnchorsPerCall,
+            rmm::mr::device_memory_resource* mr_,
             ThreadPool* threadPool_,
             const GpuForest* gpuForestAnchor_,
             const GpuForest* gpuForestCandidate_
@@ -889,6 +891,7 @@ namespace gpu{
             gpuReadStorage{&gpuReadStorage_},
             correctionOptions{&correctionOptions_},
             goodAlignmentProperties{&goodAlignmentProperties_},
+            mr{mr_},
             threadPool{threadPool_},
             gpuForestAnchor{gpuForestAnchor_},
             gpuForestCandidate{gpuForestCandidate_},
@@ -1996,7 +1999,8 @@ namespace gpu{
                 makeAsyncConstBufferWrapper(currentInput->h_candidate_read_ids.data()),
                 d_candidate_read_ids,
                 currentNumCandidates,
-                stream
+                stream,
+                mr
             );
 
             helpers::call_transpose_kernel(
@@ -2024,7 +2028,8 @@ namespace gpu{
                     makeAsyncConstBufferWrapper(currentInput->h_anchorReadIds.data()),
                     d_anchorReadIds,
                     maxAnchors,
-                    stream
+                    stream,
+                    mr
                 );
 
                 gpuReadStorage->gatherQualities(
@@ -2034,7 +2039,8 @@ namespace gpu{
                     makeAsyncConstBufferWrapper(currentInput->h_candidate_read_ids.data()),
                     d_candidate_read_ids.get(),
                     currentNumCandidates,
-                    stream
+                    stream,
+                    mr
                 );
 
 #else 
@@ -3053,6 +3059,7 @@ namespace gpu{
         GpuErrorCorrectorRawOutput* currentOutput;
         GpuErrorCorrectorRawOutput currentOutputData;
 
+        rmm::mr::device_memory_resource* mr;
         ThreadPool* threadPool;
         ThreadPool::ParallelForHandle pforHandle;
 

@@ -35,6 +35,11 @@
 #include <numeric>
 #include <mutex>
 
+#include <rmm/mr/device/device_memory_resource.hpp>
+#include <rmm/mr/device/per_device_resource.hpp>
+#include <rmm/device_uvector.hpp>
+#include <gpu/rmm_utilities.cuh>
+
 namespace care{
 namespace gpu{
 
@@ -105,6 +110,8 @@ namespace gpu{
             const read_number numReads = nReads;
             const int numIters = SDIV(numReads, parallelReads);
             const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(upperBoundSequenceLength);
+
+            rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
 
             const int numThreads = runtimeOptions.threads;
             ThreadPool::ParallelForHandle pforHandle;
@@ -206,7 +213,8 @@ namespace gpu{
                         makeAsyncConstBufferWrapper(h_indices.data()),
                         d_indices,
                         curBatchsize,
-                        stream
+                        stream,
+                        mr
                     );
                 
                     gpuReadStorage.gatherSequenceLengths(

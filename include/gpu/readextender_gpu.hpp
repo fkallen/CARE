@@ -2685,7 +2685,8 @@ struct GpuReadExtender{
             makeAsyncConstBufferWrapper(h_candidateReadIds.data(), h_candidateReadIdsEvent),
             d_candidateReadIds.data(), //device accessible
             *h_numCandidates,
-            stream
+            stream,
+            mr
         );
 
         gpuReadStorage->gatherSequenceLengths(
@@ -4067,7 +4068,8 @@ struct GpuReadExtender{
                 makeAsyncConstBufferWrapper(h_candidateReadIds.data(), h_candidateReadIdsEvent),
                 d_candidateReadIds.data(),
                 *h_numCandidates,
-                stream
+                stream,
+                mr
             );
 
         }else{

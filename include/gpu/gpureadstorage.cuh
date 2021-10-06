@@ -12,6 +12,8 @@
 
 #include <cstdint>
 
+#include <rmm/mr/device/device_memory_resource.hpp>
+
 namespace care{
 
 namespace gpu{
@@ -41,7 +43,8 @@ public:
         const AsyncConstBufferWrapper<read_number> h_readIds,
         const read_number* d_readIds,
         int numSequences,
-        cudaStream_t stream
+        cudaStream_t stream,
+        rmm::mr::device_memory_resource* mr
     ) const = 0;
 
     virtual void gatherQualities(
@@ -51,7 +54,8 @@ public:
         const AsyncConstBufferWrapper<read_number> h_readIds,
         const read_number* d_readIds,
         int numSequences,
-        cudaStream_t stream
+        cudaStream_t stream,
+        rmm::mr::device_memory_resource* mr
     ) const = 0;
 
     virtual void gatherSequenceLengths(

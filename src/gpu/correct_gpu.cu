@@ -375,6 +375,8 @@ public:
     ) const {
         cub::SwitchDevice sd{deviceId};
 
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
+
         constexpr int numextra = 1;
         constexpr int numStreams = 1 + numextra;
 
@@ -405,7 +407,7 @@ public:
             *readStorage,
             *minhasher,
             threadPool,
-            rmm::mr::get_current_device_resource()
+            mr
         );
 
         GpuErrorCorrector gpuErrorCorrector{
@@ -414,6 +416,7 @@ public:
             correctionOptions,
             goodAlignmentProperties,
             correctionOptions.batchsize,
+            mr,
             threadPool,
             gpuForestAnchor,
             gpuForestCandidate
@@ -672,6 +675,8 @@ public:
     ) const {
         cub::SwitchDevice sd{deviceId};
 
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
+
         //constexpr int numextra = 1;
 
         CudaStream stream;
@@ -687,7 +692,7 @@ public:
             *readStorage,
             *minhasher,
             threadPool,
-            rmm::mr::get_current_device_resource()
+            mr
         );
 
         GpuErrorCorrector gpuErrorCorrector{
@@ -696,6 +701,7 @@ public:
             correctionOptions,
             goodAlignmentProperties,
             correctionOptions.batchsize,
+            mr,
             threadPool,
             gpuForestAnchor,
             gpuForestCandidate
@@ -1029,11 +1035,13 @@ public:
     ){
         cudaSetDevice(deviceId);
 
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
+
         AnchorHasher gpuAnchorHasher(
             *readStorage,
             *minhasher,
             nullptr, //threadPool,
-            rmm::mr::get_current_device_resource()
+            mr
         );
 
         CudaStream hasherStream;
@@ -1104,12 +1112,15 @@ public:
     ){
         cudaSetDevice(deviceId);
 
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
+
         GpuErrorCorrector gpuErrorCorrector{
             *readStorage,
             correctionFlags,
             correctionOptions,
             goodAlignmentProperties,
             correctionOptions.batchsize,
+            mr,
             threadPool,
             gpuForestAnchor,
             gpuForestCandidate
@@ -1199,12 +1210,15 @@ public:
     ){
         cudaSetDevice(deviceId);
 
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
+
         GpuErrorCorrector gpuErrorCorrector{
             *readStorage,
             correctionFlags,
             correctionOptions,
             goodAlignmentProperties,
             correctionOptions.batchsize,
+            mr,
             threadPool,
             gpuForestAnchor,
             gpuForestCandidate

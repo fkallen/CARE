@@ -10,7 +10,6 @@
 #include <gpu/gpulengthstorage.hpp>
 #include <gpu/gpubitarray.cuh>
 #include <sharedmutex.hpp>
-#include <gpu/asyncdeviceallocation.cuh>
 #include <qualityscorecompression.hpp>
 
 
@@ -24,6 +23,11 @@
 #include <cub/cub.cuh>
 
 #include <thrust/iterator/constant_iterator.h>
+
+#include <rmm/device_uvector.hpp>
+#include <rmm/device_scalar.hpp>
+#include <rmm/mr/device/thrust_allocator_adaptor.hpp>
+#include <gpu/rmm_utilities.cuh>
 
 namespace care{
 namespace gpu{
@@ -682,7 +686,8 @@ public: //inherited GPUReadStorage interface
         const AsyncConstBufferWrapper<read_number> h_readIdsAsync,
         const read_number* d_readIds,
         int numSequences,
-        cudaStream_t stream
+        cudaStream_t stream,
+        rmm::mr::device_memory_resource* mr
     ) const override{
         if(numSequences == 0) return;
         
@@ -784,14 +789,14 @@ public: //inherited GPUReadStorage interface
                 std::array<unsigned int*, 2> h_hostdataArr{(unsigned int*)temp_allocations_host[0], (unsigned int*)temp_allocations_host[1]};
                 std::array<int*, 2> h_outputpositionsArr{(int*)temp_allocations_host[2], (int*)temp_allocations_host[3]};
 
-                AsyncDeviceAllocation d_gatheredData1(sizeof(char) * sequencepitch * batchsize, tempData->streams[0]);
-                AsyncDeviceAllocation d_gatheredData2(sizeof(char) * sequencepitch * batchsize, tempData->streams[1]);
+                rmm::device_uvector<unsigned int> d_gatheredData1(outSequencePitchInInts * batchsize, tempData->streams[0].getStream(), mr);
+                rmm::device_uvector<unsigned int> d_gatheredData2(outSequencePitchInInts * batchsize, tempData->streams[1].getStream(), mr);
 
-                AsyncDeviceAllocation d_outputPositions1(sizeof(int) * batchsize, tempData->streams[0]);
-                AsyncDeviceAllocation d_outputPositions2(sizeof(int) * batchsize, tempData->streams[1]);
+                rmm::device_uvector<int> d_outputPositions1(batchsize, tempData->streams[0].getStream(), mr);
+                rmm::device_uvector<int> d_outputPositions2(batchsize, tempData->streams[1].getStream(), mr);
 
-                std::array<unsigned int*, 2> d_hostdataArr{d_gatheredData1.get<unsigned int>(), d_gatheredData2.get<unsigned int>()};
-                std::array<int*, 2> d_outputpositionsArr{d_outputPositions1.get<int>(), d_outputPositions2.get<int>()};
+                std::array<unsigned int*, 2> d_hostdataArr{d_gatheredData1.data(), d_gatheredData2.data()};
+                std::array<int*, 2> d_outputpositionsArr{d_outputPositions1.data(), d_outputPositions2.data()};
 
                 for(int i = 0,k = 0, bufferIndex = 0; i < numSequences; i++){
 
@@ -933,7 +938,8 @@ public: //inherited GPUReadStorage interface
         const AsyncConstBufferWrapper<read_number> h_readIdsAsync,
         const read_number* d_readIds,
         int numSequences,
-        cudaStream_t stream
+        cudaStream_t stream,
+        rmm::mr::device_memory_resource* mr
     ) const override{
         if(numSequences == 0) return;
         
@@ -1046,14 +1052,14 @@ public: //inherited GPUReadStorage interface
                 std::array<unsigned int*, 2> h_hostdataArr{(unsigned int*)temp_allocations_host[0], (unsigned int*)temp_allocations_host[1]};
                 std::array<int*, 2> h_outputpositionsArr{(int*)temp_allocations_host[2], (int*)temp_allocations_host[3]};
 
-                AsyncDeviceAllocation d_gatheredData1(sizeof(unsigned int) * numColumnsCompressedQualitiesInts * batchsize, tempData->streams[0]);
-                AsyncDeviceAllocation d_gatheredData2(sizeof(unsigned int) * numColumnsCompressedQualitiesInts * batchsize, tempData->streams[1]);
+                rmm::device_uvector<unsigned int> d_gatheredData1(numColumnsCompressedQualitiesInts * batchsize, tempData->streams[0].getStream(), mr);
+                rmm::device_uvector<unsigned int> d_gatheredData2(numColumnsCompressedQualitiesInts * batchsize, tempData->streams[1].getStream(), mr);
 
-                AsyncDeviceAllocation d_outputPositions1(sizeof(int) * batchsize, tempData->streams[0]);
-                AsyncDeviceAllocation d_outputPositions2(sizeof(int) * batchsize, tempData->streams[1]);
+                rmm::device_uvector<int> d_outputPositions1(batchsize, tempData->streams[0].getStream(), mr);
+                rmm::device_uvector<int> d_outputPositions2(batchsize, tempData->streams[1].getStream(), mr);
 
-                std::array<unsigned int*, 2> d_hostdataArr{d_gatheredData1.get<unsigned int>(), d_gatheredData2.get<unsigned int>()};
-                std::array<int*, 2> d_outputpositionsArr{d_outputPositions1.get<int>(), d_outputPositions2.get<int>()};
+                std::array<unsigned int*, 2> d_hostdataArr{d_gatheredData1.data(), d_gatheredData2.data()};
+                std::array<int*, 2> d_outputpositionsArr{d_outputPositions1.data(), d_outputPositions2.data()};
 
                 for(int i = 0,k = 0, bufferIndex = 0; i < numSequences; i++){
 

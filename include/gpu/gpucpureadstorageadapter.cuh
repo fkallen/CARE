@@ -11,6 +11,7 @@
 namespace care{
 namespace gpu{
 
+#if 0
     struct GPUCPUReadStorageAdapter : public CpuReadStorage{
     public:
 
@@ -235,6 +236,7 @@ namespace gpu{
         cub::CachingDeviceAllocator* cubAllocator;
     };
 
+#endif
 
 } //namespace gpu
 } //namespace care
