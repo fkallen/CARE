@@ -12,6 +12,7 @@
 #include <gpu/gpureadstorage.cuh>
 #include <gpu/asyncresult.cuh>
 #include <gpu/cudaerrorcheck.cuh>
+#include <gpu/cubwrappers.cuh>
 
 #include <config.hpp>
 #include <util.hpp>
@@ -911,7 +912,6 @@ namespace gpu{
             d_anchor_qualities{0, cudaStreamPerThread, mr},
             d_candidate_qualities{0, cudaStreamPerThread, mr},
             d_anchorIndicesOfCandidates{0, cudaStreamPerThread, mr},
-            d_tempstorage{0, cudaStreamPerThread, mr},
             d_alignment_overlaps{0, cudaStreamPerThread, mr},
             d_alignment_shifts{0, cudaStreamPerThread, mr},
             d_alignment_nOps{0, cudaStreamPerThread, mr},
@@ -964,14 +964,8 @@ namespace gpu{
             d_candidatesBeginOffsets{0, cudaStreamPerThread, mr},
             d_flagsCandidates{0, cudaStreamPerThread, mr},
             d_alignment_shifts2{0, cudaStreamPerThread, mr},
-            d_alignment_overlaps2{0, cudaStreamPerThread, mr},
-            d_alignment_nOps2{0, cudaStreamPerThread, mr},
             d_anchorIndicesOfCandidates2{0, cudaStreamPerThread, mr},
-            d_candidateContainsN2{0, cudaStreamPerThread, mr},
-            d_candidate_sequences_lengths2{0, cudaStreamPerThread, mr},
-            d_candidate_sequences_data2{0, cudaStreamPerThread, mr},
-            d_alignment_best_alignment_flags2{0, cudaStreamPerThread, mr},
-            d_cubtemp2{0, cudaStreamPerThread, mr}
+            d_candidate_sequences_lengths2{0, cudaStreamPerThread, mr}
         {
             if(correctionOptions->correctionType != CorrectionType::Classic){
                 assert(gpuForestAnchor != nullptr);
@@ -1149,7 +1143,6 @@ namespace gpu{
             handleDevice(d_anchor_qualities);
             handleDevice(d_candidate_qualities);
             handleDevice(d_anchorIndicesOfCandidates);
-            handleDevice(d_tempstorage);
             handleDevice(d_alignment_overlaps);
             handleDevice(d_alignment_shifts);
             handleDevice(d_alignment_nOps);
@@ -1405,68 +1398,8 @@ namespace gpu{
             d_indices_of_corrected_candidates.resize(maxCandidates, stream);
 
             d_alignment_shifts2.resize(maxCandidates, stream);
-            d_alignment_overlaps2.resize(maxCandidates, stream);
-            d_alignment_nOps2.resize(maxCandidates, stream);
             d_anchorIndicesOfCandidates2.resize(maxCandidates, stream);
-            d_candidateContainsN2.resize(maxCandidates, stream);
             d_candidate_sequences_lengths2.resize(maxCandidates, stream);
-            d_candidate_sequences_data2.resize(maxCandidates * decodedSequencePitchInBytes, stream);
-            d_alignment_best_alignment_flags2.resize(maxCandidates, stream);
-
-            std::size_t flagTemp = sizeof(bool) * maxCandidates;
-            std::size_t popcountShdTempBytes = 0; 
-            
-            const bool removeAmbiguousAnchors = correctionOptions->excludeAmbiguousReads;
-            const bool removeAmbiguousCandidates = correctionOptions->excludeAmbiguousReads;
-    
-            call_popcount_shifted_hamming_distance_kernel_async(
-                nullptr,
-                popcountShdTempBytes,
-                d_alignment_overlaps.data(),
-                d_alignment_shifts.data(),
-                d_alignment_nOps.data(),
-                d_alignment_isValid.data(),
-                d_alignment_best_alignment_flags.data(),
-                d_anchor_sequences_data.data(),
-                d_candidate_sequences_data.data(),
-                d_anchor_sequences_lengths.data(),
-                d_candidate_sequences_lengths.data(),
-                d_candidates_per_anchor_prefixsum.data(),
-                d_candidates_per_anchor.data(),
-                d_anchorIndicesOfCandidates.data(),
-                d_numAnchors.data(),
-                d_numCandidates.data(),
-                d_anchorContainsN.data(),
-                removeAmbiguousAnchors,
-                d_candidateContainsN.data(),
-                removeAmbiguousCandidates,
-                maxAnchors,
-                maxCandidates,
-                gpuReadStorage->getSequenceLengthUpperBound(),
-                encodedSequencePitchInInts,
-                goodAlignmentProperties->min_overlap,
-                goodAlignmentProperties->maxErrorRate,
-                goodAlignmentProperties->min_overlap_ratio,
-                correctionOptions->estimatedErrorrate,                
-                (cudaStream_t)0
-            );
-
-            std::size_t cubtemp = 0;
-
-            CUDACHECK(cub::DeviceSelect::Flagged(
-                nullptr,
-                cubtemp,
-                cub::CountingInputIterator<int>(0),
-                (bool*) nullptr,
-                (int*) nullptr,
-                (int*) nullptr,
-                maxCandidates,
-                (cudaStream_t)0
-            ));
-            
-            std::size_t tmpsize = std::max(cubtemp, flagTemp);
-            tmpsize = std::max(tmpsize, popcountShdTempBytes);
-            d_tempstorage.resize(tmpsize, stream);
 
             // if(maxCandidatesDidChange){
             //     std::cerr << "maxCandidates changed to " << maxCandidates << "\n";
@@ -1533,10 +1466,7 @@ namespace gpu{
 
 
                     //remove candidates which are not paired
-                    std::size_t cubTempSize = d_tempstorage.sizeInBytes();
-                    CUDACHECK(cub::DeviceSelect::Flagged(
-                        d_tempstorage.data(),
-                        cubTempSize,
+                    CubCallWrapper(mr).cubSelectFlagged(
                         thrust::make_zip_iterator(thrust::make_tuple(
                             d_candidate_read_ids.data(),
                             d_anchorIndicesOfCandidates.data()
@@ -1549,7 +1479,7 @@ namespace gpu{
                         d_numCandidates.data(),
                         currentNumCandidates,
                         stream
-                    ));
+                    );
 
                     // CUDACHECK(cudaDeviceSynchronize());
 
@@ -1603,9 +1533,7 @@ namespace gpu{
                         int* d_uniqueAnchorIndices = d_anchorIndicesOfCandidates2.data();
                         int* d_aggregates_out = d_indices.data();
 
-                        CUDACHECK(cub::DeviceReduce::ReduceByKey(
-                            d_tempstorage.data(),
-                            cubTempSize,
+                        CubCallWrapper(mr).cubReduceByKey(
                             d_anchorIndicesOfCandidates.data(), 
                             d_uniqueAnchorIndices, 
                             thrust::make_constant_iterator(1), 
@@ -1614,7 +1542,7 @@ namespace gpu{
                             cub::Sum(), 
                             currentNumCandidates, 
                             stream
-                        ));
+                        );
 
                         //CUDACHECK(cudaDeviceSynchronize());
 
@@ -1638,14 +1566,12 @@ namespace gpu{
 
                         //CUDACHECK(cudaDeviceSynchronize());
 
-                        CUDACHECK(cub::DeviceScan::InclusiveSum(
-                            d_tempstorage.data(),
-                            cubTempSize,
+                        CubCallWrapper(mr).cubInclusiveSum(
                             d_candidates_per_anchor.data(),
                             d_candidates_per_anchor_prefixsum.data() + 1,
                             currentNumAnchors,
                             stream
-                        ));
+                        );
 
                         // CUDACHECK(cudaDeviceSynchronize());
                         // std::cerr << "d_candidates_per_anchor\n";
@@ -1749,12 +1675,8 @@ namespace gpu{
             int* const d_totalNumberOfEdits = d_editsOffsetsTmp + currentNumAnchors;
             helpers::call_fill_kernel_async(d_editsOffsetsTmp, 1, 0, stream); CUDACHECKASYNC;
 
-            std::size_t cubTempSize = d_tempstorage.size();
-
             //num edits per anchor prefixsum
-            CUDACHECK(cub::DeviceScan::InclusiveSum(
-                d_tempstorage.data(), 
-                cubTempSize, 
+            CubCallWrapper(mr).cubInclusiveSum(
                 thrust::make_transform_iterator(
                     d_numEditsPerCorrectedanchor.data(),
                     [doNotUseEditsValue = getDoNotUseEditsValue()] __device__ (const auto& num){ return num == doNotUseEditsValue ? 0 : num;}
@@ -1762,7 +1684,7 @@ namespace gpu{
                 d_editsOffsetsTmp + 1, 
                 currentNumAnchors,
                 stream
-            ));
+            );
 
             //compact edits
             auto* const d_editsPerCorrectedanchor2 = d_editsPerCorrectedCandidate2.data();
@@ -1816,14 +1738,12 @@ namespace gpu{
             int* const d_totalCorrectedSequencesBytes = d_correctedAnchorOffsetsTmp + currentNumAnchors;
             helpers::call_fill_kernel_async(d_correctedAnchorOffsetsTmp, 1, 0, stream); CUDACHECKASYNC;
 
-            CUDACHECK(cub::DeviceScan::InclusiveSum(
-                d_tempstorage.data(), 
-                cubTempSize, 
+            CubCallWrapper(mr).cubInclusiveSum(
                 correctedAnchorsPitches, 
                 d_correctedAnchorOffsetsTmp + 1, 
                 currentNumAnchors,
                 stream
-            ));
+            );
 
             helpers::call_copy_n_kernel(
                 d_correctedAnchorOffsetsTmp, 
@@ -1880,16 +1800,12 @@ namespace gpu{
                 stream
             );
 
-            size_t cubTempSize = d_tempstorage.size();
-
-            CUDACHECK(cub::DeviceScan::ExclusiveSum(
-                d_tempstorage.data(), 
-                cubTempSize, 
+            CubCallWrapper(mr).cubExclusiveSum(
                 d_num_corrected_candidates_per_anchor.data(), 
                 d_num_corrected_candidates_per_anchor_prefixsum.data(), 
                 maxAnchors, 
                 stream
-            ));
+            );
 
             helpers::call_copy_n_kernel(
                 thrust::make_zip_iterator(thrust::make_tuple(
@@ -1931,14 +1847,12 @@ namespace gpu{
             int* const d_totalNumberOfEdits = d_editsOffsetsTmp + currentNumCandidates;
             helpers::call_fill_kernel_async(d_editsOffsetsTmp, 1, 0, stream); CUDACHECKASYNC;
 
-            CUDACHECK(cub::DeviceScan::InclusiveSum(
-                d_tempstorage.data(), 
-                cubTempSize, 
+            CubCallWrapper(mr).cubInclusiveSum(
                 inputIter2, 
                 d_editsOffsetsTmp + 1, 
                 currentNumCandidates,
                 stream
-            ));
+            );
 
             //compact edits
             gpucorrectorkernels::compactEditsKernel<<<SDIV(currentNumCandidates, 128), 128, 0, stream>>>(
@@ -1993,14 +1907,12 @@ namespace gpu{
             int* const d_totalCorrectedSequencesBytes = d_correctedCandidatesOffsetsTmp + currentNumCandidates;
             helpers::call_fill_kernel_async(d_correctedCandidatesOffsetsTmp, 1, 0, stream); CUDACHECKASYNC;
 
-            CUDACHECK(cub::DeviceScan::InclusiveSum(
-                d_tempstorage.data(), 
-                cubTempSize, 
+            CubCallWrapper(mr).cubInclusiveSum(
                 correctedCandidatesPitches, 
                 d_correctedCandidatesOffsetsTmp + 1, 
                 currentNumCandidates,
                 stream
-            ));
+            );
 
             helpers::call_copy_n_kernel(
                 d_correctedCandidatesOffsetsTmp, 
@@ -2121,15 +2033,12 @@ namespace gpu{
 
 #else 
 
-                std::size_t cubTempSize = d_tempstorage.sizeInBytes();
-                CUDACHECK(cub::DeviceScan::ExclusiveSum(
-                    d_tempstorage.data(),
-                    cubTempSize,
+                CubCallWrapper(mr).cubExclusiveSum(
                     d_indices_per_anchor.data(),
                     d_indices_per_anchor_prefixsum.data(),
                     maxAnchors,
                     stream
-                ));
+                );
                 
                 //from the list of remaining candidates per anchor, compact the corresponding candidate read ids
                 helpers::lambda_kernel<<<maxAnchors, 128, 0, stream>>>(
@@ -2259,14 +2168,48 @@ namespace gpu{
         void getCandidateAlignments(cudaStream_t stream){
 
 
-            std::size_t tempBytes = d_tempstorage.size();
-
             const bool removeAmbiguousAnchors = correctionOptions->excludeAmbiguousReads;
             const bool removeAmbiguousCandidates = correctionOptions->excludeAmbiguousReads;
 
+            std::size_t bytes = 0;
+
             call_popcount_shifted_hamming_distance_kernel_async(
-                d_tempstorage.data(),
-                tempBytes,
+                nullptr,
+                bytes,
+                d_alignment_overlaps.data(),
+                d_alignment_shifts.data(),
+                d_alignment_nOps.data(),
+                d_alignment_isValid.data(),
+                d_alignment_best_alignment_flags.data(),
+                d_anchor_sequences_data.data(),
+                d_candidate_sequences_data.data(),
+                d_anchor_sequences_lengths.data(),
+                d_candidate_sequences_lengths.data(),
+                d_candidates_per_anchor_prefixsum.data(),
+                d_candidates_per_anchor.data(),
+                d_anchorIndicesOfCandidates.data(),
+                d_numAnchors.data(),
+                d_numCandidates.data(),
+                d_anchorContainsN.data(),
+                removeAmbiguousAnchors,
+                d_candidateContainsN.data(),
+                removeAmbiguousCandidates,
+                maxAnchors,
+                maxCandidates,
+                gpuReadStorage->getSequenceLengthUpperBound(),
+                encodedSequencePitchInInts,
+                goodAlignmentProperties->min_overlap,
+                goodAlignmentProperties->maxErrorRate,
+                goodAlignmentProperties->min_overlap_ratio,
+                correctionOptions->estimatedErrorrate,
+                stream
+            );
+
+            rmm::device_uvector<char> d_temp(bytes, stream, mr);
+
+            call_popcount_shifted_hamming_distance_kernel_async(
+                d_temp.data(),
+                bytes,
                 d_alignment_overlaps.data(),
                 d_alignment_shifts.data(),
                 d_alignment_nOps.data(),
@@ -2533,12 +2476,8 @@ namespace gpu{
             multiMSA.origWeights = d_origWeights.data();
             multiMSA.origCoverages = d_origCoverages.data();
             multiMSA.columnProperties = d_msa_column_properties.data();
-
-            const std::size_t requiredTempStorageBytes = sizeof(bool) * maxCandidates; // d_shouldBeKept
                 
-            assert(d_tempstorage.size() >= requiredTempStorageBytes);
-
-            bool* d_shouldBeKept = (bool*)d_tempstorage.data();
+            rmm::device_uvector<bool> d_shouldBeKept(maxCandidates, stream, mr);
 
             callMsaCandidateRefinementKernel_multiiter_async(
                 d_indices_tmp.data(),
@@ -2556,7 +2495,7 @@ namespace gpu{
                 d_candidate_sequences_lengths.data(),
                 d_anchor_qualities.data(),
                 d_candidate_qualities.data(),
-                d_shouldBeKept,
+                d_shouldBeKept.data(),
                 d_candidates_per_anchor_prefixsum.data(),
                 d_numAnchors.data(),
                 goodAlignmentProperties->maxErrorRate,
@@ -2846,18 +2785,14 @@ namespace gpu{
             );
             #endif
 
-            size_t cubTempSize = d_tempstorage.size();
-
-            CUDACHECK(cub::DeviceSelect::Flagged(
-                d_tempstorage.data(),
-                cubTempSize,
+            CubCallWrapper(mr).cubSelectFlagged(
                 cub::CountingInputIterator<int>(0),
                 d_candidateCanBeCorrected,
                 d_indices_of_corrected_candidates.data(),
                 d_num_total_corrected_candidates.data(),
                 maxCandidates,
                 stream
-            ));
+            );
 
             
             CUDACHECK(cudaMemsetAsync(
@@ -3036,18 +2971,14 @@ namespace gpu{
             );
             #endif
 
-            size_t cubTempSize = d_tempstorage.size();
-
-            CUDACHECK(cub::DeviceSelect::Flagged(
-                d_tempstorage.data(),
-                cubTempSize,
+            CubCallWrapper(mr).cubSelectFlagged(
                 cub::CountingInputIterator<int>(0),
                 d_candidateCanBeCorrected,
                 d_indices_of_corrected_candidates.data(),
                 d_num_total_corrected_candidates.data(),
                 maxCandidates,
                 stream
-            ));
+            );
 
             callMsaCorrectCandidatesWithForestKernel(
                 d_corrected_candidates.data(),
@@ -3163,7 +3094,6 @@ namespace gpu{
         rmm::device_uvector<char> d_anchor_qualities;
         rmm::device_uvector<char> d_candidate_qualities;
         rmm::device_uvector<int> d_anchorIndicesOfCandidates;
-        rmm::device_uvector<char> d_tempstorage;
         rmm::device_uvector<int> d_alignment_overlaps;
         rmm::device_uvector<int> d_alignment_shifts;
         rmm::device_uvector<int> d_alignment_nOps;
@@ -3223,16 +3153,8 @@ namespace gpu{
         PinnedBuffer<bool> h_flagsCandidates;
         rmm::device_uvector<bool> d_flagsCandidates;
         rmm::device_uvector<int> d_alignment_shifts2;
-        rmm::device_uvector<int> d_alignment_overlaps2;
-        rmm::device_uvector<int> d_alignment_nOps2;
         rmm::device_uvector<int> d_anchorIndicesOfCandidates2;
-        rmm::device_uvector<bool> d_candidateContainsN2;
         rmm::device_uvector<int> d_candidate_sequences_lengths2;
-        rmm::device_uvector<unsigned int> d_candidate_sequences_data2;
-        rmm::device_uvector<AlignmentOrientation> d_alignment_best_alignment_flags2;
-        rmm::device_uvector<char> d_cubtemp2;
-
-
 
 
         
