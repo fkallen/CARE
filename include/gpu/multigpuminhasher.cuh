@@ -250,6 +250,7 @@ namespace gpu{
 
             int totalNumValues{};
             Stage previousStage = Stage::None;
+            rmm::mr::device_memory_resource* mr;
 
             std::vector<RemoteData> remotedataPerGpu{};
             std::map<int, CallerData> callerDataMap{};
@@ -480,7 +481,7 @@ namespace gpu{
             int* d_numValuesPerSequence,
             int& totalNumValues,
             cudaStream_t stream,
-            rmm::mr::device_memory_resource* mr = nullptr //unused for now
+            rmm::mr::device_memory_resource* mr
         ) const override {
             
             if(numSequences == 0){
@@ -507,7 +508,8 @@ namespace gpu{
                     numSequences,
                     d_numValuesPerSequence,
                     totalNumValues,
-                    stream
+                    stream,
+                    mr
                 );
                 
             }else{
@@ -574,7 +576,7 @@ namespace gpu{
             int* d_numValuesPerSequence,
             int* d_offsets, //numSequences + 1
             cudaStream_t stream,
-            rmm::mr::device_memory_resource* mr = nullptr //unused for now
+            rmm::mr::device_memory_resource* mr
         ) const override {
             if(numSequences == 0){
                 return;
@@ -605,7 +607,8 @@ namespace gpu{
                     d_values,
                     d_numValuesPerSequence,
                     d_offsets,
-                    stream
+                    stream,
+                    mr
                 );
             }else{
 
@@ -729,7 +732,8 @@ private:
             int numSequences,
             int* d_numValuesPerSequence,
             int& totalNumValues,
-            cudaStream_t stream
+            cudaStream_t stream,
+            rmm::mr::device_memory_resource* mr
         ) const {
             assert(int(usableDeviceIds.size()) > whichSinglegpu);
 
@@ -769,7 +773,8 @@ private:
                     numSequences,
                     d_numValuesPerSequence,
                     pinnedtotalNumValues,
-                    myStream
+                    myStream,
+                    mr
                 );
 
                 CUDACHECK(cudaStreamSynchronize(myStream));
@@ -794,7 +799,8 @@ private:
             read_number* d_values,
             int* d_numValuesPerSequence,
             int* d_offsets, //numSequences + 1
-            cudaStream_t stream
+            cudaStream_t stream,
+            rmm::mr::device_memory_resource* mr
         ) const {
             assert(int(usableDeviceIds.size()) > whichSinglegpu);
 
@@ -832,7 +838,8 @@ private:
                     d_values,
                     d_numValuesPerSequence,
                     d_offsets,
-                    myStream
+                    myStream,
+                    mr
                 );
 
                 CUDACHECK(queryData->events[d].record(queryData->streams[d]));

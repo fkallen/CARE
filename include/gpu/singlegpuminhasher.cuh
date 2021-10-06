@@ -12,7 +12,7 @@
 #include <gpu/kernels.hpp>
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/cudaerrorcheck.cuh>
-
+#include <gpu/cubwrappers.cuh>
 
 #include <options.hpp>
 #include <util.hpp>
@@ -38,6 +38,7 @@
 #include <rmm/mr/device/device_memory_resource.hpp>
 #include <rmm/mr/device/per_device_resource.hpp>
 #include <rmm/device_uvector.hpp>
+#include <rmm/device_scalar.hpp>
 #include <gpu/rmm_utilities.cuh>
 
 namespace care{
@@ -54,9 +55,6 @@ namespace gpu{
 
         template<class T>
         using HostBuffer = helpers::SimpleAllocationPinnedHost<T, 5>;
-        template<class T>
-        using DeviceBuffer = helpers::SimpleAllocationDevice<T, 5>;
-
         struct QueryData{
             enum class Stage{
                 None,
@@ -67,14 +65,23 @@ namespace gpu{
             int deviceId{};
             Stage previousStage = Stage::None;
             int* d_numValuesPerSequence{};
-            DeviceBuffer<char> d_singletempbuffer{};
-            DeviceBuffer<char> d_singlepersistentbuffer{};
+            rmm::device_uvector<char> d_singlepersistentbuffer;
+
+            QueryData(rmm::mr::device_memory_resource* mr)
+            : d_singlepersistentbuffer(0, cudaStreamPerThread, mr)
+            {
+                CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
+            }
 
             MemoryUsage getMemoryInfo() const{
                 MemoryUsage mem{};
 
-                mem.device[deviceId] += d_singletempbuffer.capacityInBytes();
-                mem.device[deviceId] += d_singlepersistentbuffer.capacityInBytes();
+                auto handledevice = [&](const auto& buff){
+                    using ElementType = typename std::remove_reference<decltype(buff)>::type::value_type;
+                    mem.device[deviceId] += buff.size() * sizeof(ElementType);
+                };
+
+                handledevice(d_singlepersistentbuffer);
 
                 return mem;
             }
@@ -103,9 +110,6 @@ namespace gpu{
 
             gpuHashTables.clear();
 
-            //helpers::SimpleAllocationDevice<char,0> dummy(20ull * 1024ull * 1024ull * 1024ull);
-
-
             constexpr read_number parallelReads = 1000000;
             const read_number numReads = nReads;
             const int numIters = SDIV(numReads, parallelReads);
@@ -117,11 +121,13 @@ namespace gpu{
             ThreadPool::ParallelForHandle pforHandle;
             ThreadPool threadPool(numThreads);
 
-            helpers::SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
-            helpers::SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
+            cudaStream_t stream = cudaStreamPerThread;
+
+            rmm::device_uvector<unsigned int> d_sequenceData(encodedSequencePitchInInts * parallelReads, stream, mr);
+            rmm::device_uvector<int> d_lengths(parallelReads, stream, mr);
+            rmm::device_uvector<read_number> d_indices(parallelReads, stream, mr);
 
             helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
-            helpers::SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
 
             std::size_t insert_temp_size = 0;
             insert(
@@ -138,11 +144,7 @@ namespace gpu{
                 (cudaStream_t)0
             );
 
-            helpers::SimpleAllocationDevice<char, 0> d_temp(insert_temp_size);
-
             std::vector<int> usedHashFunctionNumbers;
-
-            CudaStream stream{};
 
             auto sequencehandle = gpuReadStorage.makeHandle();
 
@@ -161,6 +163,8 @@ namespace gpu{
             bool keepGoing = true;
 
             while(remainingHashFunctions > 0 && keepGoing){
+                rmm::device_uvector<char> d_temp(insert_temp_size, stream, mr);
+
                 const int alreadyExistingHashFunctions = maxNumHashfunctions - remainingHashFunctions;
                 int addedHashFunctions = addHashfunctions(remainingHashFunctions + 1);
 
@@ -204,14 +208,14 @@ namespace gpu{
 
                     std::iota(h_indices.get(), h_indices.get() + curBatchsize, readIdBegin);
 
-                    CUDACHECK(cudaMemcpyAsync(d_indices, h_indices, sizeof(read_number) * curBatchsize, H2D, stream));
+                    CUDACHECK(cudaMemcpyAsync(d_indices.data(), h_indices, sizeof(read_number) * curBatchsize, H2D, stream));
 
                     gpuReadStorage.gatherSequences(
                         sequencehandle,
-                        d_sequenceData,
+                        d_sequenceData.data(),
                         encodedSequencePitchInInts,
                         makeAsyncConstBufferWrapper(h_indices.data()),
-                        d_indices,
+                        d_indices.data(),
                         curBatchsize,
                         stream,
                         mr
@@ -219,8 +223,8 @@ namespace gpu{
                 
                     gpuReadStorage.gatherSequenceLengths(
                         sequencehandle,
-                        d_lengths,
-                        d_indices,
+                        d_lengths.data(),
+                        d_indices.data(),
                         curBatchsize,
                         stream
                     );
@@ -228,11 +232,11 @@ namespace gpu{
                     insert(
                         d_temp.data(),
                         insert_temp_size,
-                        d_sequenceData,
+                        d_sequenceData.data(),
                         curBatchsize,
-                        d_lengths,
+                        d_lengths.data(),
                         encodedSequencePitchInInts,
-                        d_indices,
+                        d_indices.data(),
                         alreadyExistingHashFunctions,
                         addedHashFunctions,
                         h_hashfunctionNumbers.data(),
@@ -244,6 +248,9 @@ namespace gpu{
                     //progressThread.addProgress(curBatchsize);
                 }
 
+                ::destroy(d_temp, stream);
+                CUDACHECK(cudaStreamSynchronize(stream));
+
                 std::cerr << "Compacting\n";
                 finalize();
 
@@ -251,8 +258,6 @@ namespace gpu{
 
                 remainingHashFunctions -= addedHashFunctions;
             }
-
-            d_temp.destroy();
 
             const int numberOfAvailableHashFunctions = maxNumHashfunctions - remainingHashFunctions;
 
@@ -298,10 +303,10 @@ namespace gpu{
                 requiredTempBytes = std::max(requiredTempBytes, bytes);
             }
 
-            helpers::SimpleAllocationDevice<char, 0> d_copytemp(requiredTempBytes);
+            thrust::device_vector<char> d_copytemp(requiredTempBytes);
 
             for(const auto& ptr : gpuHashTables){
-                auto newtableptr = ptr->makeCopy(d_copytemp.data(), targetDeviceId);
+                auto newtableptr = ptr->makeCopy(thrust::raw_pointer_cast(d_copytemp.data()), targetDeviceId);
                 if(newtableptr){
                     result->gpuHashTables.push_back(std::move(newtableptr));
                 }else{
@@ -460,7 +465,7 @@ namespace gpu{
         }
 
         MinhasherHandle makeMinhasherHandle() const override {
-            auto data = std::make_unique<QueryData>();
+            auto data = std::make_unique<QueryData>(rmm::mr::get_current_device_resource());
             CUDACHECK(cudaGetDevice(&data->deviceId));
 
             std::unique_lock<SharedMutex> lock(sharedmutex);
@@ -553,7 +558,7 @@ namespace gpu{
             int* d_numValuesPerSequence,
             int& totalNumValues,
             cudaStream_t stream,
-            rmm::mr::device_memory_resource* mr = nullptr //unused for now
+            rmm::mr::device_memory_resource* mr
         ) const override {
 
             QueryData* const queryData = getQueryDataFromHandle(queryHandle);
@@ -575,13 +580,14 @@ namespace gpu{
                 stream
             );
 
-            queryData->d_singlepersistentbuffer.resize(persistent_storage_bytes);
-            queryData->d_singletempbuffer.resize(temp_storage_bytes);
+            queryData->d_singlepersistentbuffer.resize(persistent_storage_bytes, stream);
+
+            rmm::device_uvector<char> d_temp(temp_storage_bytes, stream, mr);
 
             determineNumValues(
                 queryData->d_singlepersistentbuffer.data(),
                 persistent_storage_bytes,
-                queryData->d_singletempbuffer.data(),
+                d_temp.data(),
                 temp_storage_bytes,
                 d_sequenceData2Bit,
                 encodedSequencePitchInInts,
@@ -605,7 +611,7 @@ namespace gpu{
             int* d_numValuesPerSequence,
             int* d_offsets, //numSequences + 1
             cudaStream_t stream,
-            rmm::mr::device_memory_resource* mr = nullptr //unused for now
+            rmm::mr::device_memory_resource* mr
         ) const override {
             QueryData* const queryData = getQueryDataFromHandle(queryHandle);
 
@@ -631,39 +637,27 @@ namespace gpu{
                 stream
             );
 
-            std::size_t cubsize = 0;
-            CUDACHECK(cub::DeviceReduce::Max(
-                nullptr, 
-                cubsize, 
-                d_numValuesPerSequence, 
-                (int*)nullptr, 
-                numSequences, 
-                stream
-            ));
-            cubsize = SDIV(cubsize, 4) * 4;
-            temp_storage_bytes = std::max(temp_storage_bytes, cubsize + sizeof(int));
-
-            queryData->d_singletempbuffer.resize(temp_storage_bytes);
-
-            int* d_maxvalue = (int*)(queryData->d_singletempbuffer.data() + cubsize);
-
-            CUDACHECK(cub::DeviceReduce::Max(
-                queryData->d_singletempbuffer.data(), 
-                cubsize, 
-                d_numValuesPerSequence, 
-                d_maxvalue, 
-                numSequences, 
-                stream
-            ));
-            
             int sizeOfLargestSegment = 0;
-            CUDACHECK(cudaMemcpyAsync(&sizeOfLargestSegment, d_maxvalue, sizeof(int), D2H, stream));
-            CUDACHECK(cudaStreamSynchronize(stream));
+            {
+                rmm::device_scalar<int> d_maxvalue(stream, mr);
+
+                CubCallWrapper(mr).cubReduceMax(
+                    d_numValuesPerSequence, 
+                    d_maxvalue.data(), 
+                    numSequences, 
+                    stream
+                );
+
+                CUDACHECK(cudaMemcpyAsync(&sizeOfLargestSegment, d_maxvalue.data(), sizeof(int), D2H, stream));
+                CUDACHECK(cudaStreamSynchronize(stream));
+            }
+
+            rmm::device_uvector<char> d_temp(temp_storage_bytes, stream, mr);
 
             retrieveValues(
                 queryData->d_singlepersistentbuffer.data(),
                 persistent_storage_bytes,
-                queryData->d_singletempbuffer.data(),
+                d_temp.data(),
                 temp_storage_bytes,
                 d_readIds,
                 numSequences,
@@ -1178,7 +1172,7 @@ private:
         int resultsPerMapThreshold{};
         HostBuffer<int> h_currentHashFunctionNumbers{};
         std::vector<std::unique_ptr<GpuTable>> gpuHashTables{};
-        DeviceBuffer<GpuTable::DeviceTableView> d_deviceAccessibleTableViews{};
+        helpers::SimpleAllocationDevice<GpuTable::DeviceTableView, 0> d_deviceAccessibleTableViews{};
         mutable std::vector<std::unique_ptr<QueryData>> tempdataVector{};
     };
 

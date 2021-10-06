@@ -409,7 +409,8 @@ namespace gpu{
 
             rmm::device_uvector<kmer_type> d_minhashSignatures(
                 getNumberOfMaps() * numSequences,
-                stream
+                stream,
+                mr
             );
 
             DEBUGSTREAMSYNC(stream);
@@ -431,7 +432,8 @@ namespace gpu{
 
             rmm::device_uvector<kmer_type> d_minhashSignatures_transposed(
                 getNumberOfMaps() * numSequences,
-                stream
+                stream,
+                mr
             );
 
             helpers::call_transpose_kernel(
@@ -648,9 +650,9 @@ namespace gpu{
 
             DEBUGSTREAMSYNC(stream);
 
-            rmm::device_uvector<int> d_begin_offsets((numSequences + 1), stream);
-            rmm::device_uvector<int> d_end_offsets((numSequences + 1), stream);
-            rmm::device_uvector<int> d_global_begin_offsets((numSequences), stream);
+            rmm::device_uvector<int> d_begin_offsets((numSequences + 1), stream, mr);
+            rmm::device_uvector<int> d_end_offsets((numSequences + 1), stream, mr);
+            rmm::device_uvector<int> d_global_begin_offsets((numSequences), stream, mr);
 
             DEBUGSTREAMSYNC(stream);
 

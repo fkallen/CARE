@@ -169,6 +169,42 @@ namespace care{
             assert(status == cudaSuccess);
         }
 
+        template<typename InputIteratorT , typename OutputIteratorT >
+        void cubReduceMax(
+            InputIteratorT d_in,
+            OutputIteratorT d_out,
+            int num_items,
+            cudaStream_t stream = 0,
+            bool debug_synchronous = false 
+        ) const {
+            std::size_t bytes = 0;
+            cudaError_t status = cudaSuccess;
+
+            status = cub::DeviceReduce::Max(
+                nullptr,
+                bytes,
+                d_in, 
+                d_out, 
+                num_items, 
+                stream,
+                debug_synchronous
+            );
+            assert(status == cudaSuccess);
+
+            rmm::device_uvector<char> temp(bytes, stream, mr);
+
+            status = cub::DeviceReduce::Max(
+                temp.data(),
+                bytes,
+                d_in, 
+                d_out, 
+                num_items, 
+                stream,
+                debug_synchronous
+            );
+            assert(status == cudaSuccess);
+        }
+
         template<typename InputIteratorT , typename FlagIterator , typename OutputIteratorT , typename NumSelectedIteratorT >
         void cubSelectFlagged(
             InputIteratorT d_in,
