@@ -903,7 +903,6 @@ namespace gpu{
             readstorageHandle{gpuReadStorage->makeHandle()},
             d_indicesForGather{0, cudaStreamPerThread, mr},
             d_candidate_qualities_compact{0, cudaStreamPerThread, mr},
-            d_candidates_per_anchor_tmp{0, cudaStreamPerThread, mr},
             d_anchorContainsN{0, cudaStreamPerThread, mr},
             d_candidateContainsN{0, cudaStreamPerThread, mr},
             d_candidate_sequences_lengths{0, cudaStreamPerThread, mr},
@@ -921,9 +920,6 @@ namespace gpu{
             d_indices_per_anchor{0, cudaStreamPerThread, mr},
             d_indices_per_anchor_prefixsum{0, cudaStreamPerThread, mr},
             d_num_indices{0, cudaStreamPerThread, mr},
-            d_indices_tmp{0, cudaStreamPerThread, mr},
-            d_indices_per_anchor_tmp{0, cudaStreamPerThread, mr},
-            d_num_indices_tmp{0, cudaStreamPerThread, mr},
             d_consensus{0, cudaStreamPerThread, mr},
             d_support{0, cudaStreamPerThread, mr},
             d_coverage{0, cudaStreamPerThread, mr},
@@ -1041,6 +1037,9 @@ namespace gpu{
             
             cub::SwitchDevice sd{deviceId};
 
+            //fixed size memory should already be allocated. However, this will also set the correct working stream for stream-ordered allocations which is important.
+            initFixedSizeBuffers(stream); 
+
             resizeBuffers(currentNumAnchors, currentNumCandidates, stream);
 
             gpucorrectorkernels::copyCorrectionInputDeviceData<<<SDIV(currentNumCandidates, 256),256, 0, stream>>>(
@@ -1126,7 +1125,6 @@ namespace gpu{
 
             handleHost(h_num_total_corrected_candidates);
 
-            handleDevice(d_candidates_per_anchor_tmp);
             handleDevice(d_anchorContainsN);
             handleDevice(d_candidateContainsN);
             handleDevice(d_candidate_sequences_lengths);
@@ -1144,9 +1142,6 @@ namespace gpu{
             handleDevice(d_indices);
             handleDevice(d_indices_per_anchor);
             handleDevice(d_num_indices);
-            handleDevice(d_indices_tmp);
-            handleDevice(d_indices_per_anchor_tmp);
-            handleDevice(d_num_indices_tmp);
             handleDevice(d_consensus);
             handleDevice(d_support);
             handleDevice(d_coverage);
@@ -1196,14 +1191,13 @@ namespace gpu{
                 cudaMemsetAsync(devicebuffer.data(), 0, devicebuffer.size() * sizeof(ElementType), stream);
             };
 
-            zero(d_candidates_per_anchor_tmp);
             zero(d_anchorContainsN);
             zero(d_anchor_qualities);
  
             zero(d_indices_per_anchor);
             zero(d_num_indices);
-            zero(d_indices_per_anchor_tmp);
-            zero(d_num_indices_tmp);
+            //zero(d_indices_per_anchor_tmp);
+            // zero(d_num_indices_tmp);
             zero(d_consensus);
             zero(d_support);
             zero(d_coverage);
@@ -1245,7 +1239,6 @@ namespace gpu{
             zero(d_alignment_isValid);
             zero(d_alignment_best_alignment_flags);
             zero(d_indices);
-            zero(d_indices_tmp);
             zero(d_corrected_candidates);
             zero(d_editsPerCorrectedCandidate);
             zero(d_numEditsPerCorrectedCandidate);
@@ -1263,7 +1256,6 @@ namespace gpu{
             h_numRemainingCandidatesAfterAlignment.resize(1);
 
             //does not depend on number of candidates
-            d_candidates_per_anchor_tmp.resize(maxAnchors, stream);
             d_anchorContainsN.resize(maxAnchors, stream);
 
             if(correctionOptions->useQualityScores){
@@ -1272,8 +1264,8 @@ namespace gpu{
 
             d_indices_per_anchor.resize(maxAnchors, stream);
             d_num_indices.resize(1, stream);
-            d_indices_per_anchor_tmp.resize(maxAnchors, stream);
-            d_num_indices_tmp.resize(1, stream);
+            //d_indices_per_anchor_tmp.resize(maxAnchors, stream);
+            // d_num_indices_tmp.resize(1, stream);
             d_indices_per_anchor_prefixsum.resize(maxAnchors, stream);
             d_consensus.resize(maxAnchors * msaColumnPitchInElements, stream);
             d_support.resize(maxAnchors * msaColumnPitchInElements, stream);
@@ -1380,7 +1372,6 @@ namespace gpu{
             d_alignment_isValid.resize(maxCandidates, stream);
             d_alignment_best_alignment_flags.resize(maxCandidates, stream);
             d_indices.resize(maxCandidates + 1, stream);
-            d_indices_tmp.resize(maxCandidates + 1, stream);
             d_corrected_candidates.resize(maxCandidates * decodedSequencePitchInBytes, stream);
             d_editsPerCorrectedCandidate.resize(numEditsCandidates, stream);
 
@@ -2480,6 +2471,10 @@ namespace gpu{
                 
             rmm::device_uvector<bool> d_shouldBeKept(maxCandidates, stream, mr);
 
+            rmm::device_uvector<int> d_indices_tmp(maxCandidates+1, stream, mr);
+            rmm::device_uvector<int> d_indices_per_anchor_tmp(maxAnchors+1, stream, mr);
+            rmm::device_uvector<int> d_num_indices_tmp(1, stream, mr);
+
             callMsaCandidateRefinementKernel_multiiter_async(
                 d_indices_tmp.data(),
                 d_indices_per_anchor_tmp.data(),
@@ -2551,6 +2546,8 @@ namespace gpu{
             multiMSA.origWeights = d_origWeights.data();
             multiMSA.origCoverages = d_origCoverages.data();
             multiMSA.columnProperties = d_msa_column_properties.data();
+
+            //std::cerr << std::this_thread::get_id() << " msaCorrectAnchorsKernel d_indices_per_anchor " << d_indices_per_anchor.data() << "\n";
 
             call_msaCorrectAnchorsKernel_async(
                 d_corrected_anchors.data(),
@@ -3088,7 +3085,6 @@ namespace gpu{
 
         rmm::device_uvector<char> d_candidate_qualities_compact;
 
-        rmm::device_uvector<int> d_candidates_per_anchor_tmp;
         rmm::device_uvector<bool> d_anchorContainsN;
         rmm::device_uvector<bool> d_candidateContainsN;
         rmm::device_uvector<int> d_candidate_sequences_lengths;
@@ -3106,9 +3102,6 @@ namespace gpu{
         rmm::device_uvector<int> d_indices_per_anchor;
         rmm::device_uvector<int> d_indices_per_anchor_prefixsum;
         rmm::device_uvector<int> d_num_indices;
-        rmm::device_uvector<int> d_indices_tmp;
-        rmm::device_uvector<int> d_indices_per_anchor_tmp;
-        rmm::device_uvector<int> d_num_indices_tmp;
         rmm::device_uvector<std::uint8_t> d_consensus;
         rmm::device_uvector<float> d_support;
         rmm::device_uvector<int> d_coverage;

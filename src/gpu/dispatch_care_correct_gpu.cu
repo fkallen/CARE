@@ -32,6 +32,7 @@
 
 #include <rmm/mr/device/per_device_resource.hpp>
 #include <rmm/mr/device/cuda_async_memory_resource.hpp>
+#include <rmm/mr/device/logging_resource_adaptor.hpp>
 #include <gpu/rmm_utilities.cuh>
 
 namespace filesys = std::experimental::filesystem;
@@ -153,15 +154,23 @@ namespace care{
 
         //set up rmm resources
         std::vector<std::unique_ptr<MyRMMCudaAsyncResource>> rmmCudaAsyncResources;
+        std::vector<std::unique_ptr<rmm::mr::logging_resource_adaptor<MyRMMCudaAsyncResource>>> rmmLoggingResources;
+        std::vector<std::unique_ptr<std::ofstream>> logfilestreams;
+
         for(auto id : runtimeOptions.deviceIds){
             cub::SwitchDevice sd(id);
 
             cudaMemPool_t defaultMemoryPool;
             CUDACHECK(cudaDeviceGetDefaultMemPool(&defaultMemoryPool, id));
 
+            const bool autoflush = true;
+
             rmmCudaAsyncResources.push_back(std::make_unique<MyRMMCudaAsyncResource>(defaultMemoryPool));
+            logfilestreams.push_back(std::make_unique<std::ofstream>("logging_device_0.txt"));
+            rmmLoggingResources.push_back(std::make_unique<rmm::mr::logging_resource_adaptor<MyRMMCudaAsyncResource>>(rmmCudaAsyncResources.back().get(), *logfilestreams.back(), autoflush));
 
             rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), rmmCudaAsyncResources.back().get());
+            //rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), rmmLoggingResources.back().get());
         }
 
         
