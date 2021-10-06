@@ -481,7 +481,7 @@ namespace gpu{
             int* d_numValuesPerSequence,
             int& totalNumValues,
             cudaStream_t stream,
-            rmm::mr::device_memory_resource* mr
+            rmm::mr::device_memory_resource* mr //resource for current device
         ) const override {
             
             if(numSequences == 0){
@@ -937,6 +937,7 @@ private:
             const int numSequences = queryHandle->numSequences;
             const std::size_t encodedSequencePitchInInts = queryHandle->encodedSequencePitchInInts;
 
+            #if 0
             for(int d = 0; d < numUsable; d++){                
                 DeviceSwitcher ds(usableDeviceIds[d]);
 
@@ -956,6 +957,30 @@ private:
                     queryHandle->streams[d]
                 ));
             }
+            #else
+            for(int d = 0; d < numUsable; d++){                
+                DeviceSwitcher ds(usableDeviceIds[d]);
+
+                CUDACHECK(cudaMemcpyPeerAsync(
+                    queryHandle->remotedataPerGpu[d].d_input_lengths.data(),
+                    usableDeviceIds[d],
+                    queryHandle->d_sequenceLengths,
+                    queryHandle->callerDeviceId,
+                    sizeof(int) * numSequences,
+                    queryHandle->streams[d]
+                ));
+
+                CUDACHECK(cudaMemcpyPeerAsync(
+                    queryHandle->remotedataPerGpu[d].d_input_sequences.data(),
+                    usableDeviceIds[d],
+                    queryHandle->d_sequenceData2Bit,
+                    queryHandle->callerDeviceId,
+                    sizeof(unsigned int) * encodedSequencePitchInInts * numSequences,
+                    queryHandle->streams[d]
+                ));
+            }
+
+            #endif
         }
 
         void broadcastRetrieveInputToRemote(QueryData* queryHandle) const {
@@ -963,6 +988,8 @@ private:
 
             const int numUsable = usableDeviceIds.size();
             const int numSequences = queryHandle->numSequences;
+
+            #if 0
 
             for(int d = 0; d < numUsable; d++){                
                 if(queryHandle->d_readIds != nullptr){
@@ -977,6 +1004,25 @@ private:
                     ));
                 }
             }
+
+            #else
+
+            for(int d = 0; d < numUsable; d++){                
+                if(queryHandle->d_readIds != nullptr){
+                    DeviceSwitcher ds(usableDeviceIds[d]);
+
+                    CUDACHECK(cudaMemcpyPeerAsync(
+                        queryHandle->remotedataPerGpu[d].d_readIds.data(),
+                        usableDeviceIds[d],
+                        queryHandle->d_readIds,
+                        queryHandle->callerDeviceId,
+                        sizeof(read_number) * numSequences,
+                        queryHandle->streams[d]
+                    ));
+                }
+            }
+
+            #endif
         }
 
         void resizeRemoteNumValuesBuffers(QueryData* queryHandle) const{
@@ -1189,6 +1235,8 @@ private:
             auto& callerData = queryHandle->callerDataMap[queryHandle->callerDeviceId];
             int* const h_numPerGpu_ps = &queryHandle->pinnedData[2*numUsable];
 
+            #if 0
+
             for(int d = 0; d < numUsable; d++){                
                 DeviceSwitcher ds(usableDeviceIds[d]);
                 CUDACHECK(cudaStreamSynchronize(queryHandle->streams[d]));
@@ -1205,6 +1253,29 @@ private:
 
                 CUDACHECK(queryHandle->events[d].record(queryHandle->streams[d]));
             }
+
+            #else 
+
+            for(int d = 0; d < numUsable; d++){                
+                DeviceSwitcher ds(usableDeviceIds[d]);
+                CUDACHECK(cudaStreamSynchronize(queryHandle->streams[d]));
+
+                const int numValues = queryHandle->pinnedData[2*d];
+
+                CUDACHECK(cudaMemcpyPeerAsync(
+                    callerData.d_numResultsPerSequence.data() + d * numSequences,
+                    queryHandle->callerDeviceId,
+                    queryHandle->remotedataPerGpu[d].d_numResultsPerSequence.data(),
+                    usableDeviceIds[d],
+                    sizeof(int) * numSequences,
+                    queryHandle->streams[d]
+                ));
+
+                CUDACHECK(queryHandle->events[d].record(queryHandle->streams[d]));
+            }
+
+
+            #endif
         }
 
         void copyRemoteResultsToCallerData(QueryData* queryHandle) const{
@@ -1214,6 +1285,8 @@ private:
             const int numSequences = queryHandle->numSequences;
             auto& callerData = queryHandle->callerDataMap[queryHandle->callerDeviceId];
             int* const h_numPerGpu_ps = &queryHandle->pinnedData[2*numUsable];
+
+            #if 0
 
             for(int d = 0; d < numUsable; d++){                
                 DeviceSwitcher ds(usableDeviceIds[d]);
@@ -1245,6 +1318,44 @@ private:
 
                 CUDACHECK(queryHandle->events[d].record(queryHandle->streams[d]));
             }
+
+            #else 
+
+            for(int d = 0; d < numUsable; d++){                
+                DeviceSwitcher ds(usableDeviceIds[d]);
+                const int numValues = queryHandle->pinnedData[2*d];
+
+                CUDACHECK(cudaMemcpyPeerAsync(
+                    callerData.d_results.data() + h_numPerGpu_ps[d],
+                    queryHandle->callerDeviceId,
+                    queryHandle->remotedataPerGpu[d].d_results.data(),
+                    usableDeviceIds[d],
+                    sizeof(read_number) * numValues,
+                    queryHandle->streams[d]
+                ));
+
+                CUDACHECK(cudaMemcpyPeerAsync(
+                    callerData.d_numResultsPerSequence.data() + d * numSequences,
+                    queryHandle->callerDeviceId,
+                    queryHandle->remotedataPerGpu[d].d_numResultsPerSequence.data(),
+                    usableDeviceIds[d],
+                    sizeof(int) * numSequences,
+                    queryHandle->streams[d]
+                ));
+
+                CUDACHECK(cudaMemcpyPeerAsync(
+                    callerData.d_offsets.data() + d * (numSequences + 1),
+                    queryHandle->callerDeviceId,
+                    queryHandle->remotedataPerGpu[d].d_offsets.data(),
+                    usableDeviceIds[d],
+                    sizeof(int) * (numSequences + 1),
+                    queryHandle->streams[d]
+                ));
+
+                CUDACHECK(queryHandle->events[d].record(queryHandle->streams[d]));
+            }
+
+            #endif
         }
 
         void joinInternalStreams(QueryData* queryHandle, cudaStream_t stream) const{
