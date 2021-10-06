@@ -24,6 +24,7 @@
 
 #include <thrust/iterator/constant_iterator.h>
 
+#include <rmm/device_vector.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/device_scalar.hpp>
 #include <rmm/mr/device/thrust_allocator_adaptor.hpp>
@@ -150,8 +151,6 @@ public:
 
     template<class W>
     using HostBuffer = helpers::SimpleAllocationPinnedHost<W>;
-    template<class W>
-    using DeviceBuffer = helpers::SimpleAllocationDevice<W>;
 
     using IndexType = care::read_number;
 
@@ -307,10 +306,10 @@ public:
                 constexpr int batchsize = 1000000;
                 const int numBatches = SDIV(numAmbiguous, batchsize);
 
-                DeviceBuffer<bool> d_values(batchsize);
-                CUDACHECK(cudaMemset(d_values, 1, sizeof(bool) * batchsize));
+                rmm::device_vector<bool> d_values(batchsize);
+                thrust::fill(thrust::device, d_values.begin(), d_values.end(), true);
 
-                DeviceBuffer<read_number> d_positions(batchsize);
+                rmm::device_vector<read_number> d_positions(batchsize);
 
                 for(int i = 0; i < numBatches; i++){
                     size_t begin = i * batchsize;
@@ -318,7 +317,7 @@ public:
                     size_t elements = end - begin;
 
                     CUDACHECK(cudaMemcpy(
-                        d_positions.data(), 
+                        thrust::raw_pointer_cast(d_positions.data()), 
                         h_positions.data() + begin, 
                         sizeof(read_number) * elements, 
                         H2D
@@ -326,8 +325,8 @@ public:
 
                     setBitarray<<<SDIV(elements, 128), 128>>>(
                         bitArraysUndeterminedBase[deviceId], 
-                        d_values.data(), 
-                        d_positions.data(), 
+                        thrust::raw_pointer_cast(d_values.data()), 
+                        thrust::raw_pointer_cast(d_positions.data()), 
                         elements
                     ); CUDACHECKASYNC;
 
@@ -367,9 +366,10 @@ public:
             auto arrayhandle = sequencesGpu.makeHandle();
 
             std::array<helpers::SimpleAllocationPinnedHost<IndexType>, numbuffers> indexbuffers{};
-            std::array<helpers::SimpleAllocationDevice<IndexType>, numbuffers> deviceindexbuffers{};
             std::array<helpers::SimpleAllocationPinnedHost<unsigned int>, numbuffers> hostdatabuffers{};
-            std::array<helpers::SimpleAllocationDevice<unsigned int>, numbuffers> devicedatabuffers{};
+
+            std::array<rmm::device_vector<IndexType>, numbuffers> deviceindexbuffers{};
+            std::array<rmm::device_vector<unsigned int>, numbuffers> devicedatabuffers{};
 
             std::array<IndexType*, numbuffers> indexarray{};
             std::array<IndexType*, numbuffers> deviceindexarray{};
@@ -383,10 +383,11 @@ public:
                 devicedatabuffers[i].resize(batchsize * numColumnsSequences);
 
                 indexarray[i] = indexbuffers[i].data();
-                deviceindexarray[i] = deviceindexbuffers[i].data();
+                deviceindexarray[i] = thrust::raw_pointer_cast(deviceindexbuffers[i].data());
                 hostdataarray[i] = hostdatabuffers[i].data();
-                dataarray[i] = devicedatabuffers[i].data();
+                dataarray[i] = thrust::raw_pointer_cast(devicedatabuffers[i].data());
             }
+            CUDACHECK(cudaDeviceSynchronize());
             
             for(std::size_t i = 0, iteration = 0; i < sequencesGpu.getNumRows(); i += batchsize, iteration++){
                 const int bufferIndex = iteration % numbuffers;
@@ -471,9 +472,10 @@ public:
                 auto arrayhandle = qualitiesGpu.makeHandle();
 
                 std::array<helpers::SimpleAllocationPinnedHost<IndexType>, numbuffers> indexbuffers{};
-                std::array<helpers::SimpleAllocationDevice<IndexType>, numbuffers> deviceindexbuffers{};
                 std::array<helpers::SimpleAllocationPinnedHost<unsigned int>, numbuffers> hostdatabuffers{};
-                std::array<helpers::SimpleAllocationDevice<unsigned int>, numbuffers> devicecompresseddatabuffers{};
+
+                std::array<rmm::device_vector<IndexType>, numbuffers> deviceindexbuffers{};
+                std::array<rmm::device_vector<unsigned int>, numbuffers> devicecompresseddatabuffers{};
 
                 std::array<IndexType*, numbuffers> indexarray{};
                 std::array<IndexType*, numbuffers> deviceindexarray{};
@@ -487,9 +489,9 @@ public:
                     devicecompresseddatabuffers[i].resize(batchsize * numColumnsCompressedQualitiesInts);
 
                     indexarray[i] = indexbuffers[i].data();
-                    deviceindexarray[i] = deviceindexbuffers[i].data();
+                    deviceindexarray[i] = thrust::raw_pointer_cast(deviceindexbuffers[i].data());
                     hostdataarray[i] = hostdatabuffers[i].data();
-                    compresseddataarray[i] = devicecompresseddatabuffers[i].data();
+                    compresseddataarray[i] = thrust::raw_pointer_cast(devicecompresseddatabuffers[i].data());
                 }
 
                 for(std::size_t i = 0, iteration = 0; i < qualitiesGpu.getNumRows(); i += batchsize, iteration++){

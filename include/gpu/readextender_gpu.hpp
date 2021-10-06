@@ -161,9 +161,6 @@ void checkSortedSegmentsKernel(
 
 
 struct GpuReadExtender{
-    template<class T>
-    using DeviceBuffer = helpers::SimpleAllocationDevice<T>;
-    //using DeviceBuffer = helpers::SimpleAllocationPinnedHost<T>;
 
     template<class T>
     using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T>;

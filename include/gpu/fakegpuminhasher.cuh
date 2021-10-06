@@ -33,6 +33,7 @@
 #include <cub/cub.cuh>
 #include <thrust/execution_policy.h>
 #include <thrust/sequence.h>
+#include <thrust/device_vector.h>
 
 #include <rmm/mr/device/device_memory_resource.hpp>
 #include <rmm/mr/device/per_device_resource.hpp>
@@ -58,9 +59,6 @@ namespace gpu{
 
         struct QueryData{
             static constexpr int overprovisioningPercent = 0;
-
-            template<class T>
-            using DeviceBuffer = helpers::SimpleAllocationDevice<T, overprovisioningPercent>;
             
             template<class T>
             using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T, overprovisioningPercent>;
@@ -85,7 +83,7 @@ namespace gpu{
             PinnedBuffer<int> h_numValuesPerSequence{};
 
             std::vector<Range_t> allRanges{};
-            DeviceBuffer<int> d_hashFunctionNumbers{};
+            thrust::device_vector<int> d_hashFunctionNumbers{};
 
             MemoryUsage getMemoryInfo() const{
                 MemoryUsage info;
@@ -97,7 +95,8 @@ namespace gpu{
                 };
     
                 auto handledevice = [&](const auto& buff){
-                    info.device[deviceId] += buff.capacityInBytes();
+                    using ElementType = typename std::remove_reference<decltype(buff)>::type::value_type;
+                    info.device[deviceId] += buff.size() * sizeof(ElementType);
                 };
 
                 auto handlevector = [&](const auto& buff){
@@ -129,7 +128,8 @@ namespace gpu{
                 allRanges.clear();
                 allRanges.shrink_to_fit();
 
-                d_hashFunctionNumbers.destroy();
+                d_hashFunctionNumbers.clear();
+                d_hashFunctionNumbers.shrink_to_fit();
 
                 isInitialized = false;
             }
@@ -207,12 +207,14 @@ namespace gpu{
 
             
             std::vector<int> usedHashFunctionNumbers;
+
+            cudaStream_t stream = cudaStreamPerThread;
             
-            helpers::SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
-            helpers::SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
+            rmm::device_uvector<unsigned int> d_sequenceData(encodedSequencePitchInInts * parallelReads, stream, mr);
+            rmm::device_uvector<int> d_lengths(parallelReads, stream, mr);
+            rmm::device_uvector<read_number> d_indices(parallelReads, stream, mr);
             
             helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
-            helpers::SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
             
             std::size_t d_insert_temp_size = 0;
             std::size_t h_insert_temp_size = 0;
@@ -233,8 +235,6 @@ namespace gpu{
                 (cudaStream_t)0
             );
             
-            
-            CudaStream stream{};
             ThreadPool tpForHashing(runtimeOptions.threads);
             ThreadPool tpForCompacting(std::min(2,runtimeOptions.threads));
 
@@ -257,7 +257,7 @@ namespace gpu{
                     break;
                 }
 
-                helpers::SimpleAllocationDevice<char, 0> d_temp(d_insert_temp_size);
+                rmm::device_uvector<char> d_temp(d_insert_temp_size, stream, mr);
                 helpers::SimpleAllocationPinnedHost<char> h_temp(h_insert_temp_size);
 
                 std::cout << "Constructing maps: ";
@@ -283,14 +283,14 @@ namespace gpu{
 
                     std::iota(h_indices.get(), h_indices.get() + curBatchsize, readIdBegin);
 
-                    CUDACHECK(cudaMemcpyAsync(d_indices, h_indices, sizeof(read_number) * curBatchsize, H2D, stream));
+                    CUDACHECK(cudaMemcpyAsync(d_indices.data(), h_indices, sizeof(read_number) * curBatchsize, H2D, stream));
 
                     gpuReadStorage.gatherSequences(
                         sequencehandle,
-                        d_sequenceData,
+                        d_sequenceData.data(),
                         encodedSequencePitchInInts,
                         makeAsyncConstBufferWrapper(h_indices.data()),
-                        d_indices,
+                        d_indices.data(),
                         curBatchsize,
                         stream,
                         mr
@@ -298,8 +298,8 @@ namespace gpu{
                 
                     gpuReadStorage.gatherSequenceLengths(
                         sequencehandle,
-                        d_lengths,
-                        d_indices,
+                        d_lengths.data(),
+                        d_indices.data(),
                         curBatchsize,
                         stream
                     );
@@ -312,11 +312,11 @@ namespace gpu{
                         s1,
                         h_temp.data(),
                         s2,
-                        d_sequenceData,
+                        d_sequenceData.data(),
                         curBatchsize,
-                        d_lengths,
+                        d_lengths.data(),
                         encodedSequencePitchInInts,
-                        d_indices,
+                        d_indices.data(),
                         h_indices,
                         alreadyExistingHashFunctions,
                         addedHashFunctions,
@@ -327,8 +327,10 @@ namespace gpu{
                     CUDACHECK(cudaStreamSynchronize(stream));
                 }
 
-                d_temp.destroy();
+                ::destroy(d_temp, stream);
                 h_temp.destroy();
+
+                CUDACHECK(cudaStreamSynchronize(stream));
 
                 std::cerr << "Compacting\n";
                 if(tpForCompacting.getConcurrency() > 1){
@@ -421,7 +423,7 @@ namespace gpu{
                 d_sequenceLengths,
                 getKmerSize(),
                 getNumberOfMaps(),
-                queryData->d_hashFunctionNumbers.data(),
+                thrust::raw_pointer_cast(queryData->d_hashFunctionNumbers.data()),
                 stream
             );
 

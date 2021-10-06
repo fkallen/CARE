@@ -442,7 +442,7 @@ SerializedObjectStorage extend_gpu_pairedend(
 
 
 
-    auto extenderThreadFunc = [&](int gpuIndex, int threadId, auto* readIdGenerator, bool isRepeatedIteration, bool isLastIteration, bool extraHashing, GpuReadExtender::IterationConfig iterationConfig){
+    auto extenderThreadFunc = [&](int gpuIndex, int /*threadId*/, auto* readIdGenerator, bool isRepeatedIteration, bool isLastIteration, bool extraHashing, GpuReadExtender::IterationConfig iterationConfig){
         //std::cerr << "extenderThreadFunc( " << gpuIndex << ", " << threadId << ")\n";
         auto& gpudata = gpuDataVector[gpuIndex];
 
