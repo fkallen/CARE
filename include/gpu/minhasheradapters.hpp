@@ -15,6 +15,7 @@
 
 namespace care{
 
+#if 0
 class GpuToCpuMinhasherAdapater : public CpuMinhasher{
 private:
     struct GpuData{
@@ -271,7 +272,7 @@ private:
 };
 
 }
-
+#endif
 
 
 #endif
