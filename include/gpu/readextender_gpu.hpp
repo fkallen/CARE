@@ -1169,7 +1169,7 @@ struct GpuReadExtender{
             //std::cerr << "task " << this << " select, stream " << stream << "\n";
             nvtx::push_range("soa_select", 1);
             rmm::device_uvector<int> positions(entries, stream, mr);
-            rmm::device_scalar<int> d_numSelected(1, stream, mr);
+            rmm::device_scalar<int> d_numSelected(stream, mr);
 
             CUDACHECKASYNC; //DEBUG
 
@@ -1605,7 +1605,7 @@ struct GpuReadExtender{
             rmm::device_uvector<read_number> d_currentFullyUsedReadIds(numCandidateIds, stream, mr);
             rmm::device_uvector<int> d_currentNumFullyUsedreadIdsPerAnchor(size(), stream, mr);
             rmm::device_uvector<int> d_currentNumFullyUsedreadIdsPerAnchorPS(size(), stream, mr);
-            rmm::device_scalar<int> d_addNumFullyUsed(1, stream, mr);
+            rmm::device_scalar<int> d_addNumFullyUsed(stream, mr);
             
             //make compact list of current fully used candidates
             CubCallWrapper(mr).cubSelectFlagged(
@@ -1819,8 +1819,8 @@ struct GpuReadExtender{
             assert(extralength > 0);
             const std::size_t extraDecodedPitch = SDIV(extralength, 256) * 256; //rounded up to multiple of 256            
 
-            rmm::device_uvector<char> extraDecodedSequences(extraDecodedPitch * numAnchors, stream);
-            rmm::device_uvector<int> extraSequenceLengths(numAnchors, stream);
+            rmm::device_uvector<char> extraDecodedSequences(extraDecodedPitch * numAnchors, stream, mr);
+            rmm::device_uvector<int> extraSequenceLengths(numAnchors, stream, mr);
 
             DEBUGSTREAMSYNC(stream);
 
@@ -1841,7 +1841,7 @@ struct GpuReadExtender{
 
             const std::size_t extraEncodedPitchInInts = SequenceHelpers::getEncodedNumInts2Bit(extralength);
 
-            rmm::device_uvector<unsigned int> extraEncodedSequences(extraEncodedPitchInInts * numAnchors, stream);
+            rmm::device_uvector<unsigned int> extraEncodedSequences(extraEncodedPitchInInts * numAnchors, stream, mr);
 
             // CUDACHECKASYNC; //DEBUG
             // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
@@ -1872,7 +1872,7 @@ struct GpuReadExtender{
 
             //hash extra sequences
 
-            rmm::device_uvector<int> d_numCandidatesPerAnchorExtra(numAnchors, stream);
+            rmm::device_uvector<int> d_numCandidatesPerAnchorExtra(numAnchors, stream, mr);
 
             // CUDACHECKASYNC; //DEBUG
             // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
@@ -1898,10 +1898,10 @@ struct GpuReadExtender{
             destroy(extraEncodedSequences, stream);
             destroy(extraSequenceLengths, stream);
 
-            rmm::device_uvector<read_number> d_candidateReadIdsExtra(totalNumValuesExtraSequences, stream);
+            rmm::device_uvector<read_number> d_candidateReadIdsExtra(totalNumValuesExtraSequences, stream, mr);
             // CUDACHECKASYNC; //DEBUG
             // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
-            rmm::device_uvector<int> d_numCandidatesPerAnchorPrefixSumExtra(numAnchors + 1, stream);
+            rmm::device_uvector<int> d_numCandidatesPerAnchorPrefixSumExtra(numAnchors + 1, stream, mr);
             // CUDACHECKASYNC; //DEBUG
             // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
 
@@ -1964,7 +1964,7 @@ struct GpuReadExtender{
 
             //hash anchor sequences
 
-            rmm::device_uvector<int> d_numCandidatesPerAnchor(numAnchors, stream);
+            rmm::device_uvector<int> d_numCandidatesPerAnchor(numAnchors, stream, mr);
 
             // CUDACHECKASYNC; //DEBUG
             // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
@@ -1987,8 +1987,8 @@ struct GpuReadExtender{
 
             CUDACHECK(cudaStreamSynchronizeWrapper(stream));
 
-            rmm::device_uvector<read_number> d_candidateReadIds(totalNumValuesAnchorSequences, stream);
-            rmm::device_uvector<int> d_numCandidatesPerAnchorPrefixSum(numAnchors + 1, stream);
+            rmm::device_uvector<read_number> d_candidateReadIds(totalNumValuesAnchorSequences, stream, mr);
+            rmm::device_uvector<int> d_numCandidatesPerAnchorPrefixSum(numAnchors + 1, stream, mr);
 
             //std::cerr << std::this_thread::get_id() << " numnormalbefore: " << totalNumValuesAnchorSequences << "\n";
 
@@ -2509,8 +2509,8 @@ struct GpuReadExtender{
         assert(state == GpuReadExtender::State::BeforeRemoveIds);
         assert(tasks->size() > 0);
 
-        rmm::device_uvector<bool> d_shouldBeKept(initialNumCandidates, stream);
-        rmm::device_uvector<int> d_numCandidatesPerAnchor2(tasks->size(), stream);        
+        rmm::device_uvector<bool> d_shouldBeKept(initialNumCandidates, stream, mr);
+        rmm::device_uvector<int> d_numCandidatesPerAnchor2(tasks->size(), stream, mr);        
 
         resizeUninitialized(d_mateIdHasBeenRemoved, tasks->size(), stream);
 
@@ -2534,7 +2534,7 @@ struct GpuReadExtender{
 
         //copy selected candidate ids
 
-        rmm::device_uvector<read_number> d_candidateReadIds2(initialNumCandidates, stream);
+        rmm::device_uvector<read_number> d_candidateReadIds2(initialNumCandidates, stream, mr);
         assert(h_numCandidates.data() != nullptr);
 
         CubCallWrapper(mr).cubSelectFlagged(
@@ -2552,7 +2552,7 @@ struct GpuReadExtender{
 
         //::erase(d_candidateReadIds2, d_candidateReadIds2.begin() + *h_numCandidates, d_candidateReadIds2.end(), stream);
 
-        rmm::device_uvector<int> d_numCandidatesPerAnchorPrefixSum2(tasks->size() + 1, stream);
+        rmm::device_uvector<int> d_numCandidatesPerAnchorPrefixSum2(tasks->size() + 1, stream, mr);
 
         //compute prefix sum of number of candidates per anchor
         CUDACHECK(cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum2.data(), 0, sizeof(int), stream));
@@ -2630,9 +2630,9 @@ struct GpuReadExtender{
         assert(tasks->size() > 0);
 
         resizeUninitialized(d_isPairedCandidate, initialNumCandidates, stream);
-        rmm::device_uvector<int> d_firstTasksOfPairsToCheck(tasks->size(), stream);
-        rmm::device_uvector<bool> d_flags(tasks->size(), stream);
-        rmm::device_scalar<int> d_numChecks(1, stream);
+        rmm::device_uvector<int> d_firstTasksOfPairsToCheck(tasks->size(), stream, mr);
+        rmm::device_uvector<bool> d_flags(tasks->size(), stream, mr);
+        rmm::device_scalar<int> d_numChecks(stream, mr);
 
         helpers::call_fill_kernel_async(d_isPairedCandidate.data(), initialNumCandidates, false, stream);
         helpers::call_fill_kernel_async(d_flags.data(), tasks->size(), false, stream);
@@ -2704,7 +2704,7 @@ struct GpuReadExtender{
         assert(state == GpuReadExtender::State::BeforeEraseData);
         assert(tasks->size() > 0);
 
-        rmm::device_uvector<bool> d_keepflags(initialNumCandidates, stream);
+        rmm::device_uvector<bool> d_keepflags(initialNumCandidates, stream, mr);
 
         //compute flags of candidates which should not be removed. Candidates which should be removed are identical to mate sequence
         helpers::call_fill_kernel_async(d_keepflags.data(), initialNumCandidates, true, stream);
@@ -2743,7 +2743,7 @@ struct GpuReadExtender{
     void calculateAlignments(cudaStream_t stream){
         assert(state == GpuReadExtender::State::BeforeAlignment);
 
-        rmm::device_uvector<int> d_segmentIdsOfCandidates(initialNumCandidates, stream);
+        rmm::device_uvector<int> d_segmentIdsOfCandidates(initialNumCandidates, stream, mr);
         setGpuSegmentIds(
             d_segmentIdsOfCandidates.data(),
             tasks->size(),
@@ -2758,7 +2758,7 @@ struct GpuReadExtender{
         ::resizeUninitialized(d_alignment_nOps, initialNumCandidates, stream);
         ::resizeUninitialized(d_alignment_best_alignment_flags, initialNumCandidates, stream);
 
-        rmm::device_uvector<bool> d_alignment_isValid(initialNumCandidates, stream);
+        rmm::device_uvector<bool> d_alignment_isValid(initialNumCandidates, stream, mr);
 
         h_numAnchors[0] = tasks->size();
 
@@ -2813,7 +2813,7 @@ struct GpuReadExtender{
         size_t tempstoragebytes = 0;
         callAlignmentKernel(nullptr, tempstoragebytes);
 
-        rmm::device_uvector<char> d_tempstorage(tempstoragebytes, stream);
+        rmm::device_uvector<char> d_tempstorage(tempstoragebytes, stream, mr);
 
         callAlignmentKernel(d_tempstorage.data(), tempstoragebytes);
 
@@ -2824,7 +2824,7 @@ struct GpuReadExtender{
         assert(state == GpuReadExtender::State::BeforeAlignmentFilter);
         assert(tasks->size() > 0);
 
-        rmm::device_uvector<bool> d_keepflags(initialNumCandidates, stream);
+        rmm::device_uvector<bool> d_keepflags(initialNumCandidates, stream, mr);
 
         const int* const d_currentNumCandidates = d_numCandidatesPerAnchorPrefixSum.data() + tasks->size();
 
@@ -2859,15 +2859,15 @@ struct GpuReadExtender{
         assert(state == GpuReadExtender::State::BeforeMSA);
         assert(tasks->size() > 0);
 
-        rmm::device_uvector<char> d_candidateQualityScores(qualityPitchInBytes * initialNumCandidates, stream);
+        rmm::device_uvector<char> d_candidateQualityScores(qualityPitchInBytes * initialNumCandidates, stream, mr);
 
         loadCandidateQualityScores(stream, d_candidateQualityScores.data());
 
-        rmm::device_uvector<int> d_numCandidatesPerAnchor2(tasks->size(), stream);
+        rmm::device_uvector<int> d_numCandidatesPerAnchor2(tasks->size(), stream, mr);
 
-        rmm::device_uvector<int> indices1(initialNumCandidates, stream);
-        rmm::device_uvector<int> indices2(initialNumCandidates, stream);
-        rmm::device_scalar<int> d_numCandidates2(1, stream);
+        rmm::device_uvector<int> indices1(initialNumCandidates, stream, mr);
+        rmm::device_uvector<int> indices2(initialNumCandidates, stream, mr);
+        rmm::device_scalar<int> d_numCandidates2(stream, mr);
 
         // helpers::lambda_kernel<<<1,1,0, stream>>>([
         //     numAnchors = tasks->size(),
@@ -2998,7 +2998,7 @@ struct GpuReadExtender{
             stream
         );
  
-        rmm::device_uvector<bool> d_shouldBeKept(initialNumCandidates, stream);
+        rmm::device_uvector<bool> d_shouldBeKept(initialNumCandidates, stream, mr);
 
         helpers::call_fill_kernel_async(d_shouldBeKept.data(), initialNumCandidates, false, stream); CUDACHECKASYNC;
 
@@ -3058,16 +3058,16 @@ struct GpuReadExtender{
         outputAnchorQualityPitchInBytes = SDIV(qualityPitchInBytes, 128) * 128;
         decodedMatesRevCPitchInBytes = SDIV(decodedSequencePitchInBytes, 128) * 128;
 
-        rmm::device_uvector<int> d_accumExtensionsLengthsOUT(tasks->size(), stream);
-        rmm::device_uvector<int> d_sizeOfGapToMate(tasks->size(), stream);
-        rmm::device_uvector<float> d_goodscores(tasks->size(), stream);
+        rmm::device_uvector<int> d_accumExtensionsLengthsOUT(tasks->size(), stream, mr);
+        rmm::device_uvector<int> d_sizeOfGapToMate(tasks->size(), stream, mr);
+        rmm::device_uvector<float> d_goodscores(tasks->size(), stream, mr);
 
-        rmm::device_uvector<char> d_outputAnchors(tasks->size() * outputAnchorPitchInBytes, stream);
-        rmm::device_uvector<char> d_outputAnchorQualities(tasks->size() * outputAnchorQualityPitchInBytes, stream);
-        rmm::device_uvector<bool> d_outputMateHasBeenFound(tasks->size(), stream);
-        rmm::device_uvector<extension::AbortReason> d_abortReasons(tasks->size(), stream);
-        rmm::device_uvector<int> d_outputAnchorLengths(tasks->size(), stream);
-        rmm::device_uvector<bool> d_isFullyUsedCandidate(initialNumCandidates, stream);
+        rmm::device_uvector<char> d_outputAnchors(tasks->size() * outputAnchorPitchInBytes, stream, mr);
+        rmm::device_uvector<char> d_outputAnchorQualities(tasks->size() * outputAnchorQualityPitchInBytes, stream, mr);
+        rmm::device_uvector<bool> d_outputMateHasBeenFound(tasks->size(), stream, mr);
+        rmm::device_uvector<extension::AbortReason> d_abortReasons(tasks->size(), stream, mr);
+        rmm::device_uvector<int> d_outputAnchorLengths(tasks->size(), stream, mr);
+        rmm::device_uvector<bool> d_isFullyUsedCandidate(initialNumCandidates, stream, mr);
   
         readextendergpukernels::fillKernel<<<SDIV(tasks->size(), 128), 128, 0, stream>>>(
             thrust::make_zip_iterator(thrust::make_tuple(
@@ -3160,8 +3160,8 @@ struct GpuReadExtender{
             stream
         );
 
-        rmm::device_uvector<int> d_addNumEntriesPerTask(tasks->size(), stream);
-        rmm::device_uvector<int> d_addNumEntriesPerTaskPrefixSum(tasks->size()+1, stream);
+        rmm::device_uvector<int> d_addNumEntriesPerTask(tasks->size(), stream, mr);
+        rmm::device_uvector<int> d_addNumEntriesPerTaskPrefixSum(tasks->size()+1, stream, mr);
 
         //init first prefixsum element with 0.
         //compute number of soa iteration results per task
@@ -3194,10 +3194,10 @@ struct GpuReadExtender{
         CUDACHECK(cudaStreamSynchronizeWrapper(stream));
         numAdd = *tmpptr1;
 
-        rmm::device_uvector<char> d_addTotalDecodedAnchorsFlat(numAdd * outputAnchorPitchInBytes, stream);
-        rmm::device_uvector<char> d_addTotalAnchorQualityScoresFlat(numAdd * outputAnchorQualityPitchInBytes, stream);
-        rmm::device_uvector<int> d_addAnchorLengths(numAdd, stream);
-        rmm::device_uvector<int> d_addAnchorBeginsInExtendedRead(numAdd, stream);
+        rmm::device_uvector<char> d_addTotalDecodedAnchorsFlat(numAdd * outputAnchorPitchInBytes, stream, mr);
+        rmm::device_uvector<char> d_addTotalAnchorQualityScoresFlat(numAdd * outputAnchorQualityPitchInBytes, stream, mr);
+        rmm::device_uvector<int> d_addAnchorLengths(numAdd, stream, mr);
+        rmm::device_uvector<int> d_addAnchorBeginsInExtendedRead(numAdd, stream, mr);
 
         assert(tasks->decodedSequencePitchInBytes >= outputAnchorPitchInBytes);
         assert(tasks->qualityPitchInBytes >= outputAnchorQualityPitchInBytes);
@@ -3302,7 +3302,7 @@ struct GpuReadExtender{
 
         const int totalTasksBefore = tasks->size() + outputFinishedTasks.size();
 
-        rmm::device_uvector<bool> d_activeFlags(tasks->size(), stream);
+        rmm::device_uvector<bool> d_activeFlags(tasks->size(), stream, mr);
         tasks->getActiveFlags(d_activeFlags.data(), insertSize, insertSizeStddev, stream);
 
         TaskData newgpuSoaActiveTasks = tasks->select(
@@ -3341,9 +3341,9 @@ struct GpuReadExtender{
         //determine tasks in groups of 4
 
         if(finishedTasks.size() > 0){
-            rmm::device_uvector<int> d_positions4(finishedTasks.size(), stream);
-            rmm::device_uvector<int> d_positionsNot4(finishedTasks.size(), stream);
-            rmm::device_uvector<int> d_numPositions(2, stream);
+            rmm::device_uvector<int> d_positions4(finishedTasks.size(), stream, mr);
+            rmm::device_uvector<int> d_positionsNot4(finishedTasks.size(), stream, mr);
+            rmm::device_uvector<int> d_numPositions(2, stream, mr);
 
             helpers::call_fill_kernel_async(d_numPositions.data(), 2, 0, stream);
 
@@ -3420,7 +3420,7 @@ struct GpuReadExtender{
             return;
         }
 
-        rmm::device_uvector<int> d_minmax(2, stream);
+        rmm::device_uvector<int> d_minmax(2, stream, mr);
 
         readextendergpukernels::minmaxSingleBlockKernel<512><<<1, 512, 0, stream>>>(
         //readextendergpukernels::minmaxSingleBlockKernel<128><<<1, 128, 0, stream>>>(
@@ -3467,10 +3467,10 @@ struct GpuReadExtender{
 
         CUDACHECK(cudaStreamSynchronizeWrapper(stream));
 
-        rmm::device_uvector<int> d_pairIds1(finishedTasks.size(), stream);
-        rmm::device_uvector<int> d_pairIds2(finishedTasks.size(), stream);
-        rmm::device_uvector<int> d_indices1(finishedTasks.size(), stream);
-        rmm::device_uvector<int> d_incices2(finishedTasks.size(), stream);
+        rmm::device_uvector<int> d_pairIds1(finishedTasks.size(), stream, mr);
+        rmm::device_uvector<int> d_pairIds2(finishedTasks.size(), stream, mr);
+        rmm::device_uvector<int> d_indices1(finishedTasks.size(), stream, mr);
+        rmm::device_uvector<int> d_incices2(finishedTasks.size(), stream, mr);
 
         //decrease pair ids by smallest pair id to improve radix sort performance
         readextendergpukernels::vectorAddKernel<<<SDIV(finishedTasks.size(), 128), 128, 0, stream>>>(
@@ -3508,7 +3508,7 @@ struct GpuReadExtender{
         );
         assert(cudaSuccess == status);
 
-        rmm::device_uvector<char> d_temp(tempbytes, stream);
+        rmm::device_uvector<char> d_temp(tempbytes, stream, mr);
 
         status = cub::DeviceRadixSort::SortPairs(
             d_temp.data(),
@@ -3526,8 +3526,8 @@ struct GpuReadExtender{
         const int* d_theSortedPairIds = d_keys.Current();
         const int* d_theSortedIndices = d_values.Current();
 
-        rmm::device_uvector<int> d_counts_out(finishedTasks.size(), stream);
-        rmm::device_scalar<int> d_num_runs_out(1, stream);
+        rmm::device_uvector<int> d_counts_out(finishedTasks.size(), stream, mr);
+        rmm::device_scalar<int> d_num_runs_out(stream);
 
         CubCallWrapper(mr).cubReduceByKey(
             d_theSortedPairIds, 
@@ -3544,9 +3544,9 @@ struct GpuReadExtender{
         destroy(d_pairIds2, stream);
 
         //compute prefix sums to have stable output
-        rmm::device_uvector<int> d_outputoffsetsPos4(finishedTasks.size() + 1, stream);
-        rmm::device_uvector<int> d_outputoffsetsNotPos4(finishedTasks.size() + 1, stream);
-        rmm::device_uvector<int> d_countsInclusivePrefixSum(finishedTasks.size(), stream);
+        rmm::device_uvector<int> d_outputoffsetsPos4(finishedTasks.size() + 1, stream, mr);
+        rmm::device_uvector<int> d_outputoffsetsNotPos4(finishedTasks.size() + 1, stream, mr);
+        rmm::device_uvector<int> d_countsInclusivePrefixSum(finishedTasks.size(), stream, mr);
 
         //compute two exclusive prefix sums and one inclusive prefix sum. the three operations are fused into a single call
 
@@ -3700,7 +3700,7 @@ struct GpuReadExtender{
             return;
         }
 
-        rmm::device_uvector<unsigned int> d_extendedIterationSequences(numCandidates * encodedSequencePitchInInts, stream);
+        rmm::device_uvector<unsigned int> d_extendedIterationSequences(numCandidates * encodedSequencePitchInInts, stream, mr);
 
         readextendergpukernels::encodeSequencesTo2BitKernel<8>
         <<<SDIV(numCandidates, (128 / 8)), 128, 0, stream>>>(
@@ -3715,10 +3715,10 @@ struct GpuReadExtender{
 
         //sequence data has been transfered to gpu. now set up remaining msa input data
 
-        rmm::device_uvector<int> d_alignment_overlaps_tmp(numCandidates, stream);
-        rmm::device_uvector<int> d_alignment_nOps_tmp(numCandidates, stream);
-        rmm::device_uvector<AlignmentOrientation> d_alignment_best_alignment_flags_tmp(numCandidates, stream);
-        rmm::device_uvector<bool> d_isPairedCandidate_tmp(numCandidates, stream);
+        rmm::device_uvector<int> d_alignment_overlaps_tmp(numCandidates, stream, mr);
+        rmm::device_uvector<int> d_alignment_nOps_tmp(numCandidates, stream, mr);
+        rmm::device_uvector<AlignmentOrientation> d_alignment_best_alignment_flags_tmp(numCandidates, stream, mr);
+        rmm::device_uvector<bool> d_isPairedCandidate_tmp(numCandidates, stream, mr);
 
         //fill the arrays such that msa will have good quality without pairedness
         readextendergpukernels::fillKernel<<<SDIV(numCandidates, 128), 128, 0, stream>>>(
@@ -3739,7 +3739,7 @@ struct GpuReadExtender{
         
         //all input data ready. now set up msa
 
-        rmm::device_uvector<int> indices1(numCandidates, stream);
+        rmm::device_uvector<int> indices1(numCandidates, stream, mr);
 
         const int threads = 32 * numFinishedTasks;
 
@@ -3752,7 +3752,7 @@ struct GpuReadExtender{
             finishedTasks4.soaNumIterationResultsPerTaskPrefixSum.data()
         ); CUDACHECKASYNC;
 
-        rmm::device_scalar<int> d_numFinishedTasks(1, stream);
+        rmm::device_scalar<int> d_numFinishedTasks(stream, mr);
         *rawResults.h_tmp = numFinishedTasks;
         CUDACHECK(cudaMemcpyAsync(d_numFinishedTasks.data(), rawResults.h_tmp.data(), sizeof(int), H2D, stream));
 
@@ -3796,9 +3796,9 @@ struct GpuReadExtender{
         resultMSAColumnPitchInElements = finishedTasksMSA.getMaximumMsaWidth();
 
         //compute quality of consensus
-        rmm::device_uvector<char> d_consensusQuality(numFinishedTasks * resultMSAColumnPitchInElements, stream);
-        rmm::device_uvector<char> d_decodedConsensus(numFinishedTasks * resultMSAColumnPitchInElements, stream);
-        rmm::device_uvector<int> d_resultLengths(numFinishedTasks, stream);
+        rmm::device_uvector<char> d_consensusQuality(numFinishedTasks * resultMSAColumnPitchInElements, stream, mr);
+        rmm::device_uvector<char> d_decodedConsensus(numFinishedTasks * resultMSAColumnPitchInElements, stream, mr);
+        rmm::device_uvector<int> d_resultLengths(numFinishedTasks, stream, mr);
         
         finishedTasksMSA.computeConsensusQuality(
             d_consensusQuality.data(),
@@ -3822,7 +3822,7 @@ struct GpuReadExtender{
 
         const int numResults = numFinishedTasks / 4;
 
-        rmm::device_uvector<int> d_pairResultLengths(numResults, stream);
+        rmm::device_uvector<int> d_pairResultLengths(numResults, stream, mr);
 
         //compute pair result output sizes and use them to determine required memory
         readextendergpukernels::makePairResultsFromFinishedTasksDryRunKernel<128><<<numResults, 128, 0, stream>>>(
@@ -3870,14 +3870,13 @@ struct GpuReadExtender{
 
         const int outputPitch = SDIV(minmaxPairResultLengths[1], 4) * 4; //round up maximum output size to 4 bytes
 
-        //rmm::device_uvector<bool> d_pairResultAnchorIsLR(numResults, stream);
-        rmm::device_uvector<bool> d_pairResultAnchorIsLR(numResults, stream);
-        rmm::device_uvector<char> d_pairResultSequences(numResults * outputPitch, stream);
-        rmm::device_uvector<char> d_pairResultQualities(numResults * outputPitch, stream);
-        rmm::device_uvector<int> d_pairResultRead1Begins(numResults, stream);
-        rmm::device_uvector<int> d_pairResultRead2Begins(numResults, stream);
-        rmm::device_uvector<bool> d_pairResultMateHasBeenFound(numResults, stream);
-        rmm::device_uvector<bool> d_pairResultMergedDifferentStrands(numResults, stream);
+        rmm::device_uvector<bool> d_pairResultAnchorIsLR(numResults, stream, mr);
+        rmm::device_uvector<char> d_pairResultSequences(numResults * outputPitch, stream, mr);
+        rmm::device_uvector<char> d_pairResultQualities(numResults * outputPitch, stream, mr);
+        rmm::device_uvector<int> d_pairResultRead1Begins(numResults, stream, mr);
+        rmm::device_uvector<int> d_pairResultRead2Begins(numResults, stream, mr);
+        rmm::device_uvector<bool> d_pairResultMateHasBeenFound(numResults, stream, mr);
+        rmm::device_uvector<bool> d_pairResultMergedDifferentStrands(numResults, stream, mr);
         
         const std::size_t smem = 2 * outputPitch;
 
@@ -4087,7 +4086,7 @@ struct GpuReadExtender{
         bool updateHostCandidateReadIds,
         cudaStream_t stream
     ){
-        rmm::device_uvector<int> d_numCandidatesPerAnchor2(tasks->size(), stream);
+        rmm::device_uvector<int> d_numCandidatesPerAnchor2(tasks->size(), stream, mr);
 
         CubCallWrapper(mr).cubSegmentedReduceSum(
             d_keepFlags,
@@ -4106,9 +4105,9 @@ struct GpuReadExtender{
             )
         );
 
-        rmm::device_uvector<int> d_candidateSequencesLength2(initialNumCandidates, stream);
-        rmm::device_uvector<read_number> d_candidateReadIds2(initialNumCandidates, stream);
-        rmm::device_uvector<bool> d_isPairedCandidate2(initialNumCandidates, stream);
+        rmm::device_uvector<int> d_candidateSequencesLength2(initialNumCandidates, stream, mr);
+        rmm::device_uvector<read_number> d_candidateReadIds2(initialNumCandidates, stream, mr);
+        rmm::device_uvector<bool> d_isPairedCandidate2(initialNumCandidates, stream, mr);
   
         auto d_zip_data_tmp = thrust::make_zip_iterator(
             thrust::make_tuple(
@@ -4168,7 +4167,7 @@ struct GpuReadExtender{
         destroy(d_isPairedCandidate2, stream);
         
         //update candidate sequences data
-        rmm::device_uvector<unsigned int> d_candidateSequencesData2(encodedSequencePitchInInts * initialNumCandidates, stream);
+        rmm::device_uvector<unsigned int> d_candidateSequencesData2(encodedSequencePitchInInts * initialNumCandidates, stream, mr);
 
         CubCallWrapper(mr).cubSelectFlagged(
             d_candidateSequencesData.data(),
@@ -4195,7 +4194,7 @@ struct GpuReadExtender{
 
         DEBUGSTREAMSYNC(stream);
 
-        rmm::device_uvector<int> d_numCandidatesPerAnchor2(tasks->size(), stream);
+        rmm::device_uvector<int> d_numCandidatesPerAnchor2(tasks->size(), stream, mr);
 
         DEBUGSTREAMSYNC(stream);
 
@@ -4224,13 +4223,13 @@ struct GpuReadExtender{
 
         DEBUGSTREAMSYNC(stream);
 
-        rmm::device_uvector<int> d_alignment_overlaps2(initialNumCandidates, stream);
-        rmm::device_uvector<int> d_alignment_shifts2(initialNumCandidates, stream);
-        rmm::device_uvector<int> d_alignment_nOps2(initialNumCandidates, stream);
-        rmm::device_uvector<AlignmentOrientation> d_alignment_best_alignment_flags2(initialNumCandidates, stream);
-        rmm::device_uvector<int> d_candidateSequencesLength2(initialNumCandidates, stream);
-        rmm::device_uvector<read_number> d_candidateReadIds2(initialNumCandidates, stream);
-        rmm::device_uvector<bool> d_isPairedCandidate2(initialNumCandidates, stream);
+        rmm::device_uvector<int> d_alignment_overlaps2(initialNumCandidates, stream, mr);
+        rmm::device_uvector<int> d_alignment_shifts2(initialNumCandidates, stream, mr);
+        rmm::device_uvector<int> d_alignment_nOps2(initialNumCandidates, stream, mr);
+        rmm::device_uvector<AlignmentOrientation> d_alignment_best_alignment_flags2(initialNumCandidates, stream, mr);
+        rmm::device_uvector<int> d_candidateSequencesLength2(initialNumCandidates, stream, mr);
+        rmm::device_uvector<read_number> d_candidateReadIds2(initialNumCandidates, stream, mr);
+        rmm::device_uvector<bool> d_isPairedCandidate2(initialNumCandidates, stream, mr);
 
         DEBUGSTREAMSYNC(stream);
   
@@ -4304,7 +4303,7 @@ struct GpuReadExtender{
         destroy(d_isPairedCandidate2, stream);
         
         //update candidate sequences data
-        rmm::device_uvector<unsigned int> d_candidateSequencesData2(encodedSequencePitchInInts * initialNumCandidates, stream);
+        rmm::device_uvector<unsigned int> d_candidateSequencesData2(encodedSequencePitchInInts * initialNumCandidates, stream, mr);
 
         CubCallWrapper(mr).cubSelectFlagged(
             d_candidateSequencesData.data(),
@@ -4323,7 +4322,7 @@ struct GpuReadExtender{
 
         //update candidate quality scores
         // assert(qualityPitchInBytes % sizeof(int) == 0);
-        // rmm::device_uvector<char> d_candidateQualities2(qualityPitchInBytes * initialNumCandidates, stream);
+        // rmm::device_uvector<char> d_candidateQualities2(qualityPitchInBytes * initialNumCandidates, stream, mr);
 
         // cubSelectFlagged(
         //     (const int*)d_candidateQualityScores.data(),
