@@ -723,6 +723,8 @@ public:
                     return d_indices[i];
                 };
 
+                //TODO check if this code path still works with malloc async 
+                
                 gpuArrays[0]->gather(d_dest, destRowPitchInBytes, indexGenerator, numIndices, destStream);
             }
         }else{

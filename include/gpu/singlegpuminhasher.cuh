@@ -483,7 +483,10 @@ namespace gpu{
             const int id = handle.getId();
             assert(id < int(tempdataVector.size()));
             
-            tempdataVector[id] = nullptr;
+            {
+                cub::SwitchDevice sd(tempdataVector[id]->deviceId);
+                tempdataVector[id] = nullptr;
+            }
             handle = constructHandle(std::numeric_limits<int>::max());
         }
 

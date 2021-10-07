@@ -325,6 +325,7 @@ namespace care{
 
         //After minhasher is constructed, remaining gpu memory can be used to store reads
 
+        //std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 2ull*1024ull*1024ull*1024ull);
         std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 0);
         for(int i = 0; i < int(runtimeOptions.deviceIds.size()); i++){
             std::size_t total = 0;
