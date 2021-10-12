@@ -2443,54 +2443,79 @@ struct GpuReadExtender{
         std::lock_guard<std::mutex> lockguard(mutex);
         //std::cerr << "processOneIteration enter thread " << std::this_thread::get_id() << "\n";
 
+
         if(inputTasks.size() > 0){
 
             tasks = &inputTasks;
             initialNumCandidates = currentHashResults.d_candidateReadIds.size();
             iterationConfig = &iterationConfig_;
 
+            DEBUGSTREAMSYNC(stream);
+
             copyAnchorDataFrom(currentAnchorData, stream);
             copyHashResultsFrom(currentHashResults, stream);
 
             state = GpuReadExtender::State::BeforeRemoveIds;
 
+            DEBUGSTREAMSYNC(stream);
+
             nvtx::push_range("removeUsedIdsAndMateIds", 0);
             removeUsedIdsAndMateIds(stream);
             nvtx::pop_range();
+
+            DEBUGSTREAMSYNC(stream);
 
             nvtx::push_range("computePairFlagsGpu", 1);
             computePairFlagsGpu(stream);
             nvtx::pop_range();
 
+            DEBUGSTREAMSYNC(stream);
+
             nvtx::push_range("loadCandidateSequenceData", 2);
             loadCandidateSequenceData(stream);
             nvtx::pop_range();
+
+            DEBUGSTREAMSYNC(stream);
 
             nvtx::push_range("eraseDataOfRemovedMates", 3);
             eraseDataOfRemovedMates(stream);
             nvtx::pop_range();
 
+            DEBUGSTREAMSYNC(stream);
+
             nvtx::push_range("calculateAlignments", 4);
             calculateAlignments(stream);
             nvtx::pop_range();
+
+            DEBUGSTREAMSYNC(stream);
 
             nvtx::push_range("filterAlignments", 5);
             filterAlignments(stream);
             nvtx::pop_range();
 
+            DEBUGSTREAMSYNC(stream);
+
             nvtx::push_range("computeMSAs", 6);
             computeMSAs(stream);
             nvtx::pop_range();
+
+            DEBUGSTREAMSYNC(stream);
 
             nvtx::push_range("computeExtendedSequencesFromMSAs", 7);
             computeExtendedSequencesFromMSAs(stream);
             nvtx::pop_range();
 
+            DEBUGSTREAMSYNC(stream);
+
             nvtx::push_range("prepareNextIteration", 8);
             prepareNextIteration(inputTasks, outputFinishedTasks, stream);
             nvtx::pop_range();
 
+            DEBUGSTREAMSYNC(stream);
+
             destroyDeviceBuffers(stream);
+
+            DEBUGSTREAMSYNC(stream);
 
         }else{
             std::cerr << "inputTasks empty\n";

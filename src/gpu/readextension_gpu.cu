@@ -176,6 +176,8 @@ makeAndSplitExtensionOutput(GpuReadExtender::TaskData& finishedTasks, GpuReadExt
         }else{
             //assert(extensionOutput.extendedRead.size() > extensionOutput.originalLength);
 
+            
+
             ExtendedRead er;
 
             er.readId = extensionOutput.readId1;
@@ -189,6 +191,33 @@ makeAndSplitExtensionOutput(GpuReadExtender::TaskData& finishedTasks, GpuReadExt
                 er.read2end = extensionOutput.read2begin + extensionOutput.originalMateLength;
             }else{
                 er.read2end = -1;
+            }
+
+            auto printerror = [&](){
+                std::cerr << "unexpected error for read id " << er.readId << "\n";
+                std::cerr << er.mergedFromReadsWithoutMate << ", " << er.read1begin << ", " << er.read1end << ", " << er.read2begin << ", " << er.read2end << "\n";
+                std::cerr << er.extendedSequence << "\n";
+            };
+
+            if(
+                er.read1begin < 0
+                || er.read1end > int(er.extendedSequence.size())
+                || (
+                    (er.read2end != -1 && er.read2begin != -1) && (
+                        er.read2begin < er.read1begin
+                        || er.read2end > int(er.extendedSequence.size())
+                    )
+                )
+            ){
+                printerror();
+            }
+
+            assert(er.read1begin >= 0);
+            assert(er.read1end <= int(er.extendedSequence.size()));
+            if(er.read2end != -1 && er.read2begin != -1){
+                assert(er.read2begin >= 0);
+                assert(er.read2begin >= er.read1begin);
+                assert(er.read2end <= int(er.extendedSequence.size()));
             }
 
             if(extensionOutput.mateHasBeenFound){
@@ -247,21 +276,6 @@ SerializedObjectStorage extend_gpu_pairedend(
     }
     if(memoryAvailableBytesHost > mhMemInfo.host){
         memoryAvailableBytesHost -= mhMemInfo.host;
-    }else{
-        memoryAvailableBytesHost = 0;
-    }
-
-    std::unique_ptr<std::uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::uint8_t[]>(gpuReadStorage.getNumberOfReads());
-
-    #pragma omp parallel for
-    for(read_number i = 0; i < gpuReadStorage.getNumberOfReads(); i++){
-        correctionStatusFlagsPerRead[i] = 0;
-    }
-
-    std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::uint8_t) * gpuReadStorage.getNumberOfReads() / 1024. / 1024. << " MB\n";
-
-    if(memoryAvailableBytesHost > sizeof(std::uint8_t) * gpuReadStorage.getNumberOfReads()){
-        memoryAvailableBytesHost -= sizeof(std::uint8_t) * gpuReadStorage.getNumberOfReads();
     }else{
         memoryAvailableBytesHost = 0;
     }
@@ -617,8 +631,20 @@ SerializedObjectStorage extend_gpu_pairedend(
     {
         std::vector<std::future<std::vector<read_number>>> futures;
 
-        const std::size_t numReadsToProcess = 1000000;
-        //const std::size_t numReadsToProcess = gpuReadStorage.getNumberOfReads();
+        //const std::size_t numReadsToProcess = 1000000;
+        const std::size_t numReadsToProcess = gpuReadStorage.getNumberOfReads();
+
+        // std::vector<read_number> idsToExtend{
+        //     0, 1, 22, 23, 44, 45, 68, 69, 78, 79, 86, 87, 98, 99,
+        //     112, 113, 136,137,180,181,198,199,202,203,266,267,
+        //     290,291,316,317,350,351,402,403,436,437,446,447,498,499,574,575,582,583,588,589,
+        //     598,599,692,693,704,705,814,815,964,965,966,967,970,971,1026,1027
+        // };
+
+        // IteratorRangeTraversal<decltype(idsToExtend.begin())> readIdGenerator(
+        //     idsToExtend.begin(),
+        //     idsToExtend.end()
+        // );
 
         IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(
             thrust::make_counting_iterator<read_number>(0),
@@ -626,8 +652,8 @@ SerializedObjectStorage extend_gpu_pairedend(
         );
 
         // IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(
-        //     thrust::make_counting_iterator<read_number>(0) + 0,
-        //     thrust::make_counting_iterator<read_number>(0) + 16
+        //     thrust::make_counting_iterator<read_number>(0) + 9779220,
+        //     thrust::make_counting_iterator<read_number>(0) + 9779224
         // );
 
         const int maxNumThreads = runtimeOptions.threads;
