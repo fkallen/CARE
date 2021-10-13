@@ -5,13 +5,15 @@
 #include <config.hpp>
 #include <sequencehelpers.hpp>
 #include <hpc_helpers.cuh>
-#include <serializedobjectstorage.hpp>
 #include <readlibraryio.hpp>
 #include <options.hpp>
+#include <bitcompressedstring.hpp>
 
 #include <cstring>
 #include <string>
 #include <vector>
+
+#define CARE_USE_BIT_COMPRESED_QUALITY_FOR_ENCODED_EXTENDED
 
 namespace care{
 
@@ -106,7 +108,7 @@ namespace care{
             } 
         }
 
-        void copyFromContiguousMemory(const std::uint8_t* ptr){
+        const std::uint8_t* copyFromContiguousMemory(const std::uint8_t* ptr){
             std::memcpy(&readId, ptr, sizeof(read_number));
             ptr += sizeof(read_number);
             std::memcpy(&encodedflags, ptr, sizeof(std::uint32_t));
@@ -116,7 +118,9 @@ namespace care{
             data = std::make_unique<std::uint8_t[]>(numBytes);
 
             std::memcpy(data.get(), ptr, numBytes);
-            //ptr += numBytes;
+            ptr += numBytes;
+
+            return ptr;
         }
 
 
@@ -224,7 +228,7 @@ namespace care{
             }        
         }
 
-        void copyFromContiguousMemory(const std::uint8_t* ptr){
+        const std::uint8_t* copyFromContiguousMemory(const std::uint8_t* ptr){
             std::memcpy(&readId, ptr, sizeof(read_number));
             ptr += sizeof(read_number);
             std::memcpy(&mergedFromReadsWithoutMate, ptr, sizeof(bool));
@@ -246,7 +250,7 @@ namespace care{
             ptr += sizeof(int);
             extendedSequence_raw.resize(l);
             std::memcpy(&extendedSequence_raw[0], ptr, sizeof(char) * l);
-            ptr += l;
+            ptr += sizeof(char) * l;
 
             //extendedSequence_sv = extendedSequence_raw;
 
@@ -255,9 +259,11 @@ namespace care{
             ptr += sizeof(int);
             qualityScores_raw.resize(m);
             std::memcpy(&qualityScores_raw[0], ptr, sizeof(char) * m);
-            ptr += m;
+            ptr += sizeof(char) * m;
 
             //qualityScores_sv = qualityScores_raw;
+
+            return ptr;
         }
 
         //from serialized object beginning at ptr, return the read id of this object
@@ -271,6 +277,8 @@ namespace care{
             return readId;
         }
 
+        
+
         void encodeInto(EncodedExtendedRead& target) const{
 
             const int numEncodedSequenceInts = SequenceHelpers::getEncodedNumInts2Bit(getSequence().size());
@@ -283,7 +291,13 @@ namespace care{
             requiredBytes += sizeof(int); // seq length
             requiredBytes += sizeof(int); // qual length
             requiredBytes += sizeof(unsigned int) * numEncodedSequenceInts; // enc seq
+
+            #ifdef CARE_USE_BIT_COMPRESED_QUALITY_FOR_ENCODED_EXTENDED
+            BitCompressedString bitcompressedquality(getQuality());
+            requiredBytes += bitcompressedquality.getSerializedNumBytes();
+            #else
             requiredBytes += sizeof(char) * getQuality().size(); //qual
+            #endif
 
             assert(requiredBytes < (1u << 31)); // 1 bit reserved for flag
 
@@ -320,7 +334,12 @@ namespace care{
             );
             ptr += sizeof(unsigned int) * numEncodedSequenceInts;
 
+            #ifdef CARE_USE_BIT_COMPRESED_QUALITY_FOR_ENCODED_EXTENDED
+            ptr = bitcompressedquality.copyToContiguousMemory(ptr, ptr + bitcompressedquality.getSerializedNumBytes());
+            assert(ptr != nullptr);
+            #else
             ptr = std::copy(getQuality().begin(), getQuality().end(), ptr);
+            #endif
 
             assert(target.data.get() + requiredBytes == ptr);
         }
@@ -352,7 +371,6 @@ namespace care{
             loadint(quallen);
 
             extendedSequence_raw.resize(seqlen);
-            qualityScores_raw.resize(quallen);
 
             const int numEncodedSequenceInts = SequenceHelpers::getEncodedNumInts2Bit(seqlen);
 
@@ -360,10 +378,18 @@ namespace care{
             ptr += sizeof(unsigned int) * numEncodedSequenceInts;
             //extendedSequence_sv = extendedSequence_raw;
 
+            #ifdef CARE_USE_BIT_COMPRESED_QUALITY_FOR_ENCODED_EXTENDED
+            BitCompressedString bitcompressedqual;
+            ptr = bitcompressedqual.copyFromContiguousMemory(ptr);
+            assert(rhs.data.get() + rhs.getNumBytes() == ptr);
+            qualityScores_raw = bitcompressedqual.getString();
+            #else
+            qualityScores_raw.resize(quallen);
             std::copy(ptr, ptr + quallen, qualityScores_raw.begin());
+            assert(rhs.data.get() + rhs.getNumBytes() == ptr + quallen);
+            #endif
             //qualityScores_sv = qualityScores_raw;
 
-            assert(rhs.data.get() + rhs.getNumBytes() == ptr + quallen);
         }
 
         void removeOutwardExtension(){
@@ -412,6 +438,11 @@ namespace care{
 
 }
 
+
+
+#ifdef CARE_USE_BIT_COMPRESED_QUALITY_FOR_ENCODED_EXTENDED
+#undef CARE_USE_BIT_COMPRESED_QUALITY_FOR_ENCODED_EXTENDED
+#endif
 
 
 

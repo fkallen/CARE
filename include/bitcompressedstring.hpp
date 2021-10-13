@@ -124,6 +124,46 @@ struct BitCompressedString{
         return result;
     }
 
+    std::size_t getSerializedNumBytes() const{
+        return sizeof(std::uint8_t) // bitsPerElement
+            + sizeof(Element_t) // minElement
+            + sizeof(Element_t) // maxElement
+            + sizeof(int) // numElements
+            + sizeof(int) // numData
+            + sizeof(Data_t) * numData; // data
+    }
+
+    std::uint8_t* copyToContiguousMemory(std::uint8_t* ptr, std::uint8_t* endPtr) const{
+        const std::size_t requiredBytes = getSerializedNumBytes();
+        const std::size_t availableBytes = std::distance(ptr, endPtr);
+
+        if(requiredBytes <= availableBytes){                
+            std::memcpy(ptr, &bitsPerElement, sizeof(std::uint8_t)); ptr += sizeof(std::uint8_t);
+            std::memcpy(ptr, &minElement, sizeof(Element_t)); ptr += sizeof(Element_t);
+            std::memcpy(ptr, &maxElement, sizeof(Element_t)); ptr += sizeof(Element_t);
+            std::memcpy(ptr, &numElements, sizeof(int)); ptr += sizeof(int);
+            std::memcpy(ptr, &numData, sizeof(int)); ptr += sizeof(int);
+            std::memcpy(ptr, data.get(), sizeof(Data_t) * numData); ptr += sizeof(Data_t) * numData;
+
+            return ptr;
+        }else{
+            return nullptr;
+        }   
+    }
+
+    const std::uint8_t* copyFromContiguousMemory(const std::uint8_t* ptr){
+        std::memcpy(&bitsPerElement, ptr, sizeof(std::uint8_t)); ptr += sizeof(std::uint8_t);
+        std::memcpy(&minElement, ptr, sizeof(Element_t)); ptr += sizeof(Element_t);
+        std::memcpy(&maxElement, ptr, sizeof(Element_t)); ptr += sizeof(Element_t);
+        std::memcpy(&numElements, ptr, sizeof(int)); ptr += sizeof(int);
+        std::memcpy(&numData, ptr, sizeof(int)); ptr += sizeof(int);
+
+        data = std::make_unique<Data_t[]>(numData);
+        std::memcpy(data.get(), ptr, sizeof(Data_t) * numData); ptr += sizeof(Data_t) * numData;
+
+        return ptr;
+    }
+
 private:   
     //extracts at most 32 bits out of the 64 bits [l,r]. extracts bits [begin,endExcl) from [l,r]
     //bits are enumerated from left to right

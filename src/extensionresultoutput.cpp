@@ -543,18 +543,6 @@ void writeExtensionResultsToFile(
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 std::optional<Read> combineExtendedReadWithOriginalRead(
     std::vector<ExtendedRead>& tmpresults, 
     const ReadWithId& readWithId
@@ -573,10 +561,6 @@ std::optional<Read> combineExtendedReadWithOriginalRead(
         return std::nullopt;
     }
 }
-
-
-
-
 
 
 void constructOutputFileFromExtensionResults(
