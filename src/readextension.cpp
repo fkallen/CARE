@@ -357,42 +357,11 @@ SerializedObjectStorage extend_cpu_pairedend(
                 }else{
                     //assert(extensionOutput.extendedRead.size() > extensionOutput.originalLength);
 
-                    ExtendedRead er;
-
-                    er.readId = extensionOutput.readId1;
-                    er.mergedFromReadsWithoutMate = extensionOutput.mergedFromReadsWithoutMate;
-                    er.extendedSequence = std::move(extensionOutput.extendedRead);
-                    er.qualityScores = std::move(extensionOutput.qualityScores);
-                    er.read1begin = extensionOutput.read1begin;
-                    er.read1end = extensionOutput.read1begin + extensionOutput.originalLength;
-                    er.read2begin = extensionOutput.read2begin;
-                    if(er.read2begin != -1){
-                        er.read2end = extensionOutput.read2begin + extensionOutput.originalMateLength;
-                    }else{
-                        er.read2end = -1;
-                    }
-
-                    if(extensionOutput.mateHasBeenFound){
-                        er.status = ExtendedReadStatus::FoundMate;
-                    }else{
-                        if(extensionOutput.aborted){
-                            if(extensionOutput.abortReason == extension::AbortReason::NoPairedCandidates
-                                    || extensionOutput.abortReason == extension::AbortReason::NoPairedCandidatesAfterAlignment){
-
-                                er.status = ExtendedReadStatus::CandidateAbort;
-                            }else if(extensionOutput.abortReason == extension::AbortReason::MsaNotExtended){
-                                er.status = ExtendedReadStatus::MSANoExtension;
-                            }
-                        }else{
-                            er.status = ExtendedReadStatus::LengthAbort;
-                        }
-                    }
-
-                    if(isRepeatedIteration){
-                        reinterpret_cast<unsigned char&>(er.status) |= static_cast<unsigned char>(ExtendedReadStatus::Repeated);
-                    }
+                    extension::ExtensionResultConversionOptions opts;
+                    opts.allowOutwardExtension = true;
+                    opts.computedAfterRepetition = isRepeatedIteration;            
                     
-                    extendedReads.emplace_back(std::move(er));
+                    extendedReads.emplace_back(extension::makeExtendedReadFromExtensionResult(extensionOutput, opts));
 
                 }
                               

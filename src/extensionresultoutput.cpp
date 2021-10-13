@@ -15,6 +15,42 @@
 
 namespace care{
 
+    //convert extended read to struct which can be written to file
+    Read makeOutputReadFromExtendedRead(const ExtendedRead& extendedRead){
+        constexpr unsigned char foundMateStatus = static_cast<unsigned char>(ExtendedReadStatus::FoundMate);
+        constexpr unsigned char repeatedStatus = static_cast<unsigned char>(ExtendedReadStatus::Repeated);
+        unsigned char status = static_cast<unsigned char>(extendedRead.status);
+        const bool foundMate = (status & foundMateStatus) == foundMateStatus;
+        const bool repeated = (status & repeatedStatus) == repeatedStatus;
+
+        std::stringstream sstream;
+        sstream << extendedRead.readId;
+        sstream << ' ' << (foundMate ? "reached:1" : "reached:0");
+        sstream << ' ' << (extendedRead.mergedFromReadsWithoutMate ? "m:1" : "m:0");
+        sstream << ' ' << (repeated ? "a:1" : "a:0");
+        sstream << ' ';
+        sstream << "lens:" << extendedRead.read1begin << ',' << extendedRead.read1end << ',' << extendedRead.read2begin << ',' << extendedRead.read2end;
+        // if(extendedRead.status == ExtendedReadStatus::LengthAbort){
+        //     sstream << "exceeded_length";
+        // }else if(extendedRead.status == ExtendedReadStatus::CandidateAbort){
+        //     sstream << "0_candidates";
+        // }else if(extendedRead.status == ExtendedReadStatus::MSANoExtension){
+        //     sstream << "msa_stop";
+        // }
+
+        Read res;
+        res.header = sstream.str();
+        res.sequence = std::move(extendedRead.extendedSequence);
+        if(extendedRead.qualityScores.size() != res.sequence.size()){
+            res.quality.resize(res.sequence.length());
+            std::fill(res.quality.begin(), res.quality.end(), 'F');
+        }else{
+            res.quality = std::move(extendedRead.qualityScores);
+        }
+
+        return res;
+    }
+
 /*
     Write reads which were extended to extendedOutputfile.
     Write reads which did not grow to outputfiles
@@ -94,8 +130,6 @@ void mergeSerializedExtensionResultsWithOriginalReads_multithreaded(
 
             // TIMERSTARTCPU(tcsparsing);
 
-            using SerializedType = ExtendedRead;
-
             read_number previousId = 0;
             std::size_t itemnumber = 0;
 
@@ -109,10 +143,18 @@ void mergeSerializedExtensionResultsWithOriginalReads_multithreaded(
                 int batchsize = 0;
                 while(batchsize < decoder_maxbatchsize && itemnumber < partialResults.size()){
                     const std::uint8_t* serializedPtr = partialResults.getPointer(itemnumber);
-                    SerializedType deserialized;
-                    deserialized.copyFromContiguousMemory(serializedPtr);
 
-                    batch->items[batchsize] = std::move(deserialized);
+                    ExtendedRead extendedRead;
+
+                    #if 0
+                    extendedRead.copyFromContiguousMemory(serializedPtr);
+                    #else
+                    EncodedExtendedRead encext;
+                    encext.copyFromContiguousMemory(serializedPtr);
+                    extendedRead.decode(encext);
+                    #endif
+
+                    batch->items[batchsize] = std::move(extendedRead);
 
                     if(batch->items[batchsize].readId < previousId){
                         std::cerr << "Error, results not sorted. itemnumber = " << itemnumber << ", previousId = " << previousId << ", currentId = " << batch->items[batchsize].readId << "\n";
@@ -253,7 +295,7 @@ void mergeSerializedExtensionResultsWithOriginalReads_multithreaded(
 
             //auto extendedformat = FileFormat::FASTA; //extended reads are stored as fasta. No qualities available for gap.
 
-            std::unique_ptr<SequenceFileWriter> extendedReadWriter = makeSequenceWriter(extendedOutputfile, /*format*/ FileFormat::FASTA);
+            std::unique_ptr<SequenceFileWriter> extendedReadWriter = makeSequenceWriter(extendedOutputfile, format);
             std::unique_ptr<SequenceFileWriter> extendedOrigReadWriter = makeSequenceWriter(extendedOutputfile + "_origs", format);
 
             std::vector<std::unique_ptr<SequenceFileWriter>> writerVector;
@@ -464,30 +506,7 @@ void writeExtensionResultsToFile(
         const bool foundMate = (status & foundMateStatus) == foundMateStatus;
         const bool repeated = (status & repeatedStatus) == repeatedStatus;
 
-        std::stringstream sstream;
-        sstream << extendedRead.readId;
-        sstream << ' ' << (foundMate ? "reached:1" : "reached:0");
-        sstream << ' ' << (extendedRead.mergedFromReadsWithoutMate ? "m:1" : "m:0");
-        sstream << ' ' << (repeated ? "a:1" : "a:0");
-        sstream << ' ';
-        sstream << "lens:" << extendedRead.read1begin << ',' << extendedRead.read1end << ',' << extendedRead.read2begin << ',' << extendedRead.read2end;
-        // if(extendedRead.status == ExtendedReadStatus::LengthAbort){
-        //     sstream << "exceeded_length";
-        // }else if(extendedRead.status == ExtendedReadStatus::CandidateAbort){
-        //     sstream << "0_candidates";
-        // }else if(extendedRead.status == ExtendedReadStatus::MSANoExtension){
-        //     sstream << "msa_stop";
-        // }
-
-        Read res;
-        res.header = sstream.str();
-        res.sequence = std::move(extendedRead.extendedSequence);
-        if(extendedRead.qualityScores.size() != res.sequence.size()){
-            res.quality.resize(res.sequence.length());
-            std::fill(res.quality.begin(), res.quality.end(), 'F');
-        }else{
-            res.quality = std::move(extendedRead.qualityScores);
-        }
+        Read res = makeOutputReadFromExtendedRead(extendedRead);
 
         writer->writeRead(res.header, res.sequence, res.quality);
 
@@ -547,25 +566,9 @@ std::optional<Read> combineExtendedReadWithOriginalRead(
     bool extended = readWithId.read.sequence.length() < tmpresults[0].extendedSequence.length();
 
     if(extended){
-        Read extendedReadOut{};
+        const auto& extendedRead = tmpresults[0];
 
-        extendedReadOut.sequence = std::move(tmpresults[0].extendedSequence);
-        extendedReadOut.quality = std::move(tmpresults[0].qualityScores);
-        if(extendedReadOut.quality.size() != extendedReadOut.sequence.size()){
-            extendedReadOut.quality.resize(extendedReadOut.sequence.size());
-            std::fill(extendedReadOut.quality.begin(), extendedReadOut.quality.end(), 'A');
-        }
-        
-        std::stringstream sstream;
-        sstream << readWithId.globalReadId << ' ';
-        sstream << (tmpresults[0].status == ExtendedReadStatus::FoundMate ? "reached:1" : "reached:0");
-        sstream << ' ' << (tmpresults[0].mergedFromReadsWithoutMate ? "m:1" : "m:0");
-        sstream << ' ';
-        sstream << "lens:" << tmpresults[0].read1begin << ',' << tmpresults[0].read1end << ',' << tmpresults[0].read2begin << ',' << tmpresults[0].read2end;
-
-        extendedReadOut.header = sstream.str();
-
-        return std::make_optional(std::move(extendedReadOut));
+        return std::make_optional(makeOutputReadFromExtendedRead(extendedRead));
     }else{
         return std::nullopt;
     }

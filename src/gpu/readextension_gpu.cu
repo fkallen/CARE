@@ -176,71 +176,11 @@ makeAndSplitExtensionOutput(GpuReadExtender::TaskData& finishedTasks, GpuReadExt
         }else{
             //assert(extensionOutput.extendedRead.size() > extensionOutput.originalLength);
 
+            extension::ExtensionResultConversionOptions opts;
+            opts.allowOutwardExtension = true;
+            opts.computedAfterRepetition = isRepeatedIteration;            
             
-
-            ExtendedRead er;
-
-            er.readId = extensionOutput.readId1;
-            er.mergedFromReadsWithoutMate = extensionOutput.mergedFromReadsWithoutMate;
-            er.extendedSequence = std::move(extensionOutput.extendedRead);
-            er.qualityScores = std::move(extensionOutput.qualityScores);
-            er.read1begin = extensionOutput.read1begin;
-            er.read1end = extensionOutput.read1begin + extensionOutput.originalLength;
-            er.read2begin = extensionOutput.read2begin;
-            if(er.read2begin != -1){
-                er.read2end = extensionOutput.read2begin + extensionOutput.originalMateLength;
-            }else{
-                er.read2end = -1;
-            }
-
-            auto printerror = [&](){
-                std::cerr << "unexpected error for read id " << er.readId << "\n";
-                std::cerr << er.mergedFromReadsWithoutMate << ", " << er.read1begin << ", " << er.read1end << ", " << er.read2begin << ", " << er.read2end << "\n";
-                std::cerr << er.extendedSequence << "\n";
-            };
-
-            if(
-                er.read1begin < 0
-                || er.read1end > int(er.extendedSequence.size())
-                || (
-                    (er.read2end != -1 && er.read2begin != -1) && (
-                        er.read2begin < er.read1begin
-                        || er.read2end > int(er.extendedSequence.size())
-                    )
-                )
-            ){
-                printerror();
-            }
-
-            assert(er.read1begin >= 0);
-            assert(er.read1end <= int(er.extendedSequence.size()));
-            if(er.read2end != -1 && er.read2begin != -1){
-                assert(er.read2begin >= 0);
-                assert(er.read2begin >= er.read1begin);
-                assert(er.read2end <= int(er.extendedSequence.size()));
-            }
-
-            if(extensionOutput.mateHasBeenFound){
-                er.status = ExtendedReadStatus::FoundMate;
-            }else{
-                if(extensionOutput.aborted){
-                    if(extensionOutput.abortReason == extension::AbortReason::NoPairedCandidates
-                            || extensionOutput.abortReason == extension::AbortReason::NoPairedCandidatesAfterAlignment){
-
-                        er.status = ExtendedReadStatus::CandidateAbort;
-                    }else if(extensionOutput.abortReason == extension::AbortReason::MsaNotExtended){
-                        er.status = ExtendedReadStatus::MSANoExtension;
-                    }
-                }else{
-                    er.status = ExtendedReadStatus::LengthAbort;
-                }
-            }
-
-            if(isRepeatedIteration){
-                reinterpret_cast<unsigned char&>(er.status) |= static_cast<unsigned char>(ExtendedReadStatus::Repeated);
-            }
-            
-            extendedReads.emplace_back(std::move(er));
+            extendedReads.emplace_back(extension::makeExtendedReadFromExtensionResult(extensionOutput, opts));
 
         }
                         
