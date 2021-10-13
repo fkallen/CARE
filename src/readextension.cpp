@@ -201,6 +201,8 @@ SerializedObjectStorage extend_cpu_pairedend(
 
     //omp_set_num_threads(1);
 
+    std::atomic<std::size_t> totalNumToRepeat{0};
+
     #pragma omp parallel
     {
         GoodAlignmentProperties goodAlignmentProperties2 = goodAlignmentProperties;
@@ -411,11 +413,16 @@ SerializedObjectStorage extend_cpu_pairedend(
 
         isRepeatedIteration = false;
 
-        std::cerr << "First iteration. insertsizedev: " << extensionOptions.insertSizeStddev 
-            << ", maxextensionPerStep: " << fixedStepsize
-            << ", minCoverageForExtension: " << minCoverageForExtension
-            << ", isLastIteration: " << isLastIteration 
-            << ", extraHashing: " << true << "\n";
+        #pragma omp single
+        {
+
+            std::cerr << "First iteration. insertsizedev: " << extensionOptions.insertSizeStddev 
+                << ", maxextensionPerStep: " << fixedStepsize
+                << ", minCoverageForExtension: " << minCoverageForExtension
+                << ", isLastIteration: " << isLastIteration 
+                << ", extraHashing: " << true << "\n";
+
+        }
         
         while(!(readIdGenerator.empty())){
             auto inputs = init();
@@ -427,9 +434,26 @@ SerializedObjectStorage extend_cpu_pairedend(
             }
         }
 
+
         //fixedStepsize -= 4;
         //minCoverageForExtension += increment;
         std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
+
+        totalNumToRepeat += pairsWhichShouldBeRepeated.size();
+
+        #pragma omp barrier
+
+        #pragma omp single
+        {
+            std::cerr << "Will repeat extension of " << totalNumToRepeat << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
+
+            std::cerr << "Second iteration. insertsizedev: " << extensionOptions.insertSizeStddev 
+            << ", maxextensionPerStep: " << fixedStepsize
+            << ", minCoverageForExtension: " << minCoverageForExtension
+            << ", isLastIteration: " << isLastIteration 
+            << ", extraHashing: " << true << "\n";
+        }
+
 
         isRepeatedIteration = true;
         isLastIteration = true;
@@ -439,14 +463,6 @@ SerializedObjectStorage extend_cpu_pairedend(
 
             readExtender.setMaxExtensionPerStep(fixedStepsize);
             //std::cerr << "fixedStepsize = " << fixedStepsize << "\n";
-
-            std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
-
-            std::cerr << "Second iteration. insertsizedev: " << extensionOptions.insertSizeStddev 
-            << ", maxextensionPerStep: " << fixedStepsize
-            << ", minCoverageForExtension: " << minCoverageForExtension
-            << ", isLastIteration: " << isLastIteration 
-            << ", extraHashing: " << true << "\n";
 
             //isLastIteration = (fixedStepsize <= 4);
 
@@ -466,6 +482,8 @@ SerializedObjectStorage extend_cpu_pairedend(
 
         #pragma omp critical
         {
+            //std::lock_guard<std::mutex> lg(ompCriticalMutex);
+
             totalNumSuccess0 += numSuccess0;
             totalNumSuccess1 += numSuccess1;
             totalNumSuccess01 += numSuccess01;
@@ -492,10 +510,10 @@ SerializedObjectStorage extend_cpu_pairedend(
 
     outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
-    std::cout << "totalNumSuccess0: " << totalNumSuccess0 << std::endl;
-    std::cout << "totalNumSuccess1: " << totalNumSuccess1 << std::endl;
-    std::cout << "totalNumSuccess01: " << totalNumSuccess01 << std::endl;
-    std::cout << "totalNumSuccessRead: " << totalNumSuccessRead << std::endl;
+    // std::cout << "totalNumSuccess0: " << totalNumSuccess0 << std::endl;
+    // std::cout << "totalNumSuccess1: " << totalNumSuccess1 << std::endl;
+    // std::cout << "totalNumSuccess01: " << totalNumSuccess01 << std::endl;
+    // std::cout << "totalNumSuccessRead: " << totalNumSuccessRead << std::endl;
 
     // std::cout << "Extension lengths:\n";
 
