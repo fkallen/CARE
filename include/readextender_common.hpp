@@ -838,7 +838,6 @@ namespace extension{
 
 
     struct ExtensionResultConversionOptions{
-        bool allowOutwardExtension = false;
         bool computedAfterRepetition = false;
     };
 
@@ -849,8 +848,8 @@ namespace extension{
 
         er.readId = extensionOutput.readId1;
         er.mergedFromReadsWithoutMate = extensionOutput.mergedFromReadsWithoutMate;
-        er.extendedSequence = std::move(extensionOutput.extendedRead);
-        er.qualityScores = std::move(extensionOutput.qualityScores);
+        er.setSequence(std::move(extensionOutput.extendedRead));
+        er.setQuality(std::move(extensionOutput.qualityScores));
         er.read1begin = extensionOutput.read1begin;
         er.read1end = extensionOutput.read1begin + extensionOutput.originalLength;
         er.read2begin = extensionOutput.read2begin;
@@ -863,16 +862,16 @@ namespace extension{
         auto printerror = [&](){
             std::cerr << "unexpected error for read id " << er.readId << "\n";
             std::cerr << er.mergedFromReadsWithoutMate << ", " << er.read1begin << ", " << er.read1end << ", " << er.read2begin << ", " << er.read2end << "\n";
-            std::cerr << er.extendedSequence << "\n";
+            std::cerr << er.getSequence() << "\n";
         };
 
         if(
             er.read1begin < 0
-            || er.read1end > int(er.extendedSequence.size())
+            || er.read1end > int(er.getSequence().size())
             || (
                 (er.read2end != -1 && er.read2begin != -1) && (
                     er.read2begin < er.read1begin
-                    || er.read2end > int(er.extendedSequence.size())
+                    || er.read2end > int(er.getSequence().size())
                 )
             )
         ){
@@ -880,11 +879,11 @@ namespace extension{
         }
 
         assert(er.read1begin >= 0);
-        assert(er.read1end <= int(er.extendedSequence.size()));
+        assert(er.read1end <= int(er.getSequence().size()));
         if(er.read2end != -1 && er.read2begin != -1){
             assert(er.read2begin >= 0);
             assert(er.read2begin >= er.read1begin);
-            assert(er.read2end <= int(er.extendedSequence.size()));
+            assert(er.read2end <= int(er.getSequence().size()));
         }
 
         if(extensionOutput.mateHasBeenFound){

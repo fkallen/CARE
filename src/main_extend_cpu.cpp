@@ -153,6 +153,8 @@ int main(int argc, char** argv){
 		("m,memTotal", "Total memory limit in bytes. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: All free memory.",
 		cxxopts::value<std::string>())
 		("mergedoutput", "extension results will not be split into _extended and _remaining", cxxopts::value<bool>()->implicit_value("true"))
+		("allowOutwardExtension", "Will try to fill the gap and extend to the outside"
+			"Default: " + tostring(ExtensionOptions{}.allowOutwardExtension), cxxopts::value<bool>()->implicit_value("true"))		
 
 		("hashloadfactor", "Load factor of hashtables. 0.0 < hashloadfactor < 1.0. Smaller values can improve the runtime at the expense of greater memory usage."
 			"Default: " + std::to_string(MemoryOptions{}.hashtableLoadfactor), cxxopts::value<float>())
@@ -250,8 +252,10 @@ int main(int argc, char** argv){
 	std::cout << "Estimated dataset coverage: " << correctionOptions.estimatedCoverage << "\n";
 	std::cout << "errorfactortuning: " << correctionOptions.estimatedErrorrate << "\n";
 	std::cout << "coveragefactortuning: " << correctionOptions.m_coverage << "\n";
+
 	std::cout << "Insert size: " << extensionOptions.insertSize << "\n";
 	std::cout << "Insert size deviation: " << extensionOptions.insertSizeStddev << "\n";
+	std::cout << "Allow extension outside of gap: " << extensionOptions.allowOutwardExtension << "\n";
 
 	std::cout << "Threads: " << runtimeOptions.threads << "\n";
 	std::cout << "Show progress bar: " << runtimeOptions.showProgress << "\n";

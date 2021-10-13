@@ -40,12 +40,12 @@ namespace care{
 
         Read res;
         res.header = sstream.str();
-        res.sequence = std::move(extendedRead.extendedSequence);
-        if(extendedRead.qualityScores.size() != res.sequence.size()){
+        res.sequence = extendedRead.getSequence();
+        if(extendedRead.getQuality().size() != res.sequence.size()){
             res.quality.resize(res.sequence.length());
             std::fill(res.quality.begin(), res.quality.end(), 'F');
         }else{
-            res.quality = std::move(extendedRead.qualityScores);
+            res.quality = extendedRead.getQuality();
         }
 
         return res;
@@ -563,7 +563,7 @@ std::optional<Read> combineExtendedReadWithOriginalRead(
         return std::nullopt;
     }
 
-    bool extended = readWithId.read.sequence.length() < tmpresults[0].extendedSequence.length();
+    bool extended = readWithId.read.sequence.length() < tmpresults[0].getSequence().length();
 
     if(extended){
         const auto& extendedRead = tmpresults[0];

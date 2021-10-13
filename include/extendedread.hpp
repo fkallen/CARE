@@ -139,6 +139,7 @@ namespace care{
 
 
     struct ExtendedRead{
+    public:
         bool mergedFromReadsWithoutMate = false;
         ExtendedReadStatus status{};
         read_number readId{};
@@ -146,8 +147,12 @@ namespace care{
         int read1end = 0;
         int read2begin = 0;
         int read2end = 0;
-        std::string extendedSequence{};
-        std::string qualityScores{};
+    private:
+        std::string extendedSequence_raw{};
+        std::string qualityScores_raw{};
+        //std::string_view extendedSequence_sv;
+        //std::string_view qualityScores_sv;
+    public:
 
         ExtendedRead() = default;
 
@@ -159,8 +164,8 @@ namespace care{
             if(read1end != rhs.read1end) return false;
             if(read2begin != rhs.read2begin) return false;
             if(read2end != rhs.read2end) return false;
-            if(extendedSequence != rhs.extendedSequence) return false;
-            if(qualityScores != rhs.qualityScores) return false;
+            if(getSequence() != rhs.getSequence()) return false;
+            if(getQuality() != rhs.getQuality()) return false;
             return true;
         }
 
@@ -173,8 +178,8 @@ namespace care{
                 + sizeof(ExtendedReadStatus) //status
                 + sizeof(read_number) //readid
                 + sizeof(int) * 4  //original ranges
-                + sizeof(int) + extendedSequence.length() //sequence
-                + sizeof(int) + qualityScores.length(); // quality scores
+                + sizeof(int) + getSequence().length() //sequence
+                + sizeof(int) + getQuality().length(); // quality scores
         }
 
         std::uint8_t* copyToContiguousMemory(std::uint8_t* ptr, std::uint8_t* endPtr) const{
@@ -200,17 +205,17 @@ namespace care{
                 ptr += sizeof(int);
 
                 int l = 0;
-                l = extendedSequence.length();
+                l = getSequence().length();
                 std::memcpy(ptr, &l, sizeof(int));
                 ptr += sizeof(int);
-                std::memcpy(ptr, extendedSequence.c_str(), sizeof(char) * l);
+                std::memcpy(ptr, getSequence().data(), sizeof(char) * l);
                 ptr += sizeof(char) * l;
 
                 int m = 0;
-                m = qualityScores.length();
+                m = getQuality().length();
                 std::memcpy(ptr, &m, sizeof(int));
                 ptr += sizeof(int);
-                std::memcpy(ptr, qualityScores.c_str(), sizeof(char) * m);
+                std::memcpy(ptr, getQuality().data(), sizeof(char) * m);
                 ptr += sizeof(char) * m;
 
                 return ptr;
@@ -239,16 +244,20 @@ namespace care{
             int l = 0;
             std::memcpy(&l, ptr, sizeof(int));
             ptr += sizeof(int);
-            extendedSequence.resize(l);
-            std::memcpy(&extendedSequence[0], ptr, sizeof(char) * l);
+            extendedSequence_raw.resize(l);
+            std::memcpy(&extendedSequence_raw[0], ptr, sizeof(char) * l);
             ptr += l;
+
+            //extendedSequence_sv = extendedSequence_raw;
 
             int m = 0;
             std::memcpy(&m, ptr, sizeof(int));
             ptr += sizeof(int);
-            qualityScores.resize(m);
-            std::memcpy(&qualityScores[0], ptr, sizeof(char) * m);
+            qualityScores_raw.resize(m);
+            std::memcpy(&qualityScores_raw[0], ptr, sizeof(char) * m);
             ptr += m;
+
+            //qualityScores_sv = qualityScores_raw;
         }
 
         //from serialized object beginning at ptr, return the read id of this object
@@ -264,7 +273,7 @@ namespace care{
 
         void encodeInto(EncodedExtendedRead& target) const{
 
-            const int numEncodedSequenceInts = SequenceHelpers::getEncodedNumInts2Bit(extendedSequence.size());
+            const int numEncodedSequenceInts = SequenceHelpers::getEncodedNumInts2Bit(getSequence().size());
             std::size_t requiredBytes = 0;
             requiredBytes += sizeof(ExtendedReadStatus); // status
             requiredBytes += sizeof(int); // read1begin
@@ -274,7 +283,7 @@ namespace care{
             requiredBytes += sizeof(int); // seq length
             requiredBytes += sizeof(int); // qual length
             requiredBytes += sizeof(unsigned int) * numEncodedSequenceInts; // enc seq
-            requiredBytes += sizeof(char) * qualityScores.size(); //qual
+            requiredBytes += sizeof(char) * getQuality().size(); //qual
 
             assert(requiredBytes < (1u << 31)); // 1 bit reserved for flag
 
@@ -301,17 +310,17 @@ namespace care{
             saveint(read1end);
             saveint(read2begin);
             saveint(read2end);
-            saveint(extendedSequence.size());
-            saveint(qualityScores.size());
+            saveint(getSequence().size());
+            saveint(getQuality().size());
 
             SequenceHelpers::encodeSequence2Bit(
                 reinterpret_cast<unsigned int*>(ptr), 
-                extendedSequence.data(), 
-                extendedSequence.size()
+                getSequence().data(), 
+                getSequence().size()
             );
             ptr += sizeof(unsigned int) * numEncodedSequenceInts;
 
-            ptr = std::copy(qualityScores.begin(), qualityScores.end(), ptr);
+            ptr = std::copy(getQuality().begin(), getQuality().end(), ptr);
 
             assert(target.data.get() + requiredBytes == ptr);
         }
@@ -342,17 +351,61 @@ namespace care{
             loadint(seqlen);
             loadint(quallen);
 
-            extendedSequence.resize(seqlen);
-            qualityScores.resize(quallen);
+            extendedSequence_raw.resize(seqlen);
+            qualityScores_raw.resize(quallen);
 
             const int numEncodedSequenceInts = SequenceHelpers::getEncodedNumInts2Bit(seqlen);
 
-            SequenceHelpers::decode2BitSequence(extendedSequence.data(), reinterpret_cast<const unsigned int*>(ptr), seqlen);
+            SequenceHelpers::decode2BitSequence(extendedSequence_raw.data(), reinterpret_cast<const unsigned int*>(ptr), seqlen);
             ptr += sizeof(unsigned int) * numEncodedSequenceInts;
+            //extendedSequence_sv = extendedSequence_raw;
 
-            std::copy(ptr, ptr + quallen, qualityScores.begin());
+            std::copy(ptr, ptr + quallen, qualityScores_raw.begin());
+            //qualityScores_sv = qualityScores_raw;
 
             assert(rhs.data.get() + rhs.getNumBytes() == ptr + quallen);
+        }
+
+        void removeOutwardExtension(){
+            const int newlength = (read2end == -1) ? extendedSequence_raw.size() : (read2end - read1begin);
+
+            if(qualityScores_raw.size() == extendedSequence_raw.size()){
+                qualityScores_raw.erase(qualityScores_raw.begin(), qualityScores_raw.begin() + read1begin);
+                qualityScores_raw.erase(qualityScores_raw.begin() + newlength, qualityScores_raw.end());
+            }else{
+                assert(qualityScores_raw.size() == 0);
+            }
+
+            extendedSequence_raw.erase(extendedSequence_raw.begin(), extendedSequence_raw.begin() + read1begin);
+            extendedSequence_raw.erase(extendedSequence_raw.begin() + newlength, extendedSequence_raw.end());
+
+            const int curRead1begin = read1begin;
+            read1begin -= curRead1begin;
+            read1end -= curRead1begin;
+            if(read2begin != -1){
+                read2begin -= curRead1begin;
+                read2end -= curRead1begin;
+
+                assert(read2end - read1begin == newlength);
+            }
+        }
+
+        void setSequence(std::string newseq){
+            extendedSequence_raw = std::move(newseq);
+            //extendedSequence_sv = extendedSequence_raw;
+        }
+
+        void setQuality(std::string newqual){
+            qualityScores_raw = std::move(newqual);
+            //qualityScores_sv = qualityScores_raw;
+        }
+
+        std::string_view getSequence() const noexcept{
+            return extendedSequence_raw;
+        }
+
+        std::string_view getQuality() const noexcept{
+            return qualityScores_raw;
         }
     
     };

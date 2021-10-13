@@ -157,6 +157,8 @@ int main(int argc, char** argv){
 		("m,memTotal", "Total memory limit in bytes. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: All free memory.",
 		cxxopts::value<std::string>())
 		("mergedoutput", "extension results will not be split into _extended and _remaining", cxxopts::value<bool>()->implicit_value("true"))
+		("allowOutwardExtension", "Will try to fill the gap and extend to the outside"
+			"Default: " + tostring(ExtensionOptions{}.allowOutwardExtension), cxxopts::value<bool>()->implicit_value("true"))	
 		("warpcore", "Enable warpcore hash tables. 0: Disabled, 1: Enabled. "
 			"Default: " + tostring(RuntimeOptions{}.warpcore),
 		cxxopts::value<int>())
@@ -273,6 +275,7 @@ int main(int argc, char** argv){
 
 	std::cout << "Insert size: " << extensionOptions.insertSize << "\n";
 	std::cout << "Insert size deviation: " << extensionOptions.insertSizeStddev << "\n";
+	std::cout << "Allow extension outside of gap: " << extensionOptions.allowOutwardExtension << "\n";
 
 	std::cout << "Threads: " << runtimeOptions.threads << "\n";
 	std::cout << "Show progress bar: " << runtimeOptions.showProgress << "\n";

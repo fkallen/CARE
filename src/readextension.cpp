@@ -358,13 +358,17 @@ SerializedObjectStorage extend_cpu_pairedend(
                     //assert(extensionOutput.extendedRead.size() > extensionOutput.originalLength);
 
                     extension::ExtensionResultConversionOptions opts;
-                    opts.allowOutwardExtension = true;
                     opts.computedAfterRepetition = isRepeatedIteration;            
                     
                     extendedReads.emplace_back(extension::makeExtendedReadFromExtensionResult(extensionOutput, opts));
 
+                }                              
+            }
+
+            if(!extensionOptions.allowOutwardExtension){
+                for(auto& er : extendedReads){
+                    er.removeOutwardExtension();
                 }
-                              
             }
  
             std::vector<EncodedExtendedRead> encvec(extendedReads.size());

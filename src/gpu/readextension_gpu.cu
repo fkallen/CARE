@@ -142,7 +142,14 @@ void initializeExtenderInput(
 
 
 std::pair< std::vector<ExtendedRead>, std::vector<read_number> >
-makeAndSplitExtensionOutput(GpuReadExtender::TaskData& finishedTasks, GpuReadExtender::RawExtendResult& rawExtendResult, const GpuReadExtender* gpuReadExtender, bool isRepeatedIteration, bool collectPairsToRepeat, cudaStream_t stream){
+makeAndSplitExtensionOutput(
+    GpuReadExtender::TaskData& finishedTasks, 
+    GpuReadExtender::RawExtendResult& rawExtendResult, 
+    const GpuReadExtender* gpuReadExtender, 
+    bool isRepeatedIteration, 
+    bool collectPairsToRepeat, 
+    cudaStream_t stream
+){
 
     nvtx::push_range("constructRawResults", 4);
     gpuReadExtender->constructRawResults(finishedTasks, rawExtendResult, stream);
@@ -177,7 +184,6 @@ makeAndSplitExtensionOutput(GpuReadExtender::TaskData& finishedTasks, GpuReadExt
             //assert(extensionOutput.extendedRead.size() > extensionOutput.originalLength);
 
             extension::ExtensionResultConversionOptions opts;
-            opts.allowOutwardExtension = true;
             opts.computedAfterRepetition = isRepeatedIteration;            
             
             extendedReads.emplace_back(extension::makeExtendedReadFromExtensionResult(extensionOutput, opts));
@@ -440,6 +446,12 @@ SerializedObjectStorage extend_gpu_pairedend(
             pairsWhichShouldBeRepeated.insert(pairsWhichShouldBeRepeated.end(), pairsTmp.begin(), pairsTmp.end());
 
             const std::size_t numExtended = extendedReads.size();
+
+            if(!extensionOptions.allowOutwardExtension){
+                for(auto& er : extendedReads){
+                    er.removeOutwardExtension();
+                }
+            }
 
             std::vector<EncodedExtendedRead> encvec(numExtended);
             for(std::size_t i = 0; i < numExtended; i++){

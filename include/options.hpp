@@ -93,10 +93,11 @@ namespace care
 
     struct ExtensionOptions
     {
-        int insertSize;
-        int insertSizeStddev;
-        int fixedStddev;
-        int fixedStepsize;
+        bool allowOutwardExtension{};
+        int insertSize{};
+        int insertSizeStddev{};
+        int fixedStddev{};
+        int fixedStepsize{};
     };
 
     struct RuntimeOptions

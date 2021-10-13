@@ -165,6 +165,10 @@ namespace args{
             result.fixedStepsize = pr["fixedStepsize"].as<int>();
         }
 
+        if(pr.count("allowOutwardExtension")){
+            result.allowOutwardExtension = pr["allowOutwardExtension"].as<bool>();
+        }
+
         return result;
 	}
 
