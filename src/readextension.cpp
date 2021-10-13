@@ -140,7 +140,7 @@ SerializedObjectStorage extend_cpu_pairedend(
 
     SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, fileOptions.tempdirectory + "/");
 
-    const std::size_t numReadsToProcess = 100;
+    const std::size_t numReadsToProcess = 100000;
     //const std::size_t numReadsToProcess = readStorage.getNumberOfReads();
 
     auto readIdGenerator = makeIteratorRangeTraversal(
@@ -338,14 +338,14 @@ SerializedObjectStorage extend_cpu_pairedend(
         };
 
         auto output = [&](auto extensionResults){
-            const int numresults = extensionResults.size();
+            const std::size_t maxNumExtendedReads = extensionResults.size();
 
             std::vector<ExtendedRead> extendedReads;
-            extendedReads.reserve(numresults);
+            extendedReads.reserve(maxNumExtendedReads);
 
             int repeated = 0;
 
-            for(int i = 0; i < numresults; i++){
+            for(std::size_t i = 0; i < maxNumExtendedReads; i++){
                 auto& extensionOutput = extensionResults[i];
                 const int extendedReadLength = extensionOutput.extendedRead.size();
                 //if(extendedReadLength == extensionOutput.originalLength){
@@ -362,7 +362,7 @@ SerializedObjectStorage extend_cpu_pairedend(
                     er.readId = extensionOutput.readId1;
                     er.mergedFromReadsWithoutMate = extensionOutput.mergedFromReadsWithoutMate;
                     er.extendedSequence = std::move(extensionOutput.extendedRead);
-                    //er.qualityScores = std::move(extensionOutput.qualityScores);
+                    er.qualityScores = std::move(extensionOutput.qualityScores);
                     er.read1begin = extensionOutput.read1begin;
                     er.read1end = extensionOutput.read1begin + extensionOutput.originalLength;
                     er.read2begin = extensionOutput.read2begin;
@@ -397,31 +397,17 @@ SerializedObjectStorage extend_cpu_pairedend(
                 }
                               
             }
+ 
+            std::vector<EncodedExtendedRead> encvec(extendedReads.size());
+            for(std::size_t i = 0; i < extendedReads.size(); i++){
+                extendedReads[i].encodeInto(encvec[i]);
+            }
 
-            auto outputfunc = [&, vec = std::move(extendedReads)]() {
+            auto outputfunc = [&, vec = std::move(extendedReads), encvec = std::move(encvec)](){
                 std::vector<std::uint8_t> tempbuffer(256);
 
-                // auto debugcopy = vec;
-
-                // for(auto& er : debugcopy){
-                //     //debug, save canonical extended sequence
-                //     auto& origExtended = er.extendedSequence;
-                //     auto revcExtended = SequenceHelpers::reverseComplementSequenceDecoded(er.extendedSequence.data(), er.extendedSequence.size());
-                //     if(revcExtended < origExtended){
-                //         std::swap(origExtended, revcExtended);
-                //     }
-
-
-                //     const std::size_t serializedSize = er.getSerializedNumBytes();
-                //     tempbuffer.resize(serializedSize);
-
-                //     auto end = er.copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
-                //     assert(end != nullptr);
-
-                //     partialResults.insert(tempbuffer.data(), end);
-                // }
-
-                for(auto& er : vec){
+                #if 0
+                for(const auto& er : vec){
                     const std::size_t serializedSize = er.getSerializedNumBytes();
                     tempbuffer.resize(serializedSize);
 
@@ -430,6 +416,17 @@ SerializedObjectStorage extend_cpu_pairedend(
 
                     partialResults.insert(tempbuffer.data(), end);
                 }
+                #else
+                for(const auto& er : encvec){
+                    const std::size_t serializedSize = er.getSerializedNumBytes();
+                    tempbuffer.resize(serializedSize);
+
+                    auto end = er.copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
+                    assert(end != nullptr);
+
+                    partialResults.insert(tempbuffer.data(), end);
+                }
+                #endif
             };
 
             outputThread.enqueue(

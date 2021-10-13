@@ -152,18 +152,18 @@ makeAndSplitExtensionOutput(GpuReadExtender::TaskData& finishedTasks, GpuReadExt
 
     std::vector<extension::ExtendResult> extensionResults = gpuReadExtender->convertRawExtendResults(rawExtendResult);
 
-    const int numresults = extensionResults.size();
+    const std::size_t maxNumExtendedReads = extensionResults.size();
 
     std::vector<read_number> pairsWhichShouldBeRepeatedTemp;
 
     std::vector<ExtendedRead> extendedReads;
-    extendedReads.reserve(numresults);
+    extendedReads.reserve(maxNumExtendedReads);
 
     int repeated = 0;
 
     nvtx::push_range("convert extension results", 7);
 
-    for(int i = 0; i < numresults; i++){
+    for(std::size_t i = 0; i < maxNumExtendedReads; i++){
         auto& extensionOutput = extensionResults[i];
         const int extendedReadLength = extensionOutput.extendedRead.size();
         //if(extendedReadLength == extensionOutput.originalLength){
@@ -183,7 +183,7 @@ makeAndSplitExtensionOutput(GpuReadExtender::TaskData& finishedTasks, GpuReadExt
             er.readId = extensionOutput.readId1;
             er.mergedFromReadsWithoutMate = extensionOutput.mergedFromReadsWithoutMate;
             er.extendedSequence = std::move(extensionOutput.extendedRead);
-            //er.qualityScores = std::move(extensionOutput.qualityScores);
+            er.qualityScores = std::move(extensionOutput.qualityScores);
             er.read1begin = extensionOutput.read1begin;
             er.read1end = extensionOutput.read1begin + extensionOutput.originalLength;
             er.read2begin = extensionOutput.read2begin;
@@ -361,11 +361,12 @@ SerializedObjectStorage extend_gpu_pairedend(
 
     constexpr bool isPairedEnd = true;
 
-    auto submitReadyResults = [&](std::vector<ExtendedRead> extendedReads){
+    auto submitReadyResults = [&](std::vector<ExtendedRead> extendedReads, std::vector<EncodedExtendedRead> encodedExtendedReads){
         outputThread.enqueue(
-            [&, vec = std::move(extendedReads)](){
+            [&, vec = std::move(extendedReads), encvec = std::move(encodedExtendedReads)](){
                 std::vector<std::uint8_t> tempbuffer(256);
 
+                #if 0
                 for(const auto& er : vec){
                     const std::size_t serializedSize = er.getSerializedNumBytes();
                     tempbuffer.resize(serializedSize);
@@ -375,26 +376,17 @@ SerializedObjectStorage extend_gpu_pairedend(
 
                     partialResults.insert(tempbuffer.data(), end);
                 }
+                #else
+                for(const auto& er : encvec){
+                    const std::size_t serializedSize = er.getSerializedNumBytes();
+                    tempbuffer.resize(serializedSize);
 
-                // auto debugcopy = vec;
+                    auto end = er.copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
+                    assert(end != nullptr);
 
-                // for(auto& er : debugcopy){
-                //     //debug, save canonical extended sequence
-                //     auto& origExtended = er.extendedSequence;
-                //     auto revcExtended = SequenceHelpers::reverseComplementSequenceDecoded(er.extendedSequence.data(), er.extendedSequence.size());
-                //     if(revcExtended < origExtended){
-                //         std::swap(origExtended, revcExtended);
-                //     }
-
-
-                //     const std::size_t serializedSize = er.getSerializedNumBytes();
-                //     tempbuffer.resize(serializedSize);
-
-                //     auto end = er.copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
-                //     assert(end != nullptr);
-
-                //     partialResults.insert(tempbuffer.data(), end);
-                // }
+                    partialResults.insert(tempbuffer.data(), end);
+                }
+                #endif
             }
         );
     };
@@ -509,7 +501,12 @@ SerializedObjectStorage extend_gpu_pairedend(
 
             const std::size_t numExtended = extendedReads.size();
 
-            submitReadyResults(std::move(extendedReads));
+            std::vector<EncodedExtendedRead> encvec(numExtended);
+            for(std::size_t i = 0; i < numExtended; i++){
+                extendedReads[i].encodeInto(encvec[i]);
+            }
+
+            submitReadyResults(std::move(extendedReads), std::move(encvec));
 
             progressThread.addProgress(numExtended);
 
@@ -631,8 +628,8 @@ SerializedObjectStorage extend_gpu_pairedend(
     {
         std::vector<std::future<std::vector<read_number>>> futures;
 
-        //const std::size_t numReadsToProcess = 1000000;
-        const std::size_t numReadsToProcess = gpuReadStorage.getNumberOfReads();
+        const std::size_t numReadsToProcess = 100000;
+        //const std::size_t numReadsToProcess = gpuReadStorage.getNumberOfReads();
 
         // std::vector<read_number> idsToExtend{
         //     0, 1, 22, 23, 44, 45, 68, 69, 78, 79, 86, 87, 98, 99,

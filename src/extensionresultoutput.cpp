@@ -447,8 +447,16 @@ void writeExtensionResultsToFile(
 
     for(std::size_t itemnumber = 0; itemnumber < partialResults.size(); itemnumber++){
         const std::uint8_t* serializedPtr = partialResults.getPointer(itemnumber);
+
         ExtendedRead extendedRead;
+
+        #if 0
         extendedRead.copyFromContiguousMemory(serializedPtr);
+        #else
+        EncodedExtendedRead encext;
+        encext.copyFromContiguousMemory(serializedPtr);
+        extendedRead.decode(encext);
+        #endif
 
         constexpr unsigned char foundMateStatus = static_cast<unsigned char>(ExtendedReadStatus::FoundMate);
         constexpr unsigned char repeatedStatus = static_cast<unsigned char>(ExtendedReadStatus::Repeated);
@@ -581,7 +589,8 @@ void constructOutputFileFromExtensionResults(
     if(outputToSingleFile){                      
         writeExtensionResultsToFile(
             partialResults, 
-            FileFormat::FASTA, //outputFormat,
+            //FileFormat::FASTA, 
+            outputFormat,
             extendedOutputfile
         );
     }else{
