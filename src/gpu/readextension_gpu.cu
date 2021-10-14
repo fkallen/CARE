@@ -141,13 +141,17 @@ void initializeExtenderInput(
 };
 
 
-std::pair< std::vector<ExtendedRead>, std::vector<read_number> >
-makeAndSplitExtensionOutput(
+struct SplittedExtensionOutput{
+    std::vector<ExtendedRead> extendedReads{}; //mate has been found
+    std::vector<read_number> idsOfPartiallyExtendedReads; //extended a bit, but did not find mate
+    std::vector<read_number> idsOfNotExtendedReads; //did not extend even a single base
+};
+
+SplittedExtensionOutput makeAndSplitExtensionOutput(
     GpuReadExtender::TaskData& finishedTasks, 
     GpuReadExtender::RawExtendResult& rawExtendResult, 
     const GpuReadExtender* gpuReadExtender, 
     bool isRepeatedIteration, 
-    bool collectPairsToRepeat, 
     cudaStream_t stream
 ){
 
@@ -159,42 +163,38 @@ makeAndSplitExtensionOutput(
 
     std::vector<extension::ExtendResult> extensionResults = gpuReadExtender->convertRawExtendResults(rawExtendResult);
 
+
     const std::size_t maxNumExtendedReads = extensionResults.size();
+    SplittedExtensionOutput returnvalue{};
 
-    std::vector<read_number> pairsWhichShouldBeRepeatedTemp;
-
-    std::vector<ExtendedRead> extendedReads;
-    extendedReads.reserve(maxNumExtendedReads);
-
-    int repeated = 0;
+    returnvalue.extendedReads.reserve(maxNumExtendedReads);
 
     nvtx::push_range("convert extension results", 7);
 
     for(std::size_t i = 0; i < maxNumExtendedReads; i++){
         auto& extensionOutput = extensionResults[i];
         const int extendedReadLength = extensionOutput.extendedRead.size();
-        //if(extendedReadLength == extensionOutput.originalLength){
-        //if(!extensionOutput.mateHasBeenFound){
-        if(extendedReadLength > extensionOutput.originalLength && !extensionOutput.mateHasBeenFound && collectPairsToRepeat){
-            //do not insert directly into pairsWhichShouldBeRepeated. it causes an infinite loop
-            pairsWhichShouldBeRepeatedTemp.push_back(extensionOutput.readId1);
-            pairsWhichShouldBeRepeatedTemp.push_back(extensionOutput.readId2);
-            repeated++;
+
+        if(extendedReadLength > extensionOutput.originalLength){
+            if(extensionOutput.mateHasBeenFound){
+                extension::ExtensionResultConversionOptions opts;
+                opts.computedAfterRepetition = isRepeatedIteration;            
+                
+                returnvalue.extendedReads.push_back(extension::makeExtendedReadFromExtensionResult(extensionOutput, opts));
+            }else{
+                returnvalue.idsOfPartiallyExtendedReads.push_back(extensionOutput.readId1);
+                returnvalue.idsOfPartiallyExtendedReads.push_back(extensionOutput.readId2);
+            }
         }else{
-            //assert(extensionOutput.extendedRead.size() > extensionOutput.originalLength);
-
-            extension::ExtensionResultConversionOptions opts;
-            opts.computedAfterRepetition = isRepeatedIteration;            
-            
-            extendedReads.emplace_back(extension::makeExtendedReadFromExtensionResult(extensionOutput, opts));
-
+            returnvalue.idsOfNotExtendedReads.push_back(extensionOutput.readId1);
+            returnvalue.idsOfNotExtendedReads.push_back(extensionOutput.readId2);
         }
                         
     }
     
     nvtx::pop_range();
 
-    return std::make_pair(std::move(extendedReads), std::move(pairsWhichShouldBeRepeatedTemp));
+    return returnvalue;
 }
 
 
@@ -307,7 +307,11 @@ SerializedObjectStorage extend_gpu_pairedend(
 
     constexpr bool isPairedEnd = true;
 
-    auto submitReadyResults = [&](std::vector<ExtendedRead> extendedReads, std::vector<EncodedExtendedRead> encodedExtendedReads){
+    auto submitReadyResults = [&](
+        std::vector<ExtendedRead> extendedReads, 
+        std::vector<EncodedExtendedRead> encodedExtendedReads,
+        std::vector<read_number> idsOfNotExtendedReads
+    ){
         outputThread.enqueue(
             [&, vec = std::move(extendedReads), encvec = std::move(encodedExtendedReads)](){
                 std::vector<std::uint8_t> tempbuffer(256);
@@ -441,24 +445,32 @@ SerializedObjectStorage extend_gpu_pairedend(
 
             nvtx::push_range("output", 5);
 
-            auto [extendedReads, pairsTmp] = makeAndSplitExtensionOutput(finishedTasks, rawExtendResult, gpudata.gpuReadExtender.get(), isRepeatedIteration, !isLastIteration, stream);
+            SplittedExtensionOutput splittedExtOutput = makeAndSplitExtensionOutput(finishedTasks, rawExtendResult, gpudata.gpuReadExtender.get(), isRepeatedIteration, stream);
 
-            pairsWhichShouldBeRepeated.insert(pairsWhichShouldBeRepeated.end(), pairsTmp.begin(), pairsTmp.end());
+            pairsWhichShouldBeRepeated.insert(
+                pairsWhichShouldBeRepeated.end(), 
+                splittedExtOutput.idsOfPartiallyExtendedReads.begin(), 
+                splittedExtOutput.idsOfPartiallyExtendedReads.end()
+            );
 
-            const std::size_t numExtended = extendedReads.size();
+            const std::size_t numExtended = splittedExtOutput.extendedReads.size();
 
             if(!extensionOptions.allowOutwardExtension){
-                for(auto& er : extendedReads){
+                for(auto& er : splittedExtOutput.extendedReads){
                     er.removeOutwardExtension();
                 }
             }
 
             std::vector<EncodedExtendedRead> encvec(numExtended);
             for(std::size_t i = 0; i < numExtended; i++){
-                extendedReads[i].encodeInto(encvec[i]);
+                splittedExtOutput.extendedReads[i].encodeInto(encvec[i]);
             }
 
-            submitReadyResults(std::move(extendedReads), std::move(encvec));
+            submitReadyResults(
+                std::move(splittedExtOutput.extendedReads), 
+                std::move(encvec),
+                std::move(splittedExtOutput.idsOfNotExtendedReads)
+            );
 
             progressThread.addProgress(numExtended);
 
@@ -655,7 +667,7 @@ SerializedObjectStorage extend_gpu_pairedend(
 
         const bool extraHashing = true;
 
-        isLastIteration = true;
+        isLastIteration = false;
         constexpr bool isRepeatedIteration = true;
         //iterationConfig.maxextensionPerStep = 16;
 
