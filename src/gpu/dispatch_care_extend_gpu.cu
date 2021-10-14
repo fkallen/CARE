@@ -2,19 +2,19 @@
 #include <gpu/gpuminhasherconstruction.cuh>
 #include <gpu/fakegpuminhasher.cuh>
 #include <gpu/cudaerrorcheck.cuh>
+#include <gpu/multigpureadstorage.cuh>
+#include <gpu/readextension_gpu.hpp>
 
 #include <config.hpp>
 #include <options.hpp>
 #include <readlibraryio.hpp>
 #include <memorymanagement.hpp>
-
-#include <gpu/multigpureadstorage.cuh>
+#include <threadpool.hpp>
 #include <chunkedreadstorageconstruction.hpp>
 #include <chunkedreadstorage.hpp>
-
+#include <serializedobjectstorage.hpp>
 #include <rangegenerator.hpp>
 
-#include <gpu/readextension_gpu.hpp>
 #include <extendedread.hpp>
 #include <extensionresultoutput.hpp>
 #include <sortserializedresults.hpp>
@@ -341,96 +341,252 @@ namespace care{
 
         helpers::CpuTimer step2timer("STEP2");
 
-        auto partialResults = gpu::extend_gpu(
-            goodAlignmentProperties, 
-            correctionOptions,
-            extensionOptions,
-            runtimeOptions, 
-            fileOptions, 
-            memoryOptions, 
-            *gpuMinhasher, 
-            gpuReadStorage
-        );
+        const auto rsMemInfo = gpuReadStorage.getMemoryInfo();
+        const auto mhMemInfo = gpuMinhasher->getMemoryInfo();
 
-        step2timer.print();
-
-        std::cout << "Extension throughput : ~" << (gpuReadStorage.getNumberOfReads() / step2timer.elapsed()) << " reads/second.\n"; //TODO: paired end? numreads / 2 ?
-    
-        std::cerr << "Constructed " << partialResults.size() << " extensions. ";
-        std::cerr << "They occupy a total of " << (partialResults.dataBytes() + partialResults.offsetBytes()) << " bytes\n";
-
-        minhasherAndType.first.reset();
-        gpuMinhasher = nullptr;
-        gpuReadStorage.destroy();
-        cpuReadStorage.reset();   
-
-        //Merge corrected reads with input file to generate output file
-
-        const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
-        const auto partialResultMemUsage = partialResults.getMemoryInfo();
-
-        // std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
-        // std::cerr << "memoryLimitOption = " << memoryOptions.memoryTotalLimit << "\n";
-        // std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
-
-        std::size_t memoryForSorting = std::min(
-            availableMemoryInBytes,
-            memoryOptions.memoryTotalLimit - partialResultMemUsage.host
-        );
-
-        if(memoryForSorting > 1*(std::size_t(1) << 30)){
-            memoryForSorting = memoryForSorting - 1*(std::size_t(1) << 30);
+        std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
+        if(memoryAvailableBytesHost > rsMemInfo.host){
+            memoryAvailableBytesHost -= rsMemInfo.host;
+        }else{
+            memoryAvailableBytesHost = 0;
         }
-        std::cerr << "memoryForSorting = " << memoryForSorting << "\n"; 
-
-        std::cout << "STEP 3: Constructing output file(s)" << std::endl;
-
-        helpers::CpuTimer step3Timer("STEP3");
-
-        helpers::CpuTimer sorttimer("sort_results_by_read_id");
-
-        sortSerializedResultsByReadIdAscending<ExtendedRead>(
-            partialResults,
-            memoryForSorting
-        );
-
-        sorttimer.print();
-
-        std::vector<FileFormat> formats;
-        for(const auto& inputfile : fileOptions.inputfiles){
-            formats.emplace_back(getFileFormat(inputfile));
-        }
-        std::vector<std::string> outputfiles;
-        for(const auto& outputfilename : fileOptions.outputfilenames){
-            outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
+        if(memoryAvailableBytesHost > mhMemInfo.host){
+            memoryAvailableBytesHost -= mhMemInfo.host;
+        }else{
+            memoryAvailableBytesHost = 0;
         }
 
-        auto outputFormat = getFileFormat(fileOptions.inputfiles[0]);
-        //no gz output
-        if(outputFormat == FileFormat::FASTQGZ)
-            outputFormat = FileFormat::FASTQ;
-        if(outputFormat == FileFormat::FASTAGZ)
-            outputFormat = FileFormat::FASTA;
+        std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
+        std::size_t memoryForPartialResultsInBytes = 0;
 
-        //read extender does not produce longer quality scores -> only output fasta format
-        //if(outputFormat == FileFormat::FASTQGZ)
-           // outputFormat = FileFormat::FASTQ;
+        if(availableMemoryInBytes > 3*(std::size_t(1) << 30)){
+            memoryForPartialResultsInBytes = availableMemoryInBytes - 3*(std::size_t(1) << 30);
+        }
 
-        const std::string extendedOutputfile = fileOptions.outputdirectory + "/" + fileOptions.extendedReadsOutputfilename;
+        std::cerr << "Partial results may occupy " << (memoryForPartialResultsInBytes /1024. / 1024. / 1024.) 
+            << " GB in memory. Remaining partial results will be stored in temp directory. \n";
 
-        constructOutputFileFromExtensionResults(
-            fileOptions.inputfiles,            
-            partialResults, 
-            outputFormat, 
-            extendedOutputfile,
-            outputfiles,
-            fileOptions.pairType, 
-            fileOptions.mergedoutput
-        );
+        const std::size_t memoryLimitData = memoryForPartialResultsInBytes * 0.75;
+        const std::size_t memoryLimitOffsets = memoryForPartialResultsInBytes * 0.25;
 
-        step3Timer.print();
+        if(extensionOptions.sortedOutput){
 
-        std::cout << "Construction of output file(s) finished." << std::endl;
+            SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, fileOptions.tempdirectory + "/");
+            std::vector<read_number> notExtendedIds;
+
+            BackgroundThread outputThread(true);
+
+            auto submitReadyResults = [&](
+                std::vector<ExtendedRead> extendedReads, 
+                std::vector<EncodedExtendedRead> encodedExtendedReads,
+                std::vector<read_number> idsOfNotExtendedReads
+            ){
+                outputThread.enqueue(
+                    [&, 
+                        vec = std::move(extendedReads), 
+                        encvec = std::move(encodedExtendedReads),
+                        idsOfNotExtendedReads = std::move(idsOfNotExtendedReads)
+                    ](){
+                        notExtendedIds.insert(notExtendedIds.end(), idsOfNotExtendedReads.begin(), idsOfNotExtendedReads.end());
+
+                        std::vector<std::uint8_t> tempbuffer(256);
+
+                        for(const auto& er : encvec){
+                            const std::size_t serializedSize = er.getSerializedNumBytes();
+                            tempbuffer.resize(serializedSize);
+
+                            auto end = er.copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
+                            assert(end != nullptr);
+
+                            partialResults.insert(tempbuffer.data(), end);
+                        }
+                    }
+                );
+            };
+
+            gpu::extend_gpu(
+                goodAlignmentProperties, 
+                correctionOptions,
+                extensionOptions,
+                runtimeOptions, 
+                fileOptions, 
+                memoryOptions, 
+                *gpuMinhasher, 
+                gpuReadStorage,
+                submitReadyResults
+            );
+
+            outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
+
+            step2timer.print();
+
+            std::cout << "Extension throughput : ~" << (gpuReadStorage.getNumberOfReads() / step2timer.elapsed()) << " reads/second.\n"; //TODO: paired end? numreads / 2 ?
+        
+            std::cerr << "Constructed " << partialResults.size() << " extensions. ";
+            std::cerr << "They occupy a total of " << (partialResults.dataBytes() + partialResults.offsetBytes()) << " bytes\n";
+
+            minhasherAndType.first.reset();
+            gpuMinhasher = nullptr;
+            gpuReadStorage.destroy();
+            cpuReadStorage.reset();   
+
+            //Merge corrected reads with input file to generate output file
+
+            availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
+            const auto partialResultMemUsage = partialResults.getMemoryInfo();
+
+            // std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
+            // std::cerr << "memoryLimitOption = " << memoryOptions.memoryTotalLimit << "\n";
+            // std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
+
+            std::size_t memoryForSorting = std::min(
+                availableMemoryInBytes,
+                memoryOptions.memoryTotalLimit - partialResultMemUsage.host
+            );
+
+            if(memoryForSorting > 1*(std::size_t(1) << 30)){
+                memoryForSorting = memoryForSorting - 1*(std::size_t(1) << 30);
+            }
+            std::cerr << "memoryForSorting = " << memoryForSorting << "\n"; 
+
+            std::cout << "STEP 3: Constructing output file(s)" << std::endl;
+
+            helpers::CpuTimer step3Timer("STEP3");
+
+            helpers::CpuTimer sorttimer("sort_results_by_read_id");
+
+            sortSerializedResultsByReadIdAscending<ExtendedRead>(
+                partialResults,
+                memoryForSorting
+            );
+
+
+            sorttimer.print();
+
+            std::vector<FileFormat> formats;
+            for(const auto& inputfile : fileOptions.inputfiles){
+                formats.emplace_back(getFileFormat(inputfile));
+            }
+            std::vector<std::string> outputfiles;
+            for(const auto& outputfilename : fileOptions.outputfilenames){
+                outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
+            }
+
+            auto outputFormat = getFileFormat(fileOptions.inputfiles[0]);
+            //no gz output
+            if(outputFormat == FileFormat::FASTQGZ)
+                outputFormat = FileFormat::FASTQ;
+            if(outputFormat == FileFormat::FASTAGZ)
+                outputFormat = FileFormat::FASTA;
+
+            //read extender does not produce longer quality scores -> only output fasta format
+            //if(outputFormat == FileFormat::FASTQGZ)
+            // outputFormat = FileFormat::FASTQ;
+
+            const std::string extendedOutputfile = fileOptions.outputdirectory + "/" + fileOptions.extendedReadsOutputfilename;
+
+            if(extensionOptions.outputRemainingReads){
+                std::sort(notExtendedIds.begin(), notExtendedIds.end());
+
+                constructOutputFileFromExtensionResultsNew1(
+                    fileOptions.inputfiles,
+                    partialResults, 
+                    notExtendedIds,
+                    outputFormat, 
+                    extendedOutputfile,
+                    outputfiles,
+                    fileOptions.pairType
+                );
+            }else{
+                constructOutputFileFromExtensionResultsNew1(
+                    partialResults,
+                    outputFormat, 
+                    extendedOutputfile
+                );
+            }
+
+            step3Timer.print();
+
+            std::cout << "Construction of output file(s) finished." << std::endl;
+        }else{
+            BackgroundThread outputThread(true);
+
+            auto outputFormat = getFileFormat(fileOptions.inputfiles[0]);
+            //no gz output
+            if(outputFormat == FileFormat::FASTQGZ)
+                outputFormat = FileFormat::FASTQ;
+            if(outputFormat == FileFormat::FASTAGZ)
+                outputFormat = FileFormat::FASTA;
+
+            const std::string extendedOutputfile = fileOptions.outputdirectory + "/" + fileOptions.extendedReadsOutputfilename;
+
+            std::unique_ptr<SequenceFileWriter> writer = makeSequenceWriter(
+                extendedOutputfile,
+                outputFormat
+            );
+
+            std::vector<read_number> notExtendedIds;
+
+            auto submitReadyResults = [&](
+                std::vector<ExtendedRead> extendedReads, 
+                std::vector<EncodedExtendedRead> encodedExtendedReads,
+                std::vector<read_number> idsOfNotExtendedReads
+            ){
+                outputThread.enqueue(
+                    [&, 
+                        vec = std::move(extendedReads), 
+                        encvec = std::move(encodedExtendedReads),
+                        idsOfNotExtendedReads = std::move(idsOfNotExtendedReads)
+                    ](){
+                        notExtendedIds.insert(notExtendedIds.end(), idsOfNotExtendedReads.begin(), idsOfNotExtendedReads.end());
+
+                        std::vector<std::uint8_t> tempbuffer(256);
+
+                        for(const auto& er : vec){
+                            writer->writeRead(makeOutputReadFromExtendedRead(er));
+                        }
+                    }
+                );
+            };
+
+            gpu::extend_gpu(
+                goodAlignmentProperties, 
+                correctionOptions,
+                extensionOptions,
+                runtimeOptions, 
+                fileOptions, 
+                memoryOptions, 
+                *gpuMinhasher, 
+                gpuReadStorage,
+                submitReadyResults
+            );
+
+            outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
+
+            step2timer.print();
+
+            std::cout << "Extension throughput : ~" << (gpuReadStorage.getNumberOfReads() / step2timer.elapsed()) << " reads/second.\n"; //TODO: paired end? numreads / 2 ?
+
+            if(extensionOptions.outputRemainingReads){
+
+                std::sort(notExtendedIds.begin(), notExtendedIds.end());
+
+                std::vector<std::string> outputfiles;
+                for(const auto& outputfilename : fileOptions.outputfilenames){
+                    outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
+                }
+            
+                outputUnchangedReadPairs(
+                    fileOptions.inputfiles,
+                    notExtendedIds,
+                    outputFormat,
+                    outputfiles[0]
+                );
+
+            }
+
+            std::cout << "Construction of output file(s) finished." << std::endl;
+        }
 
     }
 

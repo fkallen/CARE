@@ -4,14 +4,23 @@
 
 #include <config.hpp>
 #include <options.hpp>
-#include <serializedobjectstorage.hpp>
+#include <extendedread.hpp>
+
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/gpureadstorage.cuh>
 
+#include <functional>
+
 namespace care{
 namespace gpu{
+
+    using SubmitReadyExtensionResultsCallback = std::function<void(
+        std::vector<ExtendedRead> extendedReads, 
+        std::vector<EncodedExtendedRead> encodedExtendedReads,
+        std::vector<read_number> idsOfNotExtendedReads
+    )>;
     
-    SerializedObjectStorage extend_gpu(
+    void extend_gpu(
         const GoodAlignmentProperties& goodAlignmentProperties,
         const CorrectionOptions& correctionOptions,
         const ExtensionOptions& extensionOptions,
@@ -19,7 +28,8 @@ namespace gpu{
         const FileOptions& fileOptions,
         const MemoryOptions& memoryOptions,
         const GpuMinhasher& minhasher,
-        const GpuReadStorage& gpuReadStorage
+        const GpuReadStorage& gpuReadStorage,
+        SubmitReadyExtensionResultsCallback submitReadyResults //needs to be thread-safe
     );
 
 

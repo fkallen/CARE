@@ -423,13 +423,21 @@ void mergeSerializedExtensionResultsWithOriginalReads_multithreaded(
 
                     const auto dist = std::distance(inputBatch->items.begin()+ inputBatch->processedItems, first1);
 
-                    ReadWithId* matePtr = nullptr;
-                    if(pairmode == SequencePairType::PairedEnd){                            
-                        matePtr = inputBatch->items2.data() + inputBatch->processedItems + dist;
-                    }
+                    // ReadWithId* matePtr = nullptr;
+                    // if(pairmode == SequencePairType::PairedEnd){                            
+                    //     matePtr = inputBatch->items2.data() + inputBatch->processedItems + dist;
+                    // }
 
-                    inputBatch->extendedReads[inputBatch->processedItems + dist] 
-                        = combineResultsWithRead(buffer, readWithId, matePtr);
+                    assert(buffer.size() <=1);
+
+                    if(buffer.size() == 1){
+
+                        inputBatch->extendedReads[inputBatch->processedItems + dist] 
+                            //= combineResultsWithRead(buffer, readWithId, matePtr);
+                            = combineResultsWithRead(buffer[0]);
+                    }else{
+                        inputBatch->extendedReads[inputBatch->processedItems + dist] = std::nullopt;
+                    }
 
                     ++first1;
                 }
@@ -544,20 +552,21 @@ void writeExtensionResultsToFile(
 
 
 std::optional<Read> combineExtendedReadWithOriginalRead(
-    std::vector<ExtendedRead>& tmpresults, 
-    const ReadWithId& readWithId
+    const ExtendedRead& extendedRead
 ){
-    if(tmpresults.size() == 0){
-        return std::nullopt;
-    }
+    // if(tmpresults.size() == 0){
+    //     return std::nullopt;
+    // }
 
-    bool extended = readWithId.read.sequence.length() < tmpresults[0].getSequence().length();
+    //bool extended = readWithId.read.sequence.length() < tmpresults[0].getSequence().length();
 
-    if(extended){
-        const auto& extendedRead = tmpresults[0];
+    const int extendedlength = extendedRead.getSequence().length();
+    const int originallength = extendedRead.read1end - extendedRead.read1begin;
 
+    if(originallength< extendedlength){
         return std::make_optional(makeOutputReadFromExtendedRead(extendedRead));
     }else{
+        assert(false);
         return std::nullopt;
     }
 }
@@ -594,11 +603,13 @@ void constructOutputFileFromExtensionResults(
 
         std::map<ExtendedReadStatus, std::int64_t> statusHistogram;
 
-        auto combine = [&](std::vector<ExtendedRead>& tmpresults, const ReadWithId& readWithId, ReadWithId* /*mate*/){
-            //statusHistogram[tmpresults[0].status]++;
+        // auto combine = [&](std::vector<ExtendedRead>& tmpresults, const ReadWithId& readWithId, ReadWithId* /*mate*/){
+        //     //statusHistogram[tmpresults[0].status]++;
 
-            return combineExtendedReadWithOriginalRead(tmpresults, readWithId);
-        };
+        //     return combineExtendedReadWithOriginalRead(tmpresults, readWithId);
+        // };
+
+        
 
         mergeSerializedExtensionResultsWithOriginalReads_multithreaded<ExtendedRead>(
             originalReadFiles,
@@ -607,7 +618,7 @@ void constructOutputFileFromExtensionResults(
             extendedOutputfile,
             outputfiles,
             pairmode,
-            combine,
+            combineExtendedReadWithOriginalRead,
             origIdResultIdLessThan
         );
 
@@ -621,6 +632,113 @@ void constructOutputFileFromExtensionResults(
         // }
     }
 
+}
+
+
+
+
+
+
+void outputUnchangedReadPairs(
+    const std::vector<std::string>& originalReadFiles,
+    const std::vector<read_number>& idsToOutput,
+    FileFormat outputFormat,
+    const std::string& outputfile
+){
+
+    assert(idsToOutput.size() % 2 == 0);
+
+    helpers::CpuTimer mergetimer("Writing remaining reads to file");
+
+    PairedInputReader pairedInputReader(originalReadFiles);
+    std::unique_ptr<SequenceFileWriter> extendedReadWriter = makeSequenceWriter(outputfile, outputFormat);
+
+    for(auto it = idsToOutput.begin(); it != idsToOutput.end(); it += 2){
+        const read_number id1 = *it;
+        const read_number id2 = *(it + 1);
+
+        assert(id1 + 1 == id2);
+
+        int readerstatus = pairedInputReader.next();
+
+        while(readerstatus >= 0 && pairedInputReader.getCurrent1().globalReadId < id1){
+            readerstatus = pairedInputReader.next();
+        }
+
+        if(readerstatus >= 0){
+            assert(pairedInputReader.getCurrent1().globalReadId == id1);
+
+            extendedReadWriter->writeRead(pairedInputReader.getCurrent1().read);
+            extendedReadWriter->writeRead(pairedInputReader.getCurrent2().read);
+        }else{
+            std::cout << "Error occurred when outputting unchanged original reads. The output file may be incomplete!\n";
+            break;
+        }
+    }
+
+    mergetimer.print();
+}
+
+
+
+
+
+
+
+
+void constructOutputFileFromExtensionResultsNew1(
+    SerializedObjectStorage& partialResults,
+    FileFormat outputFormat,
+    const std::string& extendedOutputfile
+){
+
+    writeExtensionResultsToFile(
+        partialResults,
+        outputFormat,
+        extendedOutputfile
+    );
+}
+
+void constructOutputFileFromExtensionResultsNew1(
+    const std::vector<std::string>& originalReadFiles,
+    SerializedObjectStorage& partialResults,
+    const std::vector<read_number>& idsOfNotExtended,
+    FileFormat outputFormat,
+    const std::string& extendedOutputfile,
+    const std::vector<std::string>& outputfiles,
+    SequencePairType pairmode
+){
+
+    auto future1 = std::async(
+        std::launch::async,
+        writeExtensionResultsToFile,
+        std::ref(partialResults),
+        //FileFormat::FASTA, 
+        outputFormat,
+        extendedOutputfile
+    );
+
+    assert(std::is_sorted(idsOfNotExtended.begin(), idsOfNotExtended.end()));
+
+    //const FileFormat remainingReadsFileFormat = getFileFormat(originalReadFiles[0]);
+
+    if(pairmode == SequencePairType::PairedEnd){
+
+        auto future2 = std::async(
+            std::launch::async,
+            outputUnchangedReadPairs,
+            std::ref(originalReadFiles),
+            std::ref(idsOfNotExtended),
+            outputFormat,
+            outputfiles[0]
+        );
+        future2.wait();
+
+    }else{
+        throw std::runtime_error("constructOutputFileFromExtensionResultsNew1 called for single end pairmode");
+    }
+
+    future1.wait();
 }
 
 

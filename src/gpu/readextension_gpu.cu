@@ -3,6 +3,7 @@
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/gpureadstorage.cuh>
 #include <gpu/readextender_gpu.hpp>
+#include <gpu/readextension_gpu.hpp>
 
 #include <alignmentorientation.hpp>
 #include <concurrencyhelpers.hpp>
@@ -164,9 +165,9 @@ SplittedExtensionOutput makeAndSplitExtensionOutput(
     std::vector<extension::ExtendResult> extensionResults = gpuReadExtender->convertRawExtendResults(rawExtendResult);
 
 
-    const std::size_t maxNumExtendedReads = extensionResults.size();
     SplittedExtensionOutput returnvalue{};
 
+    const std::size_t maxNumExtendedReads = extensionResults.size();
     returnvalue.extendedReads.reserve(maxNumExtendedReads);
 
     nvtx::push_range("convert extension results", 7);
@@ -177,15 +178,24 @@ SplittedExtensionOutput makeAndSplitExtensionOutput(
 
         if(extendedReadLength > extensionOutput.originalLength){
             if(extensionOutput.mateHasBeenFound){
+                if(extensionOutput.readId1 == 22){
+                    std::cerr << "readId1 22 found mate\n";
+                }
                 extension::ExtensionResultConversionOptions opts;
                 opts.computedAfterRepetition = isRepeatedIteration;            
                 
                 returnvalue.extendedReads.push_back(extension::makeExtendedReadFromExtensionResult(extensionOutput, opts));
             }else{
+                if(extensionOutput.readId1 == 22){
+                    std::cerr << "readId1 22 partially extended\n";
+                }
                 returnvalue.idsOfPartiallyExtendedReads.push_back(extensionOutput.readId1);
                 returnvalue.idsOfPartiallyExtendedReads.push_back(extensionOutput.readId2);
             }
         }else{
+            if(extensionOutput.readId1 == 22){
+                std::cerr << "readId1 22 not extended\n";
+            }
             returnvalue.idsOfNotExtendedReads.push_back(extensionOutput.readId1);
             returnvalue.idsOfNotExtendedReads.push_back(extensionOutput.readId2);
         }
@@ -200,48 +210,19 @@ SplittedExtensionOutput makeAndSplitExtensionOutput(
 
 
 
-
-SerializedObjectStorage extend_gpu_pairedend(
+template<class Callback>
+void extend_gpu_pairedend(
     const GoodAlignmentProperties& goodAlignmentProperties,
     const CorrectionOptions& correctionOptions,
     const ExtensionOptions& extensionOptions,
     const RuntimeOptions& runtimeOptions,
-    const FileOptions& fileOptions,
-    const MemoryOptions& memoryOptions,
+    const FileOptions& /*fileOptions*/,
+    const MemoryOptions& /*memoryOptions*/,
     const GpuMinhasher& minhasher,
-    const GpuReadStorage& gpuReadStorage
+    const GpuReadStorage& gpuReadStorage,
+    Callback submitReadyResults
 ){
-    const auto rsMemInfo = gpuReadStorage.getMemoryInfo();
-    const auto mhMemInfo = minhasher.getMemoryInfo();
-
-    std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
-    if(memoryAvailableBytesHost > rsMemInfo.host){
-        memoryAvailableBytesHost -= rsMemInfo.host;
-    }else{
-        memoryAvailableBytesHost = 0;
-    }
-    if(memoryAvailableBytesHost > mhMemInfo.host){
-        memoryAvailableBytesHost -= mhMemInfo.host;
-    }else{
-        memoryAvailableBytesHost = 0;
-    }
-
-    const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
-    std::size_t memoryForPartialResultsInBytes = 0;
-
-    if(availableMemoryInBytes > 3*(std::size_t(1) << 30)){
-        memoryForPartialResultsInBytes = availableMemoryInBytes - 3*(std::size_t(1) << 30);
-    }
-
-    std::cerr << "Partial results may occupy " << (memoryForPartialResultsInBytes /1024. / 1024. / 1024.) 
-        << " GB in memory. Remaining partial results will be stored in temp directory. \n";
-
-    const std::size_t memoryLimitData = memoryForPartialResultsInBytes * 0.75;
-    const std::size_t memoryLimitOffsets = memoryForPartialResultsInBytes * 0.25;
-
-    SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, fileOptions.tempdirectory + "/");
-
-    BackgroundThread outputThread(true);
+ 
 
     const std::uint64_t totalNumReadPairs = gpuReadStorage.getNumberOfReads() / 2;
 
@@ -305,42 +286,7 @@ SerializedObjectStorage extend_gpu_pairedend(
 
     const int batchsizePairs = correctionOptions.batchsize;
 
-    constexpr bool isPairedEnd = true;
-
-    auto submitReadyResults = [&](
-        std::vector<ExtendedRead> extendedReads, 
-        std::vector<EncodedExtendedRead> encodedExtendedReads,
-        std::vector<read_number> idsOfNotExtendedReads
-    ){
-        outputThread.enqueue(
-            [&, vec = std::move(extendedReads), encvec = std::move(encodedExtendedReads)](){
-                std::vector<std::uint8_t> tempbuffer(256);
-
-                #if 0
-                for(const auto& er : vec){
-                    const std::size_t serializedSize = er.getSerializedNumBytes();
-                    tempbuffer.resize(serializedSize);
-
-                    auto end = er.copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
-                    assert(end != nullptr);
-
-                    partialResults.insert(tempbuffer.data(), end);
-                }
-                #else
-                for(const auto& er : encvec){
-                    const std::size_t serializedSize = er.getSerializedNumBytes();
-                    tempbuffer.resize(serializedSize);
-
-                    auto end = er.copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
-                    assert(end != nullptr);
-
-                    partialResults.insert(tempbuffer.data(), end);
-                }
-                #endif
-            }
-        );
-    };
-           
+    constexpr bool isPairedEnd = true;           
 
     assert(runtimeOptions.deviceIds.size() > 0);
 
@@ -720,16 +666,18 @@ SerializedObjectStorage extend_gpu_pairedend(
             pairsWhichShouldBeRepeatedTmp.clear();
             std::sort(pairsWhichShouldBeRepeated.begin(), pairsWhichShouldBeRepeated.end());
 
+            submitReadyResults(
+                {}, 
+                {},
+                std::move(pairsWhichShouldBeRepeated) //pairs which did not find mate after repetition will remain unextended
+            );
+
             iterationConfig.maxextensionPerStep -= 4;
         }
     }
    
 
     progressThread.finished();
-
-    outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
-
-
 
     // std::cout << "totalNumSuccess0: " << totalNumSuccess0 << std::endl;
     // std::cout << "totalNumSuccess1: " << totalNumSuccess1 << std::endl;
@@ -749,8 +697,6 @@ SerializedObjectStorage extend_gpu_pairedend(
     // }
 
 
-
-    return partialResults;
 }
 
 
@@ -772,7 +718,7 @@ SerializedObjectStorage extend_gpu_singleend(
 }
 #endif
 
-SerializedObjectStorage extend_gpu(
+void extend_gpu(
     const GoodAlignmentProperties& goodAlignmentProperties,
     const CorrectionOptions& correctionOptions,
     const ExtensionOptions& extensionOptions,
@@ -780,7 +726,8 @@ SerializedObjectStorage extend_gpu(
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
     const GpuMinhasher& gpumMinhasher,
-    const GpuReadStorage& gpuReadStorage
+    const GpuReadStorage& gpuReadStorage,
+    SubmitReadyExtensionResultsCallback submitReadyResults
 ){
     // if(fileOptions.pairType == SequencePairType::SingleEnd){
     //     return extend_gpu_singleend(
@@ -794,7 +741,7 @@ SerializedObjectStorage extend_gpu(
     //         gpuReadStorage
     //     );
     // }else{
-        return extend_gpu_pairedend(
+        extend_gpu_pairedend(
             goodAlignmentProperties,
             correctionOptions,
             extensionOptions,
@@ -802,7 +749,8 @@ SerializedObjectStorage extend_gpu(
             fileOptions,
             memoryOptions,
             gpumMinhasher,
-            gpuReadStorage
+            gpuReadStorage,
+            submitReadyResults
         );
     //}
 }

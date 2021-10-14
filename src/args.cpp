@@ -169,6 +169,17 @@ namespace args{
             result.allowOutwardExtension = pr["allowOutwardExtension"].as<bool>();
         }
 
+        if(pr.count("sortedOutput")){
+            result.sortedOutput = pr["sortedOutput"].as<bool>();
+        }
+
+        if(pr.count("outputRemaining")){
+            result.outputRemainingReads = pr["outputRemaining"].as<bool>();
+        }
+
+
+        
+
         return result;
 	}
 

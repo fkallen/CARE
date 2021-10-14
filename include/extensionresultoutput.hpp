@@ -5,6 +5,7 @@
 
 #include <serializedobjectstorage.hpp>
 #include <readlibraryio.hpp>
+#include <extendedread.hpp>
 
 #include <string>
 #include <vector>
@@ -20,6 +21,32 @@ void constructOutputFileFromExtensionResults(
     const std::vector<std::string>& outputfiles,
     SequencePairType pairmode,
     bool outputToSingleFile
+);
+
+void constructOutputFileFromExtensionResultsNew1(
+    SerializedObjectStorage& partialResults,
+    FileFormat outputFormat,
+    const std::string& extendedOutputfile
+);
+
+void constructOutputFileFromExtensionResultsNew1(
+    const std::vector<std::string>& originalReadFiles,
+    SerializedObjectStorage& partialResults,
+    const std::vector<read_number>& idsOfNotExtended,
+    FileFormat outputFormat,
+    const std::string& extendedOutputfile,
+    const std::vector<std::string>& outputfiles,
+    SequencePairType pairmode
+);
+
+
+Read makeOutputReadFromExtendedRead(const ExtendedRead& extendedRead);
+
+void outputUnchangedReadPairs(
+    const std::vector<std::string>& originalReadFiles,
+    const std::vector<read_number>& idsToOutput,
+    FileFormat outputFormat,
+    const std::string& outputfile
 );
 
 }

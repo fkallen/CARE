@@ -94,6 +94,8 @@ namespace care
     struct ExtensionOptions
     {
         bool allowOutwardExtension{};
+        bool sortedOutput = false;
+        bool outputRemainingReads = false;
         int insertSize{};
         int insertSizeStddev{};
         int fixedStddev{};
