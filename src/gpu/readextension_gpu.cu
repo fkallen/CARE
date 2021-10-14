@@ -142,13 +142,7 @@ void initializeExtenderInput(
 };
 
 
-struct SplittedExtensionOutput{
-    std::vector<ExtendedRead> extendedReads{}; //mate has been found
-    std::vector<read_number> idsOfPartiallyExtendedReads; //extended a bit, but did not find mate
-    std::vector<read_number> idsOfNotExtendedReads; //did not extend even a single base
-};
-
-SplittedExtensionOutput makeAndSplitExtensionOutput(
+extension::SplittedExtensionOutput makeAndSplitExtensionOutput(
     GpuReadExtender::TaskData& finishedTasks, 
     GpuReadExtender::RawExtendResult& rawExtendResult, 
     const GpuReadExtender* gpuReadExtender, 
@@ -165,46 +159,7 @@ SplittedExtensionOutput makeAndSplitExtensionOutput(
     std::vector<extension::ExtendResult> extensionResults = gpuReadExtender->convertRawExtendResults(rawExtendResult);
 
 
-    SplittedExtensionOutput returnvalue{};
-
-    const std::size_t maxNumExtendedReads = extensionResults.size();
-    returnvalue.extendedReads.reserve(maxNumExtendedReads);
-
-    nvtx::push_range("convert extension results", 7);
-
-    for(std::size_t i = 0; i < maxNumExtendedReads; i++){
-        auto& extensionOutput = extensionResults[i];
-        const int extendedReadLength = extensionOutput.extendedRead.size();
-
-        if(extendedReadLength > extensionOutput.originalLength){
-            if(extensionOutput.mateHasBeenFound){
-                if(extensionOutput.readId1 == 22){
-                    std::cerr << "readId1 22 found mate\n";
-                }
-                extension::ExtensionResultConversionOptions opts;
-                opts.computedAfterRepetition = isRepeatedIteration;            
-                
-                returnvalue.extendedReads.push_back(extension::makeExtendedReadFromExtensionResult(extensionOutput, opts));
-            }else{
-                if(extensionOutput.readId1 == 22){
-                    std::cerr << "readId1 22 partially extended\n";
-                }
-                returnvalue.idsOfPartiallyExtendedReads.push_back(extensionOutput.readId1);
-                returnvalue.idsOfPartiallyExtendedReads.push_back(extensionOutput.readId2);
-            }
-        }else{
-            if(extensionOutput.readId1 == 22){
-                std::cerr << "readId1 22 not extended\n";
-            }
-            returnvalue.idsOfNotExtendedReads.push_back(extensionOutput.readId1);
-            returnvalue.idsOfNotExtendedReads.push_back(extensionOutput.readId2);
-        }
-                        
-    }
-    
-    nvtx::pop_range();
-
-    return returnvalue;
+    return splitExtensionOutput(extensionResults, isRepeatedIteration);
 }
 
 
@@ -344,7 +299,7 @@ void extend_gpu_pairedend(
 
 
 
-    auto extenderThreadFunc = [&](int gpuIndex, int /*threadId*/, auto* readIdGenerator, bool isRepeatedIteration, bool isLastIteration, bool extraHashing, GpuReadExtender::IterationConfig iterationConfig){
+    auto extenderThreadFunc = [&](int gpuIndex, int /*threadId*/, auto* readIdGenerator, bool isRepeatedIteration, bool /*isLastIteration*/, bool extraHashing, GpuReadExtender::IterationConfig iterationConfig){
         //std::cerr << "extenderThreadFunc( " << gpuIndex << ", " << threadId << ")\n";
         auto& gpudata = gpuDataVector[gpuIndex];
 
@@ -391,7 +346,11 @@ void extend_gpu_pairedend(
 
             nvtx::push_range("output", 5);
 
-            SplittedExtensionOutput splittedExtOutput = makeAndSplitExtensionOutput(finishedTasks, rawExtendResult, gpudata.gpuReadExtender.get(), isRepeatedIteration, stream);
+            nvtx::push_range("convert extension results", 7);
+
+            auto splittedExtOutput = makeAndSplitExtensionOutput(finishedTasks, rawExtendResult, gpudata.gpuReadExtender.get(), isRepeatedIteration, stream);
+
+            nvtx::pop_range();
 
             pairsWhichShouldBeRepeated.insert(
                 pairsWhichShouldBeRepeated.end(), 

@@ -154,7 +154,11 @@ int main(int argc, char** argv){
 		cxxopts::value<std::string>())
 		("mergedoutput", "extension results will not be split into _extended and _remaining", cxxopts::value<bool>()->implicit_value("true"))
 		("allowOutwardExtension", "Will try to fill the gap and extend to the outside"
-			"Default: " + tostring(ExtensionOptions{}.allowOutwardExtension), cxxopts::value<bool>()->implicit_value("true"))		
+			"Default: " + tostring(ExtensionOptions{}.allowOutwardExtension), cxxopts::value<bool>()->implicit_value("true"))
+		("sortedOutput", "Extended reads in output file will be sorted by read id."
+			"Default: " + tostring(ExtensionOptions{}.sortedOutput), cxxopts::value<bool>()->implicit_value("true"))	
+		("outputRemaining", "Output remaining reads which could not be extended. Will be sorted by read id."
+			"Default: " + tostring(ExtensionOptions{}.outputRemainingReads), cxxopts::value<bool>()->implicit_value("true"))
 
 		("hashloadfactor", "Load factor of hashtables. 0.0 < hashloadfactor < 1.0. Smaller values can improve the runtime at the expense of greater memory usage."
 			"Default: " + std::to_string(MemoryOptions{}.hashtableLoadfactor), cxxopts::value<float>())
@@ -256,6 +260,8 @@ int main(int argc, char** argv){
 	std::cout << "Insert size: " << extensionOptions.insertSize << "\n";
 	std::cout << "Insert size deviation: " << extensionOptions.insertSizeStddev << "\n";
 	std::cout << "Allow extension outside of gap: " << extensionOptions.allowOutwardExtension << "\n";
+	std::cout << "Sort extended reads: " << extensionOptions.sortedOutput << "\n";
+	std::cout << "Output remaining reads: " << extensionOptions.outputRemainingReads << "\n";
 
 	std::cout << "Threads: " << runtimeOptions.threads << "\n";
 	std::cout << "Show progress bar: " << runtimeOptions.showProgress << "\n";

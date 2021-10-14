@@ -7,11 +7,19 @@
 #include <serializedobjectstorage.hpp>
 #include <cpuminhasher.hpp>
 #include <cpureadstorage.hpp>
+#include <extendedread.hpp>
 
 #include <vector>
-
+#include <functional>
 namespace care{
-    SerializedObjectStorage extend_cpu(
+
+    using SubmitReadyExtensionResultsCallback = std::function<void(
+        std::vector<ExtendedRead> extendedReads, 
+        std::vector<EncodedExtendedRead> encodedExtendedReads,
+        std::vector<read_number> idsOfNotExtendedReads
+    )>;
+    
+    void extend_cpu(
         const GoodAlignmentProperties& goodAlignmentProperties,
         const CorrectionOptions& correctionOptions,
         const ExtensionOptions& extensionOptions,
@@ -19,7 +27,8 @@ namespace care{
         const FileOptions& fileOptions,
         const MemoryOptions& memoryOptions,
         const CpuMinhasher& minhasher,
-        const CpuReadStorage& readStorage
+        const CpuReadStorage& readStorage,
+        SubmitReadyExtensionResultsCallback submitReadyResults //needs to be thread-safe
     );
 
 

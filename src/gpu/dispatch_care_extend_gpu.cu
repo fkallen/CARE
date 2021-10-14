@@ -341,35 +341,37 @@ namespace care{
 
         helpers::CpuTimer step2timer("STEP2");
 
-        const auto rsMemInfo = gpuReadStorage.getMemoryInfo();
-        const auto mhMemInfo = gpuMinhasher->getMemoryInfo();
-
-        std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
-        if(memoryAvailableBytesHost > rsMemInfo.host){
-            memoryAvailableBytesHost -= rsMemInfo.host;
-        }else{
-            memoryAvailableBytesHost = 0;
-        }
-        if(memoryAvailableBytesHost > mhMemInfo.host){
-            memoryAvailableBytesHost -= mhMemInfo.host;
-        }else{
-            memoryAvailableBytesHost = 0;
-        }
-
-        std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
-        std::size_t memoryForPartialResultsInBytes = 0;
-
-        if(availableMemoryInBytes > 3*(std::size_t(1) << 30)){
-            memoryForPartialResultsInBytes = availableMemoryInBytes - 3*(std::size_t(1) << 30);
-        }
-
-        std::cerr << "Partial results may occupy " << (memoryForPartialResultsInBytes /1024. / 1024. / 1024.) 
-            << " GB in memory. Remaining partial results will be stored in temp directory. \n";
-
-        const std::size_t memoryLimitData = memoryForPartialResultsInBytes * 0.75;
-        const std::size_t memoryLimitOffsets = memoryForPartialResultsInBytes * 0.25;
+        
 
         if(extensionOptions.sortedOutput){
+
+            const auto rsMemInfo = gpuReadStorage.getMemoryInfo();
+            const auto mhMemInfo = gpuMinhasher->getMemoryInfo();
+
+            std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
+            if(memoryAvailableBytesHost > rsMemInfo.host){
+                memoryAvailableBytesHost -= rsMemInfo.host;
+            }else{
+                memoryAvailableBytesHost = 0;
+            }
+            if(memoryAvailableBytesHost > mhMemInfo.host){
+                memoryAvailableBytesHost -= mhMemInfo.host;
+            }else{
+                memoryAvailableBytesHost = 0;
+            }
+
+            std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
+            std::size_t memoryForPartialResultsInBytes = 0;
+
+            if(availableMemoryInBytes > 3*(std::size_t(1) << 30)){
+                memoryForPartialResultsInBytes = availableMemoryInBytes - 3*(std::size_t(1) << 30);
+            }
+
+            std::cerr << "Partial results may occupy " << (memoryForPartialResultsInBytes /1024. / 1024. / 1024.) 
+                << " GB in memory. Remaining partial results will be stored in temp directory. \n";
+
+            const std::size_t memoryLimitData = memoryForPartialResultsInBytes * 0.75;
+            const std::size_t memoryLimitOffsets = memoryForPartialResultsInBytes * 0.25;
 
             SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, fileOptions.tempdirectory + "/");
             std::vector<read_number> notExtendedIds;
@@ -455,7 +457,7 @@ namespace care{
 
             helpers::CpuTimer sorttimer("sort_results_by_read_id");
 
-            sortSerializedResultsByReadIdAscending<ExtendedRead>(
+            sortSerializedResultsByReadIdAscending<EncodedExtendedRead>(
                 partialResults,
                 memoryForSorting
             );
@@ -488,7 +490,7 @@ namespace care{
             if(extensionOptions.outputRemainingReads){
                 std::sort(notExtendedIds.begin(), notExtendedIds.end());
 
-                constructOutputFileFromExtensionResultsNew1(
+                constructOutputFileFromExtensionResults(
                     fileOptions.inputfiles,
                     partialResults, 
                     notExtendedIds,
@@ -498,7 +500,7 @@ namespace care{
                     fileOptions.pairType
                 );
             }else{
-                constructOutputFileFromExtensionResultsNew1(
+                constructOutputFileFromExtensionResults(
                     partialResults,
                     outputFormat, 
                     extendedOutputfile

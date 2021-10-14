@@ -23,13 +23,13 @@ void constructOutputFileFromExtensionResults(
     bool outputToSingleFile
 );
 
-void constructOutputFileFromExtensionResultsNew1(
+void constructOutputFileFromExtensionResults(
     SerializedObjectStorage& partialResults,
     FileFormat outputFormat,
     const std::string& extendedOutputfile
 );
 
-void constructOutputFileFromExtensionResultsNew1(
+void constructOutputFileFromExtensionResults(
     const std::vector<std::string>& originalReadFiles,
     SerializedObjectStorage& partialResults,
     const std::vector<read_number>& idsOfNotExtended,

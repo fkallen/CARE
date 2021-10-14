@@ -7,7 +7,7 @@
 #include <cpu_alignment.hpp>
 #include <alignmentorientation.hpp>
 #include <msa.hpp>
-
+#include <readextension_cpu.hpp>
 #include <hpc_helpers.cuh>
 
 #include <algorithm>
@@ -25,7 +25,6 @@
 #include <extendedread.hpp>
 #include <rangegenerator.hpp>
 #include <threadpool.hpp>
-#include <serializedobjectstorage.hpp>
 #include <util.hpp>
 #include <filehelpers.hpp>
 #include <readextender_common.hpp>
@@ -40,16 +39,17 @@ namespace care{
 
 
 
-
-SerializedObjectStorage extend_cpu_pairedend(
+template<class Callback>
+void extend_cpu_pairedend(
     const GoodAlignmentProperties& goodAlignmentProperties,
     const CorrectionOptions& correctionOptions,
     const ExtensionOptions& extensionOptions,
     const RuntimeOptions& runtimeOptions,
-    const FileOptions& fileOptions,
+    const FileOptions& /*fileOptions*/,
     const MemoryOptions& memoryOptions,
     const CpuMinhasher& minhasher,
-    const CpuReadStorage& readStorage
+    const CpuReadStorage& readStorage,
+    Callback submitReadyResults
 ){
     const auto rsMemInfo = readStorage.getMemoryInfo();
     const auto mhMemInfo = minhasher.getMemoryInfo();
@@ -66,79 +66,6 @@ SerializedObjectStorage extend_cpu_pairedend(
         memoryAvailableBytesHost = 0;
     }
 
-    // {
-    //     std::vector<std::string> queries{
-    //         "AAAAAGTCGAGATTTTCGCACAAAAAGTTGAATTTTGAAAAACTCAAAACTTTTTCAGCGGTTTCGTTATGAAAATCAGGTAATTTCAGCATCTAAGCAT",
-    //         "AAAAAGTCGAGATTTTCGCACAAAAAGTTGAATTTTGAAAAACTCAAAACTTTTTCAGCGGTCTCGTTATGAAAATCAGGTAATTTCAGCATCTAAGCAT"
-    //     };
-
-    //     auto minhashHandle = minhasher.makeMinhasherHandle();
-    //     const int encodedSequencePitchInInts = 16;
-
-    //     for(const auto& q : queries){
-
-    //         std::vector<unsigned int> encodedRead(encodedSequencePitchInInts);
-    //         SequenceHelpers::encodeSequence2Bit(
-    //             encodedRead.data(), 
-    //             q.data(), 
-    //             q.size()
-    //         );
-
-    //         int numValuesPerSequence = 0;
-    //         int totalNumValues = 0;
-    //         int readLength = q.size();
-
-    //         minhasher.determineNumValues(
-    //             minhashHandle,
-    //             encodedRead.data(),
-    //             encodedSequencePitchInInts,
-    //             &readLength,
-    //             1,
-    //             &numValuesPerSequence,
-    //             totalNumValues
-    //         );
-
-    //         std::vector<read_number> result(totalNumValues);
-    //         std::array<int, 2> offsets{};
-
-    //         minhasher.retrieveValues(
-    //             minhashHandle,
-    //             nullptr, //do not remove selfid
-    //             1,
-    //             totalNumValues,
-    //             result.data(),
-    //             &numValuesPerSequence,
-    //             offsets.data()
-    //         );
-
-    //         result.erase(result.begin() + numValuesPerSequence, result.end());
-
-    //         std::cerr << "Query: " << q << "\n";
-    //         std::cerr << numValuesPerSequence << " candidates\n";
-    //         for(int k = 0; k < numValuesPerSequence; k++){
-    //             std::cerr << result[k] << " ";
-    //         }
-    //         std::cerr << "\n";
-    //     }
-
-    //     minhasher.destroyHandle(minhashHandle);
-    // }
-
-
-    const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
-    std::size_t memoryForPartialResultsInBytes = 0;
-
-    if(availableMemoryInBytes > 3*(std::size_t(1) << 30)){
-        memoryForPartialResultsInBytes = availableMemoryInBytes - 3*(std::size_t(1) << 30);
-    }
-
-    std::cerr << "Partial results may occupy " << (memoryForPartialResultsInBytes /1024. / 1024. / 1024.) 
-        << " GB in memory. Remaining partial results will be stored in temp directory. \n";
-
-    const std::size_t memoryLimitData = memoryForPartialResultsInBytes * 0.75;
-    const std::size_t memoryLimitOffsets = memoryForPartialResultsInBytes * 0.25;
-
-    SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, fileOptions.tempdirectory + "/");
 
     const std::size_t numReadsToProcess = 100000;
     //const std::size_t numReadsToProcess = readStorage.getNumberOfReads();
@@ -152,10 +79,7 @@ SerializedObjectStorage extend_cpu_pairedend(
     //     thrust::make_counting_iterator<read_number>(0) + 0,
     //     thrust::make_counting_iterator<read_number>(0) + 16
     // );
-
-    BackgroundThread outputThread(true);
-
-    
+   
     const std::uint64_t totalNumReadPairs = readStorage.getNumberOfReads() / 2;
 
     auto showProgress = [&](auto totalCount, auto seconds){
@@ -339,76 +263,39 @@ SerializedObjectStorage extend_cpu_pairedend(
             return inputs;
         };
 
-        auto output = [&](auto extensionResults){
-            const std::size_t maxNumExtendedReads = extensionResults.size();
+        auto output = [&](auto extensionResults, bool isRepeatedIteration){
+            auto splittedExtOutput = splitExtensionOutput(extensionResults, isRepeatedIteration);
 
-            std::vector<ExtendedRead> extendedReads;
-            extendedReads.reserve(maxNumExtendedReads);
-
-            int repeated = 0;
-
-            for(std::size_t i = 0; i < maxNumExtendedReads; i++){
-                auto& extensionOutput = extensionResults[i];
-                const int extendedReadLength = extensionOutput.extendedRead.size();
-                //if(extendedReadLength == extensionOutput.originalLength){
-                //if(!extensionOutput.mateHasBeenFound){
-                if(extendedReadLength > extensionOutput.originalLength && !extensionOutput.mateHasBeenFound && !isLastIteration){
-                    //do not insert directly into pairsWhichShouldBeRepeated. it causes an infinite loop
-                    pairsWhichShouldBeRepeatedTemp.emplace_back(std::make_pair(extensionOutput.readId1, extensionOutput.readId2));
-                    repeated++;
-                }else{
-                    //assert(extensionOutput.extendedRead.size() > extensionOutput.originalLength);
-
-                    extension::ExtensionResultConversionOptions opts;
-                    opts.computedAfterRepetition = isRepeatedIteration;            
-                    
-                    extendedReads.emplace_back(extension::makeExtendedReadFromExtensionResult(extensionOutput, opts));
-
-                }                              
+            for(std::size_t i = 0; i < splittedExtOutput.idsOfPartiallyExtendedReads.size(); i += 2){
+                pairsWhichShouldBeRepeatedTemp.push_back(std::make_pair(splittedExtOutput.idsOfPartiallyExtendedReads[i], splittedExtOutput.idsOfPartiallyExtendedReads[i+1]));
             }
 
+            // pairsWhichShouldBeRepeatedTemp.insert(
+            //     pairsWhichShouldBeRepeatedTemp.end(), 
+            //     splittedExtOutput.idsOfPartiallyExtendedReads.begin(), 
+            //     splittedExtOutput.idsOfPartiallyExtendedReads.end()
+            // );            
+
+            const std::size_t numExtended = splittedExtOutput.extendedReads.size();
+
             if(!extensionOptions.allowOutwardExtension){
-                for(auto& er : extendedReads){
+                for(auto& er : splittedExtOutput.extendedReads){
                     er.removeOutwardExtension();
                 }
             }
- 
-            std::vector<EncodedExtendedRead> encvec(extendedReads.size());
-            for(std::size_t i = 0; i < extendedReads.size(); i++){
-                extendedReads[i].encodeInto(encvec[i]);
+
+            std::vector<EncodedExtendedRead> encvec(numExtended);
+            for(std::size_t i = 0; i < numExtended; i++){
+                splittedExtOutput.extendedReads[i].encodeInto(encvec[i]);
             }
 
-            auto outputfunc = [&, vec = std::move(extendedReads), encvec = std::move(encvec)](){
-                std::vector<std::uint8_t> tempbuffer(256);
-
-                #if 0
-                for(const auto& er : vec){
-                    const std::size_t serializedSize = er.getSerializedNumBytes();
-                    tempbuffer.resize(serializedSize);
-
-                    auto end = er.copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
-                    assert(end != nullptr);
-
-                    partialResults.insert(tempbuffer.data(), end);
-                }
-                #else
-                for(const auto& er : encvec){
-                    const std::size_t serializedSize = er.getSerializedNumBytes();
-                    tempbuffer.resize(serializedSize);
-
-                    auto end = er.copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
-                    assert(end != nullptr);
-
-                    partialResults.insert(tempbuffer.data(), end);
-                }
-                #endif
-            };
-
-            outputThread.enqueue(
-                std::move(outputfunc)
+            submitReadyResults(
+                std::move(splittedExtOutput.extendedReads), 
+                std::move(encvec),
+                std::move(splittedExtOutput.idsOfNotExtendedReads)
             );
 
-            progressThread.addProgress(extensionResults.size() - repeated);
+            progressThread.addProgress(extensionResults.size() - splittedExtOutput.idsOfPartiallyExtendedReads.size());
         };
 
         isRepeatedIteration = false;
@@ -430,7 +317,7 @@ SerializedObjectStorage extend_cpu_pairedend(
             if(inputs.size() > 0){
                 auto extensionResults = readExtender.extend(std::move(inputs), isRepeatedIteration);
 
-                output(std::move(extensionResults));
+                output(std::move(extensionResults), isRepeatedIteration);
             }
         }
 
@@ -438,6 +325,7 @@ SerializedObjectStorage extend_cpu_pairedend(
         //fixedStepsize -= 4;
         //minCoverageForExtension += increment;
         std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
+        pairsWhichShouldBeRepeatedTemp.clear();
 
         totalNumToRepeat += pairsWhichShouldBeRepeated.size();
 
@@ -456,7 +344,7 @@ SerializedObjectStorage extend_cpu_pairedend(
 
 
         isRepeatedIteration = true;
-        isLastIteration = true;
+        isLastIteration = false;
 
         //while(pairsWhichShouldBeRepeated.size() > 0 && (fixedStepsize > 0))
         {
@@ -472,13 +360,27 @@ SerializedObjectStorage extend_cpu_pairedend(
                 if(inputs.size() > 0){
                     auto extensionResults = readExtender.extend(std::move(inputs), isRepeatedIteration);
 
-                    output(std::move(extensionResults));
+                    output(std::move(extensionResults), isRepeatedIteration);
                 }
             }
 
             //fixedStepsize -= 4;
             std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
+            pairsWhichShouldBeRepeatedTemp.clear();
         }
+
+        std::vector<read_number> tmpvec;
+        tmpvec.reserve(pairsWhichShouldBeRepeated.size() * 2);
+        for(const auto& p : pairsWhichShouldBeRepeated){
+            tmpvec.push_back(p.first);
+            tmpvec.push_back(p.second);
+        }
+
+        submitReadyResults(
+            {}, 
+            {},
+            std::move(tmpvec) //pairs which did not find mate after repetition will remain unextended
+        );
 
         #pragma omp critical
         {
@@ -508,8 +410,6 @@ SerializedObjectStorage extend_cpu_pairedend(
 
     progressThread.finished();
 
-    outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
-
     // std::cout << "totalNumSuccess0: " << totalNumSuccess0 << std::endl;
     // std::cout << "totalNumSuccess1: " << totalNumSuccess1 << std::endl;
     // std::cout << "totalNumSuccess01: " << totalNumSuccess01 << std::endl;
@@ -527,9 +427,6 @@ SerializedObjectStorage extend_cpu_pairedend(
     //     std::cout << pair.first << ": " << pair.second << "\n";
     // }
 
-
-
-    return partialResults;
 }
 
 
@@ -555,7 +452,7 @@ extend_cpu_singleend(
 #endif
 
 
-SerializedObjectStorage extend_cpu(
+void extend_cpu(
     const GoodAlignmentProperties& goodAlignmentProperties,
     const CorrectionOptions& correctionOptions,
     const ExtensionOptions& extensionOptions,
@@ -563,7 +460,8 @@ SerializedObjectStorage extend_cpu(
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
     const CpuMinhasher& minhasher,
-    const CpuReadStorage& readStorage
+    const CpuReadStorage& readStorage,
+    SubmitReadyExtensionResultsCallback submitReadyResults
 ){
     if(fileOptions.pairType == SequencePairType::SingleEnd){
         throw std::runtime_error("single end extension not possible");
@@ -578,7 +476,7 @@ SerializedObjectStorage extend_cpu(
         //     readStorage
         // );
     }else{
-        return extend_cpu_pairedend(
+        extend_cpu_pairedend(
             goodAlignmentProperties,
             correctionOptions,
             extensionOptions,
@@ -586,7 +484,8 @@ SerializedObjectStorage extend_cpu(
             fileOptions,
             memoryOptions,
             minhasher,
-            readStorage
+            readStorage,
+            submitReadyResults
         );
     }
 }

@@ -908,6 +908,47 @@ namespace extension{
 
         return er;
     }
+
+    struct SplittedExtensionOutput{
+        std::vector<ExtendedRead> extendedReads{}; //mate has been found
+        std::vector<read_number> idsOfPartiallyExtendedReads; //extended a bit, but did not find mate
+        std::vector<read_number> idsOfNotExtendedReads; //did not extend even a single base
+    };
+
+    __inline__
+    SplittedExtensionOutput splitExtensionOutput(
+        std::vector<extension::ExtendResult> extensionResults,
+        bool isRepeatedIteration
+    ){
+
+        SplittedExtensionOutput returnvalue{};
+
+        const std::size_t maxNumExtendedReads = extensionResults.size();
+        returnvalue.extendedReads.reserve(maxNumExtendedReads);
+
+        for(std::size_t i = 0; i < maxNumExtendedReads; i++){
+            auto& extensionOutput = extensionResults[i];
+            const int extendedReadLength = extensionOutput.extendedRead.size();
+
+            if(extendedReadLength > extensionOutput.originalLength){
+                if(extensionOutput.mateHasBeenFound){
+                    extension::ExtensionResultConversionOptions opts;
+                    opts.computedAfterRepetition = isRepeatedIteration;            
+                    
+                    returnvalue.extendedReads.push_back(extension::makeExtendedReadFromExtensionResult(extensionOutput, opts));
+                }else{
+                    returnvalue.idsOfPartiallyExtendedReads.push_back(extensionOutput.readId1);
+                    returnvalue.idsOfPartiallyExtendedReads.push_back(extensionOutput.readId2);
+                }
+            }else{
+                returnvalue.idsOfNotExtendedReads.push_back(extensionOutput.readId1);
+                returnvalue.idsOfNotExtendedReads.push_back(extensionOutput.readId2);
+            }
+                            
+        }
+
+        return returnvalue;
+    }
     
 
 
