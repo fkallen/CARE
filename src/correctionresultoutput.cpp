@@ -393,7 +393,6 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
     decoderFuture.wait();
     inputReaderFuture.wait();
     outputWriterFuture.wait();
-    // progressThread.finished();
 
     // std::cout << "\n";
 
@@ -946,7 +945,7 @@ void constructOutputFileFromCorrectionResults(
 
             printf("Written %10llu reads\r", total);
 
-            std::fflush(stdout);
+            std::cout.flush();
         }
     };
 

@@ -193,7 +193,7 @@ void extend_gpu_pairedend(
         }
 
         if(totalCount == totalNumReadPairs){
-            std::cerr << '\n';
+            std::cout << '\n';
         }
     };
 

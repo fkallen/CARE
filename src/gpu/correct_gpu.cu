@@ -1583,7 +1583,7 @@ SerializedObjectStorage correct_gpu_impl(
             totalCount, numreads,
             hours, minutes, seconds);
 
-            std::fflush(stdout);
+            std::cout.flush();
         }
     };
 

@@ -125,7 +125,7 @@ SerializedObjectStorage correct_cpu(
             std::cout.flush();
 
             if(totalCount == totalNumReads){
-                std::cerr << '\n';
+                std::cout << '\n';
             }
         }        
     };
