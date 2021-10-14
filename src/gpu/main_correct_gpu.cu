@@ -181,6 +181,8 @@ int main(int argc, char** argv){
 			"Default: " + std::to_string(RuntimeOptions{}.replicateGpuData), cxxopts::value<bool>())
 		("qualityScoreBits", "How many bits should be used to store a single quality score. Allowed values: 1,2,8. If not 8, a lossy compression via binning is used."
 			"Default: " + tostring(MemoryOptions{}.qualityScoreBits), cxxopts::value<int>())
+
+		("fixedNumberOfReads", "Process only the first n reads. Default: " + tostring(RuntimeOptions{}.fixedNumberOfReads), cxxopts::value<std::size_t>())
 	;
 
 	//options.parse_positional({"deviceIds"});

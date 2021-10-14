@@ -98,8 +98,7 @@ SerializedObjectStorage correct_cpu(
 
     SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, fileOptions.tempdirectory + "/");
 
-    //const std::size_t numReadsToProcess = 500000;
-    const std::size_t numReadsToProcess = readStorage.getNumberOfReads();
+    const std::size_t numReadsToProcess = getNumReadsToProcess(&readStorage, runtimeOptions);
 
     IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(
         thrust::make_counting_iterator<read_number>(0),
@@ -115,7 +114,7 @@ SerializedObjectStorage correct_cpu(
     
     auto showProgress = [&](auto totalCount, auto seconds){
         if(runtimeOptions.showProgress){
-            std::size_t totalNumReads = readStorage.getNumberOfReads();
+            std::size_t totalNumReads = numReadsToProcess;
 
             printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
                     totalCount, totalNumReads,
@@ -134,7 +133,7 @@ SerializedObjectStorage correct_cpu(
         return duration;
     };
 
-    ProgressThread<read_number> progressThread(readStorage.getNumberOfReads(), showProgress, updateShowProgressInterval);
+    ProgressThread<read_number> progressThread(numReadsToProcess, showProgress, updateShowProgressInterval);
 
     #pragma omp parallel
     {

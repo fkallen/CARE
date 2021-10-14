@@ -109,6 +109,7 @@ namespace care
         bool replicateGpuData = false;
         int warpcore = 0;
         int threads = 1;
+        std::size_t fixedNumberOfReads = 0;
         std::vector<int> deviceIds;
     };
 
@@ -147,6 +148,15 @@ namespace care
         RuntimeOptions runtimeOptions;
         FileOptions fileOptions;
     };
+
+    template<class ReadStorage>
+    std::size_t getNumReadsToProcess(const ReadStorage* readStorage, const RuntimeOptions& runtimeOptions){
+        if(runtimeOptions.fixedNumberOfReads == 0){ 
+            return readStorage->getNumberOfReads();
+        }else{
+            return runtimeOptions.fixedNumberOfReads;
+        }
+    }
 }
 
 #endif

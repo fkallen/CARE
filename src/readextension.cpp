@@ -66,9 +66,7 @@ void extend_cpu_pairedend(
         memoryAvailableBytesHost = 0;
     }
 
-
-    const std::size_t numReadsToProcess = 100000;
-    //const std::size_t numReadsToProcess = readStorage.getNumberOfReads();
+    const std::size_t numReadsToProcess = getNumReadsToProcess(&readStorage, runtimeOptions);
 
     auto readIdGenerator = makeIteratorRangeTraversal(
         thrust::make_counting_iterator<read_number>(0),
@@ -80,7 +78,7 @@ void extend_cpu_pairedend(
     //     thrust::make_counting_iterator<read_number>(0) + 16
     // );
    
-    const std::uint64_t totalNumReadPairs = readStorage.getNumberOfReads() / 2;
+    const std::uint64_t totalNumReadPairs = numReadsToProcess / 2;
 
     auto showProgress = [&](auto totalCount, auto seconds){
         if(runtimeOptions.showProgress){

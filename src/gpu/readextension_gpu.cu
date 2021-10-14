@@ -179,7 +179,7 @@ void extend_gpu_pairedend(
 ){
  
 
-    const std::uint64_t totalNumReadPairs = gpuReadStorage.getNumberOfReads() / 2;
+    const std::uint64_t totalNumReadPairs = getNumReadsToProcess(&gpuReadStorage, runtimeOptions) / 2;
 
     auto showProgress = [&](auto totalCount, auto seconds){
         if(runtimeOptions.showProgress){
@@ -497,8 +497,7 @@ void extend_gpu_pairedend(
     {
         std::vector<std::future<std::vector<read_number>>> futures;
 
-        const std::size_t numReadsToProcess = 100000;
-        //const std::size_t numReadsToProcess = gpuReadStorage.getNumberOfReads();
+        const std::size_t numReadsToProcess = getNumReadsToProcess(&gpuReadStorage, runtimeOptions);
 
         // std::vector<read_number> idsToExtend{
         //     0, 1, 22, 23, 44, 45, 68, 69, 78, 79, 86, 87, 98, 99,

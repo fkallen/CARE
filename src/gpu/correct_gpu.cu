@@ -1564,9 +1564,11 @@ SerializedObjectStorage correct_gpu_impl(
 
     outputThread.start();
 
+    const std::size_t numReadsToProcess = getNumReadsToProcess(&readStorage, runtimeOptions);
+
     IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(
         thrust::make_counting_iterator<read_number>(0),
-        thrust::make_counting_iterator<read_number>(0) + readStorage.getNumberOfReads()
+        thrust::make_counting_iterator<read_number>(0) + numReadsToProcess
     );
 
     auto showProgress = [&](std::int64_t totalCount, int seconds){
@@ -1577,7 +1579,7 @@ SerializedObjectStorage correct_gpu_impl(
             int minutes = seconds / 60;
             seconds = seconds % 60;
 
-            std::size_t numreads = readStorage.getNumberOfReads();
+            std::size_t numreads = numReadsToProcess;
             
             printf("Processed %10lu of %10lu reads (Runtime: %03d:%02d:%02d)\r",
             totalCount, numreads,
@@ -1591,7 +1593,7 @@ SerializedObjectStorage correct_gpu_impl(
         return duration;
     };
 
-    ProgressThread<std::int64_t> progressThread(readStorage.getNumberOfReads(), showProgress, updateShowProgressInterval);
+    ProgressThread<std::int64_t> progressThread(numReadsToProcess, showProgress, updateShowProgressInterval);
 
     auto batchCompleted = [&](int size){
         //std::cerr << "Add progress " << size << "\n";

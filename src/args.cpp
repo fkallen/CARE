@@ -210,6 +210,10 @@ namespace args{
             result.replicateGpuData = pr["replicateGpuData"].as<bool>();
         }
 
+        if(pr.count("fixedNumberOfReads")){
+            result.fixedNumberOfReads = pr["fixedNumberOfReads"].as<std::size_t>();
+        }
+
         return result;
 	}
 
