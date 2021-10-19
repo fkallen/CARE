@@ -281,6 +281,8 @@ namespace care{
             std::vector<std::size_t> limits(numGpus, 0);
 
             for(std::size_t i = 0; i < numGpus; i++){
+                cub::SwitchDevice sd{runtimeOptions.deviceIds[i]};
+                
                 std::size_t total = 0;
                 cudaMemGetInfo(&limits[i], &total);
 
