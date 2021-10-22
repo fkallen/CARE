@@ -1032,7 +1032,7 @@ namespace gpu{
             currentOutput->decodedSequencePitchInBytes = decodedSequencePitchInBytes;
 
             if(currentNumCandidates == 0 || currentNumAnchors == 0){
-		std::cerr << "currentNumAnchors " << currentNumAnchors << ", currentNumCandidates " << currentNumCandidates << "\n";
+		        //std::cerr << "currentNumAnchors " << currentNumAnchors << ", currentNumCandidates " << currentNumCandidates << "\n";
                 currentOutput->nothingToDo = true;
                 return;
             }

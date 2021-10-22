@@ -269,7 +269,7 @@ namespace gpu{
                             stream
                         );
 
-                        constexpr bool dryrun = true;
+                        constexpr bool dryrun = false;
 
                         auto numNewKeys = insert(
                             dryrun,
@@ -316,6 +316,12 @@ namespace gpu{
             singlehashtablememoryusage = memoryAfterSinglehashtable > memoryBeforeSinglehashtable ? memoryAfterSinglehashtable - memoryBeforeSinglehashtable : 0;
 
             std::cerr << "singlehashtablememoryusage: " << singlehashtablememoryusage << "\n";
+
+            std::sort(allKeys.begin(), allKeys.end());
+            auto it = std::unique(allKeys.begin(), allKeys.end());
+            allKeys.erase(it, allKeys.end());
+
+            std::cerr << "allKeys.size() unique " << allKeys.size() << "\n";
         }
     
 
