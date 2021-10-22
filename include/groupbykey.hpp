@@ -55,13 +55,12 @@ namespace care{
         void execute(std::vector<Key_t>& keys, std::vector<Value_t>& values, std::vector<Offset_t>& offsets){
             if(keys.size() == 0) return;
 
-            bool isIotaValues = checkIotaValues(values);
-
-            if(isIotaValues){
-                executeWithIotaValues(keys, values, offsets);
-            }else{
-                assert(false && "not implemented");
+            if(valuesOfSameKeyMustBeSorted){
+                bool isIotaValues = checkIotaValues(values);
+                assert(isIotaValues);
             }
+
+            executeWithIotaValues(keys, values, offsets);
         }
 
         bool checkIotaValues(const std::vector<Value_t>& values){
@@ -233,9 +232,12 @@ namespace care{
 
             bool success = false;
 
-            bool isIotaValues = checkIotaValues(values);
+            if(valuesOfSameKeyMustBeSorted){
+                bool isIotaValues = checkIotaValues(values);
+                assert(isIotaValues);
+            }
 
-            if(isIotaValues){                   
+            //if(isIotaValues){                   
                 try{           
                     executeWithIotaValues(keys, values, offsets);
                     success = true;
@@ -251,9 +253,9 @@ namespace care{
                     cudaGetLastError();
                     success = false;
                 }                    
-            }else{
-                assert(false && "not implemented");
-            }
+            //}else{
+            //    assert(false && "not implemented");
+            //}
 
             return success;
         }
@@ -444,9 +446,12 @@ namespace care{
 
                 bool success = false;
 
-                bool isIotaValues = checkIotaValues(values);
+                if(valuesOfSameKeyMustBeSorted){
+                    bool isIotaValues = checkIotaValues(values);
+                    assert(isIotaValues);
+                }
 
-                if(isIotaValues){                   
+                //if(isIotaValues){                   
                     try{           
                         success = executeWithIotaValues(keys, values, offsets);
                     }catch(const thrust::system_error& ex){
@@ -461,9 +466,9 @@ namespace care{
                         cudaGetLastError();
                         success = false;
                     }                    
-                }else{
-                    assert(false && "not implemented");
-                }
+                // }else{
+                //     assert(false && "not implemented");
+                // }
 
                 std::cerr << "GroupByKeyGpuWarpcore success = " << success << "\n";
 
