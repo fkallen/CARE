@@ -3,6 +3,8 @@
 #include <gpu/fakegpuminhasher.cuh>
 #include <gpu/cudaerrorcheck.cuh>
 
+#include <gpu/fakegpusinglehashminhasher.cuh>
+
 #include <config.hpp>
 #include <options.hpp>
 #include <readlibraryio.hpp>
@@ -271,18 +273,22 @@ namespace care{
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
 
-        auto minhasherAndType = gpu::constructGpuMinhasherFromGpuReadStorage(
+        auto gpuMinhasher = std::make_unique<gpu::FakeGpuSingleHashMinhasher>(
+            gpuReadStorage.getNumberOfReads(),
+            255,//calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage),
+            correctionOptions.kmerlength,
+            memoryOptions.hashtableLoadfactor
+        );
+
+        gpuMinhasher->constructFromReadStorage(
             fileOptions,
             runtimeOptions,
             memoryOptions,
+            gpuReadStorage.getNumberOfReads(), 
             correctionOptions,
-            gpuReadStorage,
-            gpu::GpuMinhasherType::Multi
+            gpuReadStorage
         );
 
-        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after gpuminhasher");
-
-        gpu::GpuMinhasher* gpuMinhasher = minhasherAndType.first.get();
 
         buildMinhasherTimer.print();
 
@@ -299,24 +305,6 @@ namespace care{
                 << correctionOptions.numHashFunctions <<")\n";
             std::cout << "Abort!\n";
             return;
-        }
-
-        if(minhasherAndType.second == gpu::GpuMinhasherType::Fake){
-
-            gpu::FakeGpuMinhasher* fakeGpuMinhasher = dynamic_cast<gpu::FakeGpuMinhasher*>(gpuMinhasher);
-            assert(fakeGpuMinhasher != nullptr);
-
-            if(fileOptions.save_hashtables_to != "") {
-                std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
-                std::ofstream os(fileOptions.save_hashtables_to);
-                assert((bool)os);
-                helpers::CpuTimer timer("save_to_file");
-                fakeGpuMinhasher->writeToStream(os);
-                timer.print();
-
-                std::cout << "Saved minhasher" << std::endl;
-            }
-
         }
 
         printDataStructureMemoryUsage(*gpuMinhasher, "hash tables");        
@@ -426,7 +414,7 @@ namespace care{
         //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after correction");
 
 
-        minhasherAndType.first.reset();
+        //minhasherAndType.first.reset();
         gpuMinhasher = nullptr;
         gpuReadStorage.destroy();
         cpuReadStorage.reset();

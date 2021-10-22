@@ -446,10 +446,10 @@ namespace care{
 
                 bool success = false;
 
-                if(valuesOfSameKeyMustBeSorted){
-                    bool isIotaValues = checkIotaValues(values);
-                    assert(isIotaValues);
-                }
+                // if(valuesOfSameKeyMustBeSorted){
+                //     bool isIotaValues = checkIotaValues(values);
+                //     assert(isIotaValues);
+                // }
 
                 //if(isIotaValues){                   
                     try{           

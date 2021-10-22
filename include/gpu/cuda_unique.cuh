@@ -636,18 +636,26 @@ struct GpuSegmentedUnique{
             assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
 
             processData(blocksize, elemsPerThread);
-        }else if(sizeOfLargestSegment <= 4096){
+        }else {
             constexpr int blocksize = 128;
             constexpr int elemsPerThread = 32;
             assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
 
             processData(blocksize, elemsPerThread);
-        }else{
-            constexpr int blocksize = 128;
-            constexpr int elemsPerThread = 64;
-            
-            processData(blocksize, elemsPerThread);
         }
+        // else if(sizeOfLargestSegment <= 4096){
+        //     constexpr int blocksize = 128;
+        //     constexpr int elemsPerThread = 32;
+        //     assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
+
+        //     processData(blocksize, elemsPerThread);
+        // }
+        // else{
+        //     constexpr int blocksize = 128;
+        //     constexpr int elemsPerThread = 64;
+            
+        //     processData(blocksize, elemsPerThread);
+        // }
     }
 
     template<class T, class OffsetIterator>
@@ -666,7 +674,7 @@ struct GpuSegmentedUnique{
         cudaStream_t stream = 0
     ){
 
-        cub::DoubleBuffer<read_number> d_values_dblbuf(d_input, d_output);
+        cub::DoubleBuffer<T> d_values_dblbuf(d_input, d_output);
         
         std::size_t requiredCubTempStorageSize = 0;
         cub::DeviceSegmentedRadixSort::SortKeys(

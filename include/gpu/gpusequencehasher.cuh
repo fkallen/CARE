@@ -6,6 +6,7 @@
 #include <hpc_helpers.cuh>
 #include <gpu/cudaerrorcheck.cuh>
 #include <gpu/cubwrappers.cuh>
+#include <gpu/groupmemcpy.cuh>
 
 #include <cassert>
 #include <cstdint>
@@ -22,7 +23,9 @@
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/iterator/transform_iterator.h>
 
+#include <cooperative_groups.h>
 
+namespace cg = cooperative_groups;
 
 namespace care{
 namespace gpu{
@@ -357,6 +360,58 @@ namespace gpusequencehasher{
     }
 
 
+    template<class HashValueType, class ConstBeginOffsetsIter>
+    __global__
+    void getKmerHashes(
+        HashValueType* __restrict__ kmerhashesoutput,
+        ConstBeginOffsetsIter outputBeginOffsets,
+        const unsigned int* __restrict__ sequences2Bit,
+        std::size_t sequenceRowPitchElements,
+        int numSequences,
+        const int* __restrict__ sequenceLengths,
+        int k
+    ){
+        assert(sizeof(kmer_type) * 8 / 2 >= k);
+
+        using hasher = hashers::MurmurHash<std::uint64_t>;
+
+        constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
+        const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - k) * 2);
+        const int rcshiftamount = (maximum_kmer_length - k) * 2;
+
+        for(int s = blockIdx.x; s < numSequences; s += gridDim.x){
+
+            const auto outputOffset = outputBeginOffsets[s];
+            const unsigned int* const mySequence = sequences2Bit + s * sequenceRowPitchElements;
+            const int myLength = sequenceLengths[s];
+
+            const int numKmers = (myLength >= k) ? (myLength - k + 1) : 0;
+
+            for(int i = threadIdx.x; i < numKmers; i += blockDim.x){
+                //compute kmer i
+
+                const int firstIntIndex = i / 16;
+                const int secondIntIndex = (i + k - 1) / 16;
+                std::uint64_t kmer = 0;
+                if(firstIntIndex == secondIntIndex){
+                    const std::uint64_t firstInt = mySequence[firstIntIndex];
+                    kmer = (firstInt >> 2*(16 - (i+k)%16)) & kmer_mask;
+                }else{
+                    const std::uint64_t firstInt = mySequence[firstIntIndex];
+                    const std::uint64_t secondInt = mySequence[secondIntIndex];
+                    const int basesInFirst = 16 - (i % 16);
+                    const int basesInSecond = k - basesInFirst;
+                    kmer = ((firstInt << 2*basesInSecond) | (secondInt >> 2*(16 - (i+k)%16))) & kmer_mask;
+                }
+
+                const std::uint64_t rc_kmer = SequenceHelpers::reverseComplementInt2Bit(kmer) >> rcshiftamount;
+                const auto smallest = min(kmer, rc_kmer);
+                kmerhashesoutput[outputOffset + i] = hasher::hash(smallest) & kmer_mask;
+            }
+        }
+    }
+
+
     template<class HashValueType>
     __global__
     void hashKmersKernel(
@@ -413,6 +468,46 @@ namespace gpusequencehasher{
     }
 
 
+    template<class HashValueType>
+    __global__
+    void copyTopSmallestHashesKernel(
+        HashValueType* __restrict__ kmerhashesOutput,
+        int* __restrict__ numPerSequenceOut,
+        int numSmallest,
+        const HashValueType* __restrict__ kmerhashesinput, //per sequence sorted + unique
+        const int* __restrict__ numKmerHashesPerSequence,
+        const int* __restrict__ inputBeginOffsets,
+        int numSequences
+    ){
+        
+        constexpr int groupsize = 32;
+        auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+        const int numGroups = (blockDim.x * gridDim.x) / groupsize;
+
+        for(int s = groupId; s < numSequences; s += numGroups){
+
+            const int inputOffset = inputBeginOffsets[s];
+            const int outputOffset = s * numSmallest;
+            const int numHashes = numKmerHashesPerSequence[s];
+            const int numHashesToCopy = min(numSmallest, numHashes);
+
+            care::gpu::memcpy<HashValueType>(
+                group, 
+                kmerhashesOutput + outputOffset, 
+                kmerhashesinput + inputOffset, 
+                sizeof(HashValueType) * numHashesToCopy
+            );
+
+            if(group.thread_rank() == 0){
+                numPerSequenceOut[s] = numHashesToCopy;
+            }
+        }
+    }
+
+
+
+
     template<class KT>
     __global__
     void countUniqueKmersKernel(
@@ -463,6 +558,21 @@ struct GPUSequenceHasher{
         rmm::device_uvector<bool> d_isValid;
     };
 
+    struct TopSmallestHashResult{
+        TopSmallestHashResult(
+            int numSequences,
+            int numHashFuncs,
+            cudaStream_t stream, 
+            rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
+        ) : d_hashvalues(numSequences * numHashFuncs, stream, mr),
+            d_numPerSequences(numSequences, stream, mr){
+
+        }
+
+        rmm::device_uvector<HashValueType> d_hashvalues;
+        rmm::device_uvector<int> d_numPerSequences;
+    };
+
     struct ComputedKmers{
         ComputedKmers(
             int numSequences,
@@ -476,6 +586,107 @@ struct GPUSequenceHasher{
         rmm::device_uvector<int> d_offsets;
         rmm::device_uvector<kmer_type> d_kmers;
     };
+
+    TopSmallestHashResult getTopSmallestKmerHashes(
+        const unsigned int* __restrict__ d_sequences2Bit,
+        std::size_t sequenceRowPitchElements,
+        int numSequences,
+        const int* __restrict__ d_sequenceLengths,
+        int k,
+        int numSmallest,
+        cudaStream_t stream,
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
+    ){
+        assert(sizeof(kmer_type) * 8 / 2 >= k);
+        assert(k > 0);
+
+        CubCallWrapper cub(mr);
+
+        rmm::device_uvector<int> d_offsets(numSequences + 1, stream, mr);
+        CUDACHECK(cudaMemsetAsync(d_offsets.data(), 0, sizeof(int), stream));
+
+        auto d_numKmersPerSequence = thrust::make_transform_iterator(
+            d_sequenceLengths,
+            gpusequencehasher::GetNumKmers{k}
+        );
+
+        int h_minmaxNumKmersPerSequence[2];
+        rmm::device_uvector<int> d_minmaxNumKmersPerSequence(2, stream, mr);
+
+        gpusequencehasher::minmaxSingleBlockKernel<512><<<1, 512, 0, stream>>>(
+            d_numKmersPerSequence,
+            numSequences,
+            d_minmaxNumKmersPerSequence.data()
+        ); 
+        CUDACHECKASYNC; 
+
+        cub.cubInclusiveSum(d_numKmersPerSequence, d_offsets.data() + 1, numSequences, stream);
+        CUDACHECK(cudaMemcpyAsync(&h_minmaxNumKmersPerSequence[0], d_minmaxNumKmersPerSequence.data(), sizeof(int) * 2, D2H, stream));
+
+        const int totalNumKmers = d_offsets.back_element(stream);
+        CUDACHECK(cudaStreamSynchronize(stream));
+
+        //compute kmer hashes
+
+        rmm::device_uvector<HashValueType> d_hashes(totalNumKmers, stream);
+
+        gpusequencehasher::getKmerHashes<<<numSequences, 128, 0, stream>>>(
+            d_hashes.data(),
+            d_offsets.data(),
+            d_sequences2Bit,
+            sequenceRowPitchElements,
+            numSequences,
+            d_sequenceLengths,
+            k
+        );
+        CUDACHECKASYNC;
+
+        //make kmer hashes unique per sequence
+
+        constexpr int begin_bit = 0;
+        const int end_bit = 2 * k;
+
+        rmm::device_uvector<HashValueType> d_uniqueHashes(d_hashes.size(), stream, mr);
+        rmm::device_uvector<int> d_numUniquePerSequence(numSequences, stream, mr);
+
+        GpuSegmentedUnique::unique(
+            d_hashes.data(),
+            d_hashes.size(),
+            d_uniqueHashes.data(),
+            d_numUniquePerSequence.data(),
+            numSequences,
+            h_minmaxNumKmersPerSequence[1],
+            d_offsets.data(),
+            d_offsets.data() + 1,
+            begin_bit,
+            end_bit,
+            stream,
+            mr
+        );
+
+        d_hashes.resize(0, stream);
+        d_hashes.shrink_to_fit(stream);
+
+        cub.cubInclusiveSum(d_numUniquePerSequence.data(), d_offsets.data() + 1, numSequences, stream);
+
+        //copy top hashes to output
+
+        TopSmallestHashResult result(numSequences, numSmallest, stream, mr);
+
+        gpusequencehasher::copyTopSmallestHashesKernel<<<SDIV(numSequences * numSmallest, 128), 128, 0, stream>>>(
+            result.d_hashvalues.data(),
+            result.d_numPerSequences.data(),
+            numSmallest,
+            d_uniqueHashes.data(), //per sequence sorted + unique
+            d_numUniquePerSequence.data(),
+            d_offsets.data(),
+            numSequences
+        );
+        CUDACHECKASYNC;
+
+        return result;
+    }
+
 
     ComputedKmers computeKmers(
         const unsigned int* __restrict__ d_sequences2Bit,
