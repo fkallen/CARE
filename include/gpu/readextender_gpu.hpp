@@ -1763,6 +1763,7 @@ struct GpuReadExtender{
             ::resizeUninitialized(results.d_candidateReadIds, totalNumValues, stream);    
 
             if(totalNumValues == 0){
+                *h_numCandidates = 0;
                 CUDACHECK(cudaMemsetAsync(results.d_numCandidatesPerAnchor.data(), 0, sizeof(int) * numAnchors , stream));
                 CUDACHECK(cudaMemsetAsync(results.d_numCandidatesPerAnchorPrefixSum.data(), 0, sizeof(int) * (1 + numAnchors), stream));
 

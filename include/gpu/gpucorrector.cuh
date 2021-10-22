@@ -395,6 +395,8 @@ namespace gpu{
             ecinput.h_candidate_read_ids.resize(totalNumValues);
 
             if(totalNumValues == 0){
+                *ecinput.h_numCandidates = 0;
+                CUDACHECK(cudaMemsetAsync(ecinput.d_numCandidates.data(), 0, sizeof(int), stream));
                 CUDACHECK(cudaMemsetAsync(ecinput.d_candidates_per_anchor.data(), 0, sizeof(int) * (*ecinput.h_numAnchors), stream));
                 CUDACHECK(cudaMemsetAsync(ecinput.d_candidates_per_anchor_prefixsum.data(), 0, sizeof(int) * (1 + (*ecinput.h_numAnchors)), stream));
                 return;
