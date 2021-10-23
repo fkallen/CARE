@@ -791,16 +791,19 @@ namespace gpu{
                 constexpr bool valuesOfSameKeyMustBeSorted = false;
                 const int maxValuesPerKey = getNumResultsPerMapThreshold();
 
+                //if only 1 value exists, it belongs to the anchor read itself and does not need to be stored.
+                const int minValuesPerKey = 2;
+
                 bool success = false;
 
                 using GroupByKeyCpuOp = GroupByKeyCpu<Key_t, Value_t, read_number>;
                 using GroupByKeyGpuOp = GroupByKeyGpu<Key_t, Value_t, read_number>;
                 
-                GroupByKeyGpuOp groupByKeyGpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
+                GroupByKeyGpuOp groupByKeyGpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey, minValuesPerKey);
                 success = groupByKeyGpu.execute(keys, values, countsPrefixSum);         
 
                 if(!success){
-                    GroupByKeyCpuOp groupByKeyCpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
+                    GroupByKeyCpuOp groupByKeyCpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey, minValuesPerKey);
                     groupByKeyCpu.execute(keys, values, countsPrefixSum);
                 }
             };

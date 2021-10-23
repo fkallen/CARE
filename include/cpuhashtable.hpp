@@ -6,6 +6,7 @@
 #include <threadpool.hpp>
 #include <hostdevicefunctions.cuh>
 
+#include <map>
 #include <vector>
 #include <cassert>
 #include <cstdint>
@@ -161,6 +162,21 @@ namespace care{
             maxProbes = 0;
             size = 0;
             capacity = 0;
+        }
+
+        std::size_t getCapacity() const{
+            return capacity;
+        }
+
+        std::map<int, int> getCountDistribution() const{
+            std::map<int, int> map;
+
+            for(std::size_t i = 0; i < capacity; i++){
+                if(storage[i] != emptySlot){
+                    map[storage[i].second.second]++;
+                }
+            }
+            return map;
         }
 
     private:
@@ -410,14 +426,26 @@ namespace care{
 
             groupByKey(keys, values, countsPrefixSum);
 
-            lookup = std::move(AoSCpuSingleValueHashTable<Key, ValueIndex>(keys.size(), loadfactor));
+            std::size_t nonEmtpyKeysCount = 0;
+            for(std::size_t i = 0; i < keys.size(); i++){
+                const auto count = countsPrefixSum[i+1] - countsPrefixSum[i];
+                if(count > 0){
+                    nonEmtpyKeysCount++;
+                }
+            }
+
+            //lookup = std::move(AoSCpuSingleValueHashTable<Key, ValueIndex>(keys.size(), loadfactor));
+            lookup = std::move(AoSCpuSingleValueHashTable<Key, ValueIndex>(nonEmtpyKeysCount, loadfactor));
 
             auto buildKeyLookup = [me=this, keys = std::move(keys), countsPrefixSum = std::move(countsPrefixSum)](){
                 for(std::size_t i = 0; i < keys.size(); i++){
-                    me->lookup.insert(
-                        keys[i], 
-                        ValueIndex{countsPrefixSum[i], countsPrefixSum[i+1] - countsPrefixSum[i]}
-                    );
+                    const auto count = countsPrefixSum[i+1] - countsPrefixSum[i];
+                    if(count > 0){
+                        me->lookup.insert(
+                            keys[i], 
+                            ValueIndex{countsPrefixSum[i], count}
+                        );
+                    }
                 }
                 me->isInit = true;
             };
@@ -487,6 +515,13 @@ namespace care{
             result.device = lookup.getMemoryInfo().device;
 
             //std::cerr << lookup.getMemoryInfo().host << " " << result.host << " bytes\n";
+
+            // std::cerr << "readonlytable. keys capacity: " << lookup.getCapacity() << ", values.size() " << values.size() << "\n";
+
+            // auto map = lookup.getCountDistribution();
+            // for(auto pair : map){
+            //     std::cerr << pair.first << ": " << pair.second << "\n";
+            // }
 
             return result;
         }

@@ -40,9 +40,12 @@ namespace care{
     struct GroupByKeyCpu{
         bool valuesOfSameKeyMustBeSorted = false;
         int maxValuesPerKey = 0;
+        int minValuesPerKey = 0;
 
-        GroupByKeyCpu(bool sortValues, int maxValuesPerKey_) 
-            : valuesOfSameKeyMustBeSorted(sortValues), maxValuesPerKey(maxValuesPerKey_){}
+        GroupByKeyCpu(bool sortValues, int maxValuesPerKey_, int minValuesPerKey_) 
+            : valuesOfSameKeyMustBeSorted(sortValues), 
+                maxValuesPerKey(maxValuesPerKey_),
+                minValuesPerKey(minValuesPerKey_){}
 
         /*
             Input: keys and values. keys[i] and values[i] form a key-value pair
@@ -157,9 +160,11 @@ namespace care{
                 thrust::counting_iterator<Offset_t>(0),
                 thrust::counting_iterator<Offset_t>(0) + nUniqueKeys,
                 [&](Offset_t index){
-                    auto begin = offsets[index];
-                    auto end = offsets[index+1];
-                    if(end - begin > Offset_t(maxValuesPerKey)){
+                    const auto begin = offsets[index];
+                    const auto end = offsets[index+1];
+                    const auto num = end - begin;
+
+                    if(num > Offset_t(maxValuesPerKey) || num < Offset_t(minValuesPerKey)){
                         valuesPerKey_begin[index] = 0;
 
                         for(Offset_t k = begin; k < end; k++){
@@ -216,9 +221,12 @@ namespace care{
 
         bool valuesOfSameKeyMustBeSorted = false;
         int maxValuesPerKey = 0;
+        int minValuesPerKey = 0;
 
-        GroupByKeyGpu(bool sortValues, int maxValuesPerKey_) 
-            : valuesOfSameKeyMustBeSorted(sortValues), maxValuesPerKey(maxValuesPerKey_){}
+        GroupByKeyGpu(bool sortValues, int maxValuesPerKey_, int minValuesPerKey_) 
+            : valuesOfSameKeyMustBeSorted(sortValues), 
+                maxValuesPerKey(maxValuesPerKey_),
+                minValuesPerKey(minValuesPerKey_){}
 
         /*
             Input: keys and values. keys[i] and values[i] form a key-value pair
@@ -359,14 +367,17 @@ namespace care{
             auto d_offsets_begin = d_offsets.data();
             auto d_valuesPerKey_begin = d_valuesPerKey.data();
             auto maxValuesPerKey_copy = maxValuesPerKey;
+            auto minValuesPerKey_copy = minValuesPerKey;
             thrust::for_each(
                 allocatorPolicy,
                 thrust::counting_iterator<Offset_t>(0),
                 thrust::counting_iterator<Offset_t>(0) + nUniqueKeys,
                 [=] __device__ (Offset_t index){
-                    auto begin = d_offsets_begin[index];
-                    auto end = d_offsets_begin[index+1];
-                    if(end - begin > Offset_t(maxValuesPerKey_copy)){
+                    const auto begin = d_offsets_begin[index];
+                    const auto end = d_offsets_begin[index+1];
+                    const auto num = end - begin;
+
+                    if(num > Offset_t(maxValuesPerKey_copy) || num < Offset_t(minValuesPerKey_copy)){
                         d_valuesPerKey_begin[index] = 0;
 
                         for(Offset_t k = begin; k < end; k++){
@@ -427,9 +438,11 @@ namespace care{
         struct GroupByKeyGpuWarpcore{
 
             int maxValuesPerKey = 0;
+            int minValuesPerKey = 0;
 
-            GroupByKeyGpuWarpcore(int maxValuesPerKey_) 
-                : maxValuesPerKey(maxValuesPerKey_){}
+            GroupByKeyGpuWarpcore(int maxValuesPerKey_, int minValuesPerKey_)
+                : maxValuesPerKey(maxValuesPerKey_),
+                    minValuesPerKey(minValuesPerKey_){}
 
             /*
                 Input: keys and values. keys[i] and values[i] form a key-value pair
@@ -631,6 +644,7 @@ namespace care{
                 dim3 block(512, 1, 1);
                 dim3 grid(SDIV(numUniqueKeys, block.x / cggroupsize), 1, 1);
                 auto maxValuesPerKeytmp = maxValuesPerKey;
+                auto minValuesPerKeytmp = minValuesPerKey;
 
                 helpers::lambda_kernel<<<grid, block, 0, (cudaStream_t)0>>>(
                     [
@@ -638,7 +652,8 @@ namespace care{
                         numUniqueKeys,
                         d_unique_keys,
                         d_numbers,
-                        maxValuesPerKey = maxValuesPerKeytmp
+                        maxValuesPerKey = maxValuesPerKeytmp,
+                        minValuesPerKey = minValuesPerKeytmp
                     ] __device__ (){
                         using Core = MultiValueHashTable2;
 
@@ -663,7 +678,7 @@ namespace care{
                                 group
                             );
 
-                            if(numValuesForKey > maxValuesPerKey){
+                            if(numValuesForKey > maxValuesPerKey || numValuesForKey < minValuesPerKey){
                                 numValuesForKey = 0;
                             }
                             if(group.thread_rank() == 0){
@@ -712,6 +727,7 @@ namespace care{
                         d_unique_keys,
                         d_numbers,
                         maxValuesPerKey = maxValuesPerKeytmp,
+                        minValuesPerKey = minValuesPerKeytmp,
                         d_values
                     ] __device__ (){
                         using Core = MultiValueHashTable2;
@@ -733,7 +749,7 @@ namespace care{
                                 group
                             );
 
-                            if(numValuesForKey <= maxValuesPerKey){
+                            if(numValuesForKey <= maxValuesPerKey && numValuesForKey >= minValuesPerKey){
                                 //real run to obtain values
                                 gpuTable.retrieve(
                                     key,

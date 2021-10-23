@@ -405,7 +405,10 @@ namespace care{
                 constexpr bool valuesOfSameKeyMustBeSorted = true;
                 const int maxValuesPerKey = getNumResultsPerMapThreshold();
 
-                care::GroupByKeyCpu<Key_t, Value_t, read_number> groupByKey(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
+                //if only 1 value exists, it belongs to the anchor read itself and does not need to be stored.
+                const int minValuesPerKey = 2;
+
+                care::GroupByKeyCpu<Key_t, Value_t, read_number> groupByKey(valuesOfSameKeyMustBeSorted, maxValuesPerKey, minValuesPerKey);
                 groupByKey.execute(keys, values, countsPrefixSum);
             };
 
