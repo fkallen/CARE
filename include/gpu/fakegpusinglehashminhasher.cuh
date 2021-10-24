@@ -58,9 +58,9 @@ namespace gpu{
     private:
         using HashTable = CpuReadOnlyMultiValueHashTable<kmer_type, read_number>;
 
-        //using Range_t = std::pair<const Value_t*, const Value_t*>;
-        using SingleHashTableConstIter = std::unordered_multimap<kmer_type, read_number>::const_iterator;
-        using Range_t = std::pair<SingleHashTableConstIter, SingleHashTableConstIter>;
+        using Range_t = std::pair<const Value_t*, const Value_t*>;
+        //using SingleHashTableConstIter = std::unordered_multimap<kmer_type, read_number>::const_iterator;
+        //using Range_t = std::pair<SingleHashTableConstIter, SingleHashTableConstIter>;
 
         struct QueryData{
             static constexpr int overprovisioningPercent = 0;
@@ -169,10 +169,6 @@ namespace gpu{
             
             std::size_t memoryBeforeSinglehashtable = getAvailableMemoryInKB() * 1024;
 
-            allKeys.reserve(
-                (memoryBeforeSinglehashtable - 6ull * (1 << 30)) / sizeof(kmer_type)
-            );
-
             {
                 auto& readStorage = gpuReadStorage;
                 const auto& deviceIds = runtimeOptions.deviceIds;
@@ -211,6 +207,10 @@ namespace gpu{
                 //         << ", memoryTotalLimit: " << memoryOptions.memoryTotalLimit
                 //         << ", rsHostUsage: " << memoryUsageOfReadStorage.host << "\n";
 
+                std::size_t maxNumPairs = std::size_t(numReads) * std::size_t(numSmallest);
+
+                singlecustomhashtable = std::make_unique<HashTable>(maxNumPairs, loadfactor);
+
                 cudaStream_t stream = cudaStreamPerThread;
                 
                 rmm::device_uvector<unsigned int> d_sequenceData(encodedSequencePitchInInts * parallelReads, stream, mr);
@@ -234,7 +234,7 @@ namespace gpu{
 
                     setThreadPool(&tpForHashing);
 
-                    singlehashtable = std::unordered_multimap<kmer_type, read_number>(0); //numReads
+                    //singlehashtable = std::unordered_multimap<kmer_type, read_number>(0); //numReads
 
                     std::cout << "Constructing maps\n";
 
@@ -291,14 +291,16 @@ namespace gpu{
 
                     std::cerr << "numKeys = " << numKeys << "\n";
 
-                    std::cerr << "Skip compacting unordered multimap\n";
+                    //std::cerr << "Skip compacting unordered multimap\n";
                     // if(tpForCompacting.getConcurrency() > 1){
                     //     setThreadPool(&tpForCompacting);
                     // }else{
                     //     setThreadPool(nullptr);
                     // }
-                    
-                    // finalize();
+
+                    std::cerr << "Compacting custom table\n";
+                    setThreadPool(nullptr);                    
+                    finalize();
 
                     // remainingHashFunctions -= addedHashFunctions;
                 }
@@ -308,20 +310,20 @@ namespace gpu{
                 gpuReadStorage.destroyHandle(sequencehandle);
             }
 
-            std::cerr << "allKeys.size() " << allKeys.size() << "\n";
-            std::cerr << "allKeys.capacity() " << allKeys.capacity() << "\n";
+            // std::cerr << "allKeys.size() " << allKeys.size() << "\n";
+            // std::cerr << "allKeys.capacity() " << allKeys.capacity() << "\n";
 
-            std::size_t memoryAfterSinglehashtable = getAvailableMemoryInKB() * 1024;
+            // std::size_t memoryAfterSinglehashtable = getAvailableMemoryInKB() * 1024;
 
-            singlehashtablememoryusage = memoryAfterSinglehashtable > memoryBeforeSinglehashtable ? memoryAfterSinglehashtable - memoryBeforeSinglehashtable : 0;
+            // singlehashtablememoryusage = memoryAfterSinglehashtable > memoryBeforeSinglehashtable ? memoryAfterSinglehashtable - memoryBeforeSinglehashtable : 0;
 
-            std::cerr << "singlehashtablememoryusage: " << singlehashtablememoryusage << "\n";
+            // std::cerr << "singlehashtablememoryusage: " << singlehashtablememoryusage << "\n";
 
-            std::sort(allKeys.begin(), allKeys.end());
-            auto it = std::unique(allKeys.begin(), allKeys.end());
-            allKeys.erase(it, allKeys.end());
+            // std::sort(allKeys.begin(), allKeys.end());
+            // auto it = std::unique(allKeys.begin(), allKeys.end());
+            // allKeys.erase(it, allKeys.end());
 
-            std::cerr << "allKeys.size() unique " << allKeys.size() << "\n";
+            // std::cerr << "allKeys.size() unique " << allKeys.size() << "\n";
         }
     
 
@@ -425,19 +427,31 @@ namespace gpu{
             CUDACHECK(cudaStreamSynchronize(stream));
 
             for(int s = 0; s < numSequences; s++){
-                const int num = h_numHashesPerSequence[s];
+                const int numHashes = h_numHashesPerSequence[s];
+                assert(numHashes <= numSmallest);
 
                 int numValues = 0;
 
-                for(int i = 0; i < num; i++){
-                    auto [b,e] = singlehashtable.equal_range(h_hashes[h_numHashesPerSequencePrefixSum[s] + i]);
-                    numValues += std::distance(b,e);
+                // for(int i = 0; i < num; i++){
+                //     auto [b,e] = singlehashtable.equal_range(h_hashes[h_numHashesPerSequencePrefixSum[s] + i]);
+                //     numValues += std::distance(b,e);
 
-                    allRanges[s * numSmallest + i] = {b, e};
+                //     allRanges[s * numSmallest + i] = {b, e};
+                // }
+
+                // for(int i = num; i < numSmallest; i++){
+                //     allRanges[s * numSmallest + i] = {singlehashtable.end(), singlehashtable.end()};
+                // }
+
+                for(int i = 0; i < numHashes; i++){
+                    const kmer_type key = h_hashes[s * numSmallest + i];/* & kmer_mask*/; 
+                    const HashTable::QueryResult qr = singlecustomhashtable->query(key);
+                    allRanges[s * numSmallest + i] = {qr.valuesBegin, qr.valuesBegin + qr.numValues};
+                    numValues += qr.numValues;
                 }
 
-                for(int i = num; i < numSmallest; i++){
-                    allRanges[s * numSmallest + i] = {singlehashtable.end(), singlehashtable.end()};
+                for(int i = numHashes; i < numSmallest; i++){
+                    allRanges[s * numSmallest + i] = {nullptr, nullptr};
                 }
 
                 queryData->h_numValuesPerSequence[s] = numValues;
@@ -515,48 +529,43 @@ namespace gpu{
                     queryData->h_end_offsets.begin()
                 );
 
-                std::vector<int> processedPerSequence(numSequences, 0);
+                for(int s = 0; s < numSequences; s++){                    
 
-                for(int map = 0; map < minhasher->getNumberOfMaps(); ++map){
-                    for(int i = 0; i < numSequences; i++){
+                    //prefetch first element of next range if the next range is not empty
+                    // {
+                    //     constexpr int nextprefetch = 2;
+                    //     int prefetchSequence = 0;
+                    //     int prefetchMap = 0;
+                    //     if(i + nextprefetch < numSequences){
+                    //         prefetchMap = map;
+                    //         prefetchSequence = i + nextprefetch;
+                    //     }else{
+                    //         prefetchMap = map + 1;
+                    //         prefetchSequence = i + nextprefetch - numSequences;
+                    //     }
 
-                        
+                    //     if(prefetchMap < minhasher->getNumberOfMaps()){
+                    //         const auto& range = queryData->allRanges[prefetchMap * numSequences + prefetchSequence];
+                    //         if(range.first != range.second){
+                    //             __builtin_prefetch(range.first, 0, 0);
+                    //         }
+                    //     }
+                    // }
 
-                        //prefetch first element of next range if the next range is not empty
-                        // {
-                        //     constexpr int nextprefetch = 2;
-                        //     int prefetchSequence = 0;
-                        //     int prefetchMap = 0;
-                        //     if(i + nextprefetch < numSequences){
-                        //         prefetchMap = map;
-                        //         prefetchSequence = i + nextprefetch;
-                        //     }else{
-                        //         prefetchMap = map + 1;
-                        //         prefetchSequence = i + nextprefetch - numSequences;
-                        //     }
+                    auto destination = queryData->h_candidate_read_ids_tmp.data() + queryData->h_begin_offsets[s];
 
-                        //     if(prefetchMap < minhasher->getNumberOfMaps()){
-                        //         const auto& range = queryData->allRanges[prefetchMap * numSequences + prefetchSequence];
-                        //         if(range.first != range.second){
-                        //             __builtin_prefetch(range.first, 0, 0);
-                        //         }
-                        //     }
-                        // }
+                    for(int i = 0; i < minhasher->numSmallest; i++){
 
-                        const auto& range = queryData->allRanges[map * numSequences + i];
+                        const auto& range = queryData->allRanges[s * minhasher->numSmallest + i];
 
-                        std::transform(
+                        destination = std::copy(
                             range.first, 
                             range.second, 
-                            queryData->h_candidate_read_ids_tmp.data() 
-                                + queryData->h_begin_offsets[i] + processedPerSequence[i],
-                            [](const auto mapIterator){
-                                return mapIterator.second;
-                            }
+                            destination
                         );
-
-                        processedPerSequence[i] += std::distance(range.first, range.second);
                     }
+
+                    assert(destination == queryData->h_candidate_read_ids_tmp.data() + queryData->h_end_offsets[s]);
                 }
             };
 
@@ -746,6 +755,8 @@ namespace gpu{
             //     }                
             // }
 
+            singlecustomhashtable->finalize(groupByKey, nullptr);
+
             if(threadPool != nullptr){
                 threadPool->wait();
             }
@@ -754,7 +765,7 @@ namespace gpu{
         MemoryUsage getMemoryInfo() const noexcept override{
             MemoryUsage result;
 
-            result.host = singlehashtablememoryusage;
+            //result.host = singlehashtablememoryusage;
 
             // result.host = sizeof(HashTable) * minhashTables.size();
             
@@ -768,6 +779,8 @@ namespace gpu{
             //         result.device[pair.first] += pair.second;
             //     }
             // }
+
+            result = singlecustomhashtable->getMemoryInfo();
 
             return result;
         }
@@ -786,7 +799,8 @@ namespace gpu{
 
         void destroy() {
             //minhashTables.clear();
-            singlehashtable = std::unordered_multimap<kmer_type, read_number>();
+            //singlehashtable = std::unordered_multimap<kmer_type, read_number>();
+            singlecustomhashtable = nullptr;
         }
 
         int getKmerSize() const noexcept override{
@@ -933,22 +947,38 @@ namespace gpu{
 
             CUDACHECK(cudaStreamSynchronize(stream));
 
-            std::size_t numKeys = 0;
+            const std::size_t numKeys = h_numHashesPerSequencePrefixSum.back() + h_numHashesPerSequence.back();
 
+            std::vector<read_number> readidsToInsert(numKeys);
+            auto iterator = readidsToInsert.begin();
             for(int s = 0; s < numSequences; s++){
                 const int num = h_numHashesPerSequence[s];
-                if(num > 0){
-                    numKeys += num;
-                    if(!dryrun){
-                        std::vector<std::pair<kmer_type,read_number>> entries(num);
-                        for(int i = 0; i < num; i++){
-                            entries[i] = std::make_pair(h_hashes[h_numHashesPerSequencePrefixSum[s] + i], h_readIds[s]);
-                        }
-                        //singlehashtable.insert(entries.begin(), entries.end());
-                        allKeys.insert(allKeys.end(), &h_hashes[h_numHashesPerSequencePrefixSum[s]], &h_hashes[h_numHashesPerSequencePrefixSum[s] + num]);
-                    }
-                }
+                std::fill(iterator, iterator + num, h_readIds[s]);
+                iterator = iterator + num;
             }
+
+            singlecustomhashtable->insert(
+                h_hashes.data(), readidsToInsert.data(), numKeys
+            );
+
+            // for(int s = 0; s < numSequences; s++){
+            //     const int num = h_numHashesPerSequence[s];
+            //     if(num > 0){
+            //         numKeys += num;
+            //         if(!dryrun){
+            //             std::vector<std::pair<kmer_type,read_number>> entries(num);
+            //             for(int i = 0; i < num; i++){
+            //                 entries[i] = std::make_pair(h_hashes[h_numHashesPerSequencePrefixSum[s] + i], h_readIds[s]);
+            //             }
+            //             //singlehashtable.insert(entries.begin(), entries.end());
+            //             //allKeys.insert(allKeys.end(), &h_hashes[h_numHashesPerSequencePrefixSum[s]], &h_hashes[h_numHashesPerSequencePrefixSum[s] + num]);
+
+            //             minhashTables[0]->insert(
+            //                 hashesBegin, h_readIds, numSequences
+            //             );
+            //         }
+            //     }
+            // }
 
             return numKeys;
         }   
@@ -982,9 +1012,9 @@ namespace gpu{
         ThreadPool* threadPool;
         std::size_t memoryLimit;
         std::size_t singlehashtablememoryusage{};
-        //std::vector<std::unique_ptr<HashTable>> minhashTables{};
-        std::unordered_multimap<kmer_type, read_number> singlehashtable{};
-        std::vector<kmer_type> allKeys{};
+        std::vector<std::unique_ptr<HashTable>> minhashTables{};
+        //std::unordered_multimap<kmer_type, read_number> singlehashtable{};
+        //std::vector<kmer_type> allKeys{};
         std::unique_ptr<HashTable> singlecustomhashtable{};
         mutable std::vector<std::unique_ptr<QueryData>> tempdataVector{};
     };
