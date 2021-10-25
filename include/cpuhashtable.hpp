@@ -13,6 +13,7 @@
 #include <type_traits>
 #include <limits>
 #include <iostream>
+#include <functional>
 
 #include <hpc_helpers.cuh>
 
@@ -24,6 +25,8 @@ namespace care{
         static_assert(std::is_integral<Key>::value, "Key must be integral!");
 
     public:
+        //computes the new hashtable size from the current hashtable size on automatic rehash
+        using RehashPolicy = std::function<std::size_t(std::size_t)>; 
         class QueryResult{
         public:
             QueryResult() = default;
@@ -48,25 +51,22 @@ namespace care{
             Value val;
         };
 
-        AoSCpuSingleValueHashTable() = default;
         AoSCpuSingleValueHashTable(const AoSCpuSingleValueHashTable&) = default;
         AoSCpuSingleValueHashTable(AoSCpuSingleValueHashTable&&) = default;
         AoSCpuSingleValueHashTable& operator=(const AoSCpuSingleValueHashTable&) = default;
         AoSCpuSingleValueHashTable& operator=(AoSCpuSingleValueHashTable&&) = default;
 
-        AoSCpuSingleValueHashTable(std::size_t size, float load)
-            : load(load), size(size), capacity(size/load)
+        AoSCpuSingleValueHashTable(std::size_t size = 1, float load = 0.8, RehashPolicy pol = [](const std::size_t x){ return x * 2; })
+            : load(load), size(size), capacity(size/load), rehashPolicy(pol)
         {
             storage.resize(capacity, emptySlot);
         }
 
-        AoSCpuSingleValueHashTable(std::size_t size) 
-            : AoSCpuSingleValueHashTable(size, 0.8f){            
-        }
 
         bool operator==(const AoSCpuSingleValueHashTable& rhs) const{
             return emptySlot == rhs.emptySlot 
                 && feq(load, rhs.load)
+                && numInserts == rhs.numInserts
                 && maxProbes == rhs.maxProbes
                 && size == rhs.size 
                 && capacity == rhs.capacity
@@ -77,8 +77,23 @@ namespace care{
             return !(operator==(rhs));
         }
 
+        void rehash(std::size_t newsize){
+            std::cerr << "rehash(" << newsize << ")\n";
+            AoSCpuSingleValueHashTable newtable(newsize, load);
+
+            forEachKeyValuePair([&](const auto& key, const auto& value){
+                newtable.insert(key, value);
+            });
+
+            std::swap(newtable, *this);
+        }
+
         void insert(const Key& key, const Value& value){
             using hasher = hashers::MurmurHash<std::uint64_t>;
+
+            if(numInserts >= size){
+                rehash(rehashPolicy(size));
+            }
 
             const std::uint64_t key64 = std::uint64_t(key);
             std::size_t probes = 0;
@@ -95,6 +110,9 @@ namespace care{
             storage[pos].second = value;
 
             maxProbes = std::max(maxProbes, probes);
+
+            numInserts++;
+
         }
 
         QueryResult query(const Key& key) const{
@@ -118,6 +136,39 @@ namespace care{
                 }
             }
             return {true, storage[pos].second};
+        }
+
+        Value* queryPointer(const Key& key){
+            using hasher = hashers::MurmurHash<std::uint64_t>;
+            
+            const std::uint64_t key64 = std::uint64_t(key);
+            std::size_t probes = 0;
+            std::size_t pos = hasher::hash(key64) % capacity;
+            while(storage[pos].first != key){
+                if(storage[pos] == emptySlot){
+                    return nullptr;
+                }
+                pos++;
+                //wrap-around
+                if(pos == capacity){
+                    pos = 0;
+                }
+                probes++;
+                if(maxProbes < probes){
+                    return nullptr;
+                }
+            }
+            return &storage[pos].second;
+        }
+
+        //Func(key, value)
+        template<class Func>
+        void forEachKeyValuePair(Func&& func){
+            for(std::size_t i = 0; i < capacity; i++){
+                if(storage[i] != emptySlot){
+                    func(storage[i].first, storage[i].second);
+                }
+            }
         }
 
         MemoryUsage getMemoryInfo() const{
@@ -171,9 +222,11 @@ namespace care{
             = std::pair<Key,Value>{std::numeric_limits<Key>::max(), std::numeric_limits<Value>::max()};
 
         float load{};
+        std::size_t numInserts{}; //TODO save, load
         std::size_t maxProbes{};
         std::size_t size{};
         std::size_t capacity{};
+        RehashPolicy rehashPolicy{};
         std::vector<Data> storage{};        
     };
 

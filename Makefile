@@ -130,7 +130,7 @@ gpuarchs.txt : findgpus
 	$(shell ./findgpus > gpuarchs.txt) 
 
 correct_cpu_release:
-	@$(MAKE) correct_cpu_release_dummy DIR=$(BUILDDIR_CORRECT_CPU) CXXFLAGS="-std=c++14"
+	@$(MAKE) correct_cpu_release_dummy DIR=$(BUILDDIR_CORRECT_CPU) CXXFLAGS="-std=c++17"
 
 correct_gpu_release: gpuarchs.txt
 	@$(MAKE) correct_gpu_release_dummy DIR=$(BUILDDIR_CORRECT_GPU) CXXFLAGS="-std=c++17" CUDA_ARCH=$(shell cat gpuarchs.txt)
