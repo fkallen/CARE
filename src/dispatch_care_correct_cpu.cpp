@@ -2,7 +2,7 @@
 #include <hpc_helpers.cuh>
 #include <config.hpp>
 #include <options.hpp>
-
+#include <singlehashminhasher.hpp>
 #include <correct_cpu.hpp>
 
 #include <minhasherlimit.hpp>
@@ -116,6 +116,8 @@ namespace care{
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
 
+        #if 0
+
         auto minhasherAndType = constructCpuMinhasherFromCpuReadStorage(
             fileOptions,
             runtimeOptions,
@@ -194,6 +196,76 @@ namespace care{
         minhasherAndType.first.reset();
         cpuMinhasher = nullptr;        
         cpuReadStorage.reset();
+
+        #else
+
+        auto cpuMinhasher = std::make_unique<SingleHashCpuMinhasher>(
+            cpuReadStorage->getNumberOfReads(),
+            255,//calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage),
+            correctionOptions.kmerlength,
+            memoryOptions.hashtableLoadfactor
+        );
+
+        cpuMinhasher->constructFromReadStorage(
+            fileOptions,
+            runtimeOptions,
+            memoryOptions,
+            cpuReadStorage->getNumberOfReads(),
+            correctionOptions,
+            *cpuReadStorage
+        );
+
+
+        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after cpuminhasher");
+
+        buildMinhasherTimer.print();
+
+        std::cout << "CpuMinhasher can use " << cpuMinhasher->getNumberOfMaps() << " maps\n";
+
+        if(cpuMinhasher->getNumberOfMaps() <= 0){
+            std::cout << "Cannot construct a single cpu hashtable. Abort!" << std::endl;
+            return;
+        }
+
+        if(correctionOptions.mustUseAllHashfunctions 
+            && correctionOptions.numHashFunctions != cpuMinhasher->getNumberOfMaps()){
+            std::cout << "Cannot use specified number of hash functions (" 
+                << correctionOptions.numHashFunctions <<")\n";
+            std::cout << "Abort!\n";
+            return;
+        }
+
+        printDataStructureMemoryUsage(*cpuMinhasher, "hash tables");
+
+        step1Timer.print();
+
+        std::cout << "STEP 2: Error correction" << std::endl;
+
+        helpers::CpuTimer step2Timer("STEP2");
+
+        auto partialResults = cpu::correct_cpu(
+            goodAlignmentProperties, 
+            correctionOptions,
+            runtimeOptions, 
+            fileOptions, 
+            memoryOptions, 
+            *cpuMinhasher, 
+            *cpuReadStorage
+        );
+
+        step2Timer.print();
+
+        std::cout << "Correction throughput : ~" << (cpuReadStorage->getNumberOfReads() / step2Timer.elapsed()) << " reads/second.\n";
+
+        std::cerr << "Constructed " << partialResults.size() << " corrections. ";
+        std::cerr << "They occupy a total of " << (partialResults.dataBytes() + partialResults.offsetBytes()) << " bytes\n";
+
+        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after correction");
+
+        cpuMinhasher = nullptr;        
+        cpuReadStorage.reset();
+
+        #endif
 
         //Merge corrected reads with input file to generate output file
 
