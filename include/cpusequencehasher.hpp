@@ -86,7 +86,7 @@ struct CPUSequenceHasher{
 
         auto handlekmer = [&](std::uint64_t fwd, std::uint64_t rc){
             const std::uint64_t smallest = std::min(fwd, rc);
-            const std::uint64_t hashvalue = hasher::hash(smallest);
+            const std::uint64_t hashvalue = hasher::hash(smallest) & kmer_mask;
             result.insert(hashvalue);
         };
 

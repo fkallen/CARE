@@ -66,6 +66,21 @@ namespace care{
             }
         };
 
+        struct KVMetadata{
+            read_number offset;
+            BucketSize numValues;
+
+            bool operator==(const KVMetadata& rhs) const noexcept{
+                if(offset != rhs.offset) return false;
+                if(numValues != rhs.numValues) return false;
+                return true;
+            }
+
+            bool operator!=(const KVMetadata& rhs) const noexcept{
+                return !operator==(rhs);
+            }
+        };
+
         
     public:
 
@@ -195,7 +210,7 @@ namespace care{
 
             #else 
 
-            singlehashtable = std::make_unique<HashTable>(maxNumPairs, loadfactor);
+            singlehashtable = std::make_unique<HashTable>(0, loadfactor);
 
 
 
@@ -203,6 +218,10 @@ namespace care{
             ThreadPool tpForCompacting(std::min(2,runtimeOptions.threads));
 
             setMemoryLimitForConstruction(maxMemoryForTables);
+
+            //AoSCpuSingleValueHashTable<kmer_type, KVMetadata> metadataTable(536870912, 0.8f);
+
+            kvtable = std::make_unique<DoublePassMultiValueHashTable<kmer_type, read_number>>((numReads * numSmallest) / 8, loadfactor);
 
             //while(remainingHashFunctions > 0 && keepGoing){
             {
@@ -217,7 +236,7 @@ namespace care{
                 std::vector<unsigned int> sequencedata(batchsize * encodedSequencePitchInInts);
                 std::vector<int> sequencelengths(batchsize);
 
-                std::vector<kmer_type> keys1(maxNumPairs);
+                //std::vector<kmer_type> keys1(maxNumPairs);
 
                 helpers::CpuTimer firstpasstimer("firstpass");
 
@@ -241,8 +260,13 @@ namespace care{
                         currentbatchsize
                     );
 
+                    std::vector<kmer_type> tmpkeys(currentbatchsize * numSmallest);
+                    std::vector<read_number> tmpids(currentbatchsize * numSmallest);
+
                     auto numNewKeys = insertPart1(
-                        keys1.data() + numKeys,
+                        tmpkeys.data(),
+                        //keys1.data() + numKeys,
+                        tmpids.data(),
                         sequencedata.data(),
                         currentbatchsize,
                         sequencelengths.data(),
@@ -251,87 +275,186 @@ namespace care{
                     );
 
                     numKeys += numNewKeys;
+                    tmpkeys.erase(tmpkeys.begin() + numNewKeys, tmpkeys.end());
+                    tmpids.erase(tmpids.begin() + numNewKeys, tmpids.end());
+
+                    // for(std::size_t i = 0; i < tmpkeys.size(); i++){
+                    //     KVMetadata* valueptr = metadataTable.queryPointer(tmpkeys[i]);
+                    //     KVMetadata initvalue;
+                    //     initvalue.offset = 1;
+                    //     initvalue.numValues = 0;
+
+                    //     if(valueptr == nullptr){
+                    //         metadataTable.insert(tmpkeys[i], initvalue);
+                    //     }else{
+                    //         (*valueptr).offset++;
+                    //     }
+                    // }
+
+                    kvtable->firstPassInsert(tmpkeys.data(), tmpids.data(), tmpkeys.size());
                 }
 
-                keys1.erase(keys1.begin() + numKeys, keys1.end());
+                //keys1.erase(keys1.begin() + numKeys, keys1.end());
 
                 firstpasstimer.print();
 
-                {
-                    //AoSCpuSingleValueHashTable<kmer_type, int> keyCountTable(70'000'000, 0.8f);
-                    AoSCpuSingleValueHashTable<kmer_type, int> keyCountTable(1, 0.8f);
+                kvtable->firstPassDone(2);
 
-                    std::cerr << "insert key counts\n";
-                    helpers::CpuTimer timer4("insert key counts");
+                helpers::CpuTimer secondPassTimer("secondpass");
 
-                    for(std::size_t i = 0; i < keys1.size(); i++){
-                        int* valueptr = keyCountTable.queryPointer(keys1[i]);
-                        if(valueptr == nullptr){
-                            keyCountTable.insert(keys1[i], 1);
-                        }else{
-                            (*valueptr)++;
-                        }
-                    }
-                    timer4.print();
+                for(int iteration = 0; iteration < numIterations; iteration++){
+                    const read_number beginid = iteration * batchsize;
+                    const read_number endid = std::min((iteration + 1) * batchsize, int(numReads));
+                    const read_number currentbatchsize = endid - beginid;
 
-                    std::cerr << "check key counts\n";
-                    helpers::CpuTimer timer5("check key counts");
+                    std::iota(currentReadIds.begin(), currentReadIds.end(), beginid);
 
-                    std::size_t tablecountedUniqueKeys = 0;
-                    std::size_t tablecountedValues = 0;
-
-                    keyCountTable.forEachKeyValuePair(
-                        [&](const auto& /*key*/, const auto& value){
-                            tablecountedUniqueKeys++;
-                            tablecountedValues += value;
-                        }
+                    readStorage.gatherSequences(
+                        sequencedata.data(),
+                        encodedSequencePitchInInts,
+                        currentReadIds.data(),
+                        currentbatchsize
                     );
-                    timer5.print();
 
-                    std::cerr << "tablecountedUniqueKeys:"  << tablecountedUniqueKeys << "\n";
-                    std::cerr << "tablecountedValues:"  << tablecountedValues << "\n";
+                    readStorage.gatherSequenceLengths(
+                        sequencelengths.data(),
+                        currentReadIds.data(),
+                        currentbatchsize
+                    );
 
+                    std::vector<kmer_type> tmpkeys(currentbatchsize * numSmallest);
+                    std::vector<read_number> tmpids(currentbatchsize * numSmallest);
 
+                    auto numNewKeys = insertPart1(
+                        tmpkeys.data(),
+                        //keys1.data() + numKeys,
+                        tmpids.data(),
+                        sequencedata.data(),
+                        currentbatchsize,
+                        sequencelengths.data(),
+                        encodedSequencePitchInInts,
+                        currentReadIds.data()
+                    );
+
+                    numKeys += numNewKeys;
+                    tmpkeys.erase(tmpkeys.begin() + numNewKeys, tmpkeys.end());
+                    tmpids.erase(tmpids.begin() + numNewKeys, tmpids.end());
+
+                    kvtable->secondPassInsert(tmpkeys.data(), tmpids.data(), tmpkeys.size());
                 }
 
-                std::cerr << "sort keys\n";
-                helpers::CpuTimer timer1("sort keys");
-                std::sort(keys1.begin(), keys1.end());
-                timer1.print();
+                //keys1.erase(keys1.begin() + numKeys, keys1.end());
 
-                std::cerr << "count unique keys\n";
-                helpers::CpuTimer timer2("count unique keys");
-                std::size_t numUniqueKeys = (keys1.size() > 0) ? 1 : 0;
-                for(std::size_t i = 1; i < keys1.size(); i++){
-                    if(keys1[i-1] != keys1[i]){
-                        numUniqueKeys++;
-                    }
-                }
-                timer2.print();
-                std::cerr << "numUniqueKeys: " << numUniqueKeys << "\n";
+                secondPassTimer.print();
 
-                std::vector<int> countsPerKey(numUniqueKeys, 0);
-                if(keys1.size() > 0){
-                    countsPerKey[0] = 1;
-                }
-                std::cerr << "count values per key\n";
-                helpers::CpuTimer timer3("count values per key");
-                for(std::size_t i = 1, uniqueIndex = 0; i < keys1.size(); i++){
-                    if(keys1[i-1] != keys1[i]){
-                        uniqueIndex++;
-                    }
-                    countsPerKey[uniqueIndex]++;
-                }
-                timer3.print();
+                // {
 
-                std::size_t numValues = std::reduce(countsPerKey.begin(), countsPerKey.end(), std::size_t(0));
-                std::cerr << "numValues: " << numValues << "\n";
+                // std::cerr << "check key counts\n";
+                // helpers::CpuTimer timer5("check key counts");
 
-                std::size_t numKeysGreater1 = std::transform_reduce(countsPerKey.begin(), countsPerKey.end(), std::size_t(0), std::plus{}, [](auto x){return x > 1 ? 1 : 0;});
-                std::size_t numValuesWithKeysGreater1 = std::transform_reduce(countsPerKey.begin(), countsPerKey.end(), std::size_t(0), std::plus{}, [](auto x){return x > 1 ? x : 0;});
+                // std::size_t tablecountedUniqueKeys = 0;
+                // std::size_t tablecountedValues = 0;
 
-                std::cerr << "numKeysGreater1: " << numKeysGreater1 << "\n";
-                std::cerr << "numValuesWithKeysGreater1: " << numValuesWithKeysGreater1 << "\n";
+                // std::size_t tablecountednumKeysGreater1 = 0;
+                // std::size_t tablecountednumValuesWithKeysGreater1 = 0;
+
+                // metadataTable.forEachKeyValuePair(
+                //     [&](const auto& /*key*/, const auto& value){
+                //         tablecountedUniqueKeys++;
+                //         tablecountedValues += value.offset;
+
+                //         if(value.offset > 1){
+                //             tablecountednumKeysGreater1++;
+                //             tablecountednumValuesWithKeysGreater1 += value.offset;
+                //         }
+                //     }
+                // );
+                // timer5.print();
+
+                // std::cerr << "tablecountedUniqueKeys:"  << tablecountedUniqueKeys << "\n";
+                // std::cerr << "tablecountedValues:"  << tablecountedValues << "\n";
+                // std::cerr << "tablecountednumKeysGreater1:"  << tablecountednumKeysGreater1 << "\n";
+                // std::cerr << "tablecountednumValuesWithKeysGreater1:"  << tablecountednumValuesWithKeysGreater1 << "\n";
+
+                
+
+                // }
+
+                // {
+                //     //AoSCpuSingleValueHashTable<kmer_type, int> keyCountTable(70'000'000, 0.8f);
+                //     AoSCpuSingleValueHashTable<kmer_type, int> keyCountTable(1, 0.8f);
+
+                //     std::cerr << "insert key counts\n";
+                //     helpers::CpuTimer timer4("insert key counts");
+
+                //     for(std::size_t i = 0; i < keys1.size(); i++){
+                //         int* valueptr = keyCountTable.queryPointer(keys1[i]);
+                //         if(valueptr == nullptr){
+                //             keyCountTable.insert(keys1[i], 1);
+                //         }else{
+                //             (*valueptr)++;
+                //         }
+                //     }
+                //     timer4.print();
+
+                //     std::cerr << "check key counts\n";
+                //     helpers::CpuTimer timer5("check key counts");
+
+                //     std::size_t tablecountedUniqueKeys = 0;
+                //     std::size_t tablecountedValues = 0;
+
+                //     keyCountTable.forEachKeyValuePair(
+                //         [&](const auto& /*key*/, const auto& value){
+                //             tablecountedUniqueKeys++;
+                //             tablecountedValues += value;
+                //         }
+                //     );
+                //     timer5.print();
+
+                //     std::cerr << "tablecountedUniqueKeys:"  << tablecountedUniqueKeys << "\n";
+                //     std::cerr << "tablecountedValues:"  << tablecountedValues << "\n";
+
+
+                // }
+
+                // std::cerr << "sort keys\n";
+                // helpers::CpuTimer timer1("sort keys");
+                // std::sort(keys1.begin(), keys1.end());
+                // timer1.print();
+
+                // std::cerr << "count unique keys\n";
+                // helpers::CpuTimer timer2("count unique keys");
+                // std::size_t numUniqueKeys = (keys1.size() > 0) ? 1 : 0;
+                // for(std::size_t i = 1; i < keys1.size(); i++){
+                //     if(keys1[i-1] != keys1[i]){
+                //         numUniqueKeys++;
+                //     }
+                // }
+                // timer2.print();
+                // std::cerr << "numUniqueKeys: " << numUniqueKeys << "\n";
+
+                // std::vector<int> countsPerKey(numUniqueKeys, 0);
+                // if(keys1.size() > 0){
+                //     countsPerKey[0] = 1;
+                // }
+                // std::cerr << "count values per key\n";
+                // helpers::CpuTimer timer3("count values per key");
+                // for(std::size_t i = 1, uniqueIndex = 0; i < keys1.size(); i++){
+                //     if(keys1[i-1] != keys1[i]){
+                //         uniqueIndex++;
+                //     }
+                //     countsPerKey[uniqueIndex]++;
+                // }
+                // timer3.print();
+
+                // std::size_t numValues = std::reduce(countsPerKey.begin(), countsPerKey.end(), std::size_t(0));
+                // std::cerr << "numValues: " << numValues << "\n";
+
+                // std::size_t numKeysGreater1 = std::transform_reduce(countsPerKey.begin(), countsPerKey.end(), std::size_t(0), std::plus{}, [](auto x){return x > 1 ? 1 : 0;});
+                // std::size_t numValuesWithKeysGreater1 = std::transform_reduce(countsPerKey.begin(), countsPerKey.end(), std::size_t(0), std::plus{}, [](auto x){return x > 1 ? x : 0;});
+
+                // std::cerr << "numKeysGreater1: " << numKeysGreater1 << "\n";
+                // std::cerr << "numValuesWithKeysGreater1: " << numValuesWithKeysGreater1 << "\n";
 
                 
                 
@@ -515,6 +638,7 @@ namespace care{
             MemoryUsage result;
 
             result += singlehashtable->getMemoryInfo();
+            result += kvtable->getMemoryInfo();
 
             return result;
         }
@@ -691,11 +815,12 @@ namespace care{
         
         std::size_t insertPart1(
             kmer_type* keyoutput,
+            read_number* readIdsOutput,
             const unsigned int* h_sequenceData2Bit,
             int numSequences,
             const int* h_sequenceLengths,
             std::size_t encodedSequencePitchInInts,
-            const read_number* /*h_readIds*/
+            const read_number* h_readIds
         ){
             if(numSequences == 0) return 0;
 
@@ -706,6 +831,7 @@ namespace care{
 
             struct ThreadData{
                 std::vector<kmer_type> hashes{};
+                std::vector<read_number> ids{};
             };
 
             std::vector<ThreadData> threadData(numThreads);
@@ -714,8 +840,10 @@ namespace care{
                 CPUSequenceHasher<kmer_type> sequenceHasher;
 
                 threadData[threadid].hashes.resize((end - begin) * numSmallest);
+                threadData[threadid].ids.resize((end - begin) * numSmallest);
 
                 auto hashIter = threadData[threadid].hashes.begin();
+                auto idIter = threadData[threadid].ids.begin();
 
                 for(int s = begin; s < end; s++){
                     const int length = h_sequenceLengths[s];
@@ -729,9 +857,14 @@ namespace care{
                     );
 
                     hashIter = std::copy(hashValues.begin(), hashValues.end(), hashIter);
+                    std::fill(idIter, idIter + hashValues.size(), h_readIds[s]);
+                    idIter = idIter + hashValues.size();
                 }
 
                 threadData[threadid].hashes.erase(hashIter, threadData[threadid].hashes.end());
+                threadData[threadid].ids.erase(idIter, threadData[threadid].ids.end());
+
+                assert(std::distance(threadData[threadid].hashes.begin(), hashIter) == std::distance(threadData[threadid].ids.begin(), idIter));
             };
 
             forLoopExecutor(0, numSequences, hashloopbody);
@@ -739,8 +872,9 @@ namespace care{
             std::size_t numKeys = 0;
 
             for(const auto& data : threadData){
+                std::copy(data.hashes.begin(), data.hashes.end(), keyoutput + numKeys);
+                std::copy(data.ids.begin(), data.ids.end(), readIdsOutput + numKeys);
                 numKeys += data.hashes.size();
-                std::copy(data.hashes.begin(), data.hashes.end(), keyoutput);
             }
 
             return numKeys;
@@ -787,8 +921,9 @@ namespace care{
         int resultsPerMapThreshold{};
         ThreadPool* threadPool;
         std::size_t memoryLimit;
-        std::unique_ptr<HashTable> singlehashtable;
+        std::unique_ptr<HashTable> singlehashtable{};
         mutable std::vector<std::unique_ptr<QueryData>> tempdataVector{};
+        std::unique_ptr<DoublePassMultiValueHashTable<kmer_type, read_number>> kvtable{};
     };
 
 

@@ -66,7 +66,7 @@ namespace care{
         bool operator==(const AoSCpuSingleValueHashTable& rhs) const{
             return emptySlot == rhs.emptySlot 
                 && feq(load, rhs.load)
-                && numInserts == rhs.numInserts
+                && numKeys == rhs.numKeys
                 && maxProbes == rhs.maxProbes
                 && size == rhs.size 
                 && capacity == rhs.capacity
@@ -88,17 +88,18 @@ namespace care{
             std::swap(newtable, *this);
         }
 
+        //if key already exists, current value is overwritten by passed value
         void insert(const Key& key, const Value& value){
             using hasher = hashers::MurmurHash<std::uint64_t>;
 
-            if(numInserts >= size){
+            if(numKeys >= size){
                 rehash(rehashPolicy(size));
             }
 
             const std::uint64_t key64 = std::uint64_t(key);
             std::size_t probes = 0;
             std::size_t pos = hasher::hash(key64) % capacity;
-            while(storage[pos] != emptySlot){
+            while(storage[pos] != emptySlot && storage[pos].first != key){
                 pos++;
                 //wrap-around
                 if(pos == capacity){
@@ -106,13 +107,45 @@ namespace care{
                 }
                 probes++;
             }
-            storage[pos].first = key;
-            storage[pos].second = value;
+            if(storage[pos].first == key){
+                storage[pos].second = value;
+            }else{
+                //found empty slot
+                numKeys++;
+                storage[pos].first = key;
+                storage[pos].second = value;
+                maxProbes = std::max(maxProbes, probes);
+            }
+        }
 
-            maxProbes = std::max(maxProbes, probes);
+        template<class Func>
+        void insertOrUpdate(const Key& key, const Value& insertValue, Func&& updateFunc){
+            using hasher = hashers::MurmurHash<std::uint64_t>;
 
-            numInserts++;
+            if(numKeys >= size){
+                rehash(rehashPolicy(size));
+            }
 
+            const std::uint64_t key64 = std::uint64_t(key);
+            std::size_t probes = 0;
+            std::size_t pos = hasher::hash(key64) % capacity;
+            while(storage[pos] != emptySlot && storage[pos].first != key){
+                pos++;
+                //wrap-around
+                if(pos == capacity){
+                    pos = 0;
+                }
+                probes++;
+            }
+            if(storage[pos].first == key){
+                updateFunc(storage[pos].second);
+            }else{
+                //found empty slot
+                numKeys++;
+                storage[pos].first = key;
+                storage[pos].second = insertValue;
+                maxProbes = std::max(maxProbes, probes);
+            }
         }
 
         QueryResult query(const Key& key) const{
@@ -209,9 +242,14 @@ namespace care{
             std::vector<Data> tmp;
             std::swap(storage, tmp);
 
+            numKeys = 0;
             maxProbes = 0;
             size = 0;
             capacity = 0;
+        }
+
+        std::size_t getNumKeys() const noexcept{
+            return numKeys;
         }
 
     private:
@@ -222,7 +260,7 @@ namespace care{
             = std::pair<Key,Value>{std::numeric_limits<Key>::max(), std::numeric_limits<Value>::max()};
 
         float load{};
-        std::size_t numInserts{}; //TODO save, load
+        std::size_t numKeys{}; //TODO save, load
         std::size_t maxProbes{};
         std::size_t size{};
         std::size_t capacity{};
@@ -602,6 +640,249 @@ namespace care{
     };
 
 
+
+
+    template<class Key, class Value>
+    class DoublePassMultiValueHashTable{
+        static_assert(std::is_integral<Key>::value, "Key must be integral!");
+    public:
+
+        struct QueryResult{
+            int numValues;
+            const Value* valuesBegin;
+        };
+
+        DoublePassMultiValueHashTable() = default;
+        DoublePassMultiValueHashTable(const DoublePassMultiValueHashTable&) = default;
+        DoublePassMultiValueHashTable(DoublePassMultiValueHashTable&&) = default;
+        DoublePassMultiValueHashTable& operator=(const DoublePassMultiValueHashTable&) = default;
+        DoublePassMultiValueHashTable& operator=(DoublePassMultiValueHashTable&&) = default;
+
+        //dummy value cannot be inserted into hash table
+        static constexpr Value dummyValue(){
+            return std::numeric_limits<Value>::max();
+        }
+
+        DoublePassMultiValueHashTable(
+            std::size_t estimatedNumKeys,
+            float loadfactor_
+        ) : loadfactor(loadfactor_), lookup(estimatedNumKeys, loadfactor){
+        }
+
+        bool operator==(const DoublePassMultiValueHashTable& rhs) const{
+            return false;
+        }
+
+        bool operator!=(const DoublePassMultiValueHashTable& rhs) const{
+            return !(operator==(rhs));
+        }
+
+        void firstPassInsert(const Key* keys, const Value* values, std::size_t N){
+            auto increment = [](MetaData& meta){
+                std::size_t currentCount = meta.firstPassCount();
+                meta.firstPassCount(currentCount + 1);
+            };
+
+            MetaData count1Meta; 
+            count1Meta.firstPassCount(1);
+
+            for(std::size_t i = 0; i < N; i++){
+                if(values[i] != dummyValue()){
+                    lookup.insertOrUpdate(keys[i], count1Meta, increment);
+                }
+            }
+        }
+
+        void firstPassDone(std::size_t minValuesPerKey = 1, std::size_t maxValuesPerKey = std::numeric_limits<std::size_t>::max()){
+            helpers::CpuTimer timer1("firstPassDone");
+            //count keys with >= minValuesPerKey values
+            std::size_t numKeysWithOkValues = 0;
+            std::size_t numValuesOfKeysWithOkValues = 0;
+
+            lookup.forEachKeyValuePair(
+                [&](const auto& /*key*/, auto& meta){
+                    if(minValuesPerKey <= meta.firstPassCount() && meta.firstPassCount() <= maxValuesPerKey){
+                        numKeysWithOkValues++;
+                        numValuesOfKeysWithOkValues += meta.firstPassCount();
+                    }else{
+                        meta.firstPassCount(0);
+                    }
+                }
+            );
+
+            std::cerr << "unique keys: " << lookup.getNumKeys() << "\n";
+            std::cerr << "numKeysWithOkValues: " << numKeysWithOkValues << "\n";
+            std::cerr << "numValuesOfKeysWithOkValues: " << numValuesOfKeysWithOkValues << "\n";
+
+            //try to create a new lookup which does not contain keys with not ok values
+            try{
+                helpers::CpuTimer timer2("shrink lookup");
+
+                AoSCpuSingleValueHashTable<Key, MetaData> newLookup(lookup.getNumKeys(), loadfactor);
+
+                lookup.forEachKeyValuePair(
+                    [&](const auto& key, const auto& meta){                    
+                        if(minValuesPerKey <= meta.firstPassCount() && meta.firstPassCount() <= maxValuesPerKey){
+                            newLookup.insert(key, meta);
+                        }
+                    }
+                );
+
+                std::swap(lookup, newLookup);
+                timer2.print();
+            }catch(...){
+                std::cerr << "Could not reduce memory usage of table\n";
+            }
+
+            valuestorage.resize(numValuesOfKeysWithOkValues, dummyValue());
+
+            std::size_t position = 0;
+
+            lookup.forEachKeyValuePair(
+                [&](const auto& /*key*/, auto& meta){
+                    std::size_t count = meta.firstPassCount();
+                    meta.offset(position);
+                    position += count;
+                }
+            );
+
+            timer1.print();
+        }
+
+        void secondPassInsert(const Key* keys, const Value* values, std::size_t N){
+            for(std::size_t i = 0; i < N; i++){
+                if(values[i] != dummyValue()){
+                    const MetaData* meta = lookup.queryPointer(keys[i]);
+                    if(meta != nullptr){
+
+                        Value* myValueRangeBegin = valuestorage.data() + meta->offset();
+                        std::size_t pos = 0;
+                        while(pos < meta->numValues()){
+                            if(myValueRangeBegin[pos] == dummyValue()){
+                                myValueRangeBegin[pos] = values[i];
+                                break;
+                            }else{
+                                pos++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        QueryResult query(const Key& key) const{
+            assert(isInit);
+
+            auto lookupQueryResult = lookup.query(key);
+
+            if(lookupQueryResult.valid()){
+                QueryResult result;
+
+                result.numValues = lookupQueryResult.value().numValues();
+                const std::size_t valuepos = lookupQueryResult.value().offset();
+                result.valuesBegin = &valuestorage[valuepos];
+
+                return result;
+            }else{
+                QueryResult result;
+
+                result.numValues = 0;
+                result.valuesBegin = nullptr;
+
+                return result;
+            }
+        }
+
+        void query(const Key* keys, std::size_t numKeys, QueryResult* resultsOutput) const{
+            assert(isInit);
+            for(std::size_t i = 0; i < numKeys; i++){
+                resultsOutput[i] = query(keys[i]);
+            }
+        }
+
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage result;
+
+            result.host += valuestorage.capacity() * sizeof(Value);
+            result += lookup.getMemoryInfo();            
+
+            return result;
+        }
+
+        void writeToStream(std::ostream& os) const{
+
+        }
+
+        void loadFromStream(std::ifstream& is){
+
+        }
+
+        void destroy(){
+
+        }
+
+
+    private:
+
+        struct MetaData{
+            static constexpr std::size_t offsetBits(){
+                return 48;
+            }
+            static constexpr std::size_t numvaluesBits(){
+                return 16;
+            }
+
+            // offset into value array, num values
+            using Data = packed_types::PackedPair<offsetBits(),numvaluesBits()>;
+
+            static constexpr std::size_t maxFirstPassCount(){
+                return (1ull << offsetBits()) - 1;
+            }
+
+            std::size_t firstPassCount() const noexcept{
+                return data.first();
+            }
+
+            void firstPassCount(std::size_t newcount) noexcept{
+                const std::size_t actualnewcount = std::min(maxFirstPassCount(), newcount);
+                data.first(actualnewcount);
+            }
+
+            std::size_t numValues() const noexcept{
+                return data.second();
+            }
+
+            void numValues(std::size_t value) noexcept{
+                data.second(value);
+            }
+
+            std::size_t offset() const noexcept{
+                return data.first();
+            }
+
+            void offset(std::size_t value) noexcept{
+                data.first(value);
+            }
+
+            bool operator==(const MetaData& rhs) const noexcept{
+                return data == rhs.data;
+            }
+
+            bool operator!=(const MetaData& rhs) const noexcept{
+                return !operator==(rhs);
+            }
+
+            Data data;
+        };
+
+        using ValueIndex = std::pair<read_number, BucketSize>;
+        bool isInit = false;
+        float loadfactor = 0.8f;
+        // values with the same key are stored in contiguous memory locations
+        // a single-value hashmap maps keys to the range of the corresponding values
+        std::vector<Value> valuestorage; 
+        AoSCpuSingleValueHashTable<Key, MetaData> lookup;
+    };
 
 
 }
