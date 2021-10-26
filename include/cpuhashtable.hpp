@@ -78,6 +78,8 @@ namespace care{
         }
 
         void rehash(std::size_t newsize){
+            newsize = std::max(newsize, std::size_t(1));
+
             std::cerr << "rehash(" << newsize << ")\n";
             AoSCpuSingleValueHashTable newtable(newsize, load);
 
@@ -156,7 +158,7 @@ namespace care{
             std::size_t pos = hasher::hash(key64) % capacity;
             while(storage[pos].first != key){
                 if(storage[pos] == emptySlot){
-                    return {false, Value{}};
+                    return {false, Value()};
                 }
                 pos++;
                 //wrap-around
@@ -165,7 +167,7 @@ namespace care{
                 }
                 probes++;
                 if(maxProbes < probes){
-                    return {false, Value{}};
+                    return {false, Value()};
                 }
             }
             return {true, storage[pos].second};
@@ -742,6 +744,7 @@ namespace care{
                 [&](const auto& /*key*/, auto& meta){
                     std::size_t count = meta.firstPassCount();
                     meta.offset(position);
+                    meta.numValues(count);
                     position += count;
                 }
             );
@@ -768,6 +771,10 @@ namespace care{
                     }
                 }
             }
+        }
+
+        void secondPassDone(){
+            isInit = true;
         }
 
         QueryResult query(const Key& key) const{

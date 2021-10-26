@@ -298,7 +298,8 @@ namespace care{
 
                 firstpasstimer.print();
 
-                kvtable->firstPassDone(2);
+                kvtable->firstPassDone(2, 75);
+                //kvtable->firstPassDone(2, std::numeric_limits<BucketSize>::max());
 
                 helpers::CpuTimer secondPassTimer("secondpass");
 
@@ -346,6 +347,8 @@ namespace care{
                 //keys1.erase(keys1.begin() + numKeys, keys1.end());
 
                 secondPassTimer.print();
+
+                kvtable->secondPassDone();
 
                 // {
 
@@ -535,7 +538,9 @@ namespace care{
 
                 const auto numHashValues = hashValues.size();
                 for(std::size_t i = 0; i < numHashValues; i++){
-                    const auto mapQueryResult = singlehashtable->query(hashValues[i]);
+                    //const auto mapQueryResult = singlehashtable->query(hashValues[i]);
+                    const auto mapQueryResult = kvtable->query(hashValues[i]);
+
 
                     queryData->ranges[s * numSmallest + i] 
                         = std::make_pair(mapQueryResult.valuesBegin, mapQueryResult.valuesBegin + mapQueryResult.numValues);
