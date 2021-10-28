@@ -82,8 +82,6 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
     SimpleSingleProducerSingleConsumerQueue<ResultTypeBatch*> freeTcsBatches;
     SimpleSingleProducerSingleConsumerQueue<ResultTypeBatch*> unprocessedTcsBatches;
 
-    std::atomic<bool> noMoreTcsBatches{false};
-
     for(auto& batch : tcsBatches){
         freeTcsBatches.push(&batch);
     }
@@ -134,11 +132,11 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
                 unprocessedTcsBatches.push(batch);
             }
 
+            unprocessedTcsBatches.push(nullptr);
+
             //std::cout << "# elapsed time ("<< "tcsparsing without queues" <<"): " << adelta.count()  << " s" << std::endl;
 
             // TIMERSTOPCPU(tcsparsing);
-
-            noMoreTcsBatches = true;
         }
     );
 
@@ -200,15 +198,13 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
                 unprocessedInputreadBatches.push(batch);                
             }
 
+            unprocessedInputreadBatches.push(nullptr);
+
             // std::cout << "# elapsed time ("<< "inputparsing without queues" <<"): " << adelta.count()  << " s" << std::endl;
 
             // TIMERSTOPCPU(inputparsing);
-
-            noMoreInputreadBatches = true;
         }
     );
-
-    std::atomic<bool> noMoreOutputreadBatches{false};
 
     auto outputWriterFuture = std::async(std::launch::async,
         [&](){
@@ -262,13 +258,10 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
 
                 freeReadBatches.push(outputBatch);     
 
-                outputBatch = unprocessedOutputreadBatches.popOrDefault(
-                    [&](){
-                        return !noMoreOutputreadBatches;  //its possible that there are no corrections. In that case, return nullptr
-                    },
-                    nullptr
-                );            
+                outputBatch = unprocessedOutputreadBatches.pop();            
             }
+
+            freeReadBatches.push(nullptr);
 
             // std::cout << "# elapsed time ("<< "outputwriting without queues" <<"): " << adelta.count()  << " s" << std::endl;
 
@@ -276,13 +269,7 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
         }
     );
 
-    ResultTypeBatch* tcsBatch = unprocessedTcsBatches.popOrDefault(
-        [&](){
-            return !noMoreTcsBatches;  //its possible that there are no corrections. In that case, return nullptr
-        },
-        nullptr
-    ); 
-
+    ResultTypeBatch* tcsBatch = unprocessedTcsBatches.pop();
     ReadBatch* inputBatch = unprocessedInputreadBatches.pop();
 
     assert(!(inputBatch == nullptr && tcsBatch != nullptr)); //there must be at least one batch of input reads
@@ -351,12 +338,7 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
                         if(first2 == last2){                                
                             freeTcsBatches.push(tcsBatch);
 
-                            tcsBatch = unprocessedTcsBatches.popOrDefault(
-                                [&](){
-                                    return !noMoreTcsBatches;  //its possible that there are no more results to process. In that case, return nullptr
-                                },
-                                nullptr
-                            );
+                            tcsBatch = unprocessedTcsBatches.pop();
 
                             if(tcsBatch != nullptr){
                                 //new batch could be fetched. update begin and end accordingly
@@ -377,18 +359,14 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
 
         unprocessedOutputreadBatches.push(inputBatch);
 
-        inputBatch = unprocessedInputreadBatches.popOrDefault(
-            [&](){
-                return !noMoreInputreadBatches;
-            },
-            nullptr
-        );  
+        inputBatch = unprocessedInputreadBatches.pop();  
         
-        assert(!(inputBatch == nullptr && tcsBatch != nullptr));
+        assert(!(inputBatch == nullptr && tcsBatch != nullptr)); //unprocessed correction results must have a corresponding original read
 
     }
 
-    noMoreOutputreadBatches = true;
+    unprocessedOutputreadBatches.push(nullptr);
+    freeTcsBatches.push(nullptr);
 
     decoderFuture.wait();
     inputReaderFuture.wait();
