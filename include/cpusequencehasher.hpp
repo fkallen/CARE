@@ -39,26 +39,32 @@ struct CPUSequenceHasher{
     private:
 
         void insert(HashValueType element){
-            const std::size_t newsize = std::min(numSmallest, std::min(numHashes + 1, hashes.size()));
             //find position of new element
             auto it = std::lower_bound(hashes.begin(), hashes.begin() + numHashes, element);
 
-            if(size() < newsize){
-                //insert new element
-                std::copy_backward(it, hashes.begin() + numHashes, hashes.begin() + newsize);
-                *it = element;
+            //if element is already present in hashes, it is not inserted
+            if((it != hashes.begin() + numHashes) && (*it == element)){
+                return;
             }else{
-                auto it = std::lower_bound(hashes.begin(), hashes.begin() + numHashes, element);
-                if(it != hashes.begin() + numHashes){
-                    //insert new element if it is not the largest
-                    std::copy_backward(it, hashes.begin() + numHashes - 1, hashes.begin() + newsize);
+                const std::size_t newsize = std::min(numSmallest, std::min(numHashes + 1, hashes.size()));
+
+                if(size() < newsize){
+                    //insert new element
+                    std::copy_backward(it, hashes.begin() + numHashes, hashes.begin() + newsize);
                     *it = element;
                 }else{
-                    //element will not be inserted, too large
+                    auto it = std::lower_bound(hashes.begin(), hashes.begin() + numHashes, element);
+                    if(it != hashes.begin() + numHashes){
+                        //insert new element if it is not the largest
+                        std::copy_backward(it, hashes.begin() + numHashes - 1, hashes.begin() + newsize);
+                        *it = element;
+                    }else{
+                        //element will not be inserted, too large
+                    }
                 }
-            }
 
-            numHashes = newsize;
+                numHashes = newsize;
+            }
 
             //std::cerr << "insert(" << element << "), numHashes = " << numHashes << "\n";
         }
@@ -68,7 +74,8 @@ struct CPUSequenceHasher{
         const unsigned int* sequence2Bit,
         const int sequenceLength,
         int kmerLength,
-        int numSmallest
+        int numSmallest,
+        bool debug = false
     ){
         assert(sizeof(kmer_type) * 8 / 2 >= std::size_t(kmerLength));
 
@@ -83,12 +90,6 @@ struct CPUSequenceHasher{
         constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
         const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - kmerLength) * 2);
         const int rcshiftamount = (maximum_kmer_length - kmerLength) * 2;
-
-        auto handlekmer = [&](std::uint64_t fwd, std::uint64_t rc){
-            const std::uint64_t smallest = std::min(fwd, rc);
-            const std::uint64_t hashvalue = hasher::hash(smallest) & kmer_mask;
-            result.insert(hashvalue);
-        };
 
         std::uint64_t kmer_encoded = sequence2Bit[0];
         if(kmerLength <= 16){
@@ -123,11 +124,17 @@ struct CPUSequenceHasher{
 
             //std::cerr << nextSequencePos << "\n";
 
-            handlekmer(
-                kmer_encoded & kmer_mask, 
-                rc_kmer_encoded >> rcshiftamount
-            );
+            //std::cerr << (kmer_encoded & kmer_mask) << ", ";
+
+            const std::uint64_t smallest = std::min(kmer_encoded & kmer_mask, rc_kmer_encoded >> rcshiftamount);
+            const std::uint64_t hashvalue = hasher::hash(smallest) & kmer_mask;
+
+            if(debug){
+                std::cerr << (kmer_encoded & kmer_mask) << " , " <<  (rc_kmer_encoded >> rcshiftamount) << " , " << smallest << " : " << (hasher::hash(smallest) & kmer_mask) << "\n";
+            }
+            result.insert(hashvalue);
         }
+        //std::cerr << "\n";
 
         return result;
     }

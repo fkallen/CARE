@@ -673,6 +673,32 @@ namespace care{
             return char(((((a * x) + b) * x) + c) * x + d);
         }
 
+        //get kmer of length k which starts at position pos of the decoded sequence
+        HOSTDEVICEQUALIFIER
+        static constexpr std::uint64_t getEncodedKmerFromEncodedSequence(const unsigned int* encodedSequence, int k, int pos){
+            assert(k > 0);
+
+            constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
+            const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - k) * 2);
+
+            assert(k <= maximum_kmer_length);
+
+            std::uint64_t kmer = 0;
+
+            while(k > 0){
+                const int intIndex = pos / 16;
+                const std::uint64_t intData = encodedSequence[intIndex];
+                const int neededBasesFromInt = std::min(k, 16 - (pos % 16));
+                assert(neededBasesFromInt > 0);
+                const int intShift = 2*(16 - neededBasesFromInt - (pos % 16));
+                kmer = (kmer << (2*neededBasesFromInt)) | (intData >> intShift);
+                k -= neededBasesFromInt;
+                pos += neededBasesFromInt;
+            }           
+
+            return kmer & kmer_mask;
+        }
+
         #ifdef __CUDACC__
 
         template<class Group>

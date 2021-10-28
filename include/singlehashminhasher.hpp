@@ -298,8 +298,8 @@ namespace care{
 
                 firstpasstimer.print();
 
-                kvtable->firstPassDone(2, 75);
-                //kvtable->firstPassDone(2, std::numeric_limits<BucketSize>::max());
+                //kvtable->firstPassDone(2, 75);
+                kvtable->firstPassDone(2, 255);
 
                 helpers::CpuTimer secondPassTimer("secondpass");
 

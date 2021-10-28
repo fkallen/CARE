@@ -369,7 +369,8 @@ namespace gpusequencehasher{
         std::size_t sequenceRowPitchElements,
         int numSequences,
         const int* __restrict__ sequenceLengths,
-        int k
+        int k,
+        bool debug
     ){
         assert(sizeof(kmer_type) * 8 / 2 >= k);
 
@@ -387,27 +388,27 @@ namespace gpusequencehasher{
 
             const int numKmers = (myLength >= k) ? (myLength - k + 1) : 0;
 
+            if(debug){
+                printf("gpu s = %d\n", s);
+            }
+
             for(int i = threadIdx.x; i < numKmers; i += blockDim.x){
-                //compute kmer i
-
-                const int firstIntIndex = i / 16;
-                const int secondIntIndex = (i + k - 1) / 16;
-                std::uint64_t kmer = 0;
-                if(firstIntIndex == secondIntIndex){
-                    const std::uint64_t firstInt = mySequence[firstIntIndex];
-                    kmer = (firstInt >> 2*(16 - (i+k)%16)) & kmer_mask;
-                }else{
-                    const std::uint64_t firstInt = mySequence[firstIntIndex];
-                    const std::uint64_t secondInt = mySequence[secondIntIndex];
-                    const int basesInFirst = 16 - (i % 16);
-                    const int basesInSecond = k - basesInFirst;
-                    kmer = ((firstInt << 2*basesInSecond) | (secondInt >> 2*(16 - (i+k)%16))) & kmer_mask;
-                }
-
+                const std::uint64_t kmer = SequenceHelpers::getEncodedKmerFromEncodedSequence(mySequence, k, i);
                 const std::uint64_t rc_kmer = SequenceHelpers::reverseComplementInt2Bit(kmer) >> rcshiftamount;
                 const auto smallest = min(kmer, rc_kmer);
                 kmerhashesoutput[outputOffset + i] = hasher::hash(smallest) & kmer_mask;
+
+                // if(s < 5 && threadIdx.x == 0){
+                //     printf("s = %d, kmer %lu, rckmer %lu, smallestkmer %lu, hash: %lu\n", s, kmer, rc_kmer, smallest, kmerhashesoutput[outputOffset + i]);
+                // }
+
+                if(debug){
+                    //printf("(%lu, %lu), %lu , %lu , %lu : %lu\n", kmer, rc_kmer, kmer & kmer_mask, rc_kmer & kmer_mask, smallest, (hasher::hash(smallest) & kmer_mask));
+                    printf("%lu , %lu , %lu : %lu\n", kmer & kmer_mask, rc_kmer & kmer_mask, smallest, (hasher::hash(smallest) & kmer_mask));
+                }
             }
+
+
         }
     }
 
@@ -595,7 +596,8 @@ struct GPUSequenceHasher{
         int k,
         int numSmallest,
         cudaStream_t stream,
-        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource(),
+        bool debug = false
     ){
         assert(sizeof(kmer_type) * 8 / 2 >= k);
         assert(k > 0);
@@ -631,13 +633,15 @@ struct GPUSequenceHasher{
         rmm::device_uvector<HashValueType> d_hashes(totalNumKmers, stream);
 
         gpusequencehasher::getKmerHashes<<<numSequences, 128, 0, stream>>>(
+        //gpusequencehasher::getKmerHashes<<<1, 1, 0, stream>>>(
             d_hashes.data(),
             d_offsets.data(),
             d_sequences2Bit,
             sequenceRowPitchElements,
             numSequences,
             d_sequenceLengths,
-            k
+            k,
+            debug
         );
         CUDACHECKASYNC;
 
@@ -648,6 +652,26 @@ struct GPUSequenceHasher{
 
         rmm::device_uvector<HashValueType> d_uniqueHashes(d_hashes.size(), stream, mr);
         rmm::device_uvector<int> d_numUniquePerSequence(numSequences, stream, mr);
+
+        // helpers::lambda_kernel<<<1,1,0,stream>>>(
+        //     [
+        //         d_hashes = d_hashes.data(),
+        //         numHashes = d_hashes.size(),
+        //         d_offsets = d_offsets.data(),
+        //         d_numKmersPerSequence,
+        //         numSequences
+        //     ] __device__(){
+        //         for(int s = 0; s < min(10, numSequences); s++){
+        //             printf("s = %d, numKmers %d, offset %d\n", s, d_numKmersPerSequence[s], d_offsets[s]);
+
+        //             for(int i = 0; i < d_numKmersPerSequence[s]; i++){
+        //                 printf("%lu, ", d_hashes[d_offsets[s] + i]);
+        //             }
+        //             printf("\n");
+        //         }
+        //     }
+        // );
+        // CUDACHECKASYNC;
 
         GpuSegmentedUnique::unique(
             d_hashes.data(),
@@ -667,10 +691,7 @@ struct GPUSequenceHasher{
         d_hashes.resize(0, stream);
         d_hashes.shrink_to_fit(stream);
 
-        cub.cubInclusiveSum(d_numUniquePerSequence.data(), d_offsets.data() + 1, numSequences, stream);
-
         //copy top hashes to output
-
         TopSmallestHashResult result(numSequences, numSmallest, stream, mr);
 
         gpusequencehasher::copyTopSmallestHashesKernel<<<SDIV(numSequences * numSmallest, 128), 128, 0, stream>>>(

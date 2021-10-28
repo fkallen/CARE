@@ -27,6 +27,8 @@
 #include <algorithm>
 #include <chrono>
 
+#include <omp.h>
+
 namespace care{
 
     struct CpuErrorCorrectorOutput {
@@ -341,6 +343,10 @@ public:
         #endif
 
         MultiCandidateIds multiIds = determineCandidateReadIds(input);
+
+        // if(omp_get_thread_num() == 0){
+        //     std::cerr << "get candidates: " << (std::chrono::system_clock::now() - tpa).count() << ", num candidates: " << multiIds.candidateReadIds.size() << "\n";
+        // }
 
         computePairFlags(multiIds);
 
