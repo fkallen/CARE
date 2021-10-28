@@ -4,6 +4,7 @@
 #include <gpu/cudaerrorcheck.cuh>
 
 #include <gpu/fakegpusinglehashminhasher.cuh>
+#include <singlehashminhasher.hpp>
 
 #include <config.hpp>
 #include <options.hpp>
@@ -280,6 +281,8 @@ namespace care{
             memoryOptions.hashtableLoadfactor
         );
 
+        #if 1
+
         gpuMinhasher->constructFromReadStorage(
             fileOptions,
             runtimeOptions,
@@ -288,6 +291,204 @@ namespace care{
             correctionOptions,
             gpuReadStorage
         );
+
+        std::ofstream tablestreamA("tablestream.bin", std::ios::binary);
+        gpuMinhasher->writeToStream(tablestreamA);
+
+        #else
+        std::ifstream tablestreamA("tablestream.bin", std::ios::binary);
+        gpuMinhasher->loadFromStream(tablestreamA);
+
+        #endif
+
+        #if 0
+        {
+
+        auto cpuMinhasher = std::make_unique<SingleHashCpuMinhasher>(
+            gpuReadStorage.getNumberOfReads(),
+            255,//calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage),
+            correctionOptions.kmerlength,
+            memoryOptions.hashtableLoadfactor
+        );
+
+        // cpuMinhasher->constructFromReadStorage(
+        //     fileOptions,
+        //     runtimeOptions,
+        //     memoryOptions,
+        //     cpuReadStorage->getNumberOfReads(),
+        //     correctionOptions,
+        //     *cpuReadStorage
+        // );
+
+        std::ifstream tablestreamB("tablestream.bin", std::ios::binary);
+        gpuMinhasher->loadFromStream(tablestreamB);
+
+        auto cpuhandle = cpuMinhasher->makeMinhasherHandle();
+        auto gpuhandle = gpuMinhasher->makeMinhasherHandle();
+        auto gpurshandle = gpuReadStorage.makeHandle();
+
+        for(std::size_t first = 0; first < gpuReadStorage.getNumberOfReads(); first += 1024){
+            auto last = std::min(first + 1024, std::size_t(gpuReadStorage.getNumberOfReads()));
+            auto num = last - first;
+            auto encodedSequencePitchInInts = 8;
+
+            std::vector<read_number> h_ids(num);
+            std::iota(h_ids.begin(), h_ids.end(), first);
+
+            helpers::SimpleAllocationDevice<read_number> d_ids(num);
+            cudaMemcpy(d_ids.data(), h_ids.data(), sizeof(read_number) * num, H2D);
+
+            helpers::SimpleAllocationDevice<unsigned int> d_sequences(num * encodedSequencePitchInInts);
+            std::vector<unsigned int> h_sequences(num * encodedSequencePitchInInts);
+
+            gpuReadStorage.gatherSequences(
+                gpurshandle,
+                d_sequences.data(),
+                encodedSequencePitchInInts,
+                makeAsyncConstBufferWrapper(h_ids.data()),
+                d_ids.data(),
+                num,
+                (cudaStream_t)0,
+                rmm::mr::get_current_device_resource()
+            );
+
+            cudaMemcpy(h_sequences.data(), d_sequences.data(), sizeof(unsigned int) * num * encodedSequencePitchInInts, D2H);
+
+            helpers::SimpleAllocationDevice<int> d_lengths(num);
+            std::vector<int> h_lengths(num);
+
+            gpuReadStorage.gatherSequenceLengths(
+                gpurshandle,
+                d_lengths.data(),
+                d_ids.data(),
+                num,
+                (cudaStream_t)0
+            );
+
+            cudaMemcpy(h_lengths.data(), d_lengths.data(), sizeof(int) * num, D2H);
+
+            CUDACHECK(cudaDeviceSynchronize());
+
+            helpers::SimpleAllocationDevice<int> d_gpu_candidates_per_anchor(num);
+            helpers::SimpleAllocationDevice<int> d_gpu_candidates_per_anchor_prefixsum(num+1);
+            helpers::SimpleAllocationDevice<read_number> d_gpu_candidate_read_ids;
+
+            std::vector<int> h_gpu_candidates_per_anchor(num);
+            std::vector<int> h_gpu_candidates_per_anchor_prefixsum(num+1);
+            std::vector<read_number> h_gpu_candidate_read_ids;
+
+            {
+
+                cudaStream_t stream = (cudaStream_t)0;
+
+                int totalNumValues = 0;
+
+                gpuMinhasher->determineNumValues(
+                    gpuhandle,
+                    d_sequences.data(),
+                    encodedSequencePitchInInts,
+                    d_lengths.data(),
+                    num,
+                    d_gpu_candidates_per_anchor.data(),
+                    totalNumValues,
+                    stream,
+                    rmm::mr::get_current_device_resource()
+                );
+
+                CUDACHECK(cudaStreamSynchronize(stream));
+
+                d_gpu_candidate_read_ids.resize(totalNumValues);
+
+                assert(totalNumValues != 0);
+
+                gpuMinhasher->retrieveValues(
+                    gpuhandle,
+                    nullptr, //d_ids.data(),
+                    num,        
+                    totalNumValues,
+                    d_gpu_candidate_read_ids.data(),
+                    d_gpu_candidates_per_anchor.data(),
+                    d_gpu_candidates_per_anchor_prefixsum.data(),
+                    stream,
+                    rmm::mr::get_current_device_resource()
+                );
+
+                CUDACHECK(cudaDeviceSynchronize());
+
+                cudaMemcpy(h_gpu_candidate_read_ids.data(), d_gpu_candidate_read_ids.data(), sizeof(read_number) * d_gpu_candidate_read_ids.size(), D2H);
+                cudaMemcpy(h_gpu_candidates_per_anchor.data(), d_gpu_candidates_per_anchor.data(), sizeof(int) * d_gpu_candidates_per_anchor.size(), D2H);
+                cudaMemcpy(h_gpu_candidates_per_anchor_prefixsum.data(), d_gpu_candidates_per_anchor_prefixsum.data(), sizeof(int) * d_gpu_candidates_per_anchor_prefixsum.size(), D2H);
+
+                CUDACHECK(cudaDeviceSynchronize());
+            }
+
+            // std::vector<int> cpu_candidates_per_anchor(num);
+            // std::vector<int> cpu_candidates_per_anchor_prefixsum(num+1);
+            // std::vector<read_number> cpu_candidate_read_ids;
+
+            {
+                for(std::size_t a = 0; a < num; a++){
+                    int numPerSequence = 0;
+                    int maxnumcandidates = 0;
+                    std::array<int, 2> offsets;
+
+                    std::vector<read_number> cpu_candidate_read_ids;
+
+                    cpuMinhasher->determineNumValues(
+                        cpuhandle,
+                        h_sequences.data() + a * encodedSequencePitchInInts,
+                        encodedSequencePitchInInts,
+                        &h_lengths[a],
+                        1,
+                        &numPerSequence,
+                        maxnumcandidates
+                    );
+
+                    cpu_candidate_read_ids.resize(maxnumcandidates);
+
+                    cpuMinhasher->retrieveValues(
+                        cpuhandle,
+                        nullptr,
+                        1,
+                        maxnumcandidates,
+                        cpu_candidate_read_ids.data(),
+                        &numPerSequence,
+                        offsets.data()
+                    );
+
+                    cpu_candidate_read_ids.erase(cpu_candidate_read_ids.begin() + numPerSequence, cpu_candidate_read_ids.end());
+
+                    if(numPerSequence != h_gpu_candidates_per_anchor[a]){
+                        std::cerr << "first " << first << ", a " << a << ", numPerSequence: " << numPerSequence << ", h_gpu_candidates_per_anchor[a]: " << h_gpu_candidates_per_anchor[a] << "\n";
+                        assert(false);
+                    }else{
+                        const read_number* gpuids = h_gpu_candidate_read_ids.data() + h_gpu_candidates_per_anchor_prefixsum[a];
+
+                        for(int x = 0; x < numPerSequence; x++){
+                            if(cpu_candidate_read_ids[x] != gpuids[x]){
+                                std::cerr << "cpu ids: ";
+                                for(int x = 0; x < numPerSequence; x++){
+                                    std::cerr << cpu_candidate_read_ids[x] << " ";
+                                }
+                                std::cerr << "\n";
+
+                                std::cerr << "gpu ids: ";
+                                for(int x = 0; x < numPerSequence; x++){
+                                    std::cerr << gpuids[x] << " ";
+                                }
+                                std::cerr << "\n";
+
+                                assert(false);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        }
+
+        #endif
 
 
         buildMinhasherTimer.print();

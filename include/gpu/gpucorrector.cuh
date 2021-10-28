@@ -422,6 +422,33 @@ namespace gpu{
                 ecinput.d_candidate_read_ids.data(),
                 *ecinput.h_numAnchors.data()
             ); CUDACHECKASYNC;
+
+            // helpers::lambda_kernel<<<1,1,0,stream>>>(
+            //     [
+            //         numAnchors = (*ecinput.h_numAnchors.data()),
+            //         d_candidate_read_ids = ecinput.d_candidate_read_ids.data(),
+            //         d_candidates_per_anchor = ecinput.d_candidates_per_anchor.data(),
+            //         d_candidates_per_anchor_prefixsum = ecinput.d_candidates_per_anchor_prefixsum.data(),
+            //         d_anchorReadIds = ecinput.d_anchorReadIds.data()
+            //     ] __device__ (){
+            //         for(int a = 0; a < numAnchors; a++){
+            //             if(d_anchorReadIds[a] > 12850 && d_anchorReadIds[a] < 12870){
+            //             //if(d_anchorReadIds[a] < 12870){
+            //             //if(d_anchorReadIds[a] < 100){
+            //                 printf("a = %d %u\n", a, d_anchorReadIds[a]);
+            //                 for(int c = 0; c < d_candidates_per_anchor[a]; c++){
+            //                     printf("%u ", d_candidate_read_ids[d_candidates_per_anchor_prefixsum[a] + c]);
+            //                 }
+            //                 printf("\n");
+            //             }
+            //         }
+            //     }
+            // );
+            // CUDACHECKASYNC;
+
+            // CUDACHECK(cudaStreamSynchronize(stream));
+
+
         }
     
         int deviceId;

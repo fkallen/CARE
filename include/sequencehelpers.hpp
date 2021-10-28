@@ -699,6 +699,32 @@ namespace care{
             return kmer & kmer_mask;
         }
 
+        template<class Func> // Func::operator()(std::uint64_t kmer, int pos)
+        HOSTDEVICEQUALIFIER
+        static constexpr void forEachEncodedKmerFromEncodedSequence(const unsigned int* encodedSequence, int sequenceLength, int k, Func callback){
+            if(sequenceLength <= 0 || k > sequenceLength) return;
+
+            assert(k > 0);
+
+            constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
+            const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - k) * 2);
+
+            assert(k <= maximum_kmer_length);
+
+            std::uint64_t kmer = getEncodedKmerFromEncodedSequence(encodedSequence, k, 0);
+            callback(kmer, 0);
+
+            for(int pos = 1; pos < sequenceLength - k; pos++){
+                const int nextIntIndex = (pos + k) / basesPerInt2Bit();
+                const int nextPositionInInt = (pos + k) % basesPerInt2Bit();
+
+                const std::uint64_t nextBase = encodedSequence[nextIntIndex] >> (30 - 2 * nextPositionInInt);
+
+                kmer = ((kmer << 2) | nextBase) & kmer_mask;
+                callback(kmer, pos);
+            }
+        }
+
         #ifdef __CUDACC__
 
         template<class Group>

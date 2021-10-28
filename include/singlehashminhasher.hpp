@@ -230,6 +230,7 @@ namespace care{
                 std::size_t numKeys = 0;
 
                 constexpr int batchsize = 1000000;
+                //constexpr int batchsize = 20;
                 const int numIterations = SDIV(numReads, batchsize);
 
                 std::vector<read_number> currentReadIds(batchsize);
@@ -292,14 +293,38 @@ namespace care{
                     // }
 
                     kvtable->firstPassInsert(tmpkeys.data(), tmpids.data(), tmpkeys.size());
+
+                    // std::cerr << "keys: \n";
+                    // for(std::size_t i = 0; i < tmpkeys.size(); i++){
+                    //     std::cerr << tmpkeys[i] << " ";
+                    // }
+                    // std::cerr << "\n";
+
+                    // std::cerr << "ids: \n";
+                    // for(std::size_t i = 0; i < tmpids.size(); i++){
+                    //     std::cerr << tmpids[i] << " ";
+                    // }
+                    // std::cerr << "\n";
+
+                    // std::exit(0);
                 }
 
                 //keys1.erase(keys1.begin() + numKeys, keys1.end());
 
                 firstpasstimer.print();
 
+                // {
+                // std::ofstream outputstream("cputablestemp1.bin", std::ios::binary);
+                // kvtable->writeToStream(outputstream);
+                // }
+
                 //kvtable->firstPassDone(2, 75);
                 kvtable->firstPassDone(2, 255);
+
+                // {
+                // std::ofstream outputstream("cputablestemp2.bin", std::ios::binary);
+                // kvtable->writeToStream(outputstream);
+                // }
 
                 helpers::CpuTimer secondPassTimer("secondpass");
 
@@ -349,6 +374,11 @@ namespace care{
                 secondPassTimer.print();
 
                 kvtable->secondPassDone();
+
+                // {
+                // std::ofstream outputstream("cputablestemp3.bin", std::ios::binary);
+                // kvtable->writeToStream(outputstream);
+                // }
 
                 // {
 
@@ -642,7 +672,7 @@ namespace care{
         MemoryUsage getMemoryInfo() const noexcept override{
             MemoryUsage result;
 
-            result += singlehashtable->getMemoryInfo();
+            //result += singlehashtable->getMemoryInfo();
             result += kvtable->getMemoryInfo();
 
             return result;
@@ -891,6 +921,32 @@ namespace care{
 
         void setMemoryLimitForConstruction(std::size_t limit){
             memoryLimit = limit;
+        }
+
+        void writeToStream(std::ostream& os) const{
+
+            os.write(reinterpret_cast<const char*>(&kmerSize), sizeof(int));
+            os.write(reinterpret_cast<const char*>(&numSmallest), sizeof(int));
+            os.write(reinterpret_cast<const char*>(&resultsPerMapThreshold), sizeof(int));
+
+            os.write(reinterpret_cast<const char*>(&loadfactor), sizeof(float));
+
+            kvtable->writeToStream(os);
+        }
+
+        int loadFromStream(std::ifstream& is, int numMapsUpperLimit = std::numeric_limits<int>::max()){
+            destroy();
+
+            is.read(reinterpret_cast<char*>(&kmerSize), sizeof(int));
+            is.read(reinterpret_cast<char*>(&numSmallest), sizeof(int));
+            is.read(reinterpret_cast<char*>(&resultsPerMapThreshold), sizeof(int));
+
+            is.read(reinterpret_cast<char*>(&loadfactor), sizeof(float));
+
+            kvtable = std::make_unique<DoublePassMultiValueHashTable<kmer_type, read_number>>(1, loadfactor);
+            kvtable->loadFromStream(is);
+
+            return 0;
         }
 
     private:

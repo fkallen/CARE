@@ -215,6 +215,7 @@ namespace care{
 
         void writeToStream(std::ostream& os) const{
             os.write(reinterpret_cast<const char*>(&load), sizeof(float));
+            os.write(reinterpret_cast<const char*>(&numKeys), sizeof(std::size_t));
             os.write(reinterpret_cast<const char*>(&maxProbes), sizeof(std::size_t));
             os.write(reinterpret_cast<const char*>(&size), sizeof(std::size_t));
             os.write(reinterpret_cast<const char*>(&capacity), sizeof(std::size_t));
@@ -229,6 +230,7 @@ namespace care{
             destroy();
 
             is.read(reinterpret_cast<char*>(&load), sizeof(float));
+            is.read(reinterpret_cast<char*>(&numKeys), sizeof(std::size_t));
             is.read(reinterpret_cast<char*>(&maxProbes), sizeof(std::size_t));
             is.read(reinterpret_cast<char*>(&size), sizeof(std::size_t));
             is.read(reinterpret_cast<char*>(&capacity), sizeof(std::size_t));
@@ -817,15 +819,38 @@ namespace care{
         }
 
         void writeToStream(std::ostream& os) const{
+            os.write(reinterpret_cast<const char*>(&isInit), sizeof(bool));
+            os.write(reinterpret_cast<const char*>(&loadfactor), sizeof(float));
 
+            const std::size_t elements = valuestorage.size();
+            const std::size_t bytes = sizeof(Value) * elements;
+            os.write(reinterpret_cast<const char*>(&elements), sizeof(std::size_t));
+            os.write(reinterpret_cast<const char*>(valuestorage.data()), bytes);
+
+            lookup.writeToStream(os);
         }
 
         void loadFromStream(std::ifstream& is){
+            destroy();
 
+            is.read(reinterpret_cast<char*>(&isInit), sizeof(bool));
+            is.read(reinterpret_cast<char*>(&loadfactor), sizeof(float));
+
+            std::size_t elements;
+            is.read(reinterpret_cast<char*>(&elements), sizeof(std::size_t));
+            valuestorage.resize(elements);
+            const std::size_t bytes = sizeof(Value) * elements;
+            is.read(reinterpret_cast<char*>(valuestorage.data()), bytes);
+
+            lookup.loadFromStream(is);
         }
 
         void destroy(){
+            std::vector<Value> tmp;
+            std::swap(valuestorage, tmp);
 
+            lookup.destroy();
+            isInit = false;
         }
 
 

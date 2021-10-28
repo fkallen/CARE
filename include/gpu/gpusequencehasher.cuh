@@ -79,6 +79,37 @@ namespace gpusequencehasher{
         }
     }
 
+
+    template<class T, class InputLengthIter, class InputOffsetIter, class OutputOffsetIter, int groupsize = 32>
+    __global__
+    void copyRangesKernel(
+        const T* __restrict__ inputData,
+        InputOffsetIter inputOffsets,
+        InputLengthIter inputLengths,
+        int numRanges,
+        T* __restrict__ outputData,
+        OutputOffsetIter outputOffsets
+    ){
+        auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+        const int numGroups = (blockDim.x * gridDim.x) / groupsize;
+
+        for(int s = groupId; s < numRanges; s += numGroups){
+
+            const int inputOffset = inputOffsets[s];
+            const int outputOffset = outputOffsets[s];
+            const int numElementsToCopy = inputLengths[s];
+
+            care::gpu::memcpy<T>(
+                group, 
+                outputData + outputOffset, 
+                inputData + inputOffset, 
+                sizeof(T) * numElementsToCopy
+            );
+        }
+    }
+
+
     template<class HashValueType>
     __global__
     void minhashSignatures3264Kernel(
@@ -566,12 +597,14 @@ struct GPUSequenceHasher{
             cudaStream_t stream, 
             rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
         ) : d_hashvalues(numSequences * numHashFuncs, stream, mr),
-            d_numPerSequences(numSequences, stream, mr){
+            d_numPerSequences(numSequences, stream, mr),
+            d_numPerSequencesPrefixSum(numSequences, stream, mr){
 
         }
 
         rmm::device_uvector<HashValueType> d_hashvalues;
         rmm::device_uvector<int> d_numPerSequences;
+        rmm::device_uvector<int> d_numPerSequencesPrefixSum; //size() = numSequences
     };
 
     struct ComputedKmers{
@@ -694,15 +727,44 @@ struct GPUSequenceHasher{
         //copy top hashes to output
         TopSmallestHashResult result(numSequences, numSmallest, stream, mr);
 
-        gpusequencehasher::copyTopSmallestHashesKernel<<<SDIV(numSequences * numSmallest, 128), 128, 0, stream>>>(
-            result.d_hashvalues.data(),
-            result.d_numPerSequences.data(),
-            numSmallest,
-            d_uniqueHashes.data(), //per sequence sorted + unique
-            d_numUniquePerSequence.data(),
-            d_offsets.data(),
-            numSequences
+        //compute usable num hashes per sequence
+        helpers::lambda_kernel<<<SDIV(numSequences, 128), 128, 0, stream>>>(
+            [
+                d_numUniquePerSequence = d_numUniquePerSequence.data(),
+                d_numPerSequences = result.d_numPerSequences.data(),
+                numSequences, 
+                numSmallest
+            ] __device__ (){
+                const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                const int stride = blockDim.x * gridDim.x;
+
+                for(int i = tid; i < numSequences; i += stride){
+                    d_numPerSequences[i] = min(numSmallest, d_numUniquePerSequence[i]);
+                }
+            }
         );
+        CUDACHECKASYNC;
+
+        cub.cubExclusiveSum(result.d_numPerSequences.data(), result.d_numPerSequencesPrefixSum.data(), numSequences, stream);
+
+        gpusequencehasher::copyRangesKernel<<<SDIV(numSequences * numSmallest, 128), 128, 0, stream>>>(
+            d_uniqueHashes.data(),
+            d_offsets.data(),
+            result.d_numPerSequences.data(),
+            numSequences,
+            result.d_hashvalues.data(),
+            result.d_numPerSequencesPrefixSum.data()
+        );
+
+        // gpusequencehasher::copyTopSmallestHashesKernel<<<SDIV(numSequences * numSmallest, 128), 128, 0, stream>>>(
+        //     result.d_hashvalues.data(),
+        //     result.d_numPerSequences.data(),
+        //     numSmallest,
+        //     d_uniqueHashes.data(), //per sequence sorted + unique
+        //     d_numUniquePerSequence.data(),
+        //     d_offsets.data(),
+        //     numSequences
+        // );
         CUDACHECKASYNC;
 
         return result;

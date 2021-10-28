@@ -53,7 +53,6 @@ struct CPUSequenceHasher{
                     std::copy_backward(it, hashes.begin() + numHashes, hashes.begin() + newsize);
                     *it = element;
                 }else{
-                    auto it = std::lower_bound(hashes.begin(), hashes.begin() + numHashes, element);
                     if(it != hashes.begin() + numHashes){
                         //insert new element if it is not the largest
                         std::copy_backward(it, hashes.begin() + numHashes - 1, hashes.begin() + newsize);

@@ -47,7 +47,38 @@
 namespace care{
 namespace gpu{
 
+namespace fakegpusinglehashminhasherkernels{
 
+    template<class T, class InputLengthIter, class InputOffsetIter, class OutputOffsetIter, int groupsize = 32>
+    __global__
+    void copyRangesKernel(
+        const T* __restrict__ inputData,
+        InputOffsetIter inputOffsets,
+        InputLengthIter inputLengths,
+        int numRanges,
+        T* __restrict__ outputData,
+        OutputOffsetIter outputOffsets
+    ){
+        auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+        const int numGroups = (blockDim.x * gridDim.x) / groupsize;
+
+        for(int s = groupId; s < numRanges; s += numGroups){
+
+            const int inputOffset = inputOffsets[s];
+            const int outputOffset = outputOffsets[s];
+            const int numElementsToCopy = inputLengths[s];
+
+            care::gpu::memcpy<int>(
+                group, 
+                outputData + outputOffset, 
+                inputData + inputOffset, 
+                sizeof(int) * numElementsToCopy
+            );
+        }
+    }
+
+}
 
     /*
         Minhasher which can store query results in gpu memory and uses the gpu to parallelize some portions of the code
@@ -191,7 +222,7 @@ namespace gpu{
                 rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
 
                 constexpr read_number parallelReads = 1000000;
-                //constexpr read_number parallelReads = 2;
+                //constexpr read_number parallelReads = 20;
                 const int numIters = SDIV(numReads, parallelReads);
 
                 const MemoryUsage memoryUsageOfReadStorage = readStorage.getMemoryInfo();
@@ -312,14 +343,38 @@ namespace gpu{
                         CUDACHECK(cudaStreamSynchronize(stream));
 
                         kvtable->firstPassInsert(tmpkeys.data(), tmpids.data(), tmpkeys.size());
+
+                        // std::cerr << "keys: \n";
+                        // for(std::size_t i = 0; i < tmpkeys.size(); i++){
+                        //     std::cerr << tmpkeys[i] << " ";
+                        // }
+                        // std::cerr << "\n";
+
+                        // std::cerr << "ids: \n";
+                        // for(std::size_t i = 0; i < tmpids.size(); i++){
+                        //     std::cerr << tmpids[i] << " ";
+                        // }
+                        // std::cerr << "\n";
+
+                        // std::exit(0);
                     }
 
                     CUDACHECK(cudaStreamSynchronize(stream));
 
                     firstpasstimer.print();
 
+                    // {
+                    // std::ofstream outputstream("gputablestemp1.bin", std::ios::binary);
+                    // kvtable->writeToStream(outputstream);
+                    // }
+
                     //kvtable->firstPassDone(2, 75);
                     kvtable->firstPassDone(2, 255);
+
+                    // {
+                    // std::ofstream outputstream("gputablestemp2.bin", std::ios::binary);
+                    // kvtable->writeToStream(outputstream);
+                    // }
 
                     helpers::CpuTimer secondPassTimer("secondpass");
 
@@ -395,6 +450,11 @@ namespace gpu{
                     secondPassTimer.print();
 
                     kvtable->secondPassDone();
+
+                    // {
+                    // std::ofstream outputstream("gputablestemp3.bin", std::ios::binary);
+                    // kvtable->writeToStream(outputstream);
+                    // }
 
 
 
@@ -505,12 +565,8 @@ namespace gpu{
                 mr
             );
 
-            rmm::device_uvector<int> d_numHashesPerSequencePrefixSum(numSequences, stream, mr);
-            CubCallWrapper(mr).cubExclusiveSum(hashResult.d_numPerSequences.data(), d_numHashesPerSequencePrefixSum.data(), numSequences, stream);
-
             std::vector<kmer_type> h_hashes(numSequences * numSmallest);
             std::vector<int> h_numHashesPerSequence(numSequences);
-            std::vector<int> h_numHashesPerSequencePrefixSum(numSequences);
 
             CUDACHECK(cudaMemcpyAsync(
                 h_hashes.data(), 
@@ -528,35 +584,18 @@ namespace gpu{
                 stream
             ));
 
-            CUDACHECK(cudaMemcpyAsync(
-                h_numHashesPerSequencePrefixSum.data(), 
-                d_numHashesPerSequencePrefixSum.data(), 
-                sizeof(int) * numSequences, 
-                D2H, 
-                stream
-            ));
-
             CUDACHECK(cudaStreamSynchronize(stream));
 
+            auto hashesPtr = h_hashes.data();
             for(int s = 0; s < numSequences; s++){
                 const int numHashes = h_numHashesPerSequence[s];
                 assert(numHashes <= numSmallest);
 
                 int numValues = 0;
 
-                // for(int i = 0; i < num; i++){
-                //     auto [b,e] = singlehashtable.equal_range(h_hashes[h_numHashesPerSequencePrefixSum[s] + i]);
-                //     numValues += std::distance(b,e);
-
-                //     allRanges[s * numSmallest + i] = {b, e};
-                // }
-
-                // for(int i = num; i < numSmallest; i++){
-                //     allRanges[s * numSmallest + i] = {singlehashtable.end(), singlehashtable.end()};
-                // }
-
                 for(int i = 0; i < numHashes; i++){
-                    const kmer_type key = h_hashes[s * numSmallest + i];/* & kmer_mask*/; 
+                    //const kmer_type key = h_hashes[s * numSmallest + i];/* & kmer_mask*/; 
+                    const kmer_type key = *(hashesPtr++);
                     //const HashTable::QueryResult qr = singlecustomhashtable->query(key);
                     const auto qr = kvtable->query(key);
                     allRanges[s * numSmallest + i] = {qr.valuesBegin, qr.valuesBegin + qr.numValues};
@@ -936,6 +975,32 @@ namespace gpu{
             return std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - getKmerSize()) * 2);
         }
 
+        void writeToStream(std::ostream& os) const{
+
+            os.write(reinterpret_cast<const char*>(&kmerSize), sizeof(int));
+            os.write(reinterpret_cast<const char*>(&numSmallest), sizeof(int));
+            os.write(reinterpret_cast<const char*>(&resultsPerMapThreshold), sizeof(int));
+
+            os.write(reinterpret_cast<const char*>(&loadfactor), sizeof(float));
+
+            kvtable->writeToStream(os);
+        }
+
+        int loadFromStream(std::ifstream& is, int numMapsUpperLimit = std::numeric_limits<int>::max()){
+            destroy();
+
+            is.read(reinterpret_cast<char*>(&kmerSize), sizeof(int));
+            is.read(reinterpret_cast<char*>(&numSmallest), sizeof(int));
+            is.read(reinterpret_cast<char*>(&resultsPerMapThreshold), sizeof(int));
+
+            is.read(reinterpret_cast<char*>(&loadfactor), sizeof(float));
+
+            kvtable = std::make_unique<DoublePassMultiValueHashTable<kmer_type, read_number>>(1, loadfactor);
+            kvtable->loadFromStream(is);
+
+            return 0;
+        }
+
 
         // void writeToStream(std::ostream& os) const{
 
@@ -1004,99 +1069,99 @@ namespace gpu{
         //     return added;
         // } 
 
-        std::size_t insert(
-            bool dryrun,
-            const unsigned int* d_sequenceData2Bit,
-            int numSequences,
-            const int* d_sequenceLengths,
-            std::size_t encodedSequencePitchInInts,
-            const read_number* /*d_readIds*/,
-            const read_number* h_readIds,
-            cudaStream_t stream,
-            rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
-        ){
+        // std::size_t insert(
+        //     bool dryrun,
+        //     const unsigned int* d_sequenceData2Bit,
+        //     int numSequences,
+        //     const int* d_sequenceLengths,
+        //     std::size_t encodedSequencePitchInInts,
+        //     const read_number* /*d_readIds*/,
+        //     const read_number* h_readIds,
+        //     cudaStream_t stream,
+        //     rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
+        // ){
 
-            GPUSequenceHasher<kmer_type> hasher;
+        //     GPUSequenceHasher<kmer_type> hasher;
 
-            auto hashResult = hasher.getTopSmallestKmerHashes(
-                d_sequenceData2Bit,
-                encodedSequencePitchInInts,
-                numSequences,
-                d_sequenceLengths,
-                getKmerSize(),
-                numSmallest,
-                stream,
-                mr
-            );
+        //     auto hashResult = hasher.getTopSmallestKmerHashes(
+        //         d_sequenceData2Bit,
+        //         encodedSequencePitchInInts,
+        //         numSequences,
+        //         d_sequenceLengths,
+        //         getKmerSize(),
+        //         numSmallest,
+        //         stream,
+        //         mr
+        //     );
 
-            rmm::device_uvector<int> d_numHashesPerSequencePrefixSum(numSequences, stream, mr);
-            CubCallWrapper(mr).cubExclusiveSum(hashResult.d_numPerSequences.data(), d_numHashesPerSequencePrefixSum.data(), numSequences, stream);
+        //     rmm::device_uvector<int> d_numHashesPerSequencePrefixSum(numSequences, stream, mr);
+        //     CubCallWrapper(mr).cubExclusiveSum(hashResult.d_numPerSequences.data(), d_numHashesPerSequencePrefixSum.data(), numSequences, stream);
 
-            std::vector<kmer_type> h_hashes(numSequences * numSmallest);
-            std::vector<int> h_numHashesPerSequence(numSequences);
-            std::vector<int> h_numHashesPerSequencePrefixSum(numSequences);
+        //     std::vector<kmer_type> h_hashes(numSequences * numSmallest);
+        //     std::vector<int> h_numHashesPerSequence(numSequences);
+        //     std::vector<int> h_numHashesPerSequencePrefixSum(numSequences);
 
-            CUDACHECK(cudaMemcpyAsync(
-                h_hashes.data(), 
-                hashResult.d_hashvalues.data(), 
-                sizeof(kmer_type) * numSmallest * numSequences, 
-                D2H, 
-                stream
-            ));
+        //     CUDACHECK(cudaMemcpyAsync(
+        //         h_hashes.data(), 
+        //         hashResult.d_hashvalues.data(), 
+        //         sizeof(kmer_type) * numSmallest * numSequences, 
+        //         D2H, 
+        //         stream
+        //     ));
 
-            CUDACHECK(cudaMemcpyAsync(
-                h_numHashesPerSequence.data(), 
-                hashResult.d_numPerSequences.data(), 
-                sizeof(int) * numSequences, 
-                D2H, 
-                stream
-            ));
+        //     CUDACHECK(cudaMemcpyAsync(
+        //         h_numHashesPerSequence.data(), 
+        //         hashResult.d_numPerSequences.data(), 
+        //         sizeof(int) * numSequences, 
+        //         D2H, 
+        //         stream
+        //     ));
 
-            CUDACHECK(cudaMemcpyAsync(
-                h_numHashesPerSequencePrefixSum.data(), 
-                d_numHashesPerSequencePrefixSum.data(), 
-                sizeof(int) * numSequences, 
-                D2H, 
-                stream
-            ));
+        //     CUDACHECK(cudaMemcpyAsync(
+        //         h_numHashesPerSequencePrefixSum.data(), 
+        //         d_numHashesPerSequencePrefixSum.data(), 
+        //         sizeof(int) * numSequences, 
+        //         D2H, 
+        //         stream
+        //     ));
 
-            CUDACHECK(cudaStreamSynchronize(stream));
+        //     CUDACHECK(cudaStreamSynchronize(stream));
 
-            const std::size_t numKeys = h_numHashesPerSequencePrefixSum.back() + h_numHashesPerSequence.back();
+        //     const std::size_t numKeys = h_numHashesPerSequencePrefixSum.back() + h_numHashesPerSequence.back();
 
-            std::vector<read_number> readidsToInsert(numKeys);
-            auto iterator = readidsToInsert.begin();
-            for(int s = 0; s < numSequences; s++){
-                const int num = h_numHashesPerSequence[s];
-                std::fill(iterator, iterator + num, h_readIds[s]);
-                iterator = iterator + num;
-            }
+        //     std::vector<read_number> readidsToInsert(numKeys);
+        //     auto iterator = readidsToInsert.begin();
+        //     for(int s = 0; s < numSequences; s++){
+        //         const int num = h_numHashesPerSequence[s];
+        //         std::fill(iterator, iterator + num, h_readIds[s]);
+        //         iterator = iterator + num;
+        //     }
 
-            // singlecustomhashtable->insert(
-            //     h_hashes.data(), readidsToInsert.data(), numKeys
-            // );
+        //     // singlecustomhashtable->insert(
+        //     //     h_hashes.data(), readidsToInsert.data(), numKeys
+        //     // );
 
-            // for(int s = 0; s < numSequences; s++){
-            //     const int num = h_numHashesPerSequence[s];
-            //     if(num > 0){
-            //         numKeys += num;
-            //         if(!dryrun){
-            //             std::vector<std::pair<kmer_type,read_number>> entries(num);
-            //             for(int i = 0; i < num; i++){
-            //                 entries[i] = std::make_pair(h_hashes[h_numHashesPerSequencePrefixSum[s] + i], h_readIds[s]);
-            //             }
-            //             //singlehashtable.insert(entries.begin(), entries.end());
-            //             //allKeys.insert(allKeys.end(), &h_hashes[h_numHashesPerSequencePrefixSum[s]], &h_hashes[h_numHashesPerSequencePrefixSum[s] + num]);
+        //     // for(int s = 0; s < numSequences; s++){
+        //     //     const int num = h_numHashesPerSequence[s];
+        //     //     if(num > 0){
+        //     //         numKeys += num;
+        //     //         if(!dryrun){
+        //     //             std::vector<std::pair<kmer_type,read_number>> entries(num);
+        //     //             for(int i = 0; i < num; i++){
+        //     //                 entries[i] = std::make_pair(h_hashes[h_numHashesPerSequencePrefixSum[s] + i], h_readIds[s]);
+        //     //             }
+        //     //             //singlehashtable.insert(entries.begin(), entries.end());
+        //     //             //allKeys.insert(allKeys.end(), &h_hashes[h_numHashesPerSequencePrefixSum[s]], &h_hashes[h_numHashesPerSequencePrefixSum[s] + num]);
 
-            //             minhashTables[0]->insert(
-            //                 hashesBegin, h_readIds, numSequences
-            //             );
-            //         }
-            //     }
-            // }
+        //     //             minhashTables[0]->insert(
+        //     //                 hashesBegin, h_readIds, numSequences
+        //     //             );
+        //     //         }
+        //     //     }
+        //     // }
 
-            return numKeys;
-        }
+        //     return numKeys;
+        // }
 
         std::size_t computeHashesAndReadIds(
             kmer_type* h_keyoutput,
@@ -1111,6 +1176,7 @@ namespace gpu{
             rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
         ){
 
+            CubCallWrapper cub(mr);
             GPUSequenceHasher<kmer_type> hasher;
 
             const bool debug = false;
@@ -1126,6 +1192,13 @@ namespace gpu{
                 mr,
                 debug
             );
+
+            //hashResult is numSequences * numSmallest array. each row has at most numSmallest hashes. make hashes contiguous
+            // rmm::device_uvector<int> d_numPerSequencesPrefixSum(numSequences, stream, mr);
+            // cub.cubExclusiveSum(hashResult.d_numPerSequences.data(), d_numPerSequencesPrefixSum.data(), numSequences, stream);            
+            // rmm::device_uvector<kmer_type> d_hashvaluesContiguous(numSequences * numSmallest, stream, mr);
+
+            
 
             std::vector<int> h_numHashesPerSequence(numSequences);
 
@@ -1148,69 +1221,69 @@ namespace gpu{
             CUDACHECK(cudaStreamSynchronize(stream));
 
 
-            std::vector<unsigned int> h_sequenceData2Bit(numSequences * encodedSequencePitchInInts);
-            CUDACHECK(cudaMemcpyAsync(
-                h_sequenceData2Bit.data(),
-                d_sequenceData2Bit,
-                sizeof(unsigned int) * numSequences * encodedSequencePitchInInts,
-                D2H,
-                stream
-            ));
+            // std::vector<unsigned int> h_sequenceData2Bit(numSequences * encodedSequencePitchInInts);
+            // CUDACHECK(cudaMemcpyAsync(
+            //     h_sequenceData2Bit.data(),
+            //     d_sequenceData2Bit,
+            //     sizeof(unsigned int) * numSequences * encodedSequencePitchInInts,
+            //     D2H,
+            //     stream
+            // ));
 
-            std::vector<int> h_sequenceLengths(numSequences);
+            // std::vector<int> h_sequenceLengths(numSequences);
 
-            CUDACHECK(cudaMemcpyAsync(
-                h_sequenceLengths.data(),
-                d_sequenceLengths,
-                sizeof(int) * numSequences,
-                D2H,
-                stream
-            ));
+            // CUDACHECK(cudaMemcpyAsync(
+            //     h_sequenceLengths.data(),
+            //     d_sequenceLengths,
+            //     sizeof(int) * numSequences,
+            //     D2H,
+            //     stream
+            // ));
 
-            CUDACHECK(cudaStreamSynchronize(stream));
+            // CUDACHECK(cudaStreamSynchronize(stream));
 
-            CPUSequenceHasher<kmer_type> cpuHasher;
-            int counter = 0;
-            for(int s = 0; s < numSequences; s++){
-                //std::cerr << "cpu s " << s << "\n";
-                auto cpuhashValues = cpuHasher.getTopSmallestKmerHashes(
-                    h_sequenceData2Bit.data() + s * encodedSequencePitchInInts, 
-                    h_sequenceLengths[s], 
-                    getKmerSize(), 
-                    numSmallest,
-                    debug
-                );
+            // CPUSequenceHasher<kmer_type> cpuHasher;
+            // int counter = 0;
+            // for(int s = 0; s < numSequences; s++){
+            //     //std::cerr << "cpu s " << s << "\n";
+            //     auto cpuhashValues = cpuHasher.getTopSmallestKmerHashes(
+            //         h_sequenceData2Bit.data() + s * encodedSequencePitchInInts, 
+            //         h_sequenceLengths[s], 
+            //         getKmerSize(), 
+            //         numSmallest,
+            //         debug
+            //     );
 
-                assert(cpuhashValues.size() == h_numHashesPerSequence[s]);
+            //     assert(cpuhashValues.size() == h_numHashesPerSequence[s]);
 
-                if(debug){
-                    std::cerr << "cpu s " << s << "\n";
-                    std::cerr << "read id : " << h_readIds[s] << "\n";
-                    std::cerr << "comparing hashes\n";
-                    std::cerr << "cpu: " << cpuhashValues.size() << "\n";
-                    for(auto hash : cpuhashValues){ std::cerr << hash << ", "; }
-                    std::cerr << "\n";
+            //     if(debug){
+            //         std::cerr << "cpu s " << s << "\n";
+            //         std::cerr << "read id : " << h_readIds[s] << "\n";
+            //         std::cerr << "comparing hashes\n";
+            //         std::cerr << "cpu: " << cpuhashValues.size() << "\n";
+            //         for(auto hash : cpuhashValues){ std::cerr << hash << ", "; }
+            //         std::cerr << "\n";
 
-                    std::cerr << "gpu: " << h_numHashesPerSequence[s] << "\n";
-                    for(int i = 0; i < h_numHashesPerSequence[s]; i++){ std::cerr << h_keyoutput[numSmallest * s + i] << ", "; }
-                    std::cerr << "\n";
-                }
+            //         std::cerr << "gpu: " << h_numHashesPerSequence[s] << "\n";
+            //         for(int i = 0; i < h_numHashesPerSequence[s]; i++){ std::cerr << h_keyoutput[numSmallest * s + i] << ", "; }
+            //         std::cerr << "\n";
+            //     }
 
-                for(int i = 0; i < h_numHashesPerSequence[s]; i++){
-                    assert(cpuhashValues[i] == h_keyoutput[numSmallest * s + i]);
-                }
+            //     for(int i = 0; i < h_numHashesPerSequence[s]; i++){
+            //         assert(cpuhashValues[i] == h_keyoutput[numSmallest * s + i]);
+            //     }
 
-                // std::cerr << "comparing hashes\n";
-                // std::cerr << "cpu: " << cpuhashValues.size() << "\n";
-                // for(auto hash : cpuhashValues){ std::cerr << hash << ", "; }
-                // std::cerr << "\n";
+            //     // std::cerr << "comparing hashes\n";
+            //     // std::cerr << "cpu: " << cpuhashValues.size() << "\n";
+            //     // for(auto hash : cpuhashValues){ std::cerr << hash << ", "; }
+            //     // std::cerr << "\n";
 
-                // std::cerr << "gpu: " << h_numHashesPerSequence[s] << "\n";
-                // for(int i = 0; i < h_numHashesPerSequence[s]; i++){ std::cerr << h_keyoutput[counter + i] << ", "; }
-                // std::cerr << "\n";
+            //     // std::cerr << "gpu: " << h_numHashesPerSequence[s] << "\n";
+            //     // for(int i = 0; i < h_numHashesPerSequence[s]; i++){ std::cerr << h_keyoutput[counter + i] << ", "; }
+            //     // std::cerr << "\n";
 
-                counter += h_numHashesPerSequence[s];
-            }
+            //     counter += h_numHashesPerSequence[s];
+            // }
 
 
             std::size_t numKeys = 0;

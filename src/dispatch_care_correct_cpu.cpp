@@ -254,6 +254,7 @@ namespace care{
             memoryOptions.hashtableLoadfactor
         );
 
+        #if 1
         cpuMinhasher->constructFromReadStorage(
             fileOptions,
             runtimeOptions,
@@ -262,6 +263,10 @@ namespace care{
             correctionOptions,
             *cpuReadStorage
         );
+        #else
+        std::ifstream tablestreamA("tablestream.bin", std::ios::binary);
+        cpuMinhasher->loadFromStream(tablestreamA);
+        #endif
 
 
         //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after cpuminhasher");
