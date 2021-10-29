@@ -699,7 +699,9 @@ namespace care{
 
         void firstPassDone(std::size_t minValuesPerKey = 1, std::size_t maxValuesPerKey = std::numeric_limits<std::size_t>::max()){
             helpers::CpuTimer timer1("firstPassDone");
-            //count keys with >= minValuesPerKey values
+
+            maxValuesPerKey = std::min(maxValuesPerKey, (1ul << MetaData::numvaluesBits()) - 1);
+
             std::size_t numKeysWithOkValues = 0;
             std::size_t numValuesOfKeysWithOkValues = 0;
 
@@ -747,6 +749,7 @@ namespace care{
                     std::size_t count = meta.firstPassCount();
                     meta.offset(position);
                     meta.numValues(count);
+                    meta.tmpData(0);
                     position += count;
                 }
             );
@@ -757,18 +760,15 @@ namespace care{
         void secondPassInsert(const Key* keys, const Value* values, std::size_t N){
             for(std::size_t i = 0; i < N; i++){
                 if(values[i] != dummyValue()){
-                    const MetaData* meta = lookup.queryPointer(keys[i]);
+                    MetaData* const meta = lookup.queryPointer(keys[i]);
                     if(meta != nullptr){
 
-                        Value* myValueRangeBegin = valuestorage.data() + meta->offset();
-                        std::size_t pos = 0;
-                        while(pos < meta->numValues()){
-                            if(myValueRangeBegin[pos] == dummyValue()){
-                                myValueRangeBegin[pos] = values[i];
-                                break;
-                            }else{
-                                pos++;
-                            }
+                        Value* const myValueRangeBegin = valuestorage.data() + meta->offset();
+                        const std::size_t pos = meta->tmpData();
+                        const std::size_t numValues = meta->numValues();
+                        if(pos < numValues){
+                            myValueRangeBegin[pos] = values[i];
+                            meta->tmpData(pos+1);
                         }
                     }
                 }
@@ -861,11 +861,17 @@ namespace care{
                 return 48;
             }
             static constexpr std::size_t numvaluesBits(){
-                return 16;
+                return 8;
             }
 
+            static constexpr std::size_t numTmpBits(){
+                return 8;
+            }
+
+            static_assert(numvaluesBits() == numTmpBits());
+
             // offset into value array, num values
-            using Data = packed_types::PackedPair<offsetBits(),numvaluesBits()>;
+            using Data = packed_types::PackedTriple<offsetBits(),numvaluesBits(),numTmpBits()>;
 
             static constexpr std::size_t maxFirstPassCount(){
                 return (1ull << offsetBits()) - 1;
@@ -886,6 +892,14 @@ namespace care{
 
             void numValues(std::size_t value) noexcept{
                 data.second(value);
+            }
+
+            std::size_t tmpData() const noexcept{
+                return data.third();
+            }
+
+            void tmpData(std::size_t value) noexcept{
+                data.third(value);
             }
 
             std::size_t offset() const noexcept{
