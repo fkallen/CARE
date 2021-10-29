@@ -78,6 +78,7 @@ namespace gpu{
 
             PinnedBuffer<kmer_type> h_minhashSignatures{};
             PinnedBuffer<read_number> h_candidate_read_ids_tmp{};
+            PinnedBuffer<read_number> h_anchorReadIds{};
             PinnedBuffer<int> h_begin_offsets{};
             PinnedBuffer<int> h_end_offsets{};
             PinnedBuffer<int> h_numValuesPerSequence{};
@@ -531,6 +532,10 @@ namespace gpu{
             queryData->previousStage = QueryData::Stage::NumValues;
         }
 
+
+
+        #if 1
+
         void retrieveValues(
             MinhasherHandle& queryHandle,
             const read_number* d_readIds,
@@ -782,6 +787,190 @@ namespace gpu{
 
             queryData->previousStage = QueryData::Stage::Retrieve;
         }
+
+
+        #else
+
+        //uses host-side sort+unique instead of device-side sort+unique
+        void retrieveValues(
+            MinhasherHandle& queryHandle,
+            const read_number* d_readIds,
+            int numSequences,
+            int totalNumValues,
+            read_number* d_values,
+            int* d_numValuesPerSequence,
+            int* d_offsets, //numSequences + 1
+            cudaStream_t stream,
+            rmm::mr::device_memory_resource* mr
+        ) const override {
+            QueryData* const queryData = getQueryDataFromHandle(queryHandle);
+
+            DEBUGSTREAMSYNC(stream);
+
+            assert(queryData->isInitialized);
+            if(numSequences == 0) return;
+
+            assert(queryData->previousStage == QueryData::Stage::NumValues);
+
+            //std::cerr << "totalNumValues: " << totalNumValues << "\n";
+
+            if(totalNumValues == 0){
+                CUDACHECK(cudaMemsetAsync(d_numValuesPerSequence, 0, sizeof(int) * numSequences, stream));
+                CUDACHECK(cudaMemsetAsync(d_offsets, 0, sizeof(int) * (numSequences + 1), stream));
+
+                queryData->previousStage = QueryData::Stage::Retrieve;
+
+                DEBUGSTREAMSYNC(stream);
+
+                return;
+            }
+
+            if(d_readIds != nullptr){
+                queryData->h_anchorReadIds.resize(numSequences);
+                CUDACHECK(cudaMemcpyAsync(queryData->h_anchorReadIds.data(), d_readIds, sizeof(read_number) * numSequences, D2H, stream));
+            }
+
+            constexpr int roundUpTo = 10000;
+            const int roundedTotalNum = SDIV(totalNumValues, roundUpTo) * roundUpTo;
+            queryData->h_candidate_read_ids_tmp.resize(roundedTotalNum);
+
+            rmm::device_uvector<read_number> d_candidate_read_ids_tmp(roundedTotalNum, stream, mr);
+
+            queryData->h_begin_offsets.resize(numSequences+1);
+            queryData->h_end_offsets.resize(numSequences+1);
+
+
+            //results will be in Current() buffer
+            cub::DoubleBuffer<read_number> d_values_dblbuf(d_values, d_candidate_read_ids_tmp.data());
+
+            auto copyHitsToPinnedMemory = [queryData, numSequences, minhasher = this](){
+                int* h_numValuesPerSequence = queryData->h_numValuesPerSequence.data();
+
+                queryData->h_begin_offsets[0] = 0;
+                std::partial_sum(
+                    h_numValuesPerSequence, 
+                    h_numValuesPerSequence + numSequences - 1, 
+                    queryData->h_begin_offsets.begin() + 1
+                );
+                std::partial_sum(
+                    h_numValuesPerSequence, 
+                    h_numValuesPerSequence + numSequences, 
+                    queryData->h_end_offsets.begin()
+                );
+
+                std::vector<int> processedPerSequence(numSequences, 0);
+
+                for(int map = 0; map < minhasher->getNumberOfMaps(); ++map){
+                    for(int i = 0; i < numSequences; i++){
+
+                        
+
+                        //prefetch first element of next range if the next range is not empty
+                        // {
+                        //     constexpr int nextprefetch = 2;
+                        //     int prefetchSequence = 0;
+                        //     int prefetchMap = 0;
+                        //     if(i + nextprefetch < numSequences){
+                        //         prefetchMap = map;
+                        //         prefetchSequence = i + nextprefetch;
+                        //     }else{
+                        //         prefetchMap = map + 1;
+                        //         prefetchSequence = i + nextprefetch - numSequences;
+                        //     }
+
+                        //     if(prefetchMap < minhasher->getNumberOfMaps()){
+                        //         const auto& range = queryData->allRanges[prefetchMap * numSequences + prefetchSequence];
+                        //         if(range.first != range.second){
+                        //             __builtin_prefetch(range.first, 0, 0);
+                        //         }
+                        //     }
+                        // }
+
+                        const auto& range = queryData->allRanges[map * numSequences + i];
+
+                        std::copy(
+                            range.first, 
+                            range.second, 
+                            queryData->h_candidate_read_ids_tmp.data() 
+                                + queryData->h_begin_offsets[i] + processedPerSequence[i]
+                        );
+
+                        processedPerSequence[i] += std::distance(range.first, range.second);
+                    }
+                }
+            };
+
+            copyHitsToPinnedMemory();
+
+            read_number* const h_outputBegin = queryData->h_candidate_read_ids_tmp.data();
+            read_number* h_outputEnd = h_outputBegin;
+            int* const h_numValuesPerSequenceBegin = queryData->h_begin_offsets.data();
+            int* h_numValuesPerSequenceEnd = h_numValuesPerSequenceBegin;
+            int* const h_offsetsBegin = queryData->h_end_offsets.data();
+            int* h_offsetsEnd = h_offsetsBegin;
+
+            for(int s = 0; s < numSequences; s++){
+                const int beginIndex = queryData->h_begin_offsets[s];
+                const int endIndex = queryData->h_end_offsets[s];
+                read_number* begin = &queryData->h_candidate_read_ids_tmp[beginIndex];
+                read_number* end = &queryData->h_candidate_read_ids_tmp[endIndex];
+
+                std::sort(begin, end);
+
+                auto currentOutputEnd = h_outputEnd;
+
+                if(d_readIds != nullptr){
+                    const auto anchorReadId = queryData->h_anchorReadIds[s];
+
+                    auto isEqual = [toremove = anchorReadId](const auto& l, const auto& r){
+                        if(l == toremove) return true;
+                        if(r == toremove) return true;
+                        return l == r;
+                    };
+
+                    //make unique range and remove anchorReadId
+                    h_outputEnd = std::unique_copy(begin, end, h_outputEnd, isEqual);
+                }else{
+                    //make unique range
+                    h_outputEnd = std::unique_copy(begin, end, h_outputEnd);
+                }
+
+                *(h_numValuesPerSequenceEnd++) = std::distance(currentOutputEnd, h_outputEnd);
+                *(h_offsetsEnd++) = std::distance(h_outputBegin, currentOutputEnd);
+            }
+
+            const auto resultsize = h_offsetsBegin[numSequences - 1] + h_numValuesPerSequenceBegin[numSequences - 1];
+            h_offsetsBegin[numSequences] = resultsize;
+
+            CUDACHECK(cudaMemcpyAsync(
+                d_values,
+                queryData->h_candidate_read_ids_tmp.data(),
+                sizeof(read_number) * resultsize,
+                H2D,
+                stream
+            ));
+
+            CUDACHECK(cudaMemcpyAsync(
+                d_numValuesPerSequence,
+                h_numValuesPerSequenceBegin,
+                sizeof(int) * numSequences,
+                H2D,
+                stream
+            ));
+
+            CUDACHECK(cudaMemcpyAsync(
+                d_offsets,
+                h_offsetsBegin,
+                sizeof(int) * (numSequences + 1),
+                H2D,
+                stream
+            ));
+
+            DEBUGSTREAMSYNC(stream);
+
+            queryData->previousStage = QueryData::Stage::Retrieve;
+        }
+        #endif
 
         void compact(cudaStream_t /*stream*/) {
             int id;

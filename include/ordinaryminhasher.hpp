@@ -306,6 +306,64 @@ namespace care{
             queryData->previousStage = QueryData::Stage::NumValues;
         }
 
+
+        #if 0
+
+        //retrieve values with sort + unique instead of set_union
+        void retrieveValues(
+            MinhasherHandle& queryHandle,
+            const read_number* h_readIds,
+            int numSequences,
+            int /*totalNumValues*/,
+            read_number* h_values,
+            int* h_numValuesPerSequence,
+            int* h_offsets //numSequences + 1
+        ) const override {
+            if(numSequences == 0) return;
+
+            QueryData* const queryData = getQueryDataFromHandle(queryHandle);
+
+            assert(queryData->previousStage == QueryData::Stage::NumValues);
+
+
+            h_offsets[0] = 0;
+
+            read_number* h_valuesEnd = h_values;
+
+            for(int s = 0; s < numSequences; s++){
+                read_number* myValues = h_valuesEnd;
+
+                for(int map = 0; map < getNumberOfMaps(); ++map){
+                    const auto& range = queryData->ranges[map * numSequences + s]; //todo transpose
+                    h_valuesEnd = std::copy(range.first, range.second, h_valuesEnd);
+                }
+
+                std::sort(myValues, h_valuesEnd);
+                if(h_readIds != nullptr){
+                    const auto anchorReadId = h_readIds[s];
+
+                    auto isEqual = [toremove = anchorReadId](const auto& l, const auto& r){
+                        if(l == toremove) return true;
+                        if(r == toremove) return true;
+                        return l == r;
+                    };
+
+                    //make unique range and remove anchorReadId
+                    h_valuesEnd = std::unique(myValues, h_valuesEnd, isEqual);
+                }else{
+                    //make unique range
+                    h_valuesEnd = std::unique(myValues, h_valuesEnd);
+                }
+
+                h_numValuesPerSequence[s] = std::distance(myValues, h_valuesEnd);
+                h_offsets[s+1] = h_numValuesPerSequence[s] + h_offsets[s];
+            }
+
+            queryData->previousStage = QueryData::Stage::Retrieve;
+        }
+
+        #else
+
         void retrieveValues(
             MinhasherHandle& queryHandle,
             const read_number* h_readIds,
@@ -397,6 +455,8 @@ namespace care{
 
             queryData->previousStage = QueryData::Stage::Retrieve;
         }
+
+        #endif
 
         void compact() {
             const int num = minhashTables.size();
