@@ -639,7 +639,7 @@ struct GpuSegmentedUnique{
         }else {
             constexpr int blocksize = 128;
             constexpr int elemsPerThread = 32;
-            assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
+            //assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
 
             processData(blocksize, elemsPerThread);
         }
