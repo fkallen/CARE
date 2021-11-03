@@ -673,6 +673,212 @@ namespace care{
             return char(((((a * x) + b) * x) + c) * x + d);
         }
 
+        //get kmer of length k which starts at position pos of the decoded sequence
+        HOSTDEVICEQUALIFIER
+        static constexpr std::uint64_t getEncodedKmerFromEncodedSequence(const unsigned int* encodedSequence, int k, int pos){
+            assert(k > 0);
+
+            constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
+            const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - k) * 2);
+
+            assert(k <= maximum_kmer_length);
+
+            std::uint64_t kmer = 0;
+
+            while(k > 0){
+                const int intIndex = pos / 16;
+                const std::uint64_t intData = encodedSequence[intIndex];
+                const int neededBasesFromInt = std::min(k, 16 - (pos % 16));
+                assert(neededBasesFromInt > 0);
+                const int intShift = 2*(16 - neededBasesFromInt - (pos % 16));
+                kmer = (kmer << (2*neededBasesFromInt)) | (intData >> intShift);
+                k -= neededBasesFromInt;
+                pos += neededBasesFromInt;
+            }           
+
+            return kmer & kmer_mask;
+        }
+
+        template<class Func> // Func::operator()(std::uint64_t kmer, int pos)
+        HOSTDEVICEQUALIFIER
+        static constexpr void forEachEncodedKmerFromEncodedSequence(const unsigned int* encodedSequence, int sequenceLength, int k, Func callback){
+            if(sequenceLength <= 0 || k > sequenceLength) return;
+
+            assert(k > 0);
+
+            constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
+            const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - k) * 2);
+
+            assert(k <= maximum_kmer_length);
+
+            std::uint64_t kmer = getEncodedKmerFromEncodedSequence(encodedSequence, k, 0);
+            callback(kmer, 0);
+
+            for(int pos = 1; pos < sequenceLength - k + 1; pos++){
+                const int nextIntIndex = (pos + k - 1) / basesPerInt2Bit();
+                const int nextPositionInInt = (pos + k - 1) % basesPerInt2Bit();
+
+                const std::uint64_t nextBase = encodedSequence[nextIntIndex] >> (30 - 2 * nextPositionInInt);
+
+                kmer = ((kmer << 2) | nextBase) & kmer_mask;
+                //assert(kmer == getEncodedKmerFromEncodedSequence(encodedSequence, k, pos));
+                callback(kmer, pos);
+            }
+        }
+
+        template<class Func> // Func::operator()(std::uint64_t kmer, int pos)
+        HOSTDEVICEQUALIFIER
+        static constexpr void forEachEncodedKmerFromEncodedSequence_elaborate(const unsigned int* encodedSequence, int sequenceLength, int k, Func callback){
+            if(sequenceLength <= 0 || k > sequenceLength) return;
+
+            assert(k > 0);
+
+            constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
+            const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - k) * 2);
+
+            assert(k <= maximum_kmer_length);
+
+            std::uint64_t kmer = getEncodedKmerFromEncodedSequence(encodedSequence, k, 0);
+            // std::uint64_t kmer = encodedSequence[0];
+            // if(k <= 16){
+            //     kmer >>= (16 - k) * 2;
+            // }else{
+            //     kmer = (kmer << 32) | encodedSequence[1];
+            //     kmer >>= (32 - k) * 2;
+            // }
+
+            kmer >>= 2; //k-1 bases, allows easier loop
+
+            constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
+
+            const int itersend1 = std::min(SDIV(k-1, basesPerInt) * basesPerInt, sequenceLength);
+            int pos = 0;
+
+            //process sequence positions one by one
+            // until the next encoded sequence data element is reached
+            for(int nextSequencePos = k - 1; nextSequencePos < itersend1; nextSequencePos++){
+                const int nextIntIndex = nextSequencePos / basesPerInt;
+                const int nextPositionInInt = nextSequencePos % basesPerInt;
+
+                const std::uint64_t nextBase = encodedSequence[nextIntIndex] >> (30 - 2 * nextPositionInInt);
+                kmer = ((kmer << 2) | nextBase) & kmer_mask;
+
+                callback(kmer, pos);
+                pos++;
+            }
+
+            const int fullIntIters = (sequenceLength - itersend1) / basesPerInt;
+
+            //process all fully occupied encoded sequence data elements
+            // improves memory access
+            for(int iter = 0; iter < fullIntIters; iter++){
+                const int intIndex = (itersend1 + iter * basesPerInt) / basesPerInt;
+                const unsigned int data = encodedSequence[intIndex];
+
+                // #ifdef __CUDA_ARCH__
+                // #pragma unroll
+                // #endif
+                for(int posInInt = 0; posInInt < basesPerInt; posInInt++){
+                    const std::uint64_t nextBase = data >> (30 - 2 * posInInt);
+                    kmer = ((kmer << 2) | nextBase) & kmer_mask;
+
+                    callback(kmer, pos);
+                    pos++;
+                }
+            }
+
+            //process remaining positions one by one
+            for(int nextSequencePos = fullIntIters * basesPerInt + itersend1; nextSequencePos < sequenceLength; nextSequencePos++){
+                const int nextIntIndex = nextSequencePos / basesPerInt;
+                const int nextPositionInInt = nextSequencePos % basesPerInt;
+
+                const std::uint64_t nextBase = encodedSequence[nextIntIndex] >> (30 - 2 * nextPositionInInt);
+                kmer = ((kmer << 2) | nextBase) & kmer_mask;
+
+                callback(kmer, pos);
+                pos++;
+            }
+        }
+
+        template<class Func> // Func::operator()(std::uint64_t kmer, int pos)
+        HOSTDEVICEQUALIFIER
+        static constexpr void forEachEncodedCanonicalKmerFromEncodedSequence(const unsigned int* encodedSequence, int sequenceLength, int k, Func callback){
+            if(sequenceLength <= 0 || k > sequenceLength) return;
+
+            assert(k > 0);
+
+            constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
+            const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - k) * 2);
+            const int rcshiftamount = (maximum_kmer_length - k) * 2;
+
+            assert(k <= maximum_kmer_length);
+
+            std::uint64_t kmer = getEncodedKmerFromEncodedSequence(encodedSequence, k, 0);
+            kmer >>= 2; //k-1 bases, allows easier loop
+            std::uint64_t rc_kmer = SequenceHelpers::reverseComplementInt2Bit(kmer);
+
+            auto addBase = [&](std::uint64_t encBase){
+                const std::uint64_t revcBase = (~encBase) & 3;
+                kmer = ((kmer << 2) | encBase) & kmer_mask;
+                rc_kmer = (rc_kmer >> 2) | (revcBase << 62);
+            };
+
+
+            constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
+
+            const int itersend1 = std::min(SDIV(k-1, basesPerInt) * basesPerInt, sequenceLength);
+            int pos = 0;
+
+            //process sequence positions one by one
+            // until the next encoded sequence data element is reached
+            for(int nextSequencePos = k - 1; nextSequencePos < itersend1; nextSequencePos++){
+                const int nextIntIndex = nextSequencePos / basesPerInt;
+                const int nextPositionInInt = nextSequencePos % basesPerInt;
+
+                const std::uint64_t nextBase = encodedSequence[nextIntIndex] >> (30 - 2 * nextPositionInInt);
+                addBase(nextBase);                
+                const std::uint64_t smallest = std::min(kmer, rc_kmer >> rcshiftamount);
+
+                callback(smallest, pos);
+                pos++;
+            }
+
+            const int fullIntIters = (sequenceLength - itersend1) / basesPerInt;
+
+            //process all fully occupied encoded sequence data elements
+            // improves memory access
+            for(int iter = 0; iter < fullIntIters; iter++){
+                const int intIndex = (itersend1 + iter * basesPerInt) / basesPerInt;
+                const unsigned int data = encodedSequence[intIndex];
+
+                // #ifdef __CUDA_ARCH__
+                // #pragma unroll
+                // #endif
+                for(int posInInt = 0; posInInt < basesPerInt; posInInt++){
+                    const std::uint64_t nextBase = data >> (30 - 2 * posInInt);
+
+                    addBase(nextBase);                
+                    const std::uint64_t smallest = std::min(kmer, rc_kmer >> rcshiftamount);
+
+                    callback(smallest, pos);
+                    pos++;
+                }
+            }
+
+            //process remaining positions one by one
+            for(int nextSequencePos = fullIntIters * basesPerInt + itersend1; nextSequencePos < sequenceLength; nextSequencePos++){
+                const int nextIntIndex = nextSequencePos / basesPerInt;
+                const int nextPositionInInt = nextSequencePos % basesPerInt;
+
+                const std::uint64_t nextBase = encodedSequence[nextIntIndex] >> (30 - 2 * nextPositionInInt);
+                addBase(nextBase);                
+                const std::uint64_t smallest = std::min(kmer, rc_kmer >> rcshiftamount);
+
+                callback(smallest, pos);
+                pos++;
+            }
+        }
+
         #ifdef __CUDACC__
 
         template<class Group>
