@@ -341,7 +341,7 @@ struct GpuSegmentedUnique{
         cudaStream_t stream = 0
     ){
 
-        constexpr int maximumSegmentSizeForRegSort = 128 * 64;
+        constexpr int maximumSegmentSizeForRegSort = 128 * 32;
 
         void* temp_allocations[2]{};
         std::size_t temp_allocation_sizes[2]{0,0};
@@ -636,17 +636,18 @@ struct GpuSegmentedUnique{
             assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
 
             processData(blocksize, elemsPerThread);
-        }else if(sizeOfLargestSegment <= 4096){
+        //}else if(sizeOfLargestSegment <= 4096){
+        }else{
             constexpr int blocksize = 128;
             constexpr int elemsPerThread = 32;
             assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
 
             processData(blocksize, elemsPerThread);
-        }else{
-            constexpr int blocksize = 128;
-            constexpr int elemsPerThread = 64;
+        // }else{
+        //     constexpr int blocksize = 128;
+        //     constexpr int elemsPerThread = 64;
             
-            processData(blocksize, elemsPerThread);
+        //     processData(blocksize, elemsPerThread);
         }
     }
 
@@ -666,7 +667,7 @@ struct GpuSegmentedUnique{
         cudaStream_t stream = 0
     ){
 
-        cub::DoubleBuffer<read_number> d_values_dblbuf(d_input, d_output);
+        cub::DoubleBuffer<T> d_values_dblbuf(d_input, d_output);
         
         std::size_t requiredCubTempStorageSize = 0;
         cub::DeviceSegmentedRadixSort::SortKeys(

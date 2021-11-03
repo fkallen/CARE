@@ -764,6 +764,25 @@ OutputIt k_way_merge_sorted(OutputIt destinationbegin, std::vector<Iter> iters){
     return destinationend;
 }
 
+
+template<class OutputIter, class Iter, class FlagIter>
+OutputIter select_if(Iter begin, Iter end, FlagIter flags, OutputIter output){
+
+    while(begin != end){
+        if(*flags){
+            *output = *begin;
+            ++output;
+        }
+
+        ++begin;
+        ++flags;
+    }
+
+    return output;
+}
+
+
+
 /*
     Removes elements from sorted range which occure less than k times.
     Returns end of the new range

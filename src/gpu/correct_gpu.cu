@@ -520,6 +520,7 @@ public:
                 gpuAnchorHasher.makeErrorCorrectorInput(
                     anchorIds.data(),
                     anchorIds.size(),
+                    correctionOptions.useQualityScores,
                     *inputPtr,
                     stream
                 );
@@ -568,11 +569,12 @@ public:
                 assert(cudaSuccess == inputPtr->event.query());
 
                 //std::cerr << "globalcounter " << globalcounter << "\n";
-        
+
                 nvtx::push_range("makeErrorCorrectorInput", 0);
                 gpuAnchorHasher.makeErrorCorrectorInput(
                     anchorIds.data(),
                     anchorIds.size(),
+                    correctionOptions.useQualityScores,
                     *inputPtr,
                     stream
                 );
@@ -750,6 +752,7 @@ public:
                 gpuAnchorHasher.makeErrorCorrectorInput(
                     anchorIds.data(),
                     anchorIds.size(),
+                    correctionOptions.useQualityScores,
                     input,
                     stream
                 );
@@ -1071,6 +1074,7 @@ public:
             gpuAnchorHasher.makeErrorCorrectorInput(
                 anchorIds.data(),
                 anchorIds.size(),
+                correctionOptions.useQualityScores,
                 *inputPtr,
                 hasherStream
             );

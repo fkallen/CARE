@@ -12,7 +12,7 @@
 
 namespace care{
 namespace gpu{
-    
+
 
         std::unique_ptr<FakeGpuMinhasher>
         constructFakeGpuMinhasherFromGpuReadStorage(

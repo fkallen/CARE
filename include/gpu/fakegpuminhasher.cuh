@@ -10,6 +10,7 @@
 #include <gpu/gpuminhasher.cuh>
 #include <groupbykey.hpp>
 #include <gpu/cudaerrorcheck.cuh>
+#include <gpu/gpusequencehasher.cuh>
 
 #include <options.hpp>
 #include <util.hpp>
@@ -408,17 +409,9 @@ namespace gpu{
             const std::size_t hashValuesPitchInElements = getNumberOfMaps();
             //const int firstHashFunc = 0;
 
-            rmm::device_uvector<kmer_type> d_minhashSignatures(
-                getNumberOfMaps() * numSequences,
-                stream,
-                mr
-            );
-
-            DEBUGSTREAMSYNC(stream);
-
-            callMinhashSignatures3264Kernel(
-                d_minhashSignatures.data(),
-                hashValuesPitchInElements,
+            GPUSequenceHasher<kmer_type> hasher;
+            auto hashResult = hasher.hash(
+            //auto hashResult = hasher.hashUniqueKmers(
                 d_sequenceData2Bit,
                 encodedSequencePitchInInts,
                 numSequences,
@@ -426,8 +419,30 @@ namespace gpu{
                 getKmerSize(),
                 getNumberOfMaps(),
                 thrust::raw_pointer_cast(queryData->d_hashFunctionNumbers.data()),
-                stream
+                stream,
+                mr
             );
+
+            // rmm::device_uvector<kmer_type> d_minhashSignatures(
+            //     getNumberOfMaps() * numSequences,
+            //     stream,
+            //     mr
+            // );
+
+            // DEBUGSTREAMSYNC(stream);
+
+            // callMinhashSignatures3264Kernel(
+            //     d_minhashSignatures.data(),
+            //     hashValuesPitchInElements,
+            //     d_sequenceData2Bit,
+            //     encodedSequencePitchInInts,
+            //     numSequences,
+            //     d_sequenceLengths,
+            //     getKmerSize(),
+            //     getNumberOfMaps(),
+            //     thrust::raw_pointer_cast(queryData->d_hashFunctionNumbers.data()),
+            //     stream
+            // );
 
             DEBUGSTREAMSYNC(stream);
 
@@ -439,7 +454,8 @@ namespace gpu{
 
             helpers::call_transpose_kernel(
                 d_minhashSignatures_transposed.data(), 
-                d_minhashSignatures.data(), 
+                //d_minhashSignatures.data(), 
+                hashResult.d_hashvalues.data(),
                 numSequences, 
                 getNumberOfMaps(), 
                 hashValuesPitchInElements,
@@ -452,14 +468,43 @@ namespace gpu{
                 queryData->h_minhashSignatures.get(),
                 d_minhashSignatures_transposed.data(),
                 queryData->h_minhashSignatures.sizeInBytes(),
-                H2D,
+                D2H,
                 stream
             ));
 
             DEBUGSTREAMSYNC(stream);
 
             ::destroy(d_minhashSignatures_transposed, stream);
-            ::destroy(d_minhashSignatures, stream);
+            //::destroy(d_minhashSignatures, stream);
+
+            rmm::device_uvector<bool> d_isValid_transposed(
+                getNumberOfMaps() * numSequences,
+                stream,
+                mr
+            );
+
+            helpers::call_transpose_kernel(
+                d_isValid_transposed.data(), 
+                hashResult.d_isValid.data(),
+                numSequences, 
+                getNumberOfMaps(), 
+                getNumberOfMaps(),
+                stream
+            );
+
+            DEBUGSTREAMSYNC(stream);
+
+            auto h_isValid = std::make_unique<bool[]>(numSequences * getNumberOfMaps());
+
+            CUDACHECK(cudaMemcpyAsync(
+                h_isValid.get(),
+                d_isValid_transposed.data(),
+                sizeof(bool) * d_isValid_transposed.size(),
+                D2H,
+                stream
+            ));
+
+            DEBUGSTREAMSYNC(stream);
     
             CUDACHECK(cudaStreamSynchronize(stream)); //wait for D2H transfers of signatures
 
@@ -474,20 +519,28 @@ namespace gpu{
             for(int map = 0; map < getNumberOfMaps(); ++map){
                 for(int i = 0; i < numSequences; i++){
                     FakeGpuMinhasher::Range_t* const range = &allRanges[i * getNumberOfMaps()];
+
+                    const bool valid = h_isValid[map * numSequences + i];
+
+                    if(valid){
                 
-                    kmer_type key = queryData->h_minhashSignatures[map * numSequences + i];/* & kmer_mask*/;
-                    auto entries_range = queryMap(map, key);
-                    const int num = std::distance(entries_range.first, entries_range.second);
-                    if(num <= getNumResultsPerMapThreshold()){
-                        totalNumValues += num;
-                        h_numValuesPerSequence[i] += num;
+                        kmer_type key = queryData->h_minhashSignatures[map * numSequences + i];/* & kmer_mask*/;
+                        auto entries_range = queryMap(map, key);
+                        const int num = std::distance(entries_range.first, entries_range.second);
+                        if(num <= getNumResultsPerMapThreshold()){
+                            totalNumValues += num;
+                            h_numValuesPerSequence[i] += num;
+                        }else{
+                            //set range to empty range
+                            entries_range.second = entries_range.first;
+                        }
+                        allRanges[map * numSequences + i] = entries_range;
                     }else{
-                        //set range to empty range
-                        entries_range.second = entries_range.first;
+                        allRanges[map * numSequences + i].first = nullptr;
+                        allRanges[map * numSequences + i].second = nullptr;
                     }
 
                     //allRanges[i * getNumberOfMaps() + map] = entries_range;
-                    allRanges[map * numSequences + i] = entries_range;
                 }
             }
 
@@ -1026,6 +1079,8 @@ namespace gpu{
                 auto m = tableptr->getMemoryInfo();
                 result.host += m.host;
 
+                //std::cerr << std::distance(minhashTables.data(), &tableptr) << ": " << m.host << "\n";
+
                 for(auto pair : m.device){
                     result.device[pair.first] += pair.second;
                 }
@@ -1150,7 +1205,8 @@ namespace gpu{
             int firstHashfunction,
             int numHashfunctions,
             const int* h_hashFunctionNumbers,
-            cudaStream_t stream
+            cudaStream_t stream,
+            rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
         ){
             ThreadPool::ParallelForHandle pforHandle{};
 
@@ -1190,7 +1246,6 @@ namespace gpu{
 
             assert(firstHashfunction + numHashfunctions <= int(minhashTables.size()));
 
-            kmer_type* const d_signatures = static_cast<kmer_type*>(d_temp_allocations[0]);
             kmer_type* const d_signatures_transposed = static_cast<kmer_type*>(d_temp_allocations[1]);
             int* const d_hashFunctionNumbers = static_cast<int*>(d_temp_allocations[2]);
 
@@ -1202,9 +1257,10 @@ namespace gpu{
                 stream
             ));
 
-            callMinhashSignatures3264Kernel(
-                d_signatures,
-                signaturesRowPitchElements,
+            GPUSequenceHasher<kmer_type> hasher;
+
+            auto hashResult = hasher.hash(
+            //auto hashResult = hasher.hashUniqueKmers(
                 d_sequenceData2Bit,
                 encodedSequencePitchInInts,
                 numSequences,
@@ -1212,12 +1268,27 @@ namespace gpu{
                 getKmerSize(),
                 numHashfunctions,
                 d_hashFunctionNumbers,
-                stream
+                stream,
+                mr
             );
+
+            // callMinhashSignatures3264Kernel(
+            //     d_signatures,
+            //     signaturesRowPitchElements,
+            //     d_sequenceData2Bit,
+            //     encodedSequencePitchInInts,
+            //     numSequences,
+            //     d_sequenceLengths,
+            //     getKmerSize(),
+            //     numHashfunctions,
+            //     d_hashFunctionNumbers,
+            //     stream
+            // );
 
             helpers::call_transpose_kernel(
                 d_signatures_transposed, 
-                d_signatures, 
+                //d_signatures, 
+                hashResult.d_hashvalues.data(),
                 numSequences, 
                 signaturesRowPitchElements, 
                 signaturesRowPitchElements,
@@ -1234,12 +1305,62 @@ namespace gpu{
                 stream
             ));
 
+            rmm::device_uvector<bool> d_isValid_transposed(
+                numHashfunctions * numSequences,
+                stream,
+                mr
+            );
+
+            helpers::call_transpose_kernel(
+                d_isValid_transposed.data(), 
+                hashResult.d_isValid.data(),
+                numSequences, 
+                numHashfunctions, 
+                numHashfunctions,
+                stream
+            );
+
+            DEBUGSTREAMSYNC(stream);
+
+            auto h_isValid = std::make_unique<bool[]>(numSequences * numHashfunctions);
+
+            CUDACHECK(cudaMemcpyAsync(
+                h_isValid.get(),
+                d_isValid_transposed.data(),
+                sizeof(bool) * d_isValid_transposed.size(),
+                D2H,
+                stream
+            ));
+
+            DEBUGSTREAMSYNC(stream);
+
             CUDACHECK(cudaStreamSynchronize(stream));
 
             auto loopbody = [&](auto begin, auto end, int /*threadid*/){
                 for(int h = begin; h < end; h++){
 
-                    kmer_type* const hashesBegin = &h_signatures_transposed[h * numSequences];
+                    const kmer_type* const orighashesBegin = &h_signatures_transposed[h * numSequences];
+                    const bool* const validflagsBegin = &h_isValid[h * numSequences];
+
+                    std::vector<kmer_type> hashes(numSequences);
+
+                    auto hashesEnd = select_if(
+                        orighashesBegin,
+                        orighashesBegin + numSequences,
+                        validflagsBegin,
+                        hashes.begin()
+                    );
+
+                    std::vector<read_number> validIds(numSequences);
+
+                    auto validIdsEnd = select_if(
+                        h_readIds,
+                        h_readIds + numSequences,
+                        validflagsBegin,
+                        validIds.begin()
+                    );
+                    const auto numvalid = std::distance(hashes.begin(), hashesEnd);
+                    assert(numvalid == std::distance(validIds.begin(), validIdsEnd));
 
                     // std::for_each(
                     //     hashesBegin, hashesBegin + numSequences,
@@ -1249,7 +1370,7 @@ namespace gpu{
                     // );
 
                     minhashTables[firstHashfunction + h]->insert(
-                        hashesBegin, h_readIds, numSequences
+                        hashes.data(), validIds.data(), numvalid
                     );
                 }
             };

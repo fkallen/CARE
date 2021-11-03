@@ -56,7 +56,12 @@ namespace care{
             i.e. the key ends up with 0 values
         */
         void execute(std::vector<Key_t>& keys, std::vector<Value_t>& values, std::vector<Offset_t>& offsets){
-            if(keys.size() == 0) return;
+            if(keys.size() == 0){
+                //deallocate unused memory if capacity > 0
+                keys = std::vector<Key_t>{};
+                values = std::vector<Value_t>{};
+                return;
+            }
 
             bool isIotaValues = checkIotaValues(values);
 
@@ -237,7 +242,12 @@ namespace care{
             i.e. the key ends up with 0 values
         */
         bool execute(std::vector<Key_t>& keys, std::vector<Value_t>& values, std::vector<Offset_t>& offsets){
-            if(keys.size() == 0) return true;
+            if(keys.size() == 0){
+                //deallocate unused memory if capacity > 0
+                keys = std::vector<Key_t>{};
+                values = std::vector<Value_t>{};
+                return true;
+            }
 
             bool success = false;
 

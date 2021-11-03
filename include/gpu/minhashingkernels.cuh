@@ -5,9 +5,12 @@
 #include <config.hpp>
 #include <sequencehelpers.hpp>
 #include <gpu/cudaerrorcheck.cuh>
+#include <hpc_helpers.cuh>
 
 #include <gpu/cuda_block_select.cuh>
 #include <cub/cub.cuh>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/iterator/transform_iterator.h>
 
 #include <hpc_helpers.cuh>
 
@@ -25,7 +28,9 @@ namespace gpu{
         const int* __restrict__ sequenceLengths,
         int k,
         int numHashFuncs,
-        const int* __restrict__ hashFunctionNumbers
+        const int* __restrict__ hashFunctionNumbers,
+        std::uint64_t* kmersOfHashes,
+        int* primes
     ){
                 
         constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
@@ -37,6 +42,7 @@ namespace gpu{
             const int mySequenceIndex = tid / numHashFuncs;
             const int myNumHashFunc = tid % numHashFuncs;
             const int hashFuncId = hashFunctionNumbers[myNumHashFunc];
+            assert(hashFuncId < 64);
 
             const unsigned int* const mySequence = sequences2Bit + mySequenceIndex * sequenceRowPitchElements;
             const int myLength = sequenceLengths[mySequenceIndex];
@@ -59,13 +65,41 @@ namespace gpu{
                 );
 
                 mySignature[myNumHashFunc] = HashValueType(minHashValue & kmer_mask);
-
             }else{
                 mySignature[myNumHashFunc] = std::numeric_limits<HashValueType>::max();
             }
         }
     } 
 
+    template<class KT>
+    __global__
+    void countUniqueKmersKernel(
+        int numSequences,
+        const KT* kmersOfHashes_sorted,
+        int numHashFuncs,
+        int* totalUnique
+    ){
+        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+        const int stride = blockDim.x * gridDim.x;
+
+        for(int s = tid; s < numSequences; s += stride){
+            const KT* const myKmers = kmersOfHashes_sorted + s * 64;
+
+            int unique = 1;
+
+            for(int i = 0; i < numHashFuncs-1; i++){
+                if(myKmers[i] != myKmers[i+1]){
+                    unique++;
+                }
+            }
+
+            // if(numHashFuncs != unique){
+            //     printf("s %d, unique %d\n", s, unique);
+            // }
+
+            atomicAdd(totalUnique, unique);
+        }
+    }
 
     template<class HashValueType>
     void callMinhashSignatures3264Kernel(
@@ -80,6 +114,21 @@ namespace gpu{
         const int* __restrict__ hashFunctionNumbers,
         cudaStream_t stream
     ){
+        std::uint64_t* d_kmersOfHashes;
+        CUDACHECK(cudaMallocAsync(&d_kmersOfHashes, sizeof(std::uint64_t) * numSequences * 64, stream));
+
+        helpers::call_fill_kernel_async(d_kmersOfHashes, numSequences * 64, std::numeric_limits<std::uint64_t>::max(), stream);
+
+        constexpr std::array<int, 64> h_primes{2 ,3 ,5 ,7 ,11 ,13 ,17 ,19 ,23 ,29 ,31 ,37 ,41 ,43 ,47 ,53 ,59 ,61 ,67 ,71,
+            73 ,79 ,83 ,89 ,97 ,101 ,103 ,107 ,109 ,113 ,127 ,131 ,137 ,139 ,149 ,151 ,157 ,163 ,167 ,173,
+            179 ,181 ,191 ,193 ,197 ,199 ,211 ,223 ,227 ,229 ,233 ,239 ,241 ,251 ,257 ,263 ,269 ,271 ,277 ,281,
+            283 ,293 ,307 ,311};
+        static_assert(h_primes.size() == 64);
+
+        int* d_primes;
+        CUDACHECK(cudaMallocAsync(&d_primes, sizeof(int) * h_primes.size(), stream));
+        CUDACHECK(cudaMemcpyAsync(d_primes, h_primes.data(), sizeof(int) * h_primes.size(), H2D, stream));
+
         dim3 block(128,1,1);
         dim3 grid(SDIV(numHashFuncs * numSequences, block.x),1,1);
 
@@ -92,8 +141,80 @@ namespace gpu{
             sequenceLengths,
             k,
             numHashFuncs,
-            hashFunctionNumbers
+            hashFunctionNumbers,
+            d_kmersOfHashes,
+            d_primes
         ); CUDACHECKASYNC;
+
+        CUDACHECK(cudaFreeAsync(d_primes, stream));
+
+        std::uint64_t* d_kmersOfHashes_sorted;
+        CUDACHECK(cudaMallocAsync(&d_kmersOfHashes_sorted, sizeof(std::uint64_t) * numSequences * 64, stream));
+
+        auto offsets = thrust::make_transform_iterator(
+            thrust::make_counting_iterator(0),
+            [] __host__ __device__ (const int pos){ return pos * 64; }
+        );
+
+        std::size_t temp_storage_bytes = 0;
+
+        cub::DeviceSegmentedRadixSort::SortKeys(
+            nullptr,
+            temp_storage_bytes,
+            d_kmersOfHashes,
+            d_kmersOfHashes_sorted,
+            numSequences * 64,
+            numSequences,
+            offsets,
+            offsets + 1,
+            0,
+            k * 2,
+            stream
+        );
+
+        void* d_temp;
+        CUDACHECK(cudaMallocAsync(&d_temp, temp_storage_bytes, stream));
+
+        cub::DeviceSegmentedRadixSort::SortKeys(
+            d_temp,
+            temp_storage_bytes,
+            d_kmersOfHashes,
+            d_kmersOfHashes_sorted,
+            numSequences * 64,
+            numSequences,
+            offsets,
+            offsets + 1,
+            0,
+            k * 2,
+            stream
+        );
+
+        CUDACHECK(cudaFreeAsync(d_temp, stream));
+
+        int* d_totalunique;
+        CUDACHECK(cudaMallocAsync(&d_totalunique, sizeof(int), stream));
+
+        CUDACHECK(cudaMemsetAsync(d_totalunique, 0, sizeof(int), stream));
+
+        countUniqueKmersKernel<<<SDIV(numSequences, 64), 64, 0, stream>>>(
+            numSequences,
+            d_kmersOfHashes_sorted,
+            numHashFuncs,
+            d_totalunique
+        );
+        CUDACHECKASYNC;
+
+        int h_totalunique = 0;
+        CUDACHECK(cudaMemcpyAsync(&h_totalunique, d_totalunique, sizeof(int), D2H, stream));
+        CUDACHECK(cudaStreamSynchronize(stream));
+
+        //std::cerr << "totalunique: " << h_totalunique << ", average: " << (h_totalunique /float(numSequences)) << "\n";
+
+        CUDACHECK(cudaFreeAsync(d_totalunique, stream));
+        CUDACHECK(cudaFreeAsync(d_kmersOfHashes_sorted, stream));
+        CUDACHECK(cudaFreeAsync(d_kmersOfHashes, stream));
+
+        CUDACHECK(cudaStreamSynchronize(stream));
     }
 
 
