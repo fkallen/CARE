@@ -18,7 +18,7 @@ CXXFLAGS =
 COMPILER_WARNINGS = -Wall -Wextra 
 COMPILER_DISABLED_WARNING = -Wno-terminate -Wno-deprecated-copy
 
-CFLAGS_BASIC = $(COMPILER_WARNINGS) $(COMPILER_DISABLED_WARNING) -fopenmp -Iinclude -O3 -march=native -I$(THRUST_INCDIR)
+CFLAGS_BASIC = $(COMPILER_WARNINGS) $(COMPILER_DISABLED_WARNING) -fopenmp -Iinclude -O3 -g -I$(THRUST_INCDIR)
 CFLAGS_DEBUG_BASIC = $(COMPILER_WARNINGS) $(COMPILER_DISABLED_WARNING) -fopenmp -g -Iinclude -O0 -march=native -I$(THRUST_INCDIR)
 
 CFLAGS_CPU = $(CFLAGS_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_OMP
@@ -130,7 +130,7 @@ gpuarchs.txt : findgpus
 	$(shell ./findgpus > gpuarchs.txt) 
 
 correct_cpu_release:
-	@$(MAKE) correct_cpu_release_dummy DIR=$(BUILDDIR_CORRECT_CPU) CXXFLAGS="-std=c++14"
+	@$(MAKE) correct_cpu_release_dummy DIR=$(BUILDDIR_CORRECT_CPU) CXXFLAGS="-std=c++17"
 
 correct_gpu_release: gpuarchs.txt
 	@$(MAKE) correct_gpu_release_dummy DIR=$(BUILDDIR_CORRECT_GPU) CXXFLAGS="-std=c++17" CUDA_ARCH=$(shell cat gpuarchs.txt)

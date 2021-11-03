@@ -298,6 +298,10 @@ SerializedObjectStorage correct_cpu(
             clfAgent.flush();
 
             progressThread.addProgress(batchReadIds.size()); 
+
+            // if(omp_get_thread_num() == 0){
+            //     std::cerr << "getCandidatesTimeTotal: " << errorCorrector.getTimings().getCandidatesTimeTotal.count() << "\n";
+            // }
             
         } //while unprocessed reads exist loop end   
 

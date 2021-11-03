@@ -640,15 +640,21 @@ struct GpuSegmentedUnique{
         }else{
             constexpr int blocksize = 128;
             constexpr int elemsPerThread = 32;
-            assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
+            //assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
 
             processData(blocksize, elemsPerThread);
-        // }else{
+        }
+        // else if(sizeOfLargestSegment <= 4096){
+        //     assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
+
+        //     processData(blocksize, elemsPerThread);
+        // }
+        // else{
         //     constexpr int blocksize = 128;
         //     constexpr int elemsPerThread = 64;
             
         //     processData(blocksize, elemsPerThread);
-        }
+        // }
     }
 
     template<class T, class OffsetIterator>

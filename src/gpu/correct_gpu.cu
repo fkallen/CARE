@@ -528,7 +528,7 @@ public:
 
                 CUDACHECK(inputPtr->event.synchronize());
 
-                globalcounter++;                
+                globalcounter++;
 
                 hashingTimer.stop();
                 //elapsedHashingTimes.emplace_back(hashingTimer.elapsed());
