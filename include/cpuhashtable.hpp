@@ -267,7 +267,7 @@ namespace care{
             }
             return map;
         }
-        
+
         std::size_t getNumKeys() const noexcept{
             return numKeys;
         }
@@ -280,7 +280,7 @@ namespace care{
             = std::pair<Key,Value>{std::numeric_limits<Key>::max(), std::numeric_limits<Value>::max()};
 
         float load{};
-        std::size_t numKeys{}; //TODO save, load
+        std::size_t numKeys{};
         std::size_t maxProbes{};
         std::size_t size{};
         std::size_t capacity{};

@@ -56,44 +56,44 @@ namespace care{
         GoodAlignmentProperties goodAlignmentProperties
     ){
 
-        {
-            DoublePassMultiValueHashTable<int, char> table(0, 0.8f);
-            std::vector<int> keys{0,1,0,1,2,2,3};
-            std::vector<char> values{'0', '1', '0', '1', '2', '2', '3'};
-            table.firstPassInsert(keys.data(), values.data(), keys.size());
-            table.firstPassDone(1);
-            table.secondPassInsert(keys.data(), values.data(), keys.size());
-            table.secondPassDone();
+        // {
+        //     DoublePassMultiValueHashTable<int, char> table(0, 0.8f);
+        //     std::vector<int> keys{0,1,0,1,2,2,3};
+        //     std::vector<char> values{'0', '1', '0', '1', '2', '2', '3'};
+        //     table.firstPassInsert(keys.data(), values.data(), keys.size());
+        //     table.firstPassDone(1);
+        //     table.secondPassInsert(keys.data(), values.data(), keys.size());
+        //     table.secondPassDone();
 
-            std::vector<int> uniquekeys{0,1,2,3};
-            auto q0 = table.query(0);
-            std::cerr << "0: ";
-            for(int i = 0; i < q0.numValues; i++){
-                std::cerr << q0.valuesBegin[i] << ", ";
-            }
-            std::cerr << "\n";
+        //     std::vector<int> uniquekeys{0,1,2,3};
+        //     auto q0 = table.query(0);
+        //     std::cerr << "0: ";
+        //     for(int i = 0; i < q0.numValues; i++){
+        //         std::cerr << q0.valuesBegin[i] << ", ";
+        //     }
+        //     std::cerr << "\n";
 
-            auto q1 = table.query(1);
-            std::cerr << "1: ";
-            for(int i = 0; i < q1.numValues; i++){
-                std::cerr << q1.valuesBegin[i] << ", ";
-            }
-            std::cerr << "\n";
+        //     auto q1 = table.query(1);
+        //     std::cerr << "1: ";
+        //     for(int i = 0; i < q1.numValues; i++){
+        //         std::cerr << q1.valuesBegin[i] << ", ";
+        //     }
+        //     std::cerr << "\n";
 
-            auto q2 = table.query(2);
-            std::cerr << "2: ";
-            for(int i = 0; i < q2.numValues; i++){
-                std::cerr << q2.valuesBegin[i] << ", ";
-            }
-            std::cerr << "\n";
+        //     auto q2 = table.query(2);
+        //     std::cerr << "2: ";
+        //     for(int i = 0; i < q2.numValues; i++){
+        //         std::cerr << q2.valuesBegin[i] << ", ";
+        //     }
+        //     std::cerr << "\n";
 
-            auto q3 = table.query(3);
-            std::cerr << "3: ";
-            for(int i = 0; i < q3.numValues; i++){
-                std::cerr << q3.valuesBegin[i] << ", ";
-            }
-            std::cerr << "\n";
-        }
+        //     auto q3 = table.query(3);
+        //     std::cerr << "3: ";
+        //     for(int i = 0; i < q3.numValues; i++){
+        //         std::cerr << q3.valuesBegin[i] << ", ";
+        //     }
+        //     std::cerr << "\n";
+        // }
 
 
 
