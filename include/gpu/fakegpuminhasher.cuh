@@ -10,6 +10,7 @@
 #include <groupbykey.hpp>
 #include <gpu/cudaerrorcheck.cuh>
 #include <gpu/gpusequencehasher.cuh>
+#include <gpu/kernels.hpp>
 
 #include <options.hpp>
 #include <util.hpp>
