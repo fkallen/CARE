@@ -139,7 +139,9 @@ struct CPUSequenceHasher{
     }
 
 
-    std::vector<HashValueType> hash(
+    template<class OutputIter>
+    OutputIter hashInto(
+        OutputIter output,
         const unsigned int* sequence, 
         int sequenceLength, 
         int kmerLength, 
@@ -170,8 +172,27 @@ struct CPUSequenceHasher{
             );
         }
 
+        return std::transform(hashvalues.begin(), hashvalues.begin() + numHashFuncs, output, [&](auto hash){ return HashValueType(hash & kmer_mask); });
+    }
+
+    std::vector<HashValueType> hash(
+        const unsigned int* sequence, 
+        int sequenceLength, 
+        int kmerLength, 
+        int numHashFuncs,
+        int firstHashFunc
+    ){
         std::vector<HashValueType> result(numHashFuncs);
-        std::transform(hashvalues.begin(), hashvalues.begin() + numHashFuncs, result.begin(), [&](auto hash){ return HashValueType(hash & kmer_mask); });
+
+        hashInto(
+            result.begin(),
+            sequence,
+            sequenceLength,
+            kmerLength,
+            numHashFuncs,
+            firstHashFunc
+        );
+        
         return result;
     }
 

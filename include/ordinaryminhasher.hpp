@@ -267,24 +267,16 @@ namespace care{
 
             for(int s = 0; s < numSequences; s++){
                 const int length = h_sequenceLengths[s];
-                const unsigned int* sequence = h_sequenceData2Bit + encodedSequencePitchInInts * s;
+                const unsigned int* const sequence = h_sequenceData2Bit + encodedSequencePitchInInts * s;
 
-                if(length >= getKmerSize()){               
-
-                    auto hashValues = hasher.hash(
-                        sequence, 
-                        length, 
-                        getKmerSize(), 
-                        getNumberOfMaps(),
-                        0
-                    );
-
-                    std::copy(
-                        hashValues.begin(), 
-                        hashValues.begin() + getNumberOfMaps(),
-                        allHashValues.begin() + getNumberOfMaps() * s
-                    );
-                }
+                hasher.hashInto(
+                    allHashValues.begin() + getNumberOfMaps() * s,
+                    sequence, 
+                    length, 
+                    getKmerSize(), 
+                    getNumberOfMaps(),
+                    0
+                );
             }
 
             queryData->ranges.resize(numSequences * getNumberOfMaps());
