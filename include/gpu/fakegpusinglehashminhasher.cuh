@@ -242,8 +242,7 @@ namespace fakegpusinglehashminhasherkernels{
 
                 std::size_t maxNumPairs = std::size_t(numReads) * std::size_t(numSmallest);
 
-                //singlecustomhashtable = std::make_unique<HashTable>(maxNumPairs, loadfactor);
-                kvtable = std::make_unique<DoublePassMultiValueHashTable<kmer_type, read_number>>((numReads * numSmallest) / 8, loadfactor);
+                kvtable = std::make_unique<DoublePassMultiValueHashTable<kmer_type, read_number>>(maxNumPairs / 8, loadfactor);
 
                 cudaStream_t stream = cudaStreamPerThread;
                 
@@ -252,249 +251,142 @@ namespace fakegpusinglehashminhasherkernels{
                 rmm::device_uvector<read_number> d_indices(parallelReads, stream, mr);
                 
                 helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
-                            
-                ThreadPool tpForHashing(runtimeOptions.threads);
-                ThreadPool tpForCompacting(std::min(2,runtimeOptions.threads));
-
-                
                 setMemoryLimitForConstruction(maxMemoryForTables);
                 
-                //std::size_t bytesOfCachedConstructedTables = 0;
-                int remainingHashFunctions = requestedNumberOfMaps;
-                bool keepGoing = true;
+                std::cout << "Constructing the single hash table\n";
 
-                //while(remainingHashFunctions > 0 && keepGoing)
-                {
+                std::size_t numKeys = 0;
 
-                    setThreadPool(&tpForHashing);
+                helpers::CpuTimer firstpasstimer("firstpass");
 
-                    //singlehashtable = std::unordered_multimap<kmer_type, read_number>(0); //numReads
+                for (int iter = 0; iter < numIters; iter++){
+                    read_number readIdBegin = iter * parallelReads;
+                    read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
 
-                    std::cout << "Constructing maps\n";
+                    const std::size_t curBatchsize = readIdEnd - readIdBegin;
 
-                    std::size_t numKeys = 0;
+                    std::iota(h_indices.get(), h_indices.get() + curBatchsize, readIdBegin);
 
-                    helpers::CpuTimer firstpasstimer("firstpass");
+                    CUDACHECK(cudaMemcpyAsync(d_indices.data(), h_indices, sizeof(read_number) * curBatchsize, H2D, stream));
 
-                    for (int iter = 0; iter < numIters; iter++){
-                        read_number readIdBegin = iter * parallelReads;
-                        read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
+                    gpuReadStorage.gatherSequences(
+                        sequencehandle,
+                        d_sequenceData.data(),
+                        encodedSequencePitchInInts,
+                        makeAsyncConstBufferWrapper(h_indices.data()),
+                        d_indices.data(),
+                        curBatchsize,
+                        stream,
+                        mr
+                    );
+                
+                    gpuReadStorage.gatherSequenceLengths(
+                        sequencehandle,
+                        d_lengths.data(),
+                        d_indices.data(),
+                        curBatchsize,
+                        stream
+                    );
 
-                        const std::size_t curBatchsize = readIdEnd - readIdBegin;
+                    std::vector<kmer_type> tmpkeys(curBatchsize * numSmallest);
+                    std::vector<read_number> tmpids(curBatchsize * numSmallest);
 
-                        std::iota(h_indices.get(), h_indices.get() + curBatchsize, readIdBegin);
+                    auto numNewKeys = computeHashesAndReadIds(
+                        tmpkeys.data(),
+                        tmpids.data(),
+                        d_sequenceData.data(),
+                        curBatchsize,
+                        d_lengths.data(),
+                        encodedSequencePitchInInts,
+                        d_indices.data(),
+                        h_indices,
+                        stream
+                    );
 
-                        CUDACHECK(cudaMemcpyAsync(d_indices.data(), h_indices, sizeof(read_number) * curBatchsize, H2D, stream));
-
-                        gpuReadStorage.gatherSequences(
-                            sequencehandle,
-                            d_sequenceData.data(),
-                            encodedSequencePitchInInts,
-                            makeAsyncConstBufferWrapper(h_indices.data()),
-                            d_indices.data(),
-                            curBatchsize,
-                            stream,
-                            mr
-                        );
-                    
-                        gpuReadStorage.gatherSequenceLengths(
-                            sequencehandle,
-                            d_lengths.data(),
-                            d_indices.data(),
-                            curBatchsize,
-                            stream
-                        );
-
-                        constexpr bool dryrun = false;
-
-                        // auto numNewKeys = insert(
-                        //     dryrun,
-                        //     d_sequenceData.data(),
-                        //     curBatchsize,
-                        //     d_lengths.data(),
-                        //     encodedSequencePitchInInts,
-                        //     d_indices.data(),
-                        //     h_indices,
-                        //     stream
-                        // );
-
-                        // numKeys += numNewKeys;
-
-                        std::vector<kmer_type> tmpkeys(curBatchsize * numSmallest);
-                        std::vector<read_number> tmpids(curBatchsize * numSmallest);
-
-                        auto numNewKeys = computeHashesAndReadIds(
-                            tmpkeys.data(),
-                            tmpids.data(),
-                            d_sequenceData.data(),
-                            curBatchsize,
-                            d_lengths.data(),
-                            encodedSequencePitchInInts,
-                            d_indices.data(),
-                            h_indices,
-                            stream
-                        );
-
-                        numKeys += numNewKeys;
-                        tmpkeys.erase(tmpkeys.begin() + numNewKeys, tmpkeys.end());
-                        tmpids.erase(tmpids.begin() + numNewKeys, tmpids.end());
-
-                        CUDACHECK(cudaStreamSynchronize(stream));
-
-                        kvtable->firstPassInsert(tmpkeys.data(), tmpids.data(), tmpkeys.size());
-
-                        // std::cerr << "keys: \n";
-                        // for(std::size_t i = 0; i < tmpkeys.size(); i++){
-                        //     std::cerr << tmpkeys[i] << " ";
-                        // }
-                        // std::cerr << "\n";
-
-                        // std::cerr << "ids: \n";
-                        // for(std::size_t i = 0; i < tmpids.size(); i++){
-                        //     std::cerr << tmpids[i] << " ";
-                        // }
-                        // std::cerr << "\n";
-
-                        // std::exit(0);
-                    }
+                    numKeys += numNewKeys;
+                    tmpkeys.erase(tmpkeys.begin() + numNewKeys, tmpkeys.end());
+                    tmpids.erase(tmpids.begin() + numNewKeys, tmpids.end());
 
                     CUDACHECK(cudaStreamSynchronize(stream));
 
-                    firstpasstimer.print();
-
-                    // {
-                    // std::ofstream outputstream("gputablestemp1.bin", std::ios::binary);
-                    // kvtable->writeToStream(outputstream);
-                    // }
-
-                    //kvtable->firstPassDone(2, 75);
-                    kvtable->firstPassDone(2, 255);
-
-                    // {
-                    // std::ofstream outputstream("gputablestemp2.bin", std::ios::binary);
-                    // kvtable->writeToStream(outputstream);
-                    // }
-
-                    helpers::CpuTimer secondPassTimer("secondpass");
-
-                    for (int iter = 0; iter < numIters; iter++){
-                        read_number readIdBegin = iter * parallelReads;
-                        read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
-
-                        const std::size_t curBatchsize = readIdEnd - readIdBegin;
-
-                        std::iota(h_indices.get(), h_indices.get() + curBatchsize, readIdBegin);
-
-                        CUDACHECK(cudaMemcpyAsync(d_indices.data(), h_indices, sizeof(read_number) * curBatchsize, H2D, stream));
-
-                        gpuReadStorage.gatherSequences(
-                            sequencehandle,
-                            d_sequenceData.data(),
-                            encodedSequencePitchInInts,
-                            makeAsyncConstBufferWrapper(h_indices.data()),
-                            d_indices.data(),
-                            curBatchsize,
-                            stream,
-                            mr
-                        );
-                    
-                        gpuReadStorage.gatherSequenceLengths(
-                            sequencehandle,
-                            d_lengths.data(),
-                            d_indices.data(),
-                            curBatchsize,
-                            stream
-                        );
-
-                        constexpr bool dryrun = false;
-
-                        // auto numNewKeys = insert(
-                        //     dryrun,
-                        //     d_sequenceData.data(),
-                        //     curBatchsize,
-                        //     d_lengths.data(),
-                        //     encodedSequencePitchInInts,
-                        //     d_indices.data(),
-                        //     h_indices,
-                        //     stream
-                        // );
-
-                        // numKeys += numNewKeys;
-
-                        std::vector<kmer_type> tmpkeys(curBatchsize * numSmallest);
-                        std::vector<read_number> tmpids(curBatchsize * numSmallest);
-
-                        auto numNewKeys = computeHashesAndReadIds(
-                            tmpkeys.data(),
-                            tmpids.data(),
-                            d_sequenceData.data(),
-                            curBatchsize,
-                            d_lengths.data(),
-                            encodedSequencePitchInInts,
-                            d_indices.data(),
-                            h_indices,
-                            stream
-                        );
-
-                        numKeys += numNewKeys;
-                        tmpkeys.erase(tmpkeys.begin() + numNewKeys, tmpkeys.end());
-                        tmpids.erase(tmpids.begin() + numNewKeys, tmpids.end());
-
-                        CUDACHECK(cudaStreamSynchronize(stream));
-
-                        kvtable->secondPassInsert(tmpkeys.data(), tmpids.data(), tmpkeys.size());
-                    }
-
-
-                    secondPassTimer.print();
-
-                    kvtable->secondPassDone();
-
-                    // {
-                    // std::ofstream outputstream("gputablestemp3.bin", std::ios::binary);
-                    // kvtable->writeToStream(outputstream);
-                    // }
-
-
-
-
-
-
-                    std::cerr << "numKeys = " << numKeys << "\n";
-
-                    //std::cerr << "Skip compacting unordered multimap\n";
-                    // if(tpForCompacting.getConcurrency() > 1){
-                    //     setThreadPool(&tpForCompacting);
-                    // }else{
-                    //     setThreadPool(nullptr);
-                    // }
-
-                    std::cerr << "Compacting custom table\n";
-                    setThreadPool(nullptr);                    
-                    finalize();
-
-                    // remainingHashFunctions -= addedHashFunctions;
+                    kvtable->firstPassInsert(tmpkeys.data(), tmpids.data(), tmpkeys.size());
                 }
+
+                CUDACHECK(cudaStreamSynchronize(stream));
+
+                firstpasstimer.print();
+
+                //kvtable->firstPassDone(2, 75);
+                kvtable->firstPassDone(2, resultsPerMapThreshold);
+
+                helpers::CpuTimer secondPassTimer("secondpass");
+
+                for (int iter = 0; iter < numIters; iter++){
+                    read_number readIdBegin = iter * parallelReads;
+                    read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
+
+                    const std::size_t curBatchsize = readIdEnd - readIdBegin;
+
+                    std::iota(h_indices.get(), h_indices.get() + curBatchsize, readIdBegin);
+
+                    CUDACHECK(cudaMemcpyAsync(d_indices.data(), h_indices, sizeof(read_number) * curBatchsize, H2D, stream));
+
+                    gpuReadStorage.gatherSequences(
+                        sequencehandle,
+                        d_sequenceData.data(),
+                        encodedSequencePitchInInts,
+                        makeAsyncConstBufferWrapper(h_indices.data()),
+                        d_indices.data(),
+                        curBatchsize,
+                        stream,
+                        mr
+                    );
+                
+                    gpuReadStorage.gatherSequenceLengths(
+                        sequencehandle,
+                        d_lengths.data(),
+                        d_indices.data(),
+                        curBatchsize,
+                        stream
+                    );
+
+                    constexpr bool dryrun = false;
+
+                    std::vector<kmer_type> tmpkeys(curBatchsize * numSmallest);
+                    std::vector<read_number> tmpids(curBatchsize * numSmallest);
+
+                    auto numNewKeys = computeHashesAndReadIds(
+                        tmpkeys.data(),
+                        tmpids.data(),
+                        d_sequenceData.data(),
+                        curBatchsize,
+                        d_lengths.data(),
+                        encodedSequencePitchInInts,
+                        d_indices.data(),
+                        h_indices,
+                        stream
+                    );
+
+                    numKeys += numNewKeys;
+                    tmpkeys.erase(tmpkeys.begin() + numNewKeys, tmpkeys.end());
+                    tmpids.erase(tmpids.begin() + numNewKeys, tmpids.end());
+
+                    CUDACHECK(cudaStreamSynchronize(stream));
+
+                    kvtable->secondPassInsert(tmpkeys.data(), tmpids.data(), tmpkeys.size());
+                }
+
+
+                secondPassTimer.print();
+
+                kvtable->secondPassDone();
+
+                std::cerr << "numKeys = " << numKeys << "\n";
 
                 setThreadPool(nullptr); 
                 
                 gpuReadStorage.destroyHandle(sequencehandle);
             }
-
-            // std::cerr << "allKeys.size() " << allKeys.size() << "\n";
-            // std::cerr << "allKeys.capacity() " << allKeys.capacity() << "\n";
-
-            // std::size_t memoryAfterSinglehashtable = getAvailableMemoryInKB() * 1024;
-
-            // singlehashtablememoryusage = memoryAfterSinglehashtable > memoryBeforeSinglehashtable ? memoryAfterSinglehashtable - memoryBeforeSinglehashtable : 0;
-
-            // std::cerr << "singlehashtablememoryusage: " << singlehashtablememoryusage << "\n";
-
-            // std::sort(allKeys.begin(), allKeys.end());
-            // auto it = std::unique(allKeys.begin(), allKeys.end());
-            // allKeys.erase(it, allKeys.end());
-
-            // std::cerr << "allKeys.size() unique " << allKeys.size() << "\n";
         }
     
 
@@ -593,9 +485,7 @@ namespace fakegpusinglehashminhasherkernels{
                 int numValues = 0;
 
                 for(int i = 0; i < numHashes; i++){
-                    //const kmer_type key = h_hashes[s * numSmallest + i];/* & kmer_mask*/; 
                     const kmer_type key = *(hashesPtr++);
-                    //const HashTable::QueryResult qr = singlecustomhashtable->query(key);
                     const auto qr = kvtable->query(key);
                     allRanges[s * numSmallest + i] = {qr.valuesBegin, qr.valuesBegin + qr.numValues};
                     numValues += qr.numValues;
@@ -869,69 +759,9 @@ namespace fakegpusinglehashminhasherkernels{
             queryData->previousStage = QueryData::Stage::Retrieve;
         }
 
-        void compact(cudaStream_t /*stream*/) {
-            // int id;
-            // CUDACHECK(cudaGetDevice(&id));
-
-            // auto groupByKey = [&](auto& keys, auto& values, auto& countsPrefixSum){
-            //     constexpr bool valuesOfSameKeyMustBeSorted = false;
-            //     const int maxValuesPerKey = getNumResultsPerMapThreshold();
-
-            //     bool success = false;
-
-            //     using GroupByKeyCpuOp = GroupByKeyCpu<Key_t, Value_t, read_number>;
-            //     using GroupByKeyGpuOp = GroupByKeyGpu<Key_t, Value_t, read_number>;
-                
-            //     GroupByKeyGpuOp groupByKeyGpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
-            //     success = groupByKeyGpu.execute(keys, values, countsPrefixSum);         
-
-            //     if(!success){
-            //         GroupByKeyCpuOp groupByKeyCpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
-            //         groupByKeyCpu.execute(keys, values, countsPrefixSum);
-            //     }
-            // };
-
-            // // const int num = minhashTables.size();
-            // // for(int i = 0, l = 0; i < num; i++){
-            // //     auto& ptr = minhashTables[i];
-            
-            // //     if(!ptr->isInitialized()){
-            // //         //after processing 3 tables, available memory should be sufficient for multithreading
-            // //         if(l >= 3){
-            // //             ptr->finalize(groupByKey, threadPool);
-            // //         }else{
-            // //             ptr->finalize(groupByKey, nullptr);
-            // //         }
-            // //         l++;
-            // //     }                
-            // // }
-
-            // //singlecustomhashtable->finalize(groupByKey, nullptr);
-
-            // if(threadPool != nullptr){
-            //     threadPool->wait();
-            // }
-        }
-
         MemoryUsage getMemoryInfo() const noexcept override{
             MemoryUsage result;
 
-            //result.host = singlehashtablememoryusage;
-
-            // result.host = sizeof(HashTable) * minhashTables.size();
-            
-            // for(const auto& tableptr : minhashTables){
-            //     auto m = tableptr->getMemoryInfo();
-            //     result.host += m.host;
-
-            //     std::cerr << std::distance(minhashTables.data(), &tableptr) << ": " << m.host << "\n";
-
-            //     for(auto pair : m.device){
-            //         result.device[pair.first] += pair.second;
-            //     }
-            // }
-
-            //result = singlecustomhashtable->getMemoryInfo();
             result = kvtable->getMemoryInfo();
 
             return result;
@@ -950,9 +780,6 @@ namespace fakegpusinglehashminhasherkernels{
         }
 
         void destroy() {
-            //minhashTables.clear();
-            //singlehashtable = std::unordered_multimap<kmer_type, read_number>();
-            //singlecustomhashtable = nullptr;
             kvtable = nullptr;
         }
 
@@ -962,10 +789,6 @@ namespace fakegpusinglehashminhasherkernels{
 
         bool hasGpuTables() const noexcept override {
             return false;
-        }
-
-        void finalize(cudaStream_t stream = 0){
-            compact(stream);
         }
 
         std::uint64_t getKmerMask() const{
@@ -985,7 +808,7 @@ namespace fakegpusinglehashminhasherkernels{
             kvtable->writeToStream(os);
         }
 
-        int loadFromStream(std::ifstream& is, int numMapsUpperLimit = std::numeric_limits<int>::max()){
+        int loadFromStream(std::ifstream& is, int /*numMapsUpperLimit = std::numeric_limits<int>::max()*/){
             destroy();
 
             is.read(reinterpret_cast<char*>(&kmerSize), sizeof(int));
@@ -999,168 +822,6 @@ namespace fakegpusinglehashminhasherkernels{
 
             return 0;
         }
-
-
-        // void writeToStream(std::ostream& os) const{
-
-        //     os.write(reinterpret_cast<const char*>(&kmerSize), sizeof(int));
-        //     os.write(reinterpret_cast<const char*>(&resultsPerMapThreshold), sizeof(int));
-        //     os.write(reinterpret_cast<const char*>(&loadfactor), sizeof(float));
-
-        //     const int numTables = getNumberOfMaps();
-        //     os.write(reinterpret_cast<const char*>(&numTables), sizeof(int));
-
-        //     for(const auto& tableptr : minhashTables){
-        //         tableptr->writeToStream(os);
-        //     }
-        // }
-
-        // int loadFromStream(std::ifstream& is, int numMapsUpperLimit = std::numeric_limits<int>::max()){
-        //     destroy();
-
-        //     is.read(reinterpret_cast<char*>(&kmerSize), sizeof(int));
-        //     is.read(reinterpret_cast<char*>(&resultsPerMapThreshold), sizeof(int));
-        //     is.read(reinterpret_cast<char*>(&loadfactor), sizeof(float));
-
-        //     int numMaps = 0;
-
-        //     is.read(reinterpret_cast<char*>(&numMaps), sizeof(int));
-
-        //     const int mapsToLoad = std::min(numMapsUpperLimit, numMaps);
-
-        //     for(int i = 0; i < mapsToLoad; i++){
-        //         auto ptr = std::make_unique<HashTable>();
-        //         ptr->loadFromStream(is);
-        //         minhashTables.emplace_back(std::move(ptr));
-        //     }
-
-        //     return mapsToLoad;
-        // } 
-
-        // int addHashfunctions(int numExtraFunctions){
-        //     int added = 0;
-        //     const int cur = minhashTables.size();
-
-        //     assert(!(numExtraFunctions + cur > 64));
-
-        //     std::size_t bytesOfCachedConstructedTables = 0;
-        //     for(const auto& ptr : minhashTables){
-        //         auto memusage = ptr->getMemoryInfo();
-        //         bytesOfCachedConstructedTables += memusage.host;
-        //     }
-
-        //     std::size_t requiredMemPerTable = (sizeof(kmer_type) + sizeof(read_number)) * maxNumKeys;
-        //     int numTablesToConstruct = (memoryLimit - bytesOfCachedConstructedTables) / requiredMemPerTable;
-        //     numTablesToConstruct -= 2; // keep free memory of 2 tables to perform transformation 
-        //     numTablesToConstruct = std::min(numTablesToConstruct, numExtraFunctions);
-
-        //     for(int i = 0; i < numTablesToConstruct; i++){
-        //         try{
-        //             auto ptr = std::make_unique<HashTable>(maxNumKeys, loadfactor);
-
-        //             minhashTables.emplace_back(std::move(ptr));
-        //             added++;
-        //         }catch(...){
-
-        //         }
-        //     }
-
-        //     return added;
-        // } 
-
-        // std::size_t insert(
-        //     bool dryrun,
-        //     const unsigned int* d_sequenceData2Bit,
-        //     int numSequences,
-        //     const int* d_sequenceLengths,
-        //     std::size_t encodedSequencePitchInInts,
-        //     const read_number* /*d_readIds*/,
-        //     const read_number* h_readIds,
-        //     cudaStream_t stream,
-        //     rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
-        // ){
-
-        //     GPUSequenceHasher<kmer_type> hasher;
-
-        //     auto hashResult = hasher.getTopSmallestKmerHashes(
-        //         d_sequenceData2Bit,
-        //         encodedSequencePitchInInts,
-        //         numSequences,
-        //         d_sequenceLengths,
-        //         getKmerSize(),
-        //         numSmallest,
-        //         stream,
-        //         mr
-        //     );
-
-        //     rmm::device_uvector<int> d_numHashesPerSequencePrefixSum(numSequences, stream, mr);
-        //     CubCallWrapper(mr).cubExclusiveSum(hashResult.d_numPerSequences.data(), d_numHashesPerSequencePrefixSum.data(), numSequences, stream);
-
-        //     std::vector<kmer_type> h_hashes(numSequences * numSmallest);
-        //     std::vector<int> h_numHashesPerSequence(numSequences);
-        //     std::vector<int> h_numHashesPerSequencePrefixSum(numSequences);
-
-        //     CUDACHECK(cudaMemcpyAsync(
-        //         h_hashes.data(), 
-        //         hashResult.d_hashvalues.data(), 
-        //         sizeof(kmer_type) * numSmallest * numSequences, 
-        //         D2H, 
-        //         stream
-        //     ));
-
-        //     CUDACHECK(cudaMemcpyAsync(
-        //         h_numHashesPerSequence.data(), 
-        //         hashResult.d_numPerSequences.data(), 
-        //         sizeof(int) * numSequences, 
-        //         D2H, 
-        //         stream
-        //     ));
-
-        //     CUDACHECK(cudaMemcpyAsync(
-        //         h_numHashesPerSequencePrefixSum.data(), 
-        //         d_numHashesPerSequencePrefixSum.data(), 
-        //         sizeof(int) * numSequences, 
-        //         D2H, 
-        //         stream
-        //     ));
-
-        //     CUDACHECK(cudaStreamSynchronize(stream));
-
-        //     const std::size_t numKeys = h_numHashesPerSequencePrefixSum.back() + h_numHashesPerSequence.back();
-
-        //     std::vector<read_number> readidsToInsert(numKeys);
-        //     auto iterator = readidsToInsert.begin();
-        //     for(int s = 0; s < numSequences; s++){
-        //         const int num = h_numHashesPerSequence[s];
-        //         std::fill(iterator, iterator + num, h_readIds[s]);
-        //         iterator = iterator + num;
-        //     }
-
-        //     // singlecustomhashtable->insert(
-        //     //     h_hashes.data(), readidsToInsert.data(), numKeys
-        //     // );
-
-        //     // for(int s = 0; s < numSequences; s++){
-        //     //     const int num = h_numHashesPerSequence[s];
-        //     //     if(num > 0){
-        //     //         numKeys += num;
-        //     //         if(!dryrun){
-        //     //             std::vector<std::pair<kmer_type,read_number>> entries(num);
-        //     //             for(int i = 0; i < num; i++){
-        //     //                 entries[i] = std::make_pair(h_hashes[h_numHashesPerSequencePrefixSum[s] + i], h_readIds[s]);
-        //     //             }
-        //     //             //singlehashtable.insert(entries.begin(), entries.end());
-        //     //             //allKeys.insert(allKeys.end(), &h_hashes[h_numHashesPerSequencePrefixSum[s]], &h_hashes[h_numHashesPerSequencePrefixSum[s] + num]);
-
-        //     //             minhashTables[0]->insert(
-        //     //                 hashesBegin, h_readIds, numSequences
-        //     //             );
-        //     //         }
-        //     //     }
-        //     // }
-
-        //     return numKeys;
-        // }
 
         std::size_t computeHashesAndReadIds(
             kmer_type* h_keyoutput,
@@ -1192,13 +853,6 @@ namespace fakegpusinglehashminhasherkernels{
                 debug
             );
 
-            //hashResult is numSequences * numSmallest array. each row has at most numSmallest hashes. make hashes contiguous
-            // rmm::device_uvector<int> d_numPerSequencesPrefixSum(numSequences, stream, mr);
-            // cub.cubExclusiveSum(hashResult.d_numPerSequences.data(), d_numPerSequencesPrefixSum.data(), numSequences, stream);            
-            // rmm::device_uvector<kmer_type> d_hashvaluesContiguous(numSequences * numSmallest, stream, mr);
-
-            
-
             std::vector<int> h_numHashesPerSequence(numSequences);
 
             CUDACHECK(cudaMemcpyAsync(
@@ -1218,72 +872,6 @@ namespace fakegpusinglehashminhasherkernels{
             ));
 
             CUDACHECK(cudaStreamSynchronize(stream));
-
-
-            // std::vector<unsigned int> h_sequenceData2Bit(numSequences * encodedSequencePitchInInts);
-            // CUDACHECK(cudaMemcpyAsync(
-            //     h_sequenceData2Bit.data(),
-            //     d_sequenceData2Bit,
-            //     sizeof(unsigned int) * numSequences * encodedSequencePitchInInts,
-            //     D2H,
-            //     stream
-            // ));
-
-            // std::vector<int> h_sequenceLengths(numSequences);
-
-            // CUDACHECK(cudaMemcpyAsync(
-            //     h_sequenceLengths.data(),
-            //     d_sequenceLengths,
-            //     sizeof(int) * numSequences,
-            //     D2H,
-            //     stream
-            // ));
-
-            // CUDACHECK(cudaStreamSynchronize(stream));
-
-            // CPUSequenceHasher<kmer_type> cpuHasher;
-            // int counter = 0;
-            // for(int s = 0; s < numSequences; s++){
-            //     //std::cerr << "cpu s " << s << "\n";
-            //     auto cpuhashValues = cpuHasher.getTopSmallestKmerHashes(
-            //         h_sequenceData2Bit.data() + s * encodedSequencePitchInInts, 
-            //         h_sequenceLengths[s], 
-            //         getKmerSize(), 
-            //         numSmallest,
-            //         debug
-            //     );
-
-            //     assert(cpuhashValues.size() == h_numHashesPerSequence[s]);
-
-            //     if(debug){
-            //         std::cerr << "cpu s " << s << "\n";
-            //         std::cerr << "read id : " << h_readIds[s] << "\n";
-            //         std::cerr << "comparing hashes\n";
-            //         std::cerr << "cpu: " << cpuhashValues.size() << "\n";
-            //         for(auto hash : cpuhashValues){ std::cerr << hash << ", "; }
-            //         std::cerr << "\n";
-
-            //         std::cerr << "gpu: " << h_numHashesPerSequence[s] << "\n";
-            //         for(int i = 0; i < h_numHashesPerSequence[s]; i++){ std::cerr << h_keyoutput[numSmallest * s + i] << ", "; }
-            //         std::cerr << "\n";
-            //     }
-
-            //     for(int i = 0; i < h_numHashesPerSequence[s]; i++){
-            //         assert(cpuhashValues[i] == h_keyoutput[numSmallest * s + i]);
-            //     }
-
-            //     // std::cerr << "comparing hashes\n";
-            //     // std::cerr << "cpu: " << cpuhashValues.size() << "\n";
-            //     // for(auto hash : cpuhashValues){ std::cerr << hash << ", "; }
-            //     // std::cerr << "\n";
-
-            //     // std::cerr << "gpu: " << h_numHashesPerSequence[s] << "\n";
-            //     // for(int i = 0; i < h_numHashesPerSequence[s]; i++){ std::cerr << h_keyoutput[counter + i] << ", "; }
-            //     // std::cerr << "\n";
-
-            //     counter += h_numHashesPerSequence[s];
-            // }
-
 
             std::size_t numKeys = 0;
 
@@ -1328,9 +916,7 @@ namespace fakegpusinglehashminhasherkernels{
         std::size_t memoryLimit;
         std::size_t singlehashtablememoryusage{};
         std::vector<std::unique_ptr<HashTable>> minhashTables{};
-        //std::unordered_multimap<kmer_type, read_number> singlehashtable{};
-        //std::vector<kmer_type> allKeys{};
-        //std::unique_ptr<HashTable> singlecustomhashtable{};
+
         mutable std::vector<std::unique_ptr<QueryData>> tempdataVector{};
 
         std::unique_ptr<DoublePassMultiValueHashTable<kmer_type, read_number>> kvtable{};
