@@ -173,6 +173,7 @@ int main(int argc, char** argv){
 			"Default: " + tostring(MemoryOptions{}.qualityScoreBits), cxxopts::value<int>())
 
 		("fixedNumberOfReads", "Process only the first n reads. Default: " + tostring(RuntimeOptions{}.fixedNumberOfReads), cxxopts::value<std::size_t>())
+		("singlehash", "Use 1 hashtables with h smallest unique hashes. Default: " + tostring(CorrectionOptions{}.singlehash), cxxopts::value<bool>())
 	;
 
 	//options.parse_positional({"deviceIds"});

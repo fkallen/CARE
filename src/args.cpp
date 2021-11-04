@@ -79,6 +79,10 @@ namespace args{
             result.mustUseAllHashfunctions = pr["enforceHashmapCount"].as<bool>();
         }
 
+        if(pr.count("singlehash")){
+            result.singlehash = pr["singlehash"].as<bool>();
+        }
+
         if(pr.count("coverage")){
             result.estimatedCoverage = pr["coverage"].as<float>();
         }

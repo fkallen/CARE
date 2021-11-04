@@ -83,7 +83,7 @@ namespace care{
         
     public:
 
-        SingleHashCpuMinhasher() : SingleHashCpuMinhasher(0, 50, 16, 0.8f){
+        SingleHashCpuMinhasher() : SingleHashCpuMinhasher(0, 255, 16, 0.8f){
 
         }
 
@@ -318,7 +318,7 @@ namespace care{
                 // }
 
                 //kvtable->firstPassDone(2, 75);
-                kvtable->firstPassDone(2, 255);
+                kvtable->firstPassDone(2, resultsPerMapThreshold);
 
                 // {
                 // std::ofstream outputstream("cputablestemp2.bin", std::ios::binary);

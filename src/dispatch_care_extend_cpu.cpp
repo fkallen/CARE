@@ -132,6 +132,7 @@ namespace care{
 
         buildMinhasherTimer.print();
 
+        std::cout << "Using minhasher type: " << to_string(minhasherAndType.second) << "\n";
         std::cout << "CpuMinhasher can use " << cpuMinhasher->getNumberOfMaps() << " maps\n";
 
         if(cpuMinhasher->getNumberOfMaps() <= 0){
