@@ -5,7 +5,6 @@
 
 #include <gpu/gpureadstorage.cuh>
 #include <gpu/cuda_unique.cuh>
-#include <gpu/minhashingkernels.cuh>
 #include <cpuhashtable.hpp>
 #include <gpu/gpuminhasher.cuh>
 #include <groupbykey.hpp>

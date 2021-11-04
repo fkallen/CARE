@@ -4,7 +4,6 @@
 #include <hpc_helpers.cuh>
 #include <gpu/gpumsa.cuh>
 
-#include <gpu/minhashingkernels.cuh>
 
 #include <alignmentorientation.hpp>
 #include <correctedsequence.hpp>

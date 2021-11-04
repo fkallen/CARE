@@ -13,6 +13,7 @@
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/cudaerrorcheck.cuh>
 #include <gpu/cubwrappers.cuh>
+#include <gpu/gpusequencehasher.cuh>
 
 #include <options.hpp>
 #include <util.hpp>
@@ -379,7 +380,8 @@ namespace gpu{
             int firstHashfunction,
             int numHashfunctions,
             const int* h_hashFunctionNumbers,
-            cudaStream_t stream
+            cudaStream_t stream,
+            rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
         ){
 
             const std::size_t signaturesRowPitchElements = numHashfunctions;
@@ -407,7 +409,7 @@ namespace gpu{
 
             DeviceSwitcher ds(deviceId);
 
-            kmer_type* const d_signatures = static_cast<kmer_type*>(temp_allocations[0]);
+            //kmer_type* const d_signatures = static_cast<kmer_type*>(temp_allocations[0]);
             kmer_type* const d_signatures_transposed = static_cast<kmer_type*>(temp_allocations[1]);
             int* const d_hashFunctionNumbers = static_cast<int*>(temp_allocations[2]);
             
@@ -419,9 +421,10 @@ namespace gpu{
                 stream
             ));
 
-            callMinhashSignatures3264Kernel(
-                d_signatures,
-                signaturesRowPitchElements,
+            GPUSequenceHasher<kmer_type> hasher;
+
+            auto hashResult = hasher.hash(
+            //auto hashResult = hasher.hashUniqueKmers(
                 d_sequenceData2Bit,
                 encodedSequencePitchInInts,
                 numSequences,
@@ -429,12 +432,13 @@ namespace gpu{
                 getKmerSize(),
                 numHashfunctions,
                 d_hashFunctionNumbers,
-                stream
-            ); CUDACHECKASYNC;
+                stream,
+                mr
+            );
 
             helpers::call_transpose_kernel(
-                d_signatures_transposed, 
-                d_signatures, 
+                d_signatures_transposed,
+                hashResult.d_hashvalues.data(),
                 numSequences, 
                 signaturesRowPitchElements, 
                 signaturesRowPitchElements,
@@ -580,7 +584,8 @@ namespace gpu{
                 numSequences,
                 d_numValuesPerSequence,
                 totalNumValues,
-                stream
+                stream,
+                mr
             );
 
             queryData->d_singlepersistentbuffer.resize(persistent_storage_bytes, stream);
@@ -598,7 +603,8 @@ namespace gpu{
                 numSequences,
                 d_numValuesPerSequence,
                 totalNumValues,
-                stream
+                stream,
+                mr
             );
 
             queryData->previousStage = QueryData::Stage::NumValues;
@@ -688,7 +694,8 @@ namespace gpu{
             int numSequences,
             int* d_numValuesPerSequence,
             int& totalNumValues,
-            cudaStream_t stream
+            cudaStream_t stream,
+            rmm::mr::device_memory_resource* mr
         ) const {
 
             const int numHashfunctions = gpuHashTables.size();
@@ -743,7 +750,7 @@ namespace gpu{
 
             int* const d_hashFunctionNumbers = static_cast<int*>(temp_allocations[0]);
             void* const d_cubTemp = temp_allocations[1];
-            kmer_type* const d_signatures = static_cast<kmer_type*>(temp_allocations[2]);
+            //kmer_type* const d_signatures = static_cast<kmer_type*>(temp_allocations[2]);
             int* const d_cub_sum = static_cast<int*>(temp_allocations[3]);
 
             DeviceSwitcher ds(deviceId);
@@ -756,25 +763,24 @@ namespace gpu{
                 stream
             ));           
 
-            dim3 block(128,1,1);
-            dim3 grid(SDIV(numHashfunctions * numSequences, block.x),1,1);
+            GPUSequenceHasher<kmer_type> hasher;
 
-            callMinhashSignatures3264Kernel(
-                d_signatures,
-                signaturesRowPitchElements,
+            auto hashResult = hasher.hash(
+            //auto hashResult = hasher.hashUniqueKmers(
                 d_sequenceData2Bit,
                 encodedSequencePitchInInts,
                 numSequences,
                 d_sequenceLengths,
                 getKmerSize(),
-                numHashfunctions,
+                getNumberOfMaps(),
                 d_hashFunctionNumbers,
-                stream
-            ); CUDACHECKASYNC;
+                stream,
+                mr
+            );
 
             helpers::call_transpose_kernel(
                 d_signatures_transposed, 
-                d_signatures, 
+                hashResult.d_hashvalues.data(),
                 numSequences, 
                 signaturesRowPitchElements, 
                 signaturesRowPitchElements,

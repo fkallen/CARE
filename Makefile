@@ -57,7 +57,6 @@ SOURCES_CORRECT_GPU = \
     src/gpu/gpucorrectorkernels.cu \
     src/gpu/gpuminhasherconstruction.cu \
     src/gpu/main_correct_gpu.cu \
-    src/gpu/minhashingkernels.cu \
     src/gpu/msakernels.cu \
     src/gpu/multigpuminhasherconstruction.cu \
     src/gpu/sequenceconversionkernels.cu \
@@ -87,7 +86,6 @@ SOURCES_EXTEND_GPU = \
     src/gpu/fakegpuminhasherconstruction.cu \
     src/gpu/gpuminhasherconstruction.cu \
     src/gpu/main_extend_gpu.cu \
-    src/gpu/minhashingkernels.cu \
     src/gpu/msakernels.cu \
     src/gpu/multigpuminhasherconstruction.cu \
     src/gpu/readextension_gpu.cu \
@@ -268,9 +266,6 @@ $(DIR)/main_correct_gpu.o : src/gpu/main_correct_gpu.cu
 	$(CUDA_COMPILE)
 
 $(DIR)/main_extend_gpu.o : src/gpu/main_extend_gpu.cu
-	$(CUDA_COMPILE)
-
-$(DIR)/minhashingkernels.o : src/gpu/minhashingkernels.cu
 	$(CUDA_COMPILE)
 
 $(DIR)/msakernels.o : src/gpu/msakernels.cu

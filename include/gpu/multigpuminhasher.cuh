@@ -38,6 +38,7 @@
 #include <rmm/mr/device/device_memory_resource.hpp>
 #include <rmm/mr/device/per_device_resource.hpp>
 #include <rmm/device_uvector.hpp>
+#include <rmm/device_scalar.hpp>
 #include <gpu/rmm_utilities.cuh>
 namespace care{
 namespace gpu{
@@ -1147,6 +1148,8 @@ private:
                 int* const d_largestSegment = &myPinnedData[1];
                 CudaStream& myStream = queryHandle->streams[d];
 
+                auto* myMr = rmm::mr::get_current_device_resource();
+
                 minhasher.determineNumValues(
                     nullptr,
                     persistent_storage_bytes,
@@ -1158,12 +1161,11 @@ private:
                     numSequences,
                     myNumValuesPerSequence,
                     totalNumValues,
-                    myStream
+                    myStream,
+                    myMr
                 );
 
                 queryHandle->remotePersistentDataPerGpu[d].d_persistent.resize(persistent_storage_bytes, myStream.getStream());
-
-                auto* myMr = rmm::mr::get_current_device_resource();
 
                 rmm::device_uvector<char> d_temp(temp_storage_bytes, myStream.getStream(), myMr);
 
@@ -1178,7 +1180,8 @@ private:
                     numSequences,
                     myNumValuesPerSequence,
                     totalNumValues,
-                    myStream
+                    myStream,
+                    myMr
                 );
 
                 CubCallWrapper(myMr).cubReduceMax(
