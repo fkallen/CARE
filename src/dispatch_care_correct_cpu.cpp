@@ -164,7 +164,7 @@ namespace care{
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
 
-        #if 1
+        #if 0
 
         auto minhasherAndType = constructCpuMinhasherFromCpuReadStorage(
             fileOptions,
