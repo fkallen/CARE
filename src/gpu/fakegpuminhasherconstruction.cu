@@ -2,6 +2,8 @@
 #include <gpu/fakegpuminhasherconstruction.cuh>
 
 #include <gpu/fakegpuminhasher.cuh>
+#include <gpu/fakegpusinglehashminhasher.cuh>
+
 #include <minhasherlimit.hpp>
 
 #include <options.hpp>
@@ -51,7 +53,46 @@ namespace gpu{
             }
 
             return gpuMinhasher;
-        }    
+        }
+
+        std::unique_ptr<FakeGpuSingleHashMinhasher>
+        constructFakeGpuSingleHashMinhasherFromGpuReadStorage(
+            const CorrectionOptions& correctionOptions,
+            const FileOptions& fileOptions,
+            const RuntimeOptions& runtimeOptions,
+            const MemoryOptions& memoryOptions,
+            const GpuReadStorage& gpuReadStorage
+        ){
+            float loadfactor = memoryOptions.hashtableLoadfactor;
+            
+            auto gpuMinhasher = std::make_unique<FakeGpuSingleHashMinhasher>(
+                gpuReadStorage.getNumberOfReads(),
+                255,
+                correctionOptions.kmerlength,
+                loadfactor
+            );
+
+            if(fileOptions.load_hashtables_from != ""){
+
+                std::ifstream is(fileOptions.load_hashtables_from);
+                assert((bool)is);
+
+                const int loadedMaps = gpuMinhasher->loadFromStream(is, correctionOptions.numHashFunctions);
+
+                std::cout << "Loaded " << loadedMaps << " hash tables from " << fileOptions.load_hashtables_from << std::endl;
+            }else{
+                gpuMinhasher->constructFromReadStorage(
+                    fileOptions,
+                    runtimeOptions,
+                    memoryOptions,
+                    gpuReadStorage.getNumberOfReads(), 
+                    correctionOptions,
+                    gpuReadStorage
+                );
+            }
+
+            return gpuMinhasher;
+        }
     
 }
 }

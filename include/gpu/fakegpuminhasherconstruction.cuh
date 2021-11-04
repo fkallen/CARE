@@ -5,6 +5,7 @@
 #include <gpu/gpureadstorage.cuh>
 
 #include <gpu/fakegpuminhasher.cuh>
+#include <gpu/fakegpusinglehashminhasher.cuh>
 #include <minhasherlimit.hpp>
 
 #include <options.hpp>
@@ -15,14 +16,23 @@ namespace care{
 namespace gpu{
     
 
-        std::unique_ptr<FakeGpuMinhasher>
-        constructFakeGpuMinhasherFromGpuReadStorage(
-            const CorrectionOptions& correctionOptions,
-            const FileOptions& fileOptions,
-            const RuntimeOptions& runtimeOptions,
-            const MemoryOptions& memoryOptions,
-            const GpuReadStorage& gpuReadStorage
-        );
+    std::unique_ptr<FakeGpuMinhasher>
+    constructFakeGpuMinhasherFromGpuReadStorage(
+        const CorrectionOptions& correctionOptions,
+        const FileOptions& fileOptions,
+        const RuntimeOptions& runtimeOptions,
+        const MemoryOptions& memoryOptions,
+        const GpuReadStorage& gpuReadStorage
+    );
+
+    std::unique_ptr<FakeGpuSingleHashMinhasher>
+    constructFakeGpuSingleHashMinhasherFromGpuReadStorage(
+        const CorrectionOptions& correctionOptions,
+        const FileOptions& fileOptions,
+        const RuntimeOptions& runtimeOptions,
+        const MemoryOptions& memoryOptions,
+        const GpuReadStorage& gpuReadStorage
+    );
 
 }
 }

@@ -15,10 +15,15 @@ namespace gpu{
 
     enum class GpuMinhasherType{
         Fake,
+        FakeSingleHash,
         Single,
+        SingleSingleHash,
         Multi,
+        MultiSingleHash,
         None
     };
+
+    std::string to_string(GpuMinhasherType type);
 
     std::pair<std::unique_ptr<GpuMinhasher>, GpuMinhasherType>
     constructGpuMinhasherFromGpuReadStorage(

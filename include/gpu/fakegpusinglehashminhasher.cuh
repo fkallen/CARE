@@ -870,47 +870,47 @@ namespace fakegpusinglehashminhasherkernels{
         }
 
         void compact(cudaStream_t /*stream*/) {
-            int id;
-            CUDACHECK(cudaGetDevice(&id));
+            // int id;
+            // CUDACHECK(cudaGetDevice(&id));
 
-            auto groupByKey = [&](auto& keys, auto& values, auto& countsPrefixSum){
-                constexpr bool valuesOfSameKeyMustBeSorted = false;
-                const int maxValuesPerKey = getNumResultsPerMapThreshold();
+            // auto groupByKey = [&](auto& keys, auto& values, auto& countsPrefixSum){
+            //     constexpr bool valuesOfSameKeyMustBeSorted = false;
+            //     const int maxValuesPerKey = getNumResultsPerMapThreshold();
 
-                bool success = false;
+            //     bool success = false;
 
-                using GroupByKeyCpuOp = GroupByKeyCpu<Key_t, Value_t, read_number>;
-                using GroupByKeyGpuOp = GroupByKeyGpu<Key_t, Value_t, read_number>;
+            //     using GroupByKeyCpuOp = GroupByKeyCpu<Key_t, Value_t, read_number>;
+            //     using GroupByKeyGpuOp = GroupByKeyGpu<Key_t, Value_t, read_number>;
                 
-                GroupByKeyGpuOp groupByKeyGpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
-                success = groupByKeyGpu.execute(keys, values, countsPrefixSum);         
+            //     GroupByKeyGpuOp groupByKeyGpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
+            //     success = groupByKeyGpu.execute(keys, values, countsPrefixSum);         
 
-                if(!success){
-                    GroupByKeyCpuOp groupByKeyCpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
-                    groupByKeyCpu.execute(keys, values, countsPrefixSum);
-                }
-            };
+            //     if(!success){
+            //         GroupByKeyCpuOp groupByKeyCpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
+            //         groupByKeyCpu.execute(keys, values, countsPrefixSum);
+            //     }
+            // };
 
-            // const int num = minhashTables.size();
-            // for(int i = 0, l = 0; i < num; i++){
-            //     auto& ptr = minhashTables[i];
+            // // const int num = minhashTables.size();
+            // // for(int i = 0, l = 0; i < num; i++){
+            // //     auto& ptr = minhashTables[i];
             
-            //     if(!ptr->isInitialized()){
-            //         //after processing 3 tables, available memory should be sufficient for multithreading
-            //         if(l >= 3){
-            //             ptr->finalize(groupByKey, threadPool);
-            //         }else{
-            //             ptr->finalize(groupByKey, nullptr);
-            //         }
-            //         l++;
-            //     }                
+            // //     if(!ptr->isInitialized()){
+            // //         //after processing 3 tables, available memory should be sufficient for multithreading
+            // //         if(l >= 3){
+            // //             ptr->finalize(groupByKey, threadPool);
+            // //         }else{
+            // //             ptr->finalize(groupByKey, nullptr);
+            // //         }
+            // //         l++;
+            // //     }                
+            // // }
+
+            // //singlecustomhashtable->finalize(groupByKey, nullptr);
+
+            // if(threadPool != nullptr){
+            //     threadPool->wait();
             // }
-
-            //singlecustomhashtable->finalize(groupByKey, nullptr);
-
-            if(threadPool != nullptr){
-                threadPool->wait();
-            }
         }
 
         MemoryUsage getMemoryInfo() const noexcept override{

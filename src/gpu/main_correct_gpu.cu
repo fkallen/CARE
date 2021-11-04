@@ -58,69 +58,7 @@ std::string tostring(const bool& b){
 	return b ? "true" : "false";
 }
 
-// #include <config.hpp>
-// #include <sequencehelpers.hpp>
-
-
-// std::string getDecodedKmerFromDecodedSequence(const std::string& sequence, int k, int pos){
-// 	return sequence.substr(pos, k);
-// }
-
-// std::string encodedKmerToString(std::uint64_t kmer, int length){
-// 	std::string result(length, 'F');
-
-// 	for(int i = 0; i < length; i++){
-// 		char dec = 'A';
-// 		switch(kmer & 3ul){
-// 			case 0: break;
-// 			case 1: dec = 'C'; break;
-// 			case 2: dec = 'G'; break;
-// 			case 3: dec = 'T'; break;
-// 		}
-// 		result[length - 1 - i] = dec;
-// 		kmer >>= 2;
-// 	}
-
-// 	return result;
-// }
-
 int main(int argc, char** argv){
-
-
-    // const std::string seq = "AGCAAAGAATTAAACCGCCCTTAACACAATTAGTTTTTAAAGCTGACCTAAGGCGGAATTAAGGGTAAATTAACGTTATTCTATGCAGAGATGATATTTA";
-	// int pitch = SequenceHelpers::getEncodedNumInts2Bit(seq.size());
-	// std::vector<unsigned int> encodedseq(pitch);
-	// SequenceHelpers::encodeSequence2Bit(encodedseq.data(), seq.data(), seq.size());
-
-    // for(int k = 16; k <= 16; k++){
-		
-    //     const int numkmers = seq.size() - k + 1;
-
-	// 	if(numkmers > 0){
-
-	// 		for(int i = 0; i < seq.size() - k; i++){
-
-	// 			std::uint64_t kmer = SequenceHelpers::getEncodedKmerFromEncodedSequence(encodedseq.data(), k, i);
-	// 			std::cerr << "i = " << i << "; kmer " << kmer << "\n";
-	// 			const int unusedPositions = 32 - k;
-	// 			auto kmertmp = kmer << (2 * (unusedPositions));
-	// 			std::string decodedkmer = SequenceHelpers::get2BitString((unsigned int*)&kmertmp, k);
-
-	// 			std::string enckmerstring = encodedKmerToString(kmer, k);
-
-	// 			std::string kmerstring = getDecodedKmerFromDecodedSequence(seq, k, i);
-	// 			std::uint64_t kmerstringenc = 0;
-	// 			SequenceHelpers::encodeSequence2Bit((unsigned int*)&kmerstringenc, kmerstring.data(), kmerstring.size());
-	// 			//if(kmerstringenc != kmertmp){
-	// 			if(kmerstring != enckmerstring){
-	// 				std::cerr << "error k = " << k << " i = " << i << ", kmer = " << kmer << ", kmertmp = " << kmertmp << ", kmerstringenc = " << kmerstringenc  << "\n";
-	// 				std::cerr << "kmerstring = " << kmerstring << ", enckmerstring = " << enckmerstring << "\n";
-	// 				assert(false);
-	// 			}
-	// 		}
-	// 	}
-    // }
-
 
 	bool help = false;
 
@@ -245,6 +183,7 @@ int main(int argc, char** argv){
 			"Default: " + tostring(MemoryOptions{}.qualityScoreBits), cxxopts::value<int>())
 
 		("fixedNumberOfReads", "Process only the first n reads. Default: " + tostring(RuntimeOptions{}.fixedNumberOfReads), cxxopts::value<std::size_t>())
+		("singlehash", "Use 1 hashtables with h smallest unique hashes. Default: " + tostring(CorrectionOptions{}.singlehash), cxxopts::value<bool>())
 	;
 
 	//options.parse_positional({"deviceIds"});
