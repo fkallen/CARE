@@ -15,7 +15,6 @@
 #include <util.hpp>
 #include <hpc_helpers.cuh>
 #include <filehelpers.hpp>
-#include <minhashing.hpp>
 #include <sequencehelpers.hpp>
 #include <memorymanagement.hpp>
 #include <threadpool.hpp>
