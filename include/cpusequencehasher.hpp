@@ -138,6 +138,43 @@ struct CPUSequenceHasher{
         return result;
     }
 
+
+    std::vector<HashValueType> hash(
+        const unsigned int* sequence, 
+        int sequenceLength, 
+        int kmerLength, 
+        int numHashFuncs,
+        int firstHashFunc
+    ){
+        constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
+        const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - kmerLength) * 2);
+
+        assert(kmerLength <= maximum_kmer_length);
+        
+        std::vector<std::uint64_t> hashvalues(numHashFuncs, std::numeric_limits<std::uint64_t>::max());
+
+        if(sequenceLength >= kmerLength){
+            SequenceHelpers::forEachEncodedCanonicalKmerFromEncodedSequence(
+                sequence,
+                sequenceLength,
+                kmerLength,
+                [&](std::uint64_t kmer, int /*pos*/){
+                    using hasher = hashers::MurmurHash<std::uint64_t>;
+
+                    for(int i = 0; i < numHashFuncs; i++){
+                        const int hashFuncId = i + firstHashFunc;
+                        const auto hashvalue = hasher::hash(kmer + hashFuncId);
+                        hashvalues[i] = std::min(hashvalues[i], hashvalue);
+                    }
+                }
+            );
+        }
+
+        std::vector<HashValueType> result(numHashFuncs);
+        std::transform(hashvalues.begin(), hashvalues.begin() + numHashFuncs, result.begin(), [&](auto hash){ return HashValueType(hash & kmer_mask); });
+        return result;
+    }
+
 };
 
 

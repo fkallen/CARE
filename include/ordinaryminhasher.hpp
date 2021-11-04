@@ -21,6 +21,8 @@
 #include <threadpool.hpp>
 #include <sharedmutex.hpp>
 
+#include <cpusequencehasher.hpp>
+
 
 #include <cassert>
 #include <array>
@@ -262,12 +264,15 @@ namespace care{
 
             std::vector<kmer_type> allHashValues(numSequences * getNumberOfMaps());
 
+            CPUSequenceHasher<kmer_type> hasher;
+
             for(int s = 0; s < numSequences; s++){
                 const int length = h_sequenceLengths[s];
                 const unsigned int* sequence = h_sequenceData2Bit + encodedSequencePitchInInts * s;
 
                 if(length >= getKmerSize()){               
-                    auto hashValues = calculateMinhashSignature(
+
+                    auto hashValues = hasher.hash(
                         sequence, 
                         length, 
                         getKmerSize(), 
@@ -630,18 +635,19 @@ namespace care{
             allHashValues.resize(numSequences * getNumberOfMaps());            
 
             auto hashloopbody = [&](auto begin, auto end, int /*threadid*/){
+                CPUSequenceHasher<kmer_type> hasher;
+
                 for(int s = begin; s < end; s++){
                     const int length = h_sequenceLengths[s];
                     const unsigned int* sequence = h_sequenceData2Bit + encodedSequencePitchInInts * s;
 
-                    auto hashValues = calculateMinhashSignature(
+                    auto hashValues = hasher.hash(
                         sequence, 
                         length, 
                         getKmerSize(), 
                         getNumberOfMaps(),
                         0
                     );
-
 
                     for(int h = 0; h < getNumberOfMaps(); h++){
                         allHashValues[h * numSequences + s] = hashValues[h];
