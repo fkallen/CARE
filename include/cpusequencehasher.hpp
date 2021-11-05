@@ -164,7 +164,7 @@ struct CPUSequenceHasher{
 
         const int kmersInWindow = windowsize - kmerLength + 1;
 
-        for(int windowBegin = 0, windowId = 0; windowBegin < sequenceLength; windowBegin += kmersInWindow, windowId++){
+        for(int windowBegin = 0, windowId = 0; windowBegin < sequenceLength - kmerLength + 1; windowBegin += kmersInWindow, windowId++){
             std::vector<std::uint64_t> hashvalues(numHashFuncs, std::numeric_limits<std::uint64_t>::max());
 
             SequenceHelpers::forEachEncodedCanonicalKmerFromEncodedSequence(
