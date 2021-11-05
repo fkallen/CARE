@@ -6,7 +6,6 @@
 #include <threadpool.hpp>
 #include <readlibraryio.hpp>
 #include <sequencehelpers.hpp>
-#include <dynamic2darray.hpp>
 #include <concurrencyhelpers.hpp>
 #include <lengthstorage.hpp>
 #include <cpureadstorage.hpp>

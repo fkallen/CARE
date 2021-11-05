@@ -350,8 +350,6 @@ namespace fakegpusinglehashminhasherkernels{
                         stream
                     );
 
-                    constexpr bool dryrun = false;
-
                     std::vector<kmer_type> tmpkeys(curBatchsize * numSmallest);
                     std::vector<read_number> tmpids(curBatchsize * numSmallest);
 
