@@ -112,6 +112,10 @@ struct CPUSequenceHasher{
                         const int hashFuncId = i + firstHashFunc;
                         const auto hashvalue = hasher::hash(kmer + hashFuncId);
                         hashvalues[i] = std::min(hashvalues[i], hashvalue);
+
+                        // if(i == 0){
+                        //     std::cerr << pos << ", " << kmer << ", " << (hashvalue & kmer_mask) << "\n";
+                        // }
                     }
                 }
             );
@@ -141,6 +145,81 @@ struct CPUSequenceHasher{
         return result;
     }
 
+    template<class OutputIter>
+    OutputIter hashWindowedInto(
+        OutputIter output,
+        const unsigned int* sequence, 
+        int sequenceLength, 
+        int kmerLength, 
+        int windowsize,
+        int numHashFuncs,
+        int firstHashFunc
+    ){
+        constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
+        const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - kmerLength) * 2);
+
+        assert(kmerLength <= maximum_kmer_length);
+
+        if(kmerLength > windowsize || sequenceLength < kmerLength) return output;
+
+        const int kmersInWindow = windowsize - kmerLength + 1;
+
+        for(int windowBegin = 0, windowId = 0; windowBegin < sequenceLength; windowBegin += kmersInWindow, windowId++){
+            std::vector<std::uint64_t> hashvalues(numHashFuncs, std::numeric_limits<std::uint64_t>::max());
+
+            SequenceHelpers::forEachEncodedCanonicalKmerFromEncodedSequence(
+                sequence,
+                sequenceLength,
+                kmerLength,
+                windowBegin, 
+                windowBegin + kmersInWindow,
+                [&](std::uint64_t kmer, int /*pos*/){
+                    using hasher = hashers::MurmurHash<std::uint64_t>;
+
+                    for(int i = 0; i < numHashFuncs; i++){
+                        const int hashFuncId = i + firstHashFunc;
+                        const auto hashvalue = hasher::hash(kmer + hashFuncId);
+                        hashvalues[i] = std::min(hashvalues[i], hashvalue);
+
+                        // if(i == 0){
+                        //     std::cerr << pos << ", " << kmer << ", " << (hashvalue & kmer_mask) << "\n";
+                        // }
+                    }
+                }
+            );
+
+            output = std::transform(hashvalues.begin(), hashvalues.begin() + numHashFuncs, output, [&](auto hash){ return HashValueType(hash & kmer_mask); });
+        }
+        
+        return output;
+    }
+
+    std::vector<HashValueType> hashWindowed(
+        const unsigned int* sequence, 
+        int sequenceLength,
+        int kmerLength, 
+        int windowsize,
+        int numHashFuncs,
+        int firstHashFunc
+    ){
+        const int kmersInWindow = windowsize - kmerLength + 1;
+        const int kmersInSequence = sequenceLength - kmerLength + 1;
+        const int numWindows = SDIV(kmersInSequence, kmersInWindow);
+
+        std::vector<HashValueType> result(numWindows * numHashFuncs);
+
+        hashWindowedInto(
+            result.begin(),
+            sequence,
+            sequenceLength,
+            kmerLength,
+            windowsize,
+            numHashFuncs,
+            firstHashFunc
+        );
+        
+        return result;
+    }
 };
 
 
