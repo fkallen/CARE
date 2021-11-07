@@ -308,6 +308,26 @@ namespace gpu{
         
                 msa.checkAfterBuild(tbGroup, anchorIndex);
 
+                bool mychecksuccess = msa.checkCoverages(tbGroup);
+                int numchecksuccess = BlockReduceInt(*cubTempStorage).Sum(mychecksuccess ? 1 : 0);
+                tbGroup.sync();
+                bool checksuccess = numchecksuccess == tbGroup.size();
+                if(!checksuccess){
+                    if(threadIdx.x == 0){
+                        const int firstColumnIncl = msa.columnProperties->firstColumn_incl;
+                        const int lastColumnExcl = msa.columnProperties->lastColumn_excl;
+
+                        printf("firstColumnIncl %d, lastColumnExcl %d\n", firstColumnIncl, lastColumnExcl);
+                        printf("coverages:\n");
+                        for(int x = 0; x < msa.columnPitchInElements; x++){
+                            printf("%d, ", msa.coverages[x]);
+                        }
+                        printf("\n");
+                    }
+                }
+                tbGroup.sync();
+                assert(checksuccess);
+
                 msa.findConsensus(
                     tbGroup,
                     myAnchorSequenceData, 
@@ -902,6 +922,27 @@ namespace gpu{
 
                         long long int t3 = clock64();
 
+                        bool mychecksuccess = msa.checkCoverages(tbGroup);
+                        bool checksuccess = groupReduceBool(mychecksuccess, [](auto l, auto r){
+                            return l && r;
+                        });
+                        tbGroup.sync();
+                        if(!checksuccess){
+                            if(threadIdx.x == 0){
+                                const int firstColumnIncl = msa.columnProperties->firstColumn_incl;
+                                const int lastColumnExcl = msa.columnProperties->lastColumn_excl;
+
+                                printf("firstColumnIncl %d, lastColumnExcl %d\n", firstColumnIncl, lastColumnExcl);
+                                printf("coverages:\n");
+                                for(int x = 0; x < msa.columnPitchInElements; x++){
+                                    printf("%d, ", msa.coverages[x]);
+                                }
+                                printf("\n");
+                            }
+                        }
+                        tbGroup.sync();
+                        assert(checksuccess);
+
                         msa.removeCandidates(
                         //msa.removeCandidates_verticalthreads(
                             tbGroup,
@@ -924,15 +965,45 @@ namespace gpu{
 
                         tbGroup.sync();
 
+                        mychecksuccess = msa.checkCoverages(tbGroup);
+                        checksuccess = groupReduceBool(mychecksuccess, [](auto l, auto r){
+                            return l && r;
+                        });
+                        tbGroup.sync();
+                        if(!checksuccess){
+                            if(threadIdx.x == 0){
+                                const int firstColumnIncl = msa.columnProperties->firstColumn_incl;
+                                const int lastColumnExcl = msa.columnProperties->lastColumn_excl;
+
+                                printf("firstColumnIncl %d, lastColumnExcl %d\n", firstColumnIncl, lastColumnExcl);
+                                printf("coverages:\n");
+                                for(int x = 0; x < msa.columnPitchInElements; x++){
+                                    printf("%d, ", msa.coverages[x]);
+                                }
+                                printf("\n");
+                            }
+                        }
+                        tbGroup.sync();
+                        assert(checksuccess);
+
                         long long int t4 = clock64();
 
                         if(anchorIndex == 0 && tbGroup.thread_rank() == 0){
                             //printf("duration removal: %lu. candidates before %d, after %d\n", t4-t3, myNumIndices, myNewNumIndices);
                         }
 
-                        msa.updateColumnProperties(tbGroup);
+                        bool error = msa.updateColumnProperties(tbGroup);
 
                         tbGroup.sync();
+
+                        // if(error){
+                        //     if(tbGroup.thread_rank() == 0){
+                        //         printf("error updateColumnProperties\n");
+                        //         printf("shifts")
+                        //     }
+                        // }
+                        // tbGroup.sync();
+                        assert(!error);
 
                         //msa.checkAfterBuild(tbGroup, anchorIndex);
 

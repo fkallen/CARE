@@ -86,6 +86,29 @@ namespace gpu{
             }
         }
 
+        template<class ThreadGroup>
+        __device__ __forceinline__
+        bool checkCoverages(ThreadGroup& group){
+    
+            const int firstColumn_incl = columnProperties->firstColumn_incl;
+            const int lastColumn_excl = columnProperties->lastColumn_excl;
+
+            bool success = true;
+    
+            for(int column = firstColumn_incl + group.thread_rank(); 
+                    column < lastColumn_excl; 
+                    column += group.size()){
+
+                const int cov = coverages[column];
+
+                if(cov <= 0){
+                    success = false;
+                }
+            }
+
+            return success;
+        }
+
         //only group.thread_rank() == 0 returns the correct MSAProperties
         template<
             class ThreadGroup,
@@ -339,7 +362,7 @@ namespace gpu{
 
         template<class ThreadGroup>
         __device__ __forceinline__
-        void updateColumnProperties(ThreadGroup& group){
+        bool updateColumnProperties(ThreadGroup& group){
 
             const int firstColumn_incl = columnProperties->firstColumn_incl;
             const int lastColumn_excl = columnProperties->lastColumn_excl;
@@ -348,13 +371,19 @@ namespace gpu{
             int newFirstColumn_incl = -1;
             int newLastColumn_excl = -1;
 
+            bool error = false;
+
             for(int i = group.thread_rank(); i < numColumnsToCheck-1; i += group.size()){
                 const int column = firstColumn_incl + i;
 
                 const int thisCoverage = coverages[column];
                 const int nextCoverage = coverages[column+1];
-                assert(thisCoverage >= 0);
-                assert(nextCoverage >= 0);
+
+                if(thisCoverage < 0 || nextCoverage < 0){
+                    error = true;
+                    // assert(thisCoverage >= 0);
+                    // assert(nextCoverage >= 0);
+                }
 
                 if(thisCoverage == 0 && nextCoverage > 0){
                     newFirstColumn_incl = column+1;
@@ -365,6 +394,26 @@ namespace gpu{
                 }
             }
 
+            group.sync();
+            // for(int i = 0; i < group.size(); i++){
+            //     if(i == group.thread_rank() && error){
+
+            //     }
+            // }
+            __shared__ bool smemerror[128];
+            assert(group.size() <= 128);
+            smemerror[group.thread_rank()] = error;
+            group.sync();
+            if(group.thread_rank() == 0){
+                error = false;
+                for(int i = 0; i < group.size(); i++){
+                    if(smemerror[i]){
+                        error = true;
+                    }
+                }
+               
+                smemerror[0] = error;                
+            }
             group.sync();
 
             //there can be at most one thread for which this is true
@@ -377,6 +426,8 @@ namespace gpu{
             }
             
             group.sync();
+
+            return smemerror[0];
         }
 
         template<bool doAdd, class ThreadGroup>
