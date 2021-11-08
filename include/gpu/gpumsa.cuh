@@ -793,6 +793,7 @@ namespace gpu{
                             overlapweight, anchorLength, query_alignment_nops, query_alignment_overlap, desiredAlignmentMaxErrorRate);
                     }
                 }
+                tile.sync(); //debug
 
                 assert(overlapweight <= 1.0f);
                 assert(overlapweight >= 0.0f);
@@ -869,6 +870,14 @@ namespace gpu{
                         query_alignment_overlap,
                         desiredAlignmentMaxErrorRate
                     );
+
+                    if(tile.thread_rank() == 0){
+                        if(overlapweight > 1.0f){
+                            printf("error. overlapweight %.10f, anchorLength %d, nops %d, overlap %d, maxerrorrate %.10f\n", 
+                                overlapweight, anchorLength, query_alignment_nops, query_alignment_overlap, desiredAlignmentMaxErrorRate);
+                        }
+                    }
+                    tile.sync(); //debug
 
                     assert(overlapweight <= 1.0f);
                     assert(overlapweight >= 0.0f);
@@ -1390,6 +1399,14 @@ namespace gpu{
                                     overlapsize,
                                     desiredAlignmentMaxErrorRate
                                 );
+
+                                if(group.thread_rank() == 0){
+                                    if(overlapweight > 1.0f){
+                                        printf("error. overlapweight %.10f, anchorLength %d, nops %d, overlap %d, maxerrorrate %.10f\n", 
+                                            overlapweight, anchorLength, nOps, overlapsize, desiredAlignmentMaxErrorRate);
+                                    }
+                                }
+                                group.sync(); //debug
                                 assert(overlapweight <= 1.0f);
                                 assert(overlapweight >= 0.0f);
 
