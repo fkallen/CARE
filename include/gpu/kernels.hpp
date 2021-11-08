@@ -266,7 +266,8 @@ void callMsaCandidateRefinementKernel_multiiter_async(
     int* d_indices_per_anchor,
     int dataset_coverage,
     int numIterations,
-    cudaStream_t stream
+    cudaStream_t stream,
+    const read_number* d_anchorReadIds = nullptr
 );
 
 

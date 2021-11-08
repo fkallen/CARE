@@ -1,4 +1,4 @@
-//#define NDEBUG
+// #define NDEBUG
 
 #include <gpu/kernels.hpp>
 #include <hostdevicefunctions.cuh>
@@ -308,25 +308,27 @@ namespace gpu{
         
                 msa.checkAfterBuild(tbGroup, anchorIndex);
 
-                bool mychecksuccess = msa.checkCoverages(tbGroup);
-                int numchecksuccess = BlockReduceInt(*cubTempStorage).Sum(mychecksuccess ? 1 : 0);
-                tbGroup.sync();
-                bool checksuccess = numchecksuccess == tbGroup.size();
-                if(!checksuccess){
-                    if(threadIdx.x == 0){
-                        const int firstColumnIncl = msa.columnProperties->firstColumn_incl;
-                        const int lastColumnExcl = msa.columnProperties->lastColumn_excl;
+                // bool mychecksuccess = msa.checkCoverages(tbGroup);
+                // int numchecksuccess = BlockReduceInt(*cubTempStorage).Sum(mychecksuccess ? 1 : 0);
+                // tbGroup.sync();
+                // bool checksuccess = numchecksuccess == tbGroup.size();
+                // if(tbGroup.thread_rank() == 0){
+                //     if(!checksuccess){
+                //         printf("numchecksuccess %d\n ", numchecksuccess);
 
-                        printf("firstColumnIncl %d, lastColumnExcl %d\n", firstColumnIncl, lastColumnExcl);
-                        printf("coverages:\n");
-                        for(int x = 0; x < msa.columnPitchInElements; x++){
-                            printf("%d, ", msa.coverages[x]);
-                        }
-                        printf("\n");
-                    }
-                }
-                tbGroup.sync();
-                assert(checksuccess);
+                //         const int firstColumnIncl = msa.columnProperties->firstColumn_incl;
+                //         const int lastColumnExcl = msa.columnProperties->lastColumn_excl;
+
+                //         printf("firstColumnIncl %d, lastColumnExcl %d\n", firstColumnIncl, lastColumnExcl);
+                //         printf("coverages:\n");
+                //         for(int x = 0; x < msa.columnPitchInElements; x++){
+                //             printf("%d, ", msa.coverages[x]);
+                //         }
+                //         printf("\n");
+                //     }
+                //     assert(checksuccess);
+                // }
+                // tbGroup.sync();
 
                 msa.findConsensus(
                     tbGroup,
@@ -677,7 +679,8 @@ namespace gpu{
         int* __restrict__ d_indices,
         int* __restrict__ d_indices_per_anchor,
         int dataset_coverage,
-        int numRefinementIterations
+        int numRefinementIterations,
+        const read_number* __restrict__ anchorReadIds = nullptr
     ){
 
         constexpr bool useSmemMSA = (memoryType == MemoryType::Shared);
@@ -704,7 +707,7 @@ namespace gpu{
         const int n_anchors = *d_numAnchors;
 
         for(int anchorIndex = blockIdx.x; anchorIndex < n_anchors; anchorIndex += gridDim.x){
-            int myNumIndices = d_indices_per_anchor[anchorIndex];                            
+            int myNumIndices = d_indices_per_anchor[anchorIndex];
 
             if(myNumIndices > 0){
 
@@ -714,6 +717,9 @@ namespace gpu{
                     shared_columnProperties = *(multiMSA.getColumnPropertiesOfMSA(anchorIndex));
                 }
                 tbGroup.sync();
+
+                const read_number anchorReadId = anchorReadIds == nullptr ? 0 : anchorReadIds[anchorIndex];
+                constexpr read_number debugreadid = 42;
 
                 const int globalOffset = d_candidates_per_anchor_prefixsum[anchorIndex];
                 int* const myIndices = d_indices + globalOffset;
@@ -727,6 +733,8 @@ namespace gpu{
 
                 GpuSingleMSA msa = multiMSA.getSingleMSA(anchorIndex);
                 msa.columnProperties = &shared_columnProperties;
+
+                msa.debugflag = anchorReadId == debugreadid;
 
                 if(useSmemMSA){
                     msa.counts = shared_counts;
@@ -922,26 +930,38 @@ namespace gpu{
 
                         long long int t3 = clock64();
 
-                        bool mychecksuccess = msa.checkCoverages(tbGroup);
-                        bool checksuccess = groupReduceBool(mychecksuccess, [](auto l, auto r){
-                            return l && r;
-                        });
-                        tbGroup.sync();
-                        if(!checksuccess){
-                            if(threadIdx.x == 0){
-                                const int firstColumnIncl = msa.columnProperties->firstColumn_incl;
-                                const int lastColumnExcl = msa.columnProperties->lastColumn_excl;
+                        // bool mychecksuccess = msa.checkCoverages(tbGroup);
+                        // bool checksuccess = groupReduceBool(mychecksuccess, [](auto l, auto r){
+                        //     return l && r;
+                        // });
+                        // tbGroup.sync();
+                        // if(tbGroup.thread_rank() == 0){
+                        //     if(!checksuccess){
+                        //         const int firstColumnIncl = msa.columnProperties->firstColumn_incl;
+                        //         const int lastColumnExcl = msa.columnProperties->lastColumn_excl;
 
-                                printf("firstColumnIncl %d, lastColumnExcl %d\n", firstColumnIncl, lastColumnExcl);
-                                printf("coverages:\n");
-                                for(int x = 0; x < msa.columnPitchInElements; x++){
-                                    printf("%d, ", msa.coverages[x]);
-                                }
-                                printf("\n");
-                            }
-                        }
+                        //         printf("firstColumnIncl %d, lastColumnExcl %d\n", firstColumnIncl, lastColumnExcl);
+                        //         printf("coverages:\n");
+                        //         for(int x = 0; x < msa.columnPitchInElements; x++){
+                        //             printf("%d, ", msa.coverages[x]);
+                        //         }
+                        //         printf("\n");
+                        //         assert(checksuccess);
+                        //     }
+                        // }
+                        // tbGroup.sync();
+
+
+                        // if(tbGroup.thread_rank() == 0 && anchorReadId == debugreadid && refinementIteration >= 0){
+                        //     printf("counts before remove in iteration %d\n", refinementIteration);
+                        //     msa.printCounts(275,285);
+                        //     printf("weights before remove in iteration %d\n", refinementIteration);
+                        //     msa.printWeights(275,285);
+                        // }
+                        // tbGroup.sync();
+
+                        msa.checkAfterBuild(tbGroup, anchorIndex, __LINE__, anchorReadId);
                         tbGroup.sync();
-                        assert(checksuccess);
 
                         msa.removeCandidates(
                         //msa.removeCandidates_verticalthreads(
@@ -965,26 +985,29 @@ namespace gpu{
 
                         tbGroup.sync();
 
-                        mychecksuccess = msa.checkCoverages(tbGroup);
-                        checksuccess = groupReduceBool(mychecksuccess, [](auto l, auto r){
-                            return l && r;
-                        });
+                        msa.setWeightsToZeroIfCountIsZero(tbGroup);
                         tbGroup.sync();
-                        if(!checksuccess){
-                            if(threadIdx.x == 0){
-                                const int firstColumnIncl = msa.columnProperties->firstColumn_incl;
-                                const int lastColumnExcl = msa.columnProperties->lastColumn_excl;
 
-                                printf("firstColumnIncl %d, lastColumnExcl %d\n", firstColumnIncl, lastColumnExcl);
-                                printf("coverages:\n");
-                                for(int x = 0; x < msa.columnPitchInElements; x++){
-                                    printf("%d, ", msa.coverages[x]);
-                                }
-                                printf("\n");
-                            }
-                        }
-                        tbGroup.sync();
-                        assert(checksuccess);
+                        // mychecksuccess = msa.checkCoverages(tbGroup);
+                        // checksuccess = groupReduceBool(mychecksuccess, [](auto l, auto r){
+                        //     return l && r;
+                        // });
+                        // tbGroup.sync();
+                        // if(tbGroup.thread_rank() == 0){
+                        //     if(!checksuccess){
+                        //         const int firstColumnIncl = msa.columnProperties->firstColumn_incl;
+                        //         const int lastColumnExcl = msa.columnProperties->lastColumn_excl;
+
+                        //         printf("firstColumnIncl %d, lastColumnExcl %d\n", firstColumnIncl, lastColumnExcl);
+                        //         printf("coverages:\n");
+                        //         for(int x = 0; x < msa.columnPitchInElements; x++){
+                        //             printf("%d, ", msa.coverages[x]);
+                        //         }
+                        //         printf("\n");
+                        //         assert(checksuccess);
+                        //     }
+                        // }
+                        // tbGroup.sync();
 
                         long long int t4 = clock64();
 
@@ -994,6 +1017,18 @@ namespace gpu{
 
                         bool error = msa.updateColumnProperties(tbGroup);
 
+                        tbGroup.sync();
+
+                        // if(tbGroup.thread_rank() == 0 && anchorReadId == debugreadid && refinementIteration >= 0){
+                        //     printf("counts after remove in iteration %d\n", refinementIteration);
+                        //     msa.printCounts(275,285);
+                        //     printf("weights after remove in iteration %d\n", refinementIteration);
+                        //     msa.printWeights(275,285);
+                        // }
+                        // tbGroup.sync();
+
+
+                        msa.checkAfterBuild(tbGroup, anchorIndex, __LINE__, anchorReadId);
                         tbGroup.sync();
 
                         // if(error){
@@ -1173,7 +1208,8 @@ namespace gpu{
         int* d_indices_per_anchor,
         int dataset_coverage,
         int numIterations,
-        cudaStream_t stream
+        cudaStream_t stream,
+        const read_number* d_anchorReadIds
     ){
 
         helpers::call_fill_kernel_async(
@@ -1243,7 +1279,8 @@ namespace gpu{
             d_indices,
             d_indices_per_anchor,
             dataset_coverage,
-            numIterations
+            numIterations,
+            d_anchorReadIds
         );
 
         CUDACHECKASYNC;

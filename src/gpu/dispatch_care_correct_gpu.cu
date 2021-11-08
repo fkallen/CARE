@@ -141,6 +141,9 @@ namespace care{
 
         CUDACHECK(cudaSetDevice(runtimeOptions.deviceIds[0]));
 
+        //debug buffer printf
+        CUDACHECK(cudaDeviceSetLimit(cudaLimitPrintfFifoSize, 1024*1024*512));
+
         helpers::PeerAccessDebug peerAccess(runtimeOptions.deviceIds, true);
         peerAccess.enableAllPeerAccesses();
 

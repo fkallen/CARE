@@ -2678,7 +2678,8 @@ namespace gpu{
                 d_indices_per_anchor.data(),
                 correctionOptions->estimatedCoverage,
                 getNumRefinementIterations(),
-                stream
+                stream,
+                d_anchorReadIds.data()
             );
 
             std::swap(d_indices_tmp, d_indices);

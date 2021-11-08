@@ -44,9 +44,73 @@ namespace gpu{
     struct GpuSingleMSA{
     public:
 
+        __device__ __forceinline__
+        void printCounts(int printbegin = -1, int printend = -1){
+            if(printbegin == -1){
+                printbegin = 0;
+            }
+            if(printend == -1){
+                printend = columnPitchInElements;
+            }
+            printf("%d - %d, first %d, last %d, anchor %d\n", 
+                printbegin, printend, columnProperties->firstColumn_incl, columnProperties->lastColumn_excl, columnProperties->anchorColumnsBegin_incl);
+            printf("Counts A:\n");
+            for(int i = printbegin; i < printend; i++){
+                printf("%d ", counts[0 * columnPitchInElements + i]);
+            }
+            printf("\n");
+            printf("Counts C:\n");
+            for(int i = printbegin; i < printend; i++){
+                printf("%d ", counts[1 * columnPitchInElements + i]);
+            }
+            printf("\n");
+            printf("Counts G:\n");
+            for(int i = printbegin; i < printend; i++){
+                printf("%d ", counts[2 * columnPitchInElements + i]);
+            }
+            printf("\n");
+            printf("Counts T:\n");
+            for(int i = printbegin; i < printend; i++){
+                printf("%d ", counts[3 * columnPitchInElements + i]);
+            }
+            printf("\n");
+        }
+
+        __device__ __forceinline__
+        void printWeights(int printbegin = -1, int printend = -1){
+            if(printbegin == -1){
+                printbegin = 0;
+            }
+            if(printend == -1){
+                printend = columnPitchInElements;
+            }
+            printf("%d - %d, first %d, last %d, anchor %d\n", 
+                printbegin, printend, columnProperties->firstColumn_incl, columnProperties->lastColumn_excl, columnProperties->anchorColumnsBegin_incl);
+            printf("Weights A:\n");
+            for(int i = printbegin; i < printend; i++){
+                printf("%.7f ", weights[0 * columnPitchInElements + i]);
+            }
+            printf("\n");
+            printf("Weights C:\n");
+            for(int i = printbegin; i < printend; i++){
+                printf("%.7f ", weights[1 * columnPitchInElements + i]);
+            }
+            printf("\n");
+            printf("Weights G:\n");
+            for(int i = printbegin; i < printend; i++){
+                printf("%.7f ", weights[2 * columnPitchInElements + i]);
+            }
+            printf("\n");
+            printf("Weights T:\n");
+            for(int i = printbegin; i < printend; i++){
+                printf("%.7f ", weights[3 * columnPitchInElements + i]);
+            }
+            printf("\n");
+        }
+
         template<class ThreadGroup>
         __device__ __forceinline__
-        void checkAfterBuild(ThreadGroup& group, int anchorIndex = -1){
+        void checkAfterBuild(ThreadGroup& group, int anchorIndex = -1, int line = -1, read_number anchorReadId = 0){
     
             const int firstColumn_incl = columnProperties->firstColumn_incl;
             const int lastColumn_excl = columnProperties->lastColumn_excl;
@@ -64,25 +128,39 @@ namespace gpu{
                     const int count = mycounts[k * columnPitchInElements];
                     const float weight = myweights[k * columnPitchInElements];
 
-                    if(count > 0 && weight <= 0.0f){
-                        printf("msa check failed! anchorIndex %d, column %d, base %d, count %d, weight %f\n",
-                            anchorIndex, column, k, count, weight);
+                    if(count > 0 && fleq(weight, 0.0f)){
+                        printf("msa check failed! firstColumn_incl %d, lastColumn_excl %d, anchorIndex %d, anchorReadId %u, column %d, base %d, count %d, weight %.20f, line %d\n",
+                            firstColumn_incl, lastColumn_excl, anchorIndex, anchorReadId, column, k, count, weight, line);
                         assert(false);
                     }
     
-                    if(count <= 0 && weight > 0.0f){
-                        printf("msa check failed! anchorIndex %d, column %d, base %d, count %d, weight %f\n",
-                            anchorIndex, column, k, count, weight);
+                    if(count < 0){
+                        printf("msa check failed! firstColumn_incl %d, lastColumn_excl %d, anchorIndex %d, anchorReadId %u, column %d, base %d, count %d, weight %.20f, line %d\n",
+                            firstColumn_incl, lastColumn_excl, anchorIndex, anchorReadId, column, k, count, weight, line);
+                        assert(false);
+                    }
+
+                    if(count == 0 && (weight - 1e-5) > 0.0f){
+                        printf("msa check failed! firstColumn_incl %d, lastColumn_excl %d, anchorIndex %d, anchorReadId %u, column %d, base %d, count %d, weight %.20f, line %d\n",
+                            firstColumn_incl, lastColumn_excl, anchorIndex, anchorReadId, column, k, count, weight, line);
                         assert(false);
                     }
     
                     sumOfWeights += weight;
                 }
-    
+
                 if(sumOfWeights == 0){
                     printf("s %d c %d\n", anchorIndex, column);
                     assert(sumOfWeights != 0);
                 }
+
+                const int cov = coverages[column];
+                if(cov <= 0){
+                    printf("msa check failed! firstColumn_incl %d, lastColumn_excl %d, anchorIndex %d, anchorReadId %u, column %d, cov %d, line %d\n", 
+                        firstColumn_incl, lastColumn_excl, anchorIndex, anchorReadId, column, cov, line);
+                    assert(false);
+                }
+    
             }
         }
 
@@ -373,6 +451,15 @@ namespace gpu{
 
             bool error = false;
 
+            __shared__ int leftCount;
+            __shared__ int rightCount;
+
+            if(group.thread_rank() == 0){
+                leftCount = 0;
+                rightCount = 0;
+            }
+            group.sync();
+
             for(int i = group.thread_rank(); i < numColumnsToCheck-1; i += group.size()){
                 const int column = firstColumn_incl + i;
 
@@ -381,20 +468,28 @@ namespace gpu{
 
                 if(thisCoverage < 0 || nextCoverage < 0){
                     error = true;
+                    printf("column %d, thisCoverage %d, nextCoverage %d\n", column, thisCoverage, nextCoverage);
                     // assert(thisCoverage >= 0);
                     // assert(nextCoverage >= 0);
                 }
 
                 if(thisCoverage == 0 && nextCoverage > 0){
                     newFirstColumn_incl = column+1;
+                    atomicAdd(&leftCount, 1);
                 }
 
                 if(thisCoverage > 0 && nextCoverage == 0){
                     newLastColumn_excl = column+1;
+                    atomicAdd(&rightCount, 1);
                 }
             }
 
             group.sync();
+            if(group.thread_rank() == 0){
+                if(leftCount > 1 || rightCount > 1){
+                    printf("leftCount %d rightCount %d\n", leftCount, rightCount);
+                }
+            }
             // for(int i = 0; i < group.size(); i++){
             //     if(i == group.thread_rank() && error){
 
@@ -529,6 +624,12 @@ namespace gpu{
                         const int rowOffset = encodedBaseAsInt * columnPitchInElements;
                         const int columnIndex = columnStart 
                                 + (isForward ? (intIndex * nucleotidesPerInt2Bit + posInInt) : sequenceLength - 1 - (intIndex * nucleotidesPerInt2Bit + posInInt));
+
+                        // if(debugflag){
+                        //     if(columnIndex == 279 && encodedBaseAsInt == 3){
+                        //         printf("column 279 remove weight %.10f\n", weight);
+                        //     }
+                        // }
                         
                         atomicAdd(counts + rowOffset + columnIndex, doAdd ? 1 : -1);
                         float n = atomicAdd(weights + rowOffset + columnIndex, doAdd ? weight : -weight);
@@ -558,10 +659,35 @@ namespace gpu{
                     const int rowOffset = encodedBaseAsInt * columnPitchInElements;
                     const int columnIndex = columnStart 
                         + (isForward ? (fullInts * nucleotidesPerInt2Bit + posInInt) : sequenceLength - 1 - (fullInts * nucleotidesPerInt2Bit + posInInt));
+                    // if(debugflag){
+                    //     if(columnIndex == 279 && encodedBaseAsInt == 3){
+                    //         printf("column 279 remove weight %.10f\n", weight);
+                    //     }
+                    // }
                     atomicAdd(counts + rowOffset + columnIndex, doAdd ? 1 : -1);
                     atomicAdd(weights + rowOffset + columnIndex, doAdd ? weight : -weight);
                     atomicAdd(coverages + columnIndex, doAdd ? 1 : -1);
                 } 
+            }
+        }
+
+        template<class ThreadGroup>
+        __device__ __forceinline__
+        void setWeightsToZeroIfCountIsZero(ThreadGroup& group){
+            const int firstColumn_incl = columnProperties->firstColumn_incl;
+            const int lastColumn_excl = columnProperties->lastColumn_excl;
+    
+            for(int column = firstColumn_incl + group.thread_rank(); 
+                    column < lastColumn_excl; 
+                    column += group.size()){
+    
+                #pragma unroll
+                for(int k = 0; k < 4; k++){
+                    const int count = counts[k * columnPitchInElements + column];
+                    if(count == 0){
+                        weights[k * columnPitchInElements + column] = 0;
+                    }
+                }
             }
         }
 
@@ -660,6 +786,13 @@ namespace gpu{
                     query_alignment_overlap,
                     desiredAlignmentMaxErrorRate
                 );
+
+                if(tile.thread_rank() == 0){
+                    if(overlapweight > 1.0f){
+                        printf("error. overlapweight %.10f, anchorLength %d, nops %d, overlap %d, maxerrorrate %.10f\n", 
+                            overlapweight, anchorLength, query_alignment_nops, query_alignment_overlap, desiredAlignmentMaxErrorRate);
+                    }
+                }
 
                 assert(overlapweight <= 1.0f);
                 assert(overlapweight >= 0.0f);
@@ -1464,6 +1597,7 @@ namespace gpu{
         };
 
     public:
+        bool debugflag;
         int columnPitchInElements;
         std::uint8_t* consensus;
         int* counts;
@@ -1481,6 +1615,7 @@ namespace gpu{
         GpuSingleMSA getSingleMSA(int msaIndex) const{
             GpuSingleMSA msa;
 
+            msa.debugflag = false;
             msa.columnPitchInElements = columnPitchInElements;
             msa.counts = getCountsOfMSA(msaIndex);
             msa.weights = getWeightsOfMSA(msaIndex);
