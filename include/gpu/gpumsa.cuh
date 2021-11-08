@@ -1389,24 +1389,24 @@ namespace gpu{
                         //if there is such a candidate, none of the candidates will be removed.
                         bool veryGoodAlignment = false;
                         for(int k = group.thread_rank(); k < myNumIndices && !veryGoodAlignment; k += group.size()){
+                            float overlapweight = 0.0f;
+
                             if(!myShouldBeKept[k]){
                                 const int localCandidateIndex = myIndices[k];
                                 const int nOps = myNops[localCandidateIndex];
                                 const int overlapsize = myOverlaps[localCandidateIndex];
-                                const float overlapweight = calculateOverlapWeight(
+                                overlapweight = calculateOverlapWeight(
                                     anchorLength, 
                                     nOps, 
                                     overlapsize,
                                     desiredAlignmentMaxErrorRate
                                 );
 
-                                if(group.thread_rank() == 0){
-                                    if(overlapweight > 1.0f){
-                                        printf("error. overlapweight %.10f, anchorLength %d, nops %d, overlap %d, maxerrorrate %.10f\n", 
-                                            overlapweight, anchorLength, nOps, overlapsize, desiredAlignmentMaxErrorRate);
-                                    }
+                                if(overlapweight > 1.0f){
+                                    printf("error. overlapweight %.10f, anchorLength %d, nops %d, overlap %d, maxerrorrate %.10f\n", 
+                                        overlapweight, anchorLength, nOps, overlapsize, desiredAlignmentMaxErrorRate);
                                 }
-                                group.sync(); //debug
+
                                 assert(overlapweight <= 1.0f);
                                 assert(overlapweight >= 0.0f);
 
