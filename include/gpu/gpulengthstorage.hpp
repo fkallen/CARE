@@ -390,7 +390,7 @@ struct GPULengthStore3{
     using HostBuffer = helpers::SimpleAllocationPinnedHost<T,0>;
 
     template<class T>
-    using DeviceBuffer = helpers::SimpleAllocationPinnedHost<T,0>;
+    using DeviceBuffer = helpers::SimpleAllocationDevice<T,0>;
 
     static_assert(std::is_unsigned<Data_t>::value == true, "");
 
