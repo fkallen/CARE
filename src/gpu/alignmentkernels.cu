@@ -2784,6 +2784,12 @@ namespace gpu{
             const int tid = threadIdx.x + blockIdx.x * blockDim.x;
             const int stride = blockDim.x * gridDim.x;
 
+            const int numCandidates = *d_numCandidates;
+
+            for(int i = tid; i < numCandidates; i += stride){
+                d_indicesOfGoodCandidates[i] = -1;
+            }
+
             for(int i = tid; i < maxNumAnchors; i += stride){
                 d_numIndicesPerAnchor[i] = 0;
             }

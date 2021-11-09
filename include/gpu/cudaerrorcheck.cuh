@@ -41,7 +41,7 @@
 
 #define CUDACHECKIMPL(ans, async) { \
     using namespace std::string_literals; \
-    constexpr bool abort = true; \
+    constexpr bool abort = false; \
     cudaError_t MY_CUDA_CHECK_status = (ans);                                 \
     if (MY_CUDA_CHECK_status != cudaSuccess){              \
         cudaGetLastError();                 \

@@ -875,6 +875,19 @@ namespace gpu{
                     int* const destNumIndices = (refinementIteration % 2 == 0) ?
                         myNewNumIndicesPerAnchorPtr : myNumIndicesPerAnchorPtr;
 
+                    //debug check
+                    {
+                        const int myMaxNumCandidates = d_candidates_per_anchor_prefixsum[anchorIndex + 1] - d_candidates_per_anchor_prefixsum[anchorIndex];
+                        for(int c = tbGroup.thread_rank(); c < *srcNumIndices; c += tbGroup.size()){
+                            assert(srcIndices[c] != - 1);
+                            assert(srcIndices[c] < myMaxNumCandidates);
+                        }
+
+                        for(int c = tbGroup.thread_rank(); c < *srcNumIndices; c += tbGroup.size()){
+                            destIndices[c] = -1;
+                        }
+                    }
+
                     tbGroup.sync();
 
                     auto groupReduceBool = [&](bool b, auto comp){
@@ -913,6 +926,15 @@ namespace gpu{
                     );
 
                     tbGroup.sync();
+
+                    //debug check
+                    {
+                        const int myMaxNumCandidates = d_candidates_per_anchor_prefixsum[anchorIndex + 1] - d_candidates_per_anchor_prefixsum[anchorIndex];
+                        for(int c = tbGroup.thread_rank(); c < *destNumIndices; c += tbGroup.size()){
+                            assert(destIndices[c] != - 1);
+                            assert(destIndices[c] < myMaxNumCandidates);
+                        }
+                    }
 
                     long long int t2 = clock64();
 

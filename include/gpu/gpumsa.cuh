@@ -767,6 +767,7 @@ namespace gpu{
             for(int indexInList = tileIdInGroup; indexInList < numIndices; indexInList += numTilesInGroup){
 
                 const int localCandidateIndex = myIndices[indexInList];
+                assert(localCandidateIndex != -1);
                 const int shift = myShifts[localCandidateIndex];
                 const AlignmentOrientation flag = myAlignmentFlags[localCandidateIndex];
 
@@ -852,6 +853,7 @@ namespace gpu{
                 if(shouldBeRemoved(indexInList)){
 
                     const int localCandidateIndex = myIndices[indexInList];
+                    assert(localCandidateIndex != -1);
                     const int shift = myShifts[localCandidateIndex];
                     const AlignmentOrientation flag = myAlignmentFlags[localCandidateIndex];
 
