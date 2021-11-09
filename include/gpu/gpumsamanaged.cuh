@@ -47,7 +47,7 @@ namespace gpu{
 
     struct ManagedGPUMultiMSA{
     public:
-        ManagedGPUMultiMSA(cudaStream_t stream, rmm::mr::device_memory_resource* mr_) 
+        ManagedGPUMultiMSA(cudaStream_t stream, rmm::mr::device_memory_resource* mr_, int* h_tempstorage = nullptr) 
             : mr(mr_),
             d_consensusEncoded(0, stream, mr),
             d_counts(0, stream, mr),
@@ -58,7 +58,12 @@ namespace gpu{
             d_origWeights(0, stream, mr),
             d_columnProperties(0, stream, mr){
 
-            pinnedValue.resize(1);
+            if(h_tempstorage != nullptr){
+                tempvalue = h_tempstorage;
+            }else{
+                pinnedValue.resize(1);
+                tempvalue = pinnedValue.data();
+            }
         }
 
         void construct(
@@ -153,7 +158,8 @@ namespace gpu{
             float desiredAlignmentMaxErrorRate,
             int dataset_coverage,
             int numIterations,
-            cudaStream_t stream
+            cudaStream_t stream,
+            const read_number* d_anchorReadIds
         ){
             //std::cerr << "thread " << std::this_thread::get_id() << " msa refine, stream " << stream << "\n";
 
@@ -188,7 +194,8 @@ namespace gpu{
                 d_numCandidatePositionsInSegments,
                 dataset_coverage,
                 numIterations,
-                stream
+                stream,
+                d_anchorReadIds
             );
         }
 
@@ -330,6 +337,7 @@ namespace gpu{
 
         int numMSAs{};
         int columnPitchInElements{};
+        int* tempvalue{};
 
         helpers::SimpleAllocationPinnedHost<int, 0> pinnedValue{};
         CudaEvent event{cudaEventDisableTiming};
