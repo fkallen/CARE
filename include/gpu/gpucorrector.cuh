@@ -120,11 +120,11 @@ namespace gpu{
         rmm::device_uvector<int> d_numCandidates;
         rmm::device_uvector<read_number> d_anchorReadIds;
         rmm::device_uvector<unsigned int> d_anchor_sequences_data;
-        rmm::device_uvector<char> d_anchor_qualities;
+        //rmm::device_uvector<char> d_anchor_qualities;
         rmm::device_uvector<int> d_anchor_sequences_lengths;
         rmm::device_uvector<read_number> d_candidate_read_ids;
         rmm::device_uvector<unsigned int> d_candidate_sequences_data;
-        rmm::device_uvector<char> d_candidate_qualities;
+        //rmm::device_uvector<char> d_candidate_qualities;
         rmm::device_uvector<int> d_candidate_sequences_lengths;
         rmm::device_uvector<int> d_candidates_per_anchor;
         rmm::device_uvector<int> d_candidates_per_anchor_prefixsum;  
@@ -136,11 +136,11 @@ namespace gpu{
             d_numCandidates(0, cudaStreamPerThread, mr),
             d_anchorReadIds(0, cudaStreamPerThread, mr),
             d_anchor_sequences_data(0, cudaStreamPerThread, mr),
-            d_anchor_qualities(0, cudaStreamPerThread, mr),
+            //d_anchor_qualities(0, cudaStreamPerThread, mr),
             d_anchor_sequences_lengths(0, cudaStreamPerThread, mr),
             d_candidate_read_ids(0, cudaStreamPerThread, mr),
             d_candidate_sequences_data(0, cudaStreamPerThread, mr),
-            d_candidate_qualities(0, cudaStreamPerThread, mr),
+            //d_candidate_qualities(0, cudaStreamPerThread, mr),
             d_candidate_sequences_lengths(0, cudaStreamPerThread, mr),
             d_candidates_per_anchor(0, cudaStreamPerThread, mr),
             d_candidates_per_anchor_prefixsum(0, cudaStreamPerThread, mr),
@@ -168,11 +168,11 @@ namespace gpu{
             handleDevice(d_numCandidates);
             handleDevice(d_anchorReadIds);
             handleDevice(d_anchor_sequences_data);
-            handleDevice(d_anchor_qualities);
+            //handleDevice(d_anchor_qualities);
             handleDevice(d_anchor_sequences_lengths);
             handleDevice(d_candidate_read_ids);
             handleDevice(d_candidate_sequences_data);
-            handleDevice(d_candidate_qualities);
+            //handleDevice(d_candidate_qualities);
             handleDevice(d_candidate_sequences_lengths);
             handleDevice(d_candidates_per_anchor);
             handleDevice(d_candidates_per_anchor_prefixsum);
@@ -406,22 +406,22 @@ namespace gpu{
 
             DEBUGSTREAMSYNC(stream);
 
-            if(useQualityScores){
-                ecinput.d_anchor_qualities.resize(qualityPitchInBytes * numAnchors, stream);
+            // if(useQualityScores){
+            //     ecinput.d_anchor_qualities.resize(qualityPitchInBytes * numAnchors, stream);
 
-                gpuReadStorage->gatherQualities(
-                    readstorageHandle,
-                    ecinput.d_anchor_qualities.data(),
-                    qualityPitchInBytes,
-                    makeAsyncConstBufferWrapper(ecinput.h_anchorReadIds.data()),
-                    ecinput.d_anchorReadIds.data(),
-                    numAnchors,
-                    stream,
-                    mr
-                );
+            //     gpuReadStorage->gatherQualities(
+            //         readstorageHandle,
+            //         ecinput.d_anchor_qualities.data(),
+            //         qualityPitchInBytes,
+            //         makeAsyncConstBufferWrapper(ecinput.h_anchorReadIds.data()),
+            //         ecinput.d_anchorReadIds.data(),
+            //         numAnchors,
+            //         stream,
+            //         mr
+            //     );
 
-                DEBUGSTREAMSYNC(stream);
-            }
+            //     DEBUGSTREAMSYNC(stream);
+            // }
         }
 
         void getCandidateReads(GpuErrorCorrectorInput& ecinput, bool useQualityScores, cudaStream_t stream){
@@ -454,22 +454,22 @@ namespace gpu{
 
             DEBUGSTREAMSYNC(stream);
 
-            if(useQualityScores){
-                ecinput.d_candidate_qualities.resize(qualityPitchInBytes * numCandidates, stream);
+            // if(useQualityScores){
+            //     ecinput.d_candidate_qualities.resize(qualityPitchInBytes * numCandidates, stream);
                 
-                gpuReadStorage->gatherQualities(
-                    readstorageHandle,
-                    ecinput.d_candidate_qualities.data(),
-                    qualityPitchInBytes,
-                    makeAsyncConstBufferWrapper(ecinput.h_candidate_read_ids.data()),
-                    ecinput.d_candidate_read_ids.data(),
-                    numCandidates,
-                    stream,
-                    mr
-                );
+            //     gpuReadStorage->gatherQualities(
+            //         readstorageHandle,
+            //         ecinput.d_candidate_qualities.data(),
+            //         qualityPitchInBytes,
+            //         makeAsyncConstBufferWrapper(ecinput.h_candidate_read_ids.data()),
+            //         ecinput.d_candidate_read_ids.data(),
+            //         numCandidates,
+            //         stream,
+            //         mr
+            //     );
 
-                DEBUGSTREAMSYNC(stream);
-            }
+            //     DEBUGSTREAMSYNC(stream);
+            // }
         }
 
         void getCandidateReadIdsWithMinhashing(GpuErrorCorrectorInput& ecinput, cudaStream_t stream){
@@ -1212,29 +1212,29 @@ namespace gpu{
 
             DEBUGSTREAMSYNC(stream);
 
-            if(correctionOptions->useQualityScores){
+            // if(correctionOptions->useQualityScores){
 
-                CUDACHECK(cudaMemcpyAsync(
-                    d_anchor_qualities.data(),
-                    currentInput->d_anchor_qualities.data(),
-                    sizeof(char) * qualityPitchInBytes * currentNumAnchors,
-                    D2D,
-                    stream
-                ));
+            //     CUDACHECK(cudaMemcpyAsync(
+            //         d_anchor_qualities.data(),
+            //         currentInput->d_anchor_qualities.data(),
+            //         sizeof(char) * qualityPitchInBytes * currentNumAnchors,
+            //         D2D,
+            //         stream
+            //     ));
 
-                DEBUGSTREAMSYNC(stream);
+            //     DEBUGSTREAMSYNC(stream);
 
-                CUDACHECK(cudaMemcpyAsync(
-                    d_candidate_qualities.data(),
-                    currentInput->d_candidate_qualities.data(),
-                    sizeof(char) * qualityPitchInBytes * currentNumCandidates,
-                    D2D,
-                    stream
-                ));
+            //     CUDACHECK(cudaMemcpyAsync(
+            //         d_candidate_qualities.data(),
+            //         currentInput->d_candidate_qualities.data(),
+            //         sizeof(char) * qualityPitchInBytes * currentNumCandidates,
+            //         D2D,
+            //         stream
+            //     ));
 
-                DEBUGSTREAMSYNC(stream);
+            //     DEBUGSTREAMSYNC(stream);
 
-            }
+            // }
 
             //after gpu data has been copied to local working set, the gpu data of currentInput can be reused
             CUDACHECK(currentInput->event.record(stream));
@@ -2587,6 +2587,32 @@ namespace gpu{
         }
 
         void buildMultipleSequenceAlignment(cudaStream_t stream){
+
+            if(correctionOptions->useQualityScores){
+
+                gpuReadStorage->gatherQualities(
+                    readstorageHandle,
+                    d_anchor_qualities.data(),
+                    qualityPitchInBytes,
+                    makeAsyncConstBufferWrapper(currentInput->h_anchorReadIds.data()),
+                    d_anchorReadIds.data(),
+                    currentNumAnchors,
+                    stream,
+                    mr
+                );
+
+                gpuReadStorage->gatherQualities(
+                    readstorageHandle,
+                    d_candidate_qualities.data(),
+                    qualityPitchInBytes,
+                    makeAsyncConstBufferWrapper(currentInput->h_candidate_read_ids.data()),
+                    d_candidate_read_ids.data(),
+                    currentNumCandidates,
+                    stream,
+                    mr
+                );
+
+            }
 
             GPUMultiMSA multiMSA;
 
