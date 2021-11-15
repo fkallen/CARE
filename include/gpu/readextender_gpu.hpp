@@ -3018,7 +3018,8 @@ struct GpuReadExtender{
             goodAlignmentProperties->maxErrorRate,
             correctionOptions->estimatedCoverage,
             getNumRefinementIterations(),
-            stream
+            stream,
+            tasks->myReadId.data()
         );
  
         rmm::device_uvector<bool> d_shouldBeKept(initialNumCandidates, stream, mr);

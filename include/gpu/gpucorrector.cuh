@@ -2660,7 +2660,7 @@ namespace gpu{
 
             }
 
-            CUDACHECK(cudaStreamSynchronize(stream)); //debug
+            //CUDACHECK(cudaStreamSynchronize(stream)); //debug
         }
 
 
