@@ -1043,7 +1043,6 @@ namespace gpu{
             d_alignment_overlaps{0, cudaStreamPerThread, mr},
             d_alignment_shifts{0, cudaStreamPerThread, mr},
             d_alignment_nOps{0, cudaStreamPerThread, mr},
-            d_alignment_isValid{0, cudaStreamPerThread, mr},
             d_alignment_best_alignment_flags{0, cudaStreamPerThread, mr}, 
             d_indices{0, cudaStreamPerThread, mr},
             d_indices_per_anchor{0, cudaStreamPerThread, mr},
@@ -1306,7 +1305,6 @@ namespace gpu{
             handleDevice(d_alignment_overlaps);
             handleDevice(d_alignment_shifts);
             handleDevice(d_alignment_nOps);
-            handleDevice(d_alignment_isValid);
             handleDevice(d_alignment_best_alignment_flags);
             handleDevice(d_indices);
             handleDevice(d_indices_per_anchor);
@@ -1387,7 +1385,6 @@ namespace gpu{
             zero(d_alignment_overlaps);
             zero(d_alignment_shifts);
             zero(d_alignment_nOps);
-            zero(d_alignment_isValid);
             zero(d_alignment_best_alignment_flags);
             zero(d_indices);
             zero(d_corrected_candidates);
@@ -1511,7 +1508,6 @@ namespace gpu{
             d_alignment_overlaps.resize(maxCandidates, stream);
             d_alignment_shifts.resize(maxCandidates, stream);
             d_alignment_nOps.resize(maxCandidates, stream);
-            d_alignment_isValid.resize(maxCandidates, stream);
             d_alignment_best_alignment_flags.resize(maxCandidates, stream);
             d_indices.resize(maxCandidates + 1, stream);
             d_corrected_candidates.resize(maxCandidates * decodedSequencePitchInBytes, stream);
@@ -2312,6 +2308,8 @@ namespace gpu{
 
             const bool removeAmbiguousAnchors = correctionOptions->excludeAmbiguousReads;
             const bool removeAmbiguousCandidates = correctionOptions->excludeAmbiguousReads;
+            
+            rmm::device_uvector<bool> d_alignment_isValid(maxCandidates, stream, mr);
 
             std::size_t bytes = 0;
 
@@ -2815,7 +2813,7 @@ namespace gpu{
                 correctionOptions->m_coverage / 6.0f * correctionOptions->estimatedCoverage);
             const int new_columns_to_correct = correctionOptions->new_columns_to_correct;
 
-            bool* const d_candidateCanBeCorrected = d_alignment_isValid.data(); //repurpose
+            rmm::device_uvector<bool> d_candidateCanBeCorrected(maxCandidates, stream, mr);
 
             cub::TransformInputIterator<bool, IsHqAnchor, AnchorHighQualityFlag*>
                 d_isHqanchor(d_is_high_quality_anchor.data(), IsHqAnchor{});
@@ -2831,7 +2829,7 @@ namespace gpu{
                 maxCandidates,
                 d_numAnchors.data(),
                 d_num_corrected_candidates_per_anchor.data(),
-                d_candidateCanBeCorrected
+                d_candidateCanBeCorrected.data()
             ); CUDACHECKASYNC;
 
             #if 0
@@ -2874,7 +2872,7 @@ namespace gpu{
                 );
             #else
             callFlagCandidatesToBeCorrectedKernel_async(
-                d_candidateCanBeCorrected,
+                d_candidateCanBeCorrected.data(),
                 d_num_corrected_candidates_per_anchor.data(),
                 managedgpumsa->multiMSAView(),
                 d_alignment_shifts.data(),
@@ -2895,7 +2893,7 @@ namespace gpu{
 
             CubCallWrapper(mr).cubSelectFlagged(
                 cub::CountingInputIterator<int>(0),
-                d_candidateCanBeCorrected,
+                d_candidateCanBeCorrected.data(),
                 d_indices_of_corrected_candidates.data(),
                 d_num_total_corrected_candidates.data(),
                 maxCandidates,
@@ -2987,7 +2985,7 @@ namespace gpu{
                 correctionOptions->m_coverage / 6.0f * correctionOptions->estimatedCoverage);
             const int new_columns_to_correct = correctionOptions->new_columns_to_correct;
 
-            bool* const d_candidateCanBeCorrected = d_alignment_isValid.data(); //repurpose
+            rmm::device_uvector<bool> d_candidateCanBeCorrected(maxCandidates, stream, mr);
 
             cub::TransformInputIterator<bool, IsHqAnchor, AnchorHighQualityFlag*>
                 d_isHqanchor(d_is_high_quality_anchor.data(), IsHqAnchor{});
@@ -3003,7 +3001,7 @@ namespace gpu{
                 maxCandidates,
                 d_numAnchors.data(),
                 d_num_corrected_candidates_per_anchor.data(),
-                d_candidateCanBeCorrected
+                d_candidateCanBeCorrected.data()
             ); CUDACHECKASYNC;
 
    
@@ -3028,7 +3026,7 @@ namespace gpu{
                 );
 
                 callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
-                    d_candidateCanBeCorrected,
+                    d_candidateCanBeCorrected.data(),
                     d_num_corrected_candidates_per_anchor.data(),
                     managedgpumsa->multiMSAView(),
                     d_excludeFlags,
@@ -3048,7 +3046,7 @@ namespace gpu{
                 );
             #else
             callFlagCandidatesToBeCorrectedKernel_async(
-                d_candidateCanBeCorrected,
+                d_candidateCanBeCorrected.data(),
                 d_num_corrected_candidates_per_anchor.data(),
                 managedgpumsa->multiMSAView(),
                 d_alignment_shifts.data(),
@@ -3069,7 +3067,7 @@ namespace gpu{
 
             CubCallWrapper(mr).cubSelectFlagged(
                 cub::CountingInputIterator<int>(0),
-                d_candidateCanBeCorrected,
+                d_candidateCanBeCorrected.data(),
                 d_indices_of_corrected_candidates.data(),
                 d_num_total_corrected_candidates.data(),
                 maxCandidates,
@@ -3193,7 +3191,6 @@ namespace gpu{
         rmm::device_uvector<int> d_alignment_overlaps;
         rmm::device_uvector<int> d_alignment_shifts;
         rmm::device_uvector<int> d_alignment_nOps;
-        rmm::device_uvector<bool> d_alignment_isValid;
         rmm::device_uvector<AlignmentOrientation> d_alignment_best_alignment_flags; 
         rmm::device_uvector<int> d_indices;
         rmm::device_uvector<int> d_indices_per_anchor;
