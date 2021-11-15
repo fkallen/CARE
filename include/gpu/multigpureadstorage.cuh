@@ -285,6 +285,7 @@ public:
             const int deviceId = deviceIds[d];
             cub::SwitchDevice sd(deviceId);
 
+            //TODO if numAmbiguous == 0, don't need bitArrays
             bitArraysUndeterminedBase[deviceId] = makeGpuBitArray<read_number>(numReads);
 
             if(memoryLimitsPerDevice[d] >= bitArraysUndeterminedBase[deviceId].numAllocatedBytes){
