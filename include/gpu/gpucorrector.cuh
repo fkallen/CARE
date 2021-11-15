@@ -1798,9 +1798,10 @@ namespace gpu{
                 d_indices.resize(currentNumAnchors+1, stream);
             }
 
-            int* const d_editsOffsetsTmp = d_indices.data();
-            int* const d_totalNumberOfEdits = d_editsOffsetsTmp + currentNumAnchors;
-            helpers::call_fill_kernel_async(d_editsOffsetsTmp, 1, 0, stream); CUDACHECKASYNC;
+            rmm::device_uvector<int> d_editsOffsetsTmp(currentNumAnchors + 1, stream, mr);
+            int* const d_totalNumberOfEdits = d_editsOffsetsTmp.data() + currentNumAnchors;
+
+            helpers::call_fill_kernel_async(d_editsOffsetsTmp.data(), 1, 0, stream); CUDACHECKASYNC;
 
             //num edits per anchor prefixsum
             CubCallWrapper(mr).cubInclusiveSum(
@@ -1808,7 +1809,7 @@ namespace gpu{
                     d_numEditsPerCorrectedanchor.data(),
                     [doNotUseEditsValue = getDoNotUseEditsValue()] __device__ (const auto& num){ return num == doNotUseEditsValue ? 0 : num;}
                 ), 
-                d_editsOffsetsTmp + 1, 
+                d_editsOffsetsTmp.data() + 1, 
                 currentNumAnchors,
                 stream
             );
@@ -1820,7 +1821,7 @@ namespace gpu{
             gpucorrectorkernels::compactEditsKernel<<<SDIV(currentNumAnchors, 128), 128, 0, stream>>>(
                 d_editsPerCorrectedanchor.data(),
                 d_editsPerCorrectedanchor2.data(),
-                d_editsOffsetsTmp,
+                d_editsOffsetsTmp.data(),
                 d_numAnchors.data(),
                 d_numEditsPerCorrectedanchor.data(),
                 getDoNotUseEditsValue(),
@@ -1843,7 +1844,7 @@ namespace gpu{
                     d_anchor_is_corrected.data(),
                     d_is_high_quality_anchor.data(),
                     d_numEditsPerCorrectedanchor.data(),
-                    d_editsOffsetsTmp
+                    d_editsOffsetsTmp.data()
                 )), 
                 currentNumAnchors, 
                 thrust::make_zip_iterator(thrust::make_tuple(
@@ -1863,7 +1864,7 @@ namespace gpu{
                 ReplaceNumberOp(getDoNotUseEditsValue(), decodedSequencePitchInBytes)
             );
 
-            int* const d_correctedAnchorOffsetsTmp = d_indices.data();
+            int* const d_correctedAnchorOffsetsTmp = d_editsOffsetsTmp.data();
             int* const d_totalCorrectedSequencesBytes = d_correctedAnchorOffsetsTmp + currentNumAnchors;
             helpers::call_fill_kernel_async(d_correctedAnchorOffsetsTmp, 1, 0, stream); CUDACHECKASYNC;
 
