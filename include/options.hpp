@@ -124,7 +124,6 @@ namespace care
 
     struct FileOptions
     {
-        bool mergedoutput = false;
         SequencePairType pairType = SequencePairType::SingleEnd;
         int minimum_sequence_length = 0;
         int maximum_sequence_length = 0;

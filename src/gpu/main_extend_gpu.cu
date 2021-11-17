@@ -156,7 +156,6 @@ int main(int argc, char** argv){
 		cxxopts::value<std::string>())
 		("m,memTotal", "Total memory limit in bytes. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: All free memory.",
 		cxxopts::value<std::string>())
-		("mergedoutput", "extension results will not be split into _extended and _remaining", cxxopts::value<bool>()->implicit_value("true"))
 		("allowOutwardExtension", "Will try to fill the gap and extend to the outside"
 			"Default: " + tostring(ExtensionOptions{}.allowOutwardExtension), cxxopts::value<bool>()->implicit_value("true"))	
 		("sortedOutput", "Extended reads in output file will be sorted by read id."
@@ -322,9 +321,11 @@ int main(int argc, char** argv){
 		std::cout << s << ' ';
 	}
 	std::cout << "\n";
-	std::cout << "Merged output: " << fileOptions.mergedoutput << "\n";
 	std::cout << "fixedStddev: " << extensionOptions.fixedStddev << "\n";
 	std::cout << "fixedStepsize: " << extensionOptions.fixedStepsize << "\n";
+	std::cout << "Allow outward extension: " << extensionOptions.allowOutwardExtension << "\n";
+	std::cout << "Sorted output: " << extensionOptions.sortedOutput << "\n";
+	std::cout << "Output remaining reads: " << extensionOptions.outputRemainingReads << "\n";
 	std::cout << "----------------------------------------\n";
 	std::cout << std::noboolalpha;
 
