@@ -2686,7 +2686,7 @@ namespace gpu{
             std::swap(d_indices_per_anchor_tmp, d_indices_per_anchor);
             std::swap(d_num_indices_tmp, d_num_indices);
 
-            CUDACHECK(cudaStreamSynchronize(stream));
+            //CUDACHECK(cudaStreamSynchronize(stream));
 
         }
 
