@@ -163,8 +163,8 @@ void MultipleSequenceAlignment::findOrigWeightAndCoverage(const char* subject){
         const char subjectBase = subject[localIndex];
         switch(subjectBase){
             case 'A':origWeights[column] = weightsA[column]; origCoverages[column] = countsA[column]; break;
-            case 'C':origWeights[column] = weightsG[column]; origCoverages[column] = countsC[column]; break;
-            case 'G':origWeights[column] = weightsC[column]; origCoverages[column] = countsG[column]; break;
+            case 'C':origWeights[column] = weightsC[column]; origCoverages[column] = countsC[column]; break;
+            case 'G':origWeights[column] = weightsG[column]; origCoverages[column] = countsG[column]; break;
             case 'T':origWeights[column] = weightsT[column]; origCoverages[column] = countsT[column]; break;
             default: assert(false); break;
         }
