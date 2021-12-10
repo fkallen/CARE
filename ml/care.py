@@ -181,11 +181,7 @@ def extract_clf(clf, out_file_path):
         elif isinstance(clf, LogisticRegression):
             extract_lr(clf, out_file)
 
-def process(data_map, clf_t, clf_args, suffix, test_index):
-    tqdm.write("### data sets: "+str(len(data_map))+"\n")
-    tqdm.write("### leave index "+str(test_index)+" out:\n")
-    train_map = list(data_map)
-    test_map = [train_map.pop(test_index)]
+def process(clf_t, clf_args, train_map, test_map, name):
     train_desc, train_data = read_data(train_map)
     test_desc, test_data = read_data(test_map)
 
@@ -199,8 +195,7 @@ def process(data_map, clf_t, clf_args, suffix, test_index):
     clf = clf_t(**clf_args).fit(X_train, y_train)
     clf.CARE_desc = str(train_desc)
 
-    filename = test_map[0]["prefix"]+'_'+suffix
-    extract_clf(clf, filename+".rf")
+    extract_clf(clf, name+".rf")
 
     probs = clf.predict_proba(X_test)
     auroc = metrics.roc_auc_score(y_test, probs[:,1])
@@ -210,11 +205,11 @@ def process(data_map, clf_t, clf_args, suffix, test_index):
     
     probs_train = clf.predict_proba(X_train)
     auroc_train = metrics.roc_auc_score(y_train, probs_train[:,1])
-    avgps_train =  metrics.average_precision_score(y_train, probs_train[:,1])
+    avgps_train = metrics.average_precision_score(y_train, probs_train[:,1])
     tqdm.write("AUROC (train)  : "+str(auroc_train))
     tqdm.write("AVGPS (train)  : "+str(avgps_train))
     
-    pickle.dump(clf, open(filename+".rf.p", "wb"))
+    pickle.dump(clf, open(name+".rf.p", "wb"))
 
 ### stuff ###
 
