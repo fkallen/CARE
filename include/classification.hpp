@@ -74,6 +74,9 @@ struct clf_agent
     {
         if (c_opts.correctionType == CorrectionType::Print) {
             *anchor_file << extract_anchor << std::endl;
+        }
+
+        if (c_opts.correctionTypeCands == CorrectionType::Print) {
             *cands_file << extract_cands << std::endl;
         }
     }
