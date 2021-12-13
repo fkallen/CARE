@@ -17,29 +17,26 @@ namespace gpu{
     #ifdef CARE_HAS_WARPCORE
         std::unique_ptr<MultiGpuMinhasher>
         constructMultiGpuMinhasherFromGpuReadStorage(
-            const CorrectionOptions& correctionOptions,
-            const FileOptions& /*fileOptions*/,
-            const RuntimeOptions& runtimeOptions,
-            const MemoryOptions& /*memoryOptions*/,
+            const ProgramOptions& programOptions,
             const GpuReadStorage& gpuReadStorage
         ){
             
             auto gpuMinhasher = std::make_unique<MultiGpuMinhasher>(
                 gpuReadStorage.getNumberOfReads(), 
-                calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage),
-                correctionOptions.kmerlength,
-                runtimeOptions.deviceIds
+                calculateResultsPerMapThreshold(programOptions.estimatedCoverage),
+                programOptions.kmerlength,
+                programOptions.deviceIds
             );
 
             gpuMinhasher->constructFromReadStorage(
-                runtimeOptions,
+                programOptions,
                 gpuReadStorage.getNumberOfReads(),
                 gpuReadStorage,
                 gpuReadStorage.getSequenceLengthUpperBound(),
-                correctionOptions.numHashFunctions
+                programOptions.numHashFunctions
             );
 
-            if(runtimeOptions.replicateGpuData){
+            if(programOptions.replicateGpuData){
                 bool ok = gpuMinhasher->tryReplication();
                 if(ok){
                     std::cerr << "Replicated hash tables to each gpu\n";

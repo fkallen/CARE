@@ -5,13 +5,7 @@
 
 namespace care{
 
-    void performCorrection(
-        CorrectionOptions correctionOptions,
-        RuntimeOptions runtimeOptions,
-        MemoryOptions memoryOptions,
-        FileOptions fileOptions,
-        GoodAlignmentProperties goodAlignmentProperties
-    );
+    void performCorrection(ProgramOptions programOptions);
 
 }
 

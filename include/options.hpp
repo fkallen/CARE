@@ -2,8 +2,9 @@
 #define CARE_OPTIONS_HPP
 
 #include <config.hpp>
-
 #include <readlibraryio.hpp>
+
+#include "cxxopts/cxxopts.hpp"
 
 #include <string>
 #include <vector>
@@ -18,21 +19,6 @@ namespace care
         PairedEnd,
     };
 
-    __inline__ std::string to_string(SequencePairType s)
-    {
-        switch (s)
-        {
-        case SequencePairType::Invalid:
-            return "Invalid";
-        case SequencePairType::SingleEnd:
-            return "SingleEnd";
-        case SequencePairType::PairedEnd:
-            return "PairedEnd";
-        default:
-            return "Error";
-        }
-    }
-
     enum class CorrectionType : int
     {
         Classic,
@@ -40,36 +26,16 @@ namespace care
         Print
     };
 
-    __inline__ std::string to_string(CorrectionType t)
-    {
-        switch (t)
-        {
-        case CorrectionType::Classic:
-            return "Classic";
-            break;
-        case CorrectionType::Forest:
-            return "Forest";
-            break;
-        case CorrectionType::Print:
-            return "Print";
-            break;
-        default:
-            return "Forgot to name correction type";
-            break;
-        }
-    }
+    std::string to_string(SequencePairType s);
+    std::string to_string(CorrectionType t);
+
 
     //Options which can be parsed from command-line arguments
 
-    struct GoodAlignmentProperties
-    {
+    struct ProgramOptions{
         int min_overlap = 30;
         float maxErrorRate = 0.2f;
         float min_overlap_ratio = 0.30f;
-    };
-
-    struct CorrectionOptions
-    {
         bool excludeAmbiguousReads = false;
         bool correctCandidates = false;
         bool useQualityScores = false;
@@ -90,10 +56,6 @@ namespace care
         float sampleRateAnchor = 1.f;
         float sampleRateCands = 0.01f;
         float pairedthreshold1 = 0.06f;
-    };
-
-    struct ExtensionOptions
-    {
         bool allowOutwardExtension{};
         bool sortedOutput = false;
         bool outputRemainingReads = false;
@@ -101,10 +63,6 @@ namespace care
         int insertSizeStddev{};
         int fixedStddev{};
         int fixedStepsize{};
-    };
-
-    struct RuntimeOptions
-    {
         bool showProgress = false;
         bool canUseGpu = false;
         bool replicateGpuData = false;
@@ -112,18 +70,10 @@ namespace care
         int threads = 1;
         std::size_t fixedNumberOfReads = 0;
         std::vector<int> deviceIds;
-    };
-
-    struct MemoryOptions
-    {
         int qualityScoreBits = 8;
         float hashtableLoadfactor = 0.8f;
         std::size_t memoryForHashtables = 0;
         std::size_t memoryTotalLimit = 0;
-    };
-
-    struct FileOptions
-    {
         SequencePairType pairType = SequencePairType::SingleEnd;
         int minimum_sequence_length = 0;
         int maximum_sequence_length = 0;
@@ -141,20 +91,15 @@ namespace care
         std::vector<std::string> outputfilenames;
     };
 
-    struct AllOptions
-    {
-        GoodAlignmentProperties goodAlignmentProperties;
-        CorrectionOptions correctionOptions;
-        RuntimeOptions runtimeOptions;
-        FileOptions fileOptions;
-    };
+    ProgramOptions makeProgramOptions(const cxxopts::ParseResult& pr);
+    bool isValid(const ProgramOptions& opt);
 
     template<class ReadStorage>
-    std::size_t getNumReadsToProcess(const ReadStorage* readStorage, const RuntimeOptions& runtimeOptions){
-        if(runtimeOptions.fixedNumberOfReads == 0){ 
+    std::size_t getNumReadsToProcess(const ReadStorage* readStorage, const ProgramOptions& options){
+        if(options.fixedNumberOfReads == 0){ 
             return readStorage->getNumberOfReads();
         }else{
-            return runtimeOptions.fixedNumberOfReads;
+            return options.fixedNumberOfReads;
         }
     }
 }

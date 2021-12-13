@@ -191,11 +191,8 @@ namespace fakegpusinglehashminhasherkernels{
 
 
         void constructFromReadStorage(
-            const FileOptions &/*fileOptions*/,
-            const RuntimeOptions &runtimeOptions,
-            const MemoryOptions& memoryOptions,
+            const ProgramOptions& programOptions,
             std::uint64_t /*nReads*/,
-            const CorrectionOptions& correctionOptions,
             const GpuReadStorage& gpuReadStorage
         ){
             
@@ -203,13 +200,13 @@ namespace fakegpusinglehashminhasherkernels{
 
             {
                 auto& readStorage = gpuReadStorage;
-                const auto& deviceIds = runtimeOptions.deviceIds;
+                const auto& deviceIds = programOptions.deviceIds;
 
                 int deviceId = deviceIds[0];
 
                 cub::SwitchDevice sd{deviceId};
 
-                const int requestedNumberOfMaps = correctionOptions.numHashFunctions;
+                const int requestedNumberOfMaps = programOptions.numHashFunctions;
                 numSmallest = requestedNumberOfMaps;
 
                 const read_number numReads = readStorage.getNumberOfReads();
@@ -225,7 +222,7 @@ namespace fakegpusinglehashminhasherkernels{
                 const int numIters = SDIV(numReads, parallelReads);
 
                 const MemoryUsage memoryUsageOfReadStorage = readStorage.getMemoryInfo();
-                std::size_t totalLimit = memoryOptions.memoryTotalLimit;
+                std::size_t totalLimit = programOptions.memoryTotalLimit;
                 if(totalLimit > memoryUsageOfReadStorage.host){
                     totalLimit -= memoryUsageOfReadStorage.host;
                 }else{
@@ -236,8 +233,8 @@ namespace fakegpusinglehashminhasherkernels{
                 }
                 std::size_t maxMemoryForTables = getAvailableMemoryInKB() * 1024;
                 // std::cerr << "available: " << maxMemoryForTables 
-                //         << ",memoryForHashtables: " << memoryOptions.memoryForHashtables
-                //         << ", memoryTotalLimit: " << memoryOptions.memoryTotalLimit
+                //         << ",memoryForHashtables: " << programOptions.memoryForHashtables
+                //         << ", memoryTotalLimit: " << programOptions.memoryTotalLimit
                 //         << ", rsHostUsage: " << memoryUsageOfReadStorage.host << "\n";
 
                 std::size_t maxNumPairs = std::size_t(numReads) * std::size_t(numSmallest);

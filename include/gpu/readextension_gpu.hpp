@@ -21,12 +21,7 @@ namespace gpu{
     )>;
     
     void extend_gpu(
-        const GoodAlignmentProperties& goodAlignmentProperties,
-        const CorrectionOptions& correctionOptions,
-        const ExtensionOptions& extensionOptions,
-        const RuntimeOptions& runtimeOptions,
-        const FileOptions& fileOptions,
-        const MemoryOptions& memoryOptions,
+        const ProgramOptions& programOptions,
         const GpuMinhasher& minhasher,
         const GpuReadStorage& gpuReadStorage,
         SubmitReadyExtensionResultsCallback submitReadyResults //needs to be thread-safe

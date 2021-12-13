@@ -2,7 +2,6 @@
 #include <config.hpp>
 
 #include <cxxopts/cxxopts.hpp>
-#include <args.hpp>
 #include <options.hpp>
 #include <gpu/dispatch_care_extend_gpu.cuh>
 
@@ -106,41 +105,41 @@ int main(int argc, char** argv){
 		("tempdir", "Directory to store temporary files. Default: output directory", cxxopts::value<std::string>())
 		("h,hashmaps", "The requested number of hash maps. Must be greater than 0. "
 			"The actual number of used hash maps may be lower to respect the set memory limit. "
-			"Default: " + tostring(CorrectionOptions{}.numHashFunctions), 
+			"Default: " + tostring(ProgramOptions{}.numHashFunctions), 
 			cxxopts::value<int>())
 		("k,kmerlength", "The kmer length for minhashing. If 0 or missing, it is automatically determined.", cxxopts::value<int>())
 		("enforceHashmapCount",
 			"If the requested number of hash maps cannot be fullfilled, the program terminates without error correction. "
-			"Default: " + tostring(CorrectionOptions{}.mustUseAllHashfunctions),
+			"Default: " + tostring(ProgramOptions{}.mustUseAllHashfunctions),
 			cxxopts::value<bool>()->implicit_value("true")
 		)
 		("t,threads", "Maximum number of thread to use. Must be greater than 0", cxxopts::value<int>())
 		("batchsize", "Number of reads in a single batch. Must be greater than 0. "
-			"Default: " + tostring(CorrectionOptions{}.batchsize),
+			"Default: " + tostring(ProgramOptions{}.batchsize),
 		cxxopts::value<int>())
 		("q,useQualityScores", "If set, quality scores (if any) are considered during read correction. "
-			"Default: " + tostring(CorrectionOptions{}.useQualityScores),
+			"Default: " + tostring(ProgramOptions{}.useQualityScores),
 		cxxopts::value<bool>()->implicit_value("true"))
 		("excludeAmbiguous", 
 			"If set, reads which contain at least one ambiguous nucleotide will not be corrected. "
-			"Default: " + tostring(CorrectionOptions{}.excludeAmbiguousReads),
+			"Default: " + tostring(ProgramOptions{}.excludeAmbiguousReads),
 		cxxopts::value<bool>()->implicit_value("true"))
 		("maxmismatchratio", "Overlap between anchor and candidate must contain at "
 			"most (maxmismatchratio * overlapsize) mismatches. "
-			"Default: " + tostring(GoodAlignmentProperties{}.maxErrorRate),
+			"Default: " + tostring(ProgramOptions{}.maxErrorRate),
 		cxxopts::value<float>())
 		("minalignmentoverlap", "Overlap between anchor and candidate must be at least this long. "
-			"Default: " + tostring(GoodAlignmentProperties{}.min_overlap),
+			"Default: " + tostring(ProgramOptions{}.min_overlap),
 		cxxopts::value<int>())
 		("minalignmentoverlapratio", "Overlap between anchor and candidate must be at least as "
 			"long as (minalignmentoverlapratio * candidatelength). "
-			"Default: " + tostring(GoodAlignmentProperties{}.min_overlap_ratio),
+			"Default: " + tostring(ProgramOptions{}.min_overlap_ratio),
 		cxxopts::value<float>())
 		("errorfactortuning", "errorfactortuning. "
-			"Default: " + tostring(CorrectionOptions{}.estimatedErrorrate),
+			"Default: " + tostring(ProgramOptions{}.estimatedErrorrate),
 		cxxopts::value<float>())
 		("coveragefactortuning", "coveragefactortuning. "
-			"Default: " + tostring(CorrectionOptions{}.m_coverage),
+			"Default: " + tostring(ProgramOptions{}.m_coverage),
 		cxxopts::value<float>())
 		("p,showProgress", "If set, progress bar is shown during correction",
 		cxxopts::value<bool>()->implicit_value("true"))
@@ -157,30 +156,30 @@ int main(int argc, char** argv){
 		("m,memTotal", "Total memory limit in bytes. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: All free memory.",
 		cxxopts::value<std::string>())
 		("allowOutwardExtension", "Will try to fill the gap and extend to the outside"
-			"Default: " + tostring(ExtensionOptions{}.allowOutwardExtension), cxxopts::value<bool>()->implicit_value("true"))	
+			"Default: " + tostring(ProgramOptions{}.allowOutwardExtension), cxxopts::value<bool>()->implicit_value("true"))	
 		("sortedOutput", "Extended reads in output file will be sorted by read id."
-			"Default: " + tostring(ExtensionOptions{}.sortedOutput), cxxopts::value<bool>()->implicit_value("true"))	
+			"Default: " + tostring(ProgramOptions{}.sortedOutput), cxxopts::value<bool>()->implicit_value("true"))	
 		("outputRemaining", "Output remaining reads which could not be extended. Will be sorted by read id."
-			"Default: " + tostring(ExtensionOptions{}.outputRemainingReads), cxxopts::value<bool>()->implicit_value("true"))
+			"Default: " + tostring(ProgramOptions{}.outputRemainingReads), cxxopts::value<bool>()->implicit_value("true"))
 		("warpcore", "Enable warpcore hash tables. 0: Disabled, 1: Enabled. "
-			"Default: " + tostring(RuntimeOptions{}.warpcore),
+			"Default: " + tostring(ProgramOptions{}.warpcore),
 		cxxopts::value<int>())
 		("hashloadfactor", "Load factor of hashtables. 0.0 < hashloadfactor < 1.0. Smaller values can improve the runtime at the expense of greater memory usage."
-			"Default: " + std::to_string(MemoryOptions{}.hashtableLoadfactor), cxxopts::value<float>())
+			"Default: " + std::to_string(ProgramOptions{}.hashtableLoadfactor), cxxopts::value<float>())
 		("replicateGpuData", "If a GPU data structure fits into the memory of a single GPU, allow its replication to other GPUs. This can improve the runtime when multiple GPUs are used."
-			"Default: " + std::to_string(RuntimeOptions{}.replicateGpuData), cxxopts::value<bool>())
+			"Default: " + std::to_string(ProgramOptions{}.replicateGpuData), cxxopts::value<bool>())
 
 		("fixedStepsize", "fixedStepsize "
-			"Default: " + tostring(ExtensionOptions{}.fixedStepsize),
+			"Default: " + tostring(ProgramOptions{}.fixedStepsize),
 		cxxopts::value<int>())
 		("fixedStddev", "fixedStddev "
-			"Default: " + tostring(ExtensionOptions{}.fixedStddev),
+			"Default: " + tostring(ProgramOptions{}.fixedStddev),
 		cxxopts::value<int>())
 		("qualityScoreBits", "How many bits should be used to store a single quality score. Allowed values: 1,2,8. If not 8, a lossy compression via binning is used."
-			"Default: " + tostring(MemoryOptions{}.qualityScoreBits), cxxopts::value<int>())
+			"Default: " + tostring(ProgramOptions{}.qualityScoreBits), cxxopts::value<int>())
 
-		("fixedNumberOfReads", "Process only the first n reads. Default: " + tostring(RuntimeOptions{}.fixedNumberOfReads), cxxopts::value<std::size_t>())
-		("singlehash", "Use 1 hashtables with h smallest unique hashes. Default: " + tostring(CorrectionOptions{}.singlehash), cxxopts::value<bool>())
+		("fixedNumberOfReads", "Process only the first n reads. Default: " + tostring(ProgramOptions{}.fixedNumberOfReads), cxxopts::value<std::size_t>())
+		("singlehash", "Use 1 hashtables with h smallest unique hashes. Default: " + tostring(ProgramOptions{}.singlehash), cxxopts::value<bool>())
 	;
 
 	//options.parse_positional({"deviceIds"});
@@ -200,35 +199,25 @@ int main(int argc, char** argv){
 		std::exit(0);
 	}
 
-	GoodAlignmentProperties goodAlignmentProperties = args::to<GoodAlignmentProperties>(parseresults);
-	CorrectionOptions correctionOptions = args::to<CorrectionOptions>(parseresults);
-	ExtensionOptions extensionOptions = args::to<ExtensionOptions>(parseresults);
-	RuntimeOptions runtimeOptions = args::to<RuntimeOptions>(parseresults);
-	MemoryOptions memoryOptions = args::to<MemoryOptions>(parseresults);
-	FileOptions fileOptions = args::to<FileOptions>(parseresults);
+	ProgramOptions programOptions = makeProgramOptions(parseresults);
 
-	if(!args::isValid(goodAlignmentProperties)) throw std::runtime_error("Invalid goodAlignmentProperties!");
-	if(!args::isValid(correctionOptions)) throw std::runtime_error("Invalid correctionOptions!");
-	if(!args::isValid(extensionOptions)) throw std::runtime_error("Invalid extensionOptions!");
-	if(!args::isValid(runtimeOptions)) throw std::runtime_error("Invalid runtimeOptions!");
-	if(!args::isValid(memoryOptions)) throw std::runtime_error("Invalid memoryOptions!");
-	if(!args::isValid(fileOptions)) throw std::runtime_error("Invalid fileOptions!");
+	if(!isValid(programOptions)) throw std::runtime_error("Invalid program options!");
 
-    runtimeOptions.deviceIds = extension::getUsableDeviceIds(runtimeOptions.deviceIds);
-    runtimeOptions.canUseGpu = runtimeOptions.deviceIds.size() > 0;
+    programOptions.deviceIds = extension::getUsableDeviceIds(programOptions.deviceIds);
+    programOptions.canUseGpu = programOptions.deviceIds.size() > 0;
 
-	if(correctionOptions.useQualityScores){
-		// const bool fileHasQscores = hasQualityScores(fileOptions.inputfile);
+	if(programOptions.useQualityScores){
+		// const bool fileHasQscores = hasQualityScores(programOptions.inputfile);
 
 		// if(!fileHasQscores){
 		// 	std::cerr << "Quality scores have been disabled because no quality scores were found in the input file.\n";
 			
-		// 	correctionOptions.useQualityScores = false;
+		// 	programOptions.useQualityScores = false;
 		// }
 		
 		const bool hasQ = std::all_of(
-			fileOptions.inputfiles.begin(),
-			fileOptions.inputfiles.end(),
+			programOptions.inputfiles.begin(),
+			programOptions.inputfiles.end(),
 			[](const auto& s){
 				return hasQualityScores(s);
 			}
@@ -237,19 +226,19 @@ int main(int argc, char** argv){
 		if(!hasQ){
 			std::cerr << "Quality scores have been disabled because there exist reads in an input file without quality scores.\n";
 			
-			correctionOptions.useQualityScores = false;
+			programOptions.useQualityScores = false;
 		}
 
 	}
 
-	if(correctionOptions.correctionType != CorrectionType::Classic){
-		if(fileOptions.mlForestfileAnchor == ""){
+	if(programOptions.correctionType != CorrectionType::Classic){
+		if(programOptions.mlForestfileAnchor == ""){
 			std::cerr << "CorrectionType is not set to Classic, but no valid classifier file is provided. Abort!\n";
 			return 0;
 		}
 
-		if(fileOptions.mlForestfileCands == ""){
-			fileOptions.mlForestfileCands = fileOptions.mlForestfileAnchor;
+		if(programOptions.mlForestfileCands == ""){
+			programOptions.mlForestfileCands = programOptions.mlForestfileAnchor;
 		}
 	}
 
@@ -261,95 +250,90 @@ int main(int argc, char** argv){
 	std::cout << "----------------------------------------\n";
 
 
-	std::cout << "Alignment absolute required overlap: " << goodAlignmentProperties.min_overlap << "\n";
-	std::cout << "Alignment relative required overlap: " << goodAlignmentProperties.min_overlap_ratio << "\n";
-	std::cout << "Alignment max relative number of mismatches in overlap: " << goodAlignmentProperties.maxErrorRate << "\n";
+	std::cout << "Alignment absolute required overlap: " << programOptions.min_overlap << "\n";
+	std::cout << "Alignment relative required overlap: " << programOptions.min_overlap_ratio << "\n";
+	std::cout << "Alignment max relative number of mismatches in overlap: " << programOptions.maxErrorRate << "\n";
 
-	std::cout << "Number of hash tables / hash functions: " << correctionOptions.numHashFunctions << "\n";
-	if(correctionOptions.autodetectKmerlength){
+	std::cout << "Number of hash tables / hash functions: " << programOptions.numHashFunctions << "\n";
+	if(programOptions.autodetectKmerlength){
 		std::cout << "K-mer size for hashing: auto\n";
 	}else{
-		std::cout << "K-mer size for hashing: " << correctionOptions.kmerlength << "\n";
+		std::cout << "K-mer size for hashing: " << programOptions.kmerlength << "\n";
 	}
 	
-	std::cout << "Exclude ambigious reads: " << correctionOptions.excludeAmbiguousReads << "\n";
-	std::cout << "Use quality scores: " << correctionOptions.useQualityScores << "\n";
-	std::cout << "Estimated dataset coverage: " << correctionOptions.estimatedCoverage << "\n";
-	std::cout << "errorfactortuning: " << correctionOptions.estimatedErrorrate << "\n";
-	std::cout << "coveragefactortuning: " << correctionOptions.m_coverage << "\n";
-	std::cout << "Batch size: " << correctionOptions.batchsize << "\n";
+	std::cout << "Exclude ambigious reads: " << programOptions.excludeAmbiguousReads << "\n";
+	std::cout << "Use quality scores: " << programOptions.useQualityScores << "\n";
+	std::cout << "Estimated dataset coverage: " << programOptions.estimatedCoverage << "\n";
+	std::cout << "errorfactortuning: " << programOptions.estimatedErrorrate << "\n";
+	std::cout << "coveragefactortuning: " << programOptions.m_coverage << "\n";
+	std::cout << "Batch size: " << programOptions.batchsize << "\n";
 
-	std::cout << "Insert size: " << extensionOptions.insertSize << "\n";
-	std::cout << "Insert size deviation: " << extensionOptions.insertSizeStddev << "\n";
-	std::cout << "Allow extension outside of gap: " << extensionOptions.allowOutwardExtension << "\n";
-	std::cout << "Sort extended reads: " << extensionOptions.sortedOutput << "\n";
-	std::cout << "Output remaining reads: " << extensionOptions.outputRemainingReads << "\n";
+	std::cout << "Insert size: " << programOptions.insertSize << "\n";
+	std::cout << "Insert size deviation: " << programOptions.insertSizeStddev << "\n";
+	std::cout << "Allow extension outside of gap: " << programOptions.allowOutwardExtension << "\n";
+	std::cout << "Sort extended reads: " << programOptions.sortedOutput << "\n";
+	std::cout << "Output remaining reads: " << programOptions.outputRemainingReads << "\n";
 
-	std::cout << "Threads: " << runtimeOptions.threads << "\n";
-	std::cout << "Show progress bar: " << runtimeOptions.showProgress << "\n";
-	std::cout << "Can use GPU(s): " << runtimeOptions.canUseGpu << "\n";
-	if(runtimeOptions.canUseGpu){
+	std::cout << "Threads: " << programOptions.threads << "\n";
+	std::cout << "Show progress bar: " << programOptions.showProgress << "\n";
+	std::cout << "Can use GPU(s): " << programOptions.canUseGpu << "\n";
+	if(programOptions.canUseGpu){
 		std::cout << "GPU device ids: [";
-		for(int id : runtimeOptions.deviceIds){
+		for(int id : programOptions.deviceIds){
 			std::cout << " " << id;
 		}
 		std::cout << " ]\n";
 	}
-	std::cout << "Warpcore: " << runtimeOptions.warpcore << "\n";
-	std::cout << "Replicate GPU data: " << runtimeOptions.replicateGpuData << "\n";
+	std::cout << "Warpcore: " << programOptions.warpcore << "\n";
+	std::cout << "Replicate GPU data: " << programOptions.replicateGpuData << "\n";
 
-	std::cout << "Maximum memory for hash tables: " << memoryOptions.memoryForHashtables << "\n";
-	std::cout << "Maximum memory total: " << memoryOptions.memoryTotalLimit << "\n";
-	std::cout << "Hashtable load factor: " << memoryOptions.hashtableLoadfactor << "\n";
-	std::cout << "Bits per quality score: " << memoryOptions.qualityScoreBits << "\n";
+	std::cout << "Maximum memory for hash tables: " << programOptions.memoryForHashtables << "\n";
+	std::cout << "Maximum memory total: " << programOptions.memoryTotalLimit << "\n";
+	std::cout << "Hashtable load factor: " << programOptions.hashtableLoadfactor << "\n";
+	std::cout << "Bits per quality score: " << programOptions.qualityScoreBits << "\n";
 
-	std::cout << "Paired mode: " << to_string(fileOptions.pairType) << "\n";
-	std::cout << "Output directory: " << fileOptions.outputdirectory << "\n";
-	std::cout << "Temporary directory: " << fileOptions.tempdirectory << "\n";
-	std::cout << "Save preprocessed reads to file: " << fileOptions.save_binary_reads_to << "\n";
-	std::cout << "Load preprocessed reads from file: " << fileOptions.load_binary_reads_from << "\n";
-	std::cout << "Save hash tables to file: " << fileOptions.save_hashtables_to << "\n";
-	std::cout << "Load hash tables from file: " << fileOptions.load_hashtables_from << "\n";
+	std::cout << "Paired mode: " << to_string(programOptions.pairType) << "\n";
+	std::cout << "Output directory: " << programOptions.outputdirectory << "\n";
+	std::cout << "Temporary directory: " << programOptions.tempdirectory << "\n";
+	std::cout << "Save preprocessed reads to file: " << programOptions.save_binary_reads_to << "\n";
+	std::cout << "Load preprocessed reads from file: " << programOptions.load_binary_reads_from << "\n";
+	std::cout << "Save hash tables to file: " << programOptions.save_hashtables_to << "\n";
+	std::cout << "Load hash tables from file: " << programOptions.load_hashtables_from << "\n";
 	std::cout << "Input files: ";
-	for(auto& s : fileOptions.inputfiles){
+	for(auto& s : programOptions.inputfiles){
 		std::cout << s << ' ';
 	}
 	std::cout << "\n";
-	std::cout << "Extended reads output file: " << fileOptions.extendedReadsOutputfilename << "\n";
+	std::cout << "Extended reads output file: " << programOptions.extendedReadsOutputfilename << "\n";
 	std::cout << "Output file names: ";
-	for(auto& s : fileOptions.outputfilenames){
+	for(auto& s : programOptions.outputfilenames){
 		std::cout << s << ' ';
 	}
 	std::cout << "\n";
-	std::cout << "fixedStddev: " << extensionOptions.fixedStddev << "\n";
-	std::cout << "fixedStepsize: " << extensionOptions.fixedStepsize << "\n";
-	std::cout << "Allow outward extension: " << extensionOptions.allowOutwardExtension << "\n";
-	std::cout << "Sorted output: " << extensionOptions.sortedOutput << "\n";
-	std::cout << "Output remaining reads: " << extensionOptions.outputRemainingReads << "\n";
+	std::cout << "fixedStddev: " << programOptions.fixedStddev << "\n";
+	std::cout << "fixedStepsize: " << programOptions.fixedStepsize << "\n";
+	std::cout << "Allow outward extension: " << programOptions.allowOutwardExtension << "\n";
+	std::cout << "Sorted output: " << programOptions.sortedOutput << "\n";
+	std::cout << "Output remaining reads: " << programOptions.outputRemainingReads << "\n";
 	std::cout << "----------------------------------------\n";
 	std::cout << std::noboolalpha;
 
-	if(fileOptions.pairType == SequencePairType::SingleEnd || fileOptions.pairType == SequencePairType::Invalid){
+	if(programOptions.pairType == SequencePairType::SingleEnd || programOptions.pairType == SequencePairType::Invalid){
 		std::cout << "Only paired-end extension is supported. Abort.\n";
 		return 0;
 	}
 
-	if(!runtimeOptions.canUseGpu){
+	if(!programOptions.canUseGpu){
 		std::cout << "No valid GPUs selected. Abort\n";
 		return 0;
 	}
 
-    const int numThreads = runtimeOptions.threads;
+    const int numThreads = programOptions.threads;
 
 	omp_set_num_threads(numThreads);
 
 	care::performExtension(
-		correctionOptions,
-		extensionOptions,
-		runtimeOptions,
-		memoryOptions,
-		fileOptions,
-		goodAlignmentProperties
+		programOptions
 	);
 
 	return 0;

@@ -32,21 +32,15 @@ namespace gpu{
     
         std::pair<std::unique_ptr<GpuMinhasher>, GpuMinhasherType>
         constructGpuMinhasherFromGpuReadStorage(
-            const FileOptions& fileOptions,
-            const RuntimeOptions& runtimeOptions,
-            const MemoryOptions& memoryOptions,
-            const CorrectionOptions& correctionOptions,
+            const ProgramOptions& programOptions,
             const GpuReadStorage& gpuReadStorage,
             GpuMinhasherType requestedType
         ){
-            if(requestedType == GpuMinhasherType::Fake || runtimeOptions.warpcore == 0 || correctionOptions.singlehash){
-                if(correctionOptions.singlehash){                    
+            if(requestedType == GpuMinhasherType::Fake || programOptions.warpcore == 0 || programOptions.singlehash){
+                if(programOptions.singlehash){                    
                     return std::make_pair(
                         constructFakeGpuSingleHashMinhasherFromGpuReadStorage(
-                            correctionOptions,
-                            fileOptions,
-                            runtimeOptions,
-                            memoryOptions,
+                            programOptions,
                             gpuReadStorage
                         ),
                         GpuMinhasherType::FakeSingleHash
@@ -54,23 +48,17 @@ namespace gpu{
                 }else{
                     return std::make_pair(
                         constructFakeGpuMinhasherFromGpuReadStorage(
-                            correctionOptions,
-                            fileOptions,
-                            runtimeOptions,
-                            memoryOptions,
+                            programOptions,
                             gpuReadStorage
                         ),
                         GpuMinhasherType::Fake
                     );
                 }
             #ifdef CARE_HAS_WARPCORE
-            }else if(requestedType == GpuMinhasherType::Single || runtimeOptions.deviceIds.size() < 2){
+            }else if(requestedType == GpuMinhasherType::Single || programOptions.deviceIds.size() < 2){
                 return std::make_pair(
                     constructSingleGpuMinhasherFromGpuReadStorage(
-                        correctionOptions,
-                        fileOptions,
-                        runtimeOptions,
-                        memoryOptions,
+                        programOptions,
                         gpuReadStorage
                     ),
                     GpuMinhasherType::Single
@@ -78,10 +66,7 @@ namespace gpu{
             }else if(requestedType == GpuMinhasherType::Multi){
                 return std::make_pair(
                     constructMultiGpuMinhasherFromGpuReadStorage(
-                        correctionOptions,
-                        fileOptions,
-                        runtimeOptions,
-                        memoryOptions,
+                        programOptions,
                         gpuReadStorage
                     ),
                     GpuMinhasherType::Multi
@@ -90,10 +75,7 @@ namespace gpu{
             }else{
                 return std::make_pair(
                     constructFakeGpuMinhasherFromGpuReadStorage(
-                        correctionOptions,
-                        fileOptions,
-                        runtimeOptions,
-                        memoryOptions,
+                        programOptions,
                         gpuReadStorage
                     ),
                     GpuMinhasherType::Fake

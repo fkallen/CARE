@@ -41,12 +41,7 @@ namespace care{
 
 template<class Callback>
 void extend_cpu_pairedend(
-    const GoodAlignmentProperties& goodAlignmentProperties,
-    const CorrectionOptions& correctionOptions,
-    const ExtensionOptions& extensionOptions,
-    const RuntimeOptions& runtimeOptions,
-    const FileOptions& /*fileOptions*/,
-    const MemoryOptions& memoryOptions,
+    const ProgramOptions& programOptions,
     const CpuMinhasher& minhasher,
     const CpuReadStorage& readStorage,
     Callback submitReadyResults
@@ -54,7 +49,7 @@ void extend_cpu_pairedend(
     const auto rsMemInfo = readStorage.getMemoryInfo();
     const auto mhMemInfo = minhasher.getMemoryInfo();
 
-    std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
+    std::size_t memoryAvailableBytesHost = programOptions.memoryTotalLimit;
     if(memoryAvailableBytesHost > rsMemInfo.host){
         memoryAvailableBytesHost -= rsMemInfo.host;
     }else{
@@ -66,7 +61,7 @@ void extend_cpu_pairedend(
         memoryAvailableBytesHost = 0;
     }
 
-    const std::size_t numReadsToProcess = getNumReadsToProcess(&readStorage, runtimeOptions);
+    const std::size_t numReadsToProcess = getNumReadsToProcess(&readStorage, programOptions);
 
     auto readIdGenerator = makeIteratorRangeTraversal(
         thrust::make_counting_iterator<read_number>(0),
@@ -81,7 +76,7 @@ void extend_cpu_pairedend(
     const std::uint64_t totalNumReadPairs = numReadsToProcess / 2;
 
     auto showProgress = [&](auto totalCount, auto seconds){
-        if(runtimeOptions.showProgress){
+        if(programOptions.showProgress){
 
             printf("Processed %10u of %10lu read pairs (Runtime: %03d:%02d:%02d)\r",
                     totalCount, totalNumReadPairs,
@@ -103,8 +98,8 @@ void extend_cpu_pairedend(
     ProgressThread<read_number> progressThread(totalNumReadPairs, showProgress, updateShowProgressInterval);
 
     
-    const int insertSize = extensionOptions.insertSize;
-    const int insertSizeStddev = extensionOptions.insertSizeStddev;
+    const int insertSize = programOptions.insertSize;
+    const int insertSizeStddev = programOptions.insertSizeStddev;
     const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
     const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
     //const std::size_t decodedSequencePitchInBytes = maximumSequenceLength;
@@ -127,8 +122,6 @@ void extend_cpu_pairedend(
 
     #pragma omp parallel
     {
-        GoodAlignmentProperties goodAlignmentProperties2 = goodAlignmentProperties;
-        //goodAlignmentProperties2.maxErrorRate = 0.05;
 
         constexpr int maxextensionPerStep = 20;
 
@@ -141,8 +134,7 @@ void extend_cpu_pairedend(
             maximumSequenceLength,
             readStorage, 
             minhasher,
-            correctionOptions,
-            goodAlignmentProperties2,
+            programOptions,
             &qualityConversion
         };
 
@@ -154,14 +146,14 @@ void extend_cpu_pairedend(
         std::map<int, int> extensionLengthsMap;
         std::map<int, int> mismatchesBetweenMateExtensions;
 
-        const int batchsizePairs = correctionOptions.batchsize;
+        const int batchsizePairs = programOptions.batchsize;
 
         std::vector<read_number> currentIds(2 * batchsizePairs);
         std::vector<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsizePairs);
         std::vector<int> currentReadLengths(2 * batchsizePairs);
         std::vector<char> currentQualityScores(2 * qualityPitchInBytes * batchsizePairs);
 
-        if(!correctionOptions.useQualityScores){
+        if(!programOptions.useQualityScores){
             std::fill(currentQualityScores.begin(), currentQualityScores.end(), 'I');
         }
 
@@ -226,7 +218,7 @@ void extend_cpu_pairedend(
                     currentIds.size()
                 );
 
-                if(correctionOptions.useQualityScores){
+                if(programOptions.useQualityScores){
                     readStorage.gatherQualities(
                         currentQualityScores.data(),
                         qualityPitchInBytes,
@@ -276,7 +268,7 @@ void extend_cpu_pairedend(
 
             const std::size_t numExtended = splittedExtOutput.extendedReads.size();
 
-            if(!extensionOptions.allowOutwardExtension){
+            if(!programOptions.allowOutwardExtension){
                 for(auto& er : splittedExtOutput.extendedReads){
                     er.removeOutwardExtension();
                 }
@@ -301,7 +293,7 @@ void extend_cpu_pairedend(
         #pragma omp single
         {
 
-            std::cerr << "First iteration. insertsizedev: " << extensionOptions.insertSizeStddev 
+            std::cerr << "First iteration. insertsizedev: " << programOptions.insertSizeStddev 
                 << ", maxextensionPerStep: " << fixedStepsize
                 << ", minCoverageForExtension: " << minCoverageForExtension
                 << ", isLastIteration: " << isLastIteration 
@@ -333,7 +325,7 @@ void extend_cpu_pairedend(
         {
             std::cerr << "Will repeat extension of " << totalNumToRepeat << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
 
-            std::cerr << "Second iteration. insertsizedev: " << extensionOptions.insertSizeStddev 
+            std::cerr << "Second iteration. insertsizedev: " << programOptions.insertSizeStddev 
             << ", maxextensionPerStep: " << fixedStepsize
             << ", minCoverageForExtension: " << minCoverageForExtension
             << ", isLastIteration: " << isLastIteration 
@@ -434,11 +426,11 @@ MemoryFileFixedSize<ExtendedRead>
 //std::vector<ExtendedRead>
 extend_cpu_singleend(
     const GoodAlignmentProperties& goodAlignmentProperties,
-    const CorrectionOptions& correctionOptions,
-    const ExtensionOptions& extensionOptions,
-    const RuntimeOptions& runtimeOptions,
-    const FileOptions& fileOptions,
-    const MemoryOptions& memoryOptions,
+    const CorrectionOptions& programOptions,
+    const ExtensionOptions& programOptions,
+    const RuntimeOptions& programOptions,
+    const FileOptions& programOptions,
+    const MemoryOptions& programOptions,
     const CpuMinhasher& minhasher,
     const CpuReadStorage& readStorage
 ){
@@ -451,36 +443,16 @@ extend_cpu_singleend(
 
 
 void extend_cpu(
-    const GoodAlignmentProperties& goodAlignmentProperties,
-    const CorrectionOptions& correctionOptions,
-    const ExtensionOptions& extensionOptions,
-    const RuntimeOptions& runtimeOptions,
-    const FileOptions& fileOptions,
-    const MemoryOptions& memoryOptions,
+    const ProgramOptions& programOptions,
     const CpuMinhasher& minhasher,
     const CpuReadStorage& readStorage,
     SubmitReadyExtensionResultsCallback submitReadyResults
 ){
-    if(fileOptions.pairType == SequencePairType::SingleEnd){
+    if(programOptions.pairType == SequencePairType::SingleEnd){
         throw std::runtime_error("single end extension not possible");
-        // return extend_cpu_singleend(
-        //     goodAlignmentProperties,
-        //     correctionOptions,
-        //     extensionOptions,
-        //     runtimeOptions,
-        //     fileOptions,
-        //     memoryOptions,
-        //     minhasher,
-        //     readStorage
-        // );
     }else{
         extend_cpu_pairedend(
-            goodAlignmentProperties,
-            correctionOptions,
-            extensionOptions,
-            runtimeOptions,
-            fileOptions,
-            memoryOptions,
+            programOptions,
             minhasher,
             readStorage,
             submitReadyResults

@@ -45,21 +45,17 @@ namespace cpu{
 
 
 SerializedObjectStorage correct_cpu(
-    const GoodAlignmentProperties& goodAlignmentProperties,
-    const CorrectionOptions& correctionOptions,
-    const RuntimeOptions& runtimeOptions,
-    const FileOptions& fileOptions,
-    const MemoryOptions& memoryOptions,
+    const ProgramOptions& programOptions,
     CpuMinhasher& minhasher,
     CpuReadStorage& readStorage
 ){
 
-    omp_set_num_threads(runtimeOptions.threads);
+    omp_set_num_threads(programOptions.threads);
 
     const auto rsMemInfo = readStorage.getMemoryInfo();
     const auto mhMemInfo = minhasher.getMemoryInfo();
 
-    std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
+    std::size_t memoryAvailableBytesHost = programOptions.memoryTotalLimit;
     if(memoryAvailableBytesHost > rsMemInfo.host){
         memoryAvailableBytesHost -= rsMemInfo.host;
     }else{
@@ -96,9 +92,9 @@ SerializedObjectStorage correct_cpu(
     const std::size_t memoryLimitData = memoryForPartialResultsInBytes * 0.75;
     const std::size_t memoryLimitOffsets = memoryForPartialResultsInBytes * 0.25;
 
-    SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, fileOptions.tempdirectory + "/");
+    SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, programOptions.tempdirectory + "/");
 
-    const std::size_t numReadsToProcess = getNumReadsToProcess(&readStorage, runtimeOptions);
+    const std::size_t numReadsToProcess = getNumReadsToProcess(&readStorage, programOptions);
 
     IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(
         thrust::make_counting_iterator<read_number>(0),
@@ -106,14 +102,14 @@ SerializedObjectStorage correct_cpu(
     );
     
     BackgroundThread outputThread(true);
-    outputThread.setMaximumQueueSize(runtimeOptions.threads);
+    outputThread.setMaximumQueueSize(programOptions.threads);
 
     CpuErrorCorrector::TimeMeasurements timingsOfAllThreads;
 
-    ClfAgent clfAgent_(correctionOptions, fileOptions);
+    ClfAgent clfAgent_(programOptions);
     
     auto showProgress = [&](auto totalCount, auto seconds){
-        if(runtimeOptions.showProgress){
+        if(programOptions.showProgress){
             std::size_t totalNumReads = numReadsToProcess;
 
             printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
@@ -144,14 +140,13 @@ SerializedObjectStorage correct_cpu(
         const std::size_t decodedSequencePitchInBytes = readStorage.getSequenceLengthUpperBound();
         const std::size_t qualityPitchInBytes = readStorage.getSequenceLengthUpperBound();
 
-        const int myBatchsize = std::max((readStorage.isPairedEnd() ? 2 : 1), correctionOptions.batchsize);
+        const int myBatchsize = std::max((readStorage.isPairedEnd() ? 2 : 1), programOptions.batchsize);
 
         CpuErrorCorrector errorCorrector(
             encodedSequencePitchInInts2Bit,
             decodedSequencePitchInBytes,
             qualityPitchInBytes,
-            correctionOptions,
-            goodAlignmentProperties,
+            programOptions,
             minhasher,
             readStorage,
             correctionFlags,
@@ -194,7 +189,7 @@ SerializedObjectStorage correct_cpu(
                 batchReadIds.size()
             );
 
-            if(correctionOptions.useQualityScores){
+            if(programOptions.useQualityScores){
                 readStorage.gatherQualities(
                     batchQualities.data(),
                     qualityPitchInBytes,
@@ -319,7 +314,7 @@ SerializedObjectStorage correct_cpu(
     #ifdef ENABLE_CPU_CORRECTOR_TIMING
 
     auto totalDurationOfThreads = timingsOfAllThreads.getSumOfDurations();
-    const int numThreads = runtimeOptions.threads;
+    const int numThreads = programOptions.threads;
 
     auto printDuration = [&](const auto& name, const auto& duration){
         std::cout << "# average time per thread ("<< name << "): "

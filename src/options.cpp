@@ -1,4 +1,4 @@
-#include <args.hpp>
+#include <options.hpp>
 #include <hpc_helpers.cuh>
 #include <util.hpp>
 #include <config.hpp>
@@ -16,25 +16,43 @@
 namespace filesys = std::experimental::filesystem;
 
 namespace care{
-namespace args{
 
-    std::vector<std::string> split(const std::string& str, char c){
-    	std::vector<std::string> result;
 
-    	std::stringstream ss(str);
-    	std::string s;
-
-    	while (std::getline(ss, s, c)) {
-    		result.emplace_back(s);
-    	}
-
-    	return result;
+    std::string to_string(SequencePairType s){
+        switch (s)
+        {
+        case SequencePairType::Invalid:
+            return "Invalid";
+        case SequencePairType::SingleEnd:
+            return "SingleEnd";
+        case SequencePairType::PairedEnd:
+            return "PairedEnd";
+        default:
+            return "Error";
+        }
     }
 
-	template<>
-	GoodAlignmentProperties to<GoodAlignmentProperties>(const cxxopts::ParseResult& pr){
+    std::string to_string(CorrectionType t)
+    {
+        switch (t)
+        {
+        case CorrectionType::Classic:
+            return "Classic";
+            break;
+        case CorrectionType::Forest:
+            return "Forest";
+            break;
+        case CorrectionType::Print:
+            return "Print";
+            break;
+        default:
+            return "Forgot to name correction type";
+            break;
+        }
+    }
 
-        GoodAlignmentProperties result{};
+    ProgramOptions makeProgramOptions(const cxxopts::ParseResult& pr){
+        ProgramOptions result;
 
         if(pr.count("minalignmentoverlap")){
             result.min_overlap = pr["minalignmentoverlap"].as<int>();
@@ -45,13 +63,6 @@ namespace args{
         if(pr.count("minalignmentoverlapratio")){
             result.min_overlap_ratio = pr["minalignmentoverlapratio"].as<float>();
         }
-
-        return result;
-	}
-
-	template<>
-	CorrectionOptions to<CorrectionOptions>(const cxxopts::ParseResult& pr){
-        CorrectionOptions result{};
 
         if(pr.count("excludeAmbiguous")){
             result.excludeAmbiguousReads = pr["excludeAmbiguous"].as<bool>();
@@ -86,9 +97,11 @@ namespace args{
         if(pr.count("coverage")){
             result.estimatedCoverage = pr["coverage"].as<float>();
         }
+
         if(pr.count("errorfactortuning")){
             result.estimatedErrorrate = pr["errorfactortuning"].as<float>();
         }
+
         if(pr.count("coveragefactortuning")){
             result.m_coverage = pr["coveragefactortuning"].as<float>();
         }
@@ -103,6 +116,7 @@ namespace args{
         }else{
             result.autodetectKmerlength = true;
         }
+
         if(pr.count("hashmaps")){
             result.numHashFunctions = pr["hashmaps"].as<int>();
         }        
@@ -110,9 +124,11 @@ namespace args{
         if(pr.count("batchsize")){
             result.batchsize = pr["batchsize"].as<int>();
         }
+
         if(pr.count("candidateCorrectionNewColumns")){
             result.new_columns_to_correct = pr["candidateCorrectionNewColumns"].as<int>();
         }
+
         if(pr.count("correctionType")){
             const int val = pr["correctionType"].as<int>();
 
@@ -122,6 +138,7 @@ namespace args{
                 default: result.correctionType = CorrectionType::Classic; break;
             }
         }
+
         if(pr.count("thresholdAnchor")){
             float t = pr["thresholdAnchor"].as<float>();
             result.thresholdAnchor = t>1.0?t/100:t;
@@ -145,13 +162,6 @@ namespace args{
         if(pr.count("pairedthreshold1")){
             result.pairedthreshold1 = pr["pairedthreshold1"].as<float>();
         }
-
-        return result;
-	}
-
-    template<>
-	ExtensionOptions to<ExtensionOptions>(const cxxopts::ParseResult& pr){
-        ExtensionOptions result{};
 
         if(pr.count("insertsize")){
             result.insertSize = pr["insertsize"].as<int>();
@@ -181,16 +191,6 @@ namespace args{
             result.outputRemainingReads = pr["outputRemaining"].as<bool>();
         }
 
-
-        
-
-        return result;
-	}
-
-	template<>
-	RuntimeOptions to<RuntimeOptions>(const cxxopts::ParseResult& pr){
-        RuntimeOptions result{};
-
         if(pr.count("threads")){
             result.threads = pr["threads"].as<int>();
         }
@@ -217,13 +217,6 @@ namespace args{
         if(pr.count("fixedNumberOfReads")){
             result.fixedNumberOfReads = pr["fixedNumberOfReads"].as<std::size_t>();
         }
-
-        return result;
-	}
-
-    template<>
-	MemoryOptions to<MemoryOptions>(const cxxopts::ParseResult& pr){
-        MemoryOptions result{};
 
         auto parseMemoryString = [](const auto& string) -> std::size_t{
             if(string.length() > 0){
@@ -290,18 +283,12 @@ namespace args{
 
         if(pr.count("qualityScoreBits")){
             result.qualityScoreBits = pr["qualityScoreBits"].as<int>();
-        } 
-
-        return result;
-	}
-
-	template<>
-	FileOptions to<FileOptions>(const cxxopts::ParseResult& pr){
-        FileOptions result{};
+        }
 
         if(pr.count("outdir")){
 		    result.outputdirectory = pr["outdir"].as<std::string>();
         }
+
         if(pr.count("pairmode")){
             const std::string arg = pr["pairmode"].as<std::string>();
 
@@ -313,27 +300,35 @@ namespace args{
                 result.pairType = SequencePairType::Invalid;
             }
         }  
+
         if(pr.count("eo")){
             result.extendedReadsOutputfilename = pr["eo"].as<std::string>();
-        }       
+        }
+
         if(pr.count("nReads")){
 		    result.nReads = pr["nReads"].as<std::uint64_t>();
         }
+
         if(pr.count("min_length")){
             result.minimum_sequence_length = pr["min_length"].as<int>();
         }
+
         if(pr.count("max_length")){
             result.maximum_sequence_length = pr["max_length"].as<int>();
         }
+
         if(pr.count("save-preprocessedreads-to")){
             result.save_binary_reads_to = pr["save-preprocessedreads-to"].as<std::string>();
         }
+
         if(pr.count("load-preprocessedreads-from")){
             result.load_binary_reads_from = pr["load-preprocessedreads-from"].as<std::string>();
         }
+
         if(pr.count("save-hashtables-to")){
             result.save_hashtables_to = pr["save-hashtables-to"].as<std::string>();
         }
+
         if(pr.count("load-hashtables-from")){
             result.load_hashtables_from = pr["load-hashtables-from"].as<std::string>();
         }
@@ -355,16 +350,15 @@ namespace args{
         if(pr.count("inputfiles")){
             result.inputfiles = pr["inputfiles"].as<std::vector<std::string>>();
         }
+
         if(pr.count("outputfilenames")){
             result.outputfilenames = pr["outputfilenames"].as<std::vector<std::string>>();
         }
 
         return result;
-	}
+    }
 
-
-    template<>
-    bool isValid<GoodAlignmentProperties>(const GoodAlignmentProperties& opt){
+    bool isValid(const ProgramOptions& opt){
         bool valid = true;
 
         if(opt.maxErrorRate < 0.0f || opt.maxErrorRate > 1.0f){
@@ -383,13 +377,6 @@ namespace args{
                         + std::to_string(opt.min_overlap_ratio) << std::endl;
         }
 
-        return valid;
-    }
-
-    template<>
-    bool isValid<CorrectionOptions>(const CorrectionOptions& opt){
-        bool valid = true;
-
         if(opt.estimatedCoverage <= 0.0f){
             valid = false;
             std::cout << "Error: estimatedCoverage must be > 0.0, is " + std::to_string(opt.estimatedCoverage) << std::endl;
@@ -405,7 +392,6 @@ namespace args{
             std::cout << "Error: batchsize must be in range [1, ], is " + std::to_string(opt.batchsize) << std::endl;
         }
 
-
         if(opt.numHashFunctions < 1){
             valid = false;
             std::cout << "Error: Number of hashmaps must be >= 1, is " + std::to_string(opt.numHashFunctions) << std::endl;
@@ -416,13 +402,6 @@ namespace args{
             std::cout << "Error: kmer length must be in range [0, " << max_k<kmer_type>::value 
                 << "], is " + std::to_string(opt.kmerlength) << std::endl;
         }
-
-        return valid;
-    }
-
-    template<>
-    bool isValid<ExtensionOptions>(const ExtensionOptions& opt){
-        bool valid = true;
 
         if(opt.insertSize < 0){
             valid = false;
@@ -448,36 +427,15 @@ namespace args{
                 << opt.fixedStepsize << std::endl;
         }
 
-        return valid;
-    }
-
-    template<>
-    bool isValid<RuntimeOptions>(const RuntimeOptions& opt){
-        bool valid = true;
-
         if(opt.threads < 1){
             valid = false;
             std::cout << "Error: threads must be > 0, is " + std::to_string(opt.threads) << std::endl;
         }
 
-        return valid;
-    }
-
-    template<>
-    bool isValid<MemoryOptions>(const MemoryOptions& opt){
-        bool valid = true;
-
         if(opt.qualityScoreBits != 1 && opt.qualityScoreBits != 2 && opt.qualityScoreBits != 8){
             valid = false;
             std::cout << "Error: qualityScoreBits must be 1,2,or 8, is " + std::to_string(opt.qualityScoreBits) << std::endl;
         }
-
-        return valid;
-    }
-
-    template<>
-    bool isValid<FileOptions>(const FileOptions& opt){
-        bool valid = true;
 
         if(!filesys::exists(opt.tempdirectory)){
             bool created = filesys::create_directories(opt.tempdirectory);
@@ -559,9 +517,7 @@ namespace args{
                 }
             }
         }
-        
+
         return valid;
     }
-
-}
 }
