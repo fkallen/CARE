@@ -479,14 +479,6 @@ namespace args{
     bool isValid<FileOptions>(const FileOptions& opt){
         bool valid = true;
 
-        // {
-        //     std::ifstream is(opt.inputfile);
-        //     if(!(bool)is){
-        //         valid = false;
-        //         std::cout << "Error: cannot find input file " << opt.inputfile << std::endl;
-        //     }
-        // }
-
         if(!filesys::exists(opt.tempdirectory)){
             bool created = filesys::create_directories(opt.tempdirectory);
             if(!created){
@@ -514,26 +506,6 @@ namespace args{
         }
 
         {
-            for(const auto& outputfilename : opt.outputfilenames){
-                const std::string outputfile = opt.outputdirectory + "/" + outputfilename;
-                std::ofstream os(outputfile);
-                if(!(bool)os){
-                    valid = false;
-                    std::cout << "Error: cannot open output file " << outputfile << std::endl;
-                }
-            }            
-        }
-
-        {
-            const std::string outputfile = opt.outputdirectory + "/" + opt.extendedReadsOutputfilename;
-            std::ofstream os(outputfile);
-            if(!(bool)os){
-                valid = false;
-                std::cout << "Error: cannot open extended reads output file " << outputfile << std::endl;
-            }
-        }
-
-        {
             std::vector<FileFormat> formats;
             for(const auto& inputfile : opt.inputfiles){
                 FileFormat f = getFileFormat(inputfile);
@@ -552,16 +524,6 @@ namespace args{
             if(!sameFormats){
                 valid = false;
                 std::cout << "Error: Must not specify both fasta and fastq files!" << std::endl;
-            }
-        }
-
-        {
-            std::ofstream os(opt.tempdirectory+"/tmptest");
-            if(!(bool)os){
-                valid = false;
-                std::cout << "Error: cannot open temporary test file " << opt.tempdirectory+"/tmptest" << std::endl;
-            }else{
-                filehelpers::removeFile(opt.tempdirectory+"/tmptest");
             }
         }
 
