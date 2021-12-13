@@ -1,8 +1,9 @@
 #ifndef CARE_CLASSIFICATION_GPU_CUH
 #define CARE_CLASSIFICATION_GPU_CUH
 
+#include <classification.hpp>
 #include <gpu/gpumsa.cuh>
-
+#include <type_traits>
 namespace care{
 
 namespace gpu{
@@ -519,16 +520,159 @@ namespace gpu{
                 *(features + 41) = float(std::max(a_begin-msaPos, msaPos-a_end))/(c_end-c_begin);
             }
         };
+
+
+        struct extract_anchor_v2{
+
+            HOSTDEVICEQUALIFIER
+            static constexpr int numFeatures() noexcept{
+                return 11;
+            }
+
+            template<class OutIter>
+            HOSTDEVICEQUALIFIER
+            void operator()(OutIter features, const ExtractAnchorInputData& input) const noexcept{
+                const int msaPos = input.msaPos;
+                const int pitch = input.msa.columnPitchInElements;
+                const int* const countsA = &input.msa.counts[0 * pitch];
+                const int* const countsC = &input.msa.counts[1 * pitch];
+                const int* const countsG = &input.msa.counts[2 * pitch];
+                const int* const countsT = &input.msa.counts[3 * pitch];
+
+                const float* const weightsA = &input.msa.weights[0 * pitch];
+                const float* const weightsC = &input.msa.weights[1 * pitch];
+                const float* const weightsG = &input.msa.weights[2 * pitch];
+                const float* const weightsT = &input.msa.weights[3 * pitch];
+
+                const float countsACGT = input.msa.coverages[msaPos];
+                const float weightsACGT = weightsA[msaPos] + weightsC[msaPos] + weightsG[msaPos] + weightsT[msaPos];
+
+                float weightCons = 0, countCons = 0;
+
+                switch (input.consensusBase) {
+                    case 'A':
+                        weightCons = weightsA[msaPos];
+                        countCons = countsA[msaPos];
+                        break;
+                    case 'C':
+                        weightCons = weightsC[msaPos];
+                        countCons = countsC[msaPos];
+                        break;
+                    case 'G':
+                        weightCons = weightsG[msaPos];
+                        countCons = countsG[msaPos];
+                        break;
+                    case 'T':
+                        weightCons = weightsT[msaPos];
+                        countCons = countsT[msaPos];
+                        break;
+                    default: break;
+                }
+
+                *(features + 0) = float(input.msa.origCoverages[msaPos]) / countsACGT;
+                *(features + 1) = input.msa.origWeights[msaPos] / weightsACGT;
+                *(features + 2) = input.msa.origWeights[msaPos] / countsACGT;
+                *(features + 3) = countCons / countsACGT;
+                *(features + 4) = input.msa.support[msaPos];
+                *(features + 5) = weightCons / countsACGT;
+                *(features + 6) = weightsACGT / countsACGT;
+                *(features + 7) = input.msaProperties.avg_support;
+                *(features + 8) = input.msaProperties.min_support;
+                *(features + 9) = float(input.msaProperties.max_coverage) / input.estimatedCoverage;
+                *(features + 10) = float(input.msaProperties.min_coverage) / input.estimatedCoverage;
+             }
+        };
+
+        struct extract_cands_v2{
+
+            HOSTDEVICEQUALIFIER
+            static constexpr int numFeatures() noexcept{
+                return 12;
+            }
+
+            template<class OutIter>
+            HOSTDEVICEQUALIFIER
+            void operator()(OutIter features, const ExtractCandidateInputData& input) const noexcept{
+                const int a_begin = input.subjectColumnsBegin_incl;
+                const int a_end = input.subjectColumnsEnd_excl;
+                const int c_begin = input.queryColumnsBegin_incl;
+                const int c_end = input.queryColumnsEnd_excl;
+
+                const int msaPos = input.msaPos;
+                const int pitch = input.msa.columnPitchInElements;
+                const float countsACGT = input.msa.coverages[msaPos];
+                const int* const countsA = &input.msa.counts[0 * pitch];
+                const int* const countsC = &input.msa.counts[1 * pitch];
+                const int* const countsG = &input.msa.counts[2 * pitch];
+                const int* const countsT = &input.msa.counts[3 * pitch];
+
+                const float* const weightsA = &input.msa.weights[0 * pitch];
+                const float* const weightsC = &input.msa.weights[1 * pitch];
+                const float* const weightsG = &input.msa.weights[2 * pitch];
+                const float* const weightsT = &input.msa.weights[3 * pitch];
+                const float weightsACGT = weightsA[msaPos] + weightsC[msaPos] + weightsG[msaPos] + weightsT[msaPos];
+
+                float weightCons = 0, countCons = 0;
+
+                switch (input.consensusBase) {
+                    case 'A':
+                        weightCons = weightsA[msaPos];
+                        countCons = countsA[msaPos];
+                        break;
+                    case 'C':
+                        weightCons = weightsC[msaPos];
+                        countCons = countsC[msaPos];
+                        break;
+                    case 'G':
+                        weightCons = weightsG[msaPos];
+                        countCons = countsG[msaPos];
+                        break;
+                    case 'T':
+                        weightCons = weightsT[msaPos];
+                        countCons = countsT[msaPos];
+                        break;
+                    default: break;
+                }
+
+                *(features + 0) = float(input.msa.origCoverages[msaPos]) / countsACGT;
+                *(features + 1) = input.msa.origWeights[msaPos] / weightsACGT;
+                *(features + 2) = input.msa.origWeights[msaPos] / countsACGT;
+                *(features + 3) = countCons / countsACGT;
+                *(features + 4) = input.msa.support[msaPos];
+                *(features + 5) = weightCons / countsACGT;
+                *(features + 6) = weightsACGT / countsACGT;
+                *(features + 7) = input.msaProperties.avg_support;
+                *(features + 8) = input.msaProperties.min_support;
+                *(features + 9) = float(input.msaProperties.max_coverage) / input.estimatedCoverage;
+                *(features + 10) = float(input.msaProperties.min_coverage) / input.estimatedCoverage;
+                *(features + 11) = float(std::min(a_end, c_end)-std::max(a_begin, c_begin))
+                    / (std::max(a_end, c_end)-std::min(a_begin, c_begin)); // jaccard
+            }
+        };
+
+
+        //map cpu extractors to corresponding gpu extractors
+
+        template<class CpuExtractor> struct GpuExtractorSelection;
+        template<> struct GpuExtractorSelection<care::detail::extract_anchor>{using type = care::gpu::detail::extract_anchor;};
+        template<> struct GpuExtractorSelection<care::detail::extract_cands>{using type = care::gpu::detail::extract_cands;};
+        template<> struct GpuExtractorSelection<care::detail::extract_anchor_transformed>{using type = care::gpu::detail::extract_anchor_transformed;};
+        template<> struct GpuExtractorSelection<care::detail::extract_cands_transformed>{using type = care::gpu::detail::extract_cands_transformed;};
+        template<> struct GpuExtractorSelection<care::detail::extract_anchor_normed_weights>{using type = care::gpu::detail::extract_anchor_normed_weights;};
+        template<> struct GpuExtractorSelection<care::detail::extract_cands_normed_weights>{using type = care::gpu::detail::extract_cands_normed_weights;};
+        template<> struct GpuExtractorSelection<care::detail::extract_anchor_transformed_normed_weights>{using type = care::gpu::detail::extract_anchor_transformed_normed_weights;};
+        template<> struct GpuExtractorSelection<care::detail::extract_cands_transformed_normed_weights>{using type = care::gpu::detail::extract_cands_transformed_normed_weights;};
+        template<> struct GpuExtractorSelection<care::detail::extract_anchor_v2>{using type = care::gpu::detail::extract_anchor_v2;};
+        template<> struct GpuExtractorSelection<care::detail::extract_cands_v2>{using type = care::gpu::detail::extract_cands_v2;};
+
     } //namespace detail
 
-    using anchor_extractor = detail::extract_anchor_transformed;
-    using cands_extractor = detail::extract_cands_transformed;
+    using anchor_extractor = detail::GpuExtractorSelection<care::anchor_extractor>::type;
+    using cands_extractor = detail::GpuExtractorSelection<care::cands_extractor>::type;
 
-}
+} //namespace gpu
 
-
-
-}
+} //namespace care
 
 
 
