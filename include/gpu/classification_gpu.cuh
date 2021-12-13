@@ -593,8 +593,8 @@ namespace gpu{
             template<class OutIter>
             HOSTDEVICEQUALIFIER
             void operator()(OutIter features, const ExtractCandidateInputData& input) const noexcept{
-                const int a_begin = input.subjectColumnsBegin_incl;
-                const int a_end = input.subjectColumnsEnd_excl;
+                const int a_begin = input.anchorColumnsBegin_incl;
+                const int a_end = input.anchorColumnsEnd_excl;
                 const int c_begin = input.queryColumnsBegin_incl;
                 const int c_end = input.queryColumnsEnd_excl;
 
