@@ -42,21 +42,27 @@ def check_descr(old, new):
     return new
 
 
-def onehot(base):
-    if base == "A":
-        return (1,0,0,0)
-    elif base == "C":
-        return (0,1,0,0)
-    elif base == "G":
-        return (0,0,1,0)
-    elif base == "T":
-        return (0,0,0,1)
-    else:
-        print("ASDASDASDASD!!!!!!!!!!!!!!!!!", base)
-        return (0,0,0,0)
+# def onehot(base):
+#     if base == "A":
+#         return (1,0,0,0)
+#     elif base == "C":
+#         return (0,1,0,0)
+#     elif base == "G":
+#         return (0,0,1,0)
+#     elif base == "T":
+#         return (0,0,0,1)
+#     else:
+#         print("ASDASDASDASD!!!!!!!!!!!!!!!!!", base)
+#         return (0,0,0,0)
 
-def onehot_(enc):
-    return np.array(["A","C","G","T"])[[bool(x) for x in enc]][0]
+# def onehot_(enc):
+#     return np.array(["A","C","G","T"])[[bool(x) for x in enc]][0]
+
+def nucleo_id(enc):
+    return "ACGT".index(enc)
+
+def nucleotide(id):
+    return "ACGT"[id]
 
 def read_data(paths):    
     ### get X
@@ -66,9 +72,11 @@ def read_data(paths):
     else:
         with open(paths[0]["X"], "r", encoding="utf-8") as infile:
             descr = infile.readline()[:-1]
-            num_features = len(infile.readline().split()) - 2
-    
-    row_t = np.dtype([("fileId", "u1"), ("readId", "u4"), ("col", "i2"), ('atts', '('+str(num_features)+',)f4'), ('class', bool)])
+            num_features = len(infile.readline().split()) - 3
+            if num_features != int(descr.split()[0]):
+                raise ValueError("Data descriptor does not fit data shape!")
+
+    row_t = np.dtype([("fileId", "u1"), ("readId", "u4"), ("col", "i2"), ('atts', '('+str(num_features)+',)f4'), ('class', "u1")])
 
     linecounts = [npz_samples_metadata(path["np"])[0] if "np" in path and os.path.isfile(path["np"]) else sum(1 for _ in open(path["X"], "r"))-1 for path in tqdm(paths, total=len(paths), colour="blue", miniters=1, mininterval=0, leave=False)]
     tqdm.write("# files: "+str(len(linecounts)))
@@ -96,7 +104,8 @@ def read_data(paths):
                     s['fileId'] = file_id
                     s['readId'] = splt[0]
                     s['col'] = splt[1]
-                    s['atts'] = tuple(splt[2:])
+                    s['atts'] = tuple(splt[3:])
+                    s['class'] = nucleo_id(splt[2])
 
     # print(samples[0:10])
     # print(samples.shape)
@@ -124,9 +133,9 @@ def read_data(paths):
                         trueseq = truthfile.readline()
                         filepos += 1
                     if s['col']>=0:
-                        s['class'] = onehot_(s['atts'][4:8])==trueseq[s['col']]
+                        s['class'] = s['class']==nucleo_id(trueseq[s['col']])
                     else:
-                        s['class'] = onehot_(s['atts'][7:3:-1])==trueseq[s['col']-1] # -1 because last character is newline
+                        s['class'] = s['class']==3-nucleo_id(trueseq[s['col']-1]) # -1 because last character is newline
 
             if "np" in path:
                 tqdm.write("save: "+path["np"])
@@ -195,8 +204,6 @@ def process(clf_t, clf_args, train_map, test_map, name):
     clf = clf_t(**clf_args).fit(X_train, y_train)
     clf.CARE_desc = str(train_desc)
 
-    extract_clf(clf, name+".rf")
-
     probs = clf.predict_proba(X_test)
     auroc = metrics.roc_auc_score(y_test, probs[:,1])
     avgps = metrics.average_precision_score(y_test, probs[:,1])
@@ -210,6 +217,8 @@ def process(clf_t, clf_args, train_map, test_map, name):
     tqdm.write("AVGPS (train)  : "+str(avgps_train))
     
     pickle.dump(clf, open(name+".rf.p", "wb"))
+
+    # extract_clf(clf, name+".rf")
 
 ### stuff ###
 
