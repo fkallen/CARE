@@ -249,7 +249,7 @@ namespace gpu{
                 *(features + 1) = float(input.origBase == 'C');
                 *(features + 2) = float(input.origBase == 'G');
                 *(features + 3) = float(input.origBase == 'T');
-                *(features + 4) = float(input.origBase == 'A');
+                *(features + 4) = float(input.consensusBase == 'A');
                 *(features + 5) = float(input.consensusBase == 'C');
                 *(features + 6) = float(input.consensusBase == 'G');
                 *(features + 7) = float(input.consensusBase == 'T');

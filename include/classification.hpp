@@ -8,6 +8,8 @@
 #include <msa.hpp>
 #include <cpucorrectortask.hpp>
 #include <options.hpp>
+#include <chrono>
+#include <thread>
 
 // This header allows toggling of feature transformations and classifiers,
 // and seperates classification logic from the main corrector code.
@@ -25,8 +27,8 @@ namespace care {
 
 struct ClfAgentDecisionInputData{
     const char* decodedAnchor{};
-    int anchorColumnsBegin_incl{};
-    int anchorColumnsEnd_excl{};
+    int subjectColumnsBegin_incl{};
+    int subjectColumnsEnd_excl{};
     const int* alignmentShifts{};
     const int* candidateSequencesLengths{};
     const char* decodedCandidateSequences{};
@@ -53,12 +55,16 @@ template<typename AnchorClf,
 struct clf_agent
 {
 
+    static uint64_t get_seed() {
+        return std::chrono::high_resolution_clock::now().time_since_epoch().count() + std::hash<std::thread::id>()(std::this_thread::get_id());
+    }
+
     //TODO: access permission
     std::shared_ptr<AnchorClf> classifier_anchor;
     std::shared_ptr<CandClf> classifier_cands;
     std::stringstream anchor_stream, cands_stream;
     std::shared_ptr<std::ofstream> anchor_file, cands_file;
-    std::mt19937 rng;
+    std::ranlux48 rng;
     std::bernoulli_distribution coinflip_anchor, coinflip_cands;
     AnchorExtractor extract_anchor;
     CandsExtractor extract_cands;
@@ -68,15 +74,12 @@ struct clf_agent
         classifier_cands(c_opts.correctionTypeCands == CorrectionType::Forest ? std::make_shared<CandClf>(f_opts.mlForestfileCands, c_opts.thresholdCands) : nullptr),
         anchor_file(c_opts.correctionType == CorrectionType::Print ? std::make_shared<std::ofstream>(f_opts.mlForestfileAnchor) : nullptr),
         cands_file(c_opts.correctionTypeCands == CorrectionType::Print ? std::make_shared<std::ofstream>(f_opts.mlForestfileCands) : nullptr),
-        rng(44),
+        rng(get_seed()),
         coinflip_anchor(c_opts.sampleRateAnchor),
         coinflip_cands(c_opts.sampleRateCands)
     {
         if (c_opts.correctionType == CorrectionType::Print) {
             *anchor_file << extract_anchor << std::endl;
-        }
-
-        if (c_opts.correctionTypeCands == CorrectionType::Print) {
             *cands_file << extract_cands << std::endl;
         }
     }
@@ -86,7 +89,7 @@ struct clf_agent
         classifier_cands(other.classifier_cands),
         anchor_file(other.anchor_file),
         cands_file(other.cands_file),
-        rng(44),
+        rng(get_seed()),
         coinflip_anchor(other.coinflip_anchor),
         coinflip_cands(other.coinflip_cands)
     {}
@@ -111,7 +114,14 @@ struct clf_agent
 
     template<typename... Args>
     bool decide_anchor(Args&&...args) {
-        return classifier_anchor->decide(extract_anchor(std::forward<Args>(args)...));
+        auto feats = extract_anchor(std::forward<Args>(args)...);
+        #pragma omp critical
+        {
+            for (const auto& f: feats)
+                std::cerr << f << ' ';
+            std::cerr << "=>  " << classifier_anchor->prob_debug(feats) << std::endl;
+        }
+        return classifier_anchor->decide(feats);
     }
 
     template<typename... Args>
@@ -141,10 +151,15 @@ struct clf_agent
 namespace detail {
 
 struct extract_anchor {
+
+    constexpr operator auto() {
+        return u8"21 extract_anchor";
+    }
+
     using features_t = std::array<float, 21>;
     features_t operator()(const ClfAgentDecisionInputData& data, int i, const CorrectionOptions& opt) noexcept{   
-        int a_begin = data.anchorColumnsBegin_incl;
-        int a_end = data.anchorColumnsEnd_excl;
+        int a_begin = data.subjectColumnsBegin_incl;
+        int a_end = data.subjectColumnsEnd_excl;
         int pos = a_begin + i;
         char orig = data.decodedAnchor[i];
         float countsACGT = data.coverages[pos];
@@ -175,8 +190,8 @@ struct extract_anchor {
 
     features_t operator()(const CpuErrorCorrectorTask& task, int i, const CorrectionOptions& opt) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
-        int a_begin = msa.anchorColumnsBegin_incl;
-        int a_end = msa.anchorColumnsEnd_excl;
+        int a_begin = msa.subjectColumnsBegin_incl;
+        int a_end = msa.subjectColumnsEnd_excl;
         int pos = a_begin + i;
         char orig = task.decodedAnchor[i];
         float countsACGT = msa.countsA[pos] + msa.countsC[pos] + msa.countsG[pos] + msa.countsT[pos];
@@ -207,10 +222,15 @@ struct extract_anchor {
 };
 
 struct extract_cands {
+
+    constexpr operator auto() {
+        return u8"26 extract_cands";
+    }
+
     using features_t = std::array<float, 26>;
     features_t operator()(const ClfAgentDecisionInputData& data, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
-        int a_begin = data.anchorColumnsBegin_incl;
-        int a_end = data.anchorColumnsEnd_excl;
+        int a_begin = data.subjectColumnsBegin_incl;
+        int a_end = data.subjectColumnsEnd_excl;
         int c_begin = a_begin + data.alignmentShifts[cand];
         int c_end = c_begin + data.candidateSequencesLengths[cand];
         int pos = c_begin + i;
@@ -249,8 +269,8 @@ struct extract_cands {
 
     features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
-        int a_begin = msa.anchorColumnsBegin_incl;
-        int a_end = msa.anchorColumnsEnd_excl;
+        int a_begin = msa.subjectColumnsBegin_incl;
+        int a_end = msa.subjectColumnsEnd_excl;
         int c_begin = a_begin + task.alignmentShifts[cand];
         int c_end = c_begin + task.candidateSequencesLengths[cand];
         int pos = c_begin + i;
@@ -296,8 +316,8 @@ struct extract_anchor_transformed {
     }
 
     features_t operator()(const ClfAgentDecisionInputData& data, int i, const CorrectionOptions& opt) noexcept{
-        int a_begin = data.anchorColumnsBegin_incl;
-        int a_end = data.anchorColumnsEnd_excl;
+        int a_begin = data.subjectColumnsBegin_incl;
+        int a_end = data.subjectColumnsEnd_excl;
         int pos = a_begin + i;
         char orig = data.decodedAnchor[i];
         float countsACGT = data.coverages[pos];
@@ -345,8 +365,8 @@ struct extract_anchor_transformed {
 
     features_t operator()(const CpuErrorCorrectorTask& task, int i, const CorrectionOptions& opt) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
-        int a_begin = msa.anchorColumnsBegin_incl;
-        int a_end = msa.anchorColumnsEnd_excl;
+        int a_begin = msa.subjectColumnsBegin_incl;
+        int a_end = msa.subjectColumnsEnd_excl;
         int pos = a_begin + i;
         char orig = task.decodedAnchor[i];
         float countsACGT = msa.countsA[pos] + msa.countsC[pos] + msa.countsG[pos] + msa.countsT[pos];
@@ -401,8 +421,8 @@ struct extract_cands_transformed {
 
     features_t operator()(const ClfAgentDecisionInputData& data, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
 
-        int a_begin = data.anchorColumnsBegin_incl;
-        int a_end = data.anchorColumnsEnd_excl;
+        int a_begin = data.subjectColumnsBegin_incl;
+        int a_end = data.subjectColumnsEnd_excl;
         int c_begin = a_begin + data.alignmentShifts[cand];
         int c_end = c_begin + data.candidateSequencesLengths[cand];
         int pos = c_begin + i;
@@ -457,8 +477,8 @@ struct extract_cands_transformed {
 
     features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
-        int a_begin = msa.anchorColumnsBegin_incl;
-        int a_end = msa.anchorColumnsEnd_excl;
+        int a_begin = msa.subjectColumnsBegin_incl;
+        int a_end = msa.subjectColumnsEnd_excl;
         int c_begin = a_begin + task.alignmentShifts[cand];
         int c_end = c_begin + task.candidateSequencesLengths[cand];
         int pos = c_begin + i;
@@ -515,9 +535,13 @@ struct extract_cands_transformed {
 struct extract_anchor_normed_weights {
     using features_t = std::array<float, 21>;
 
+    constexpr operator auto() {
+        return u8"21 extract_anchor_normed_weights";
+    }
+
     features_t operator()(const ClfAgentDecisionInputData& data, int i, const CorrectionOptions& opt) noexcept {   
-        int a_begin = data.anchorColumnsBegin_incl;
-        int a_end = data.anchorColumnsEnd_excl;
+        int a_begin = data.subjectColumnsBegin_incl;
+        int a_end = data.subjectColumnsEnd_excl;
         int pos = a_begin + i;
         char orig = data.decodedAnchor[i];
         float countsACGT = data.coverages[pos];
@@ -549,8 +573,8 @@ struct extract_anchor_normed_weights {
 
     features_t operator()(const CpuErrorCorrectorTask& task, int i, const CorrectionOptions& opt) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
-        int a_begin = msa.anchorColumnsBegin_incl;
-        int a_end = msa.anchorColumnsEnd_excl;
+        int a_begin = msa.subjectColumnsBegin_incl;
+        int a_end = msa.subjectColumnsEnd_excl;
         int pos = a_begin + i;
         char orig = task.decodedAnchor[i];
         float countsACGT = msa.countsA[pos] + msa.countsC[pos] + msa.countsG[pos] + msa.countsT[pos];
@@ -583,10 +607,15 @@ struct extract_anchor_normed_weights {
 
 struct extract_cands_normed_weights {
     using features_t = std::array<float, 26>;
+
+    constexpr operator auto() {
+        return u8"26 extract_cands_normed_weights";
+    }
+
     features_t operator()(const ClfAgentDecisionInputData& data, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
 
-        int a_begin = data.anchorColumnsBegin_incl;
-        int a_end = data.anchorColumnsEnd_excl;
+        int a_begin = data.subjectColumnsBegin_incl;
+        int a_end = data.subjectColumnsEnd_excl;
         int c_begin = a_begin + data.alignmentShifts[cand];
         int c_end = c_begin + data.candidateSequencesLengths[cand];
         int pos = c_begin + i;
@@ -626,8 +655,8 @@ struct extract_cands_normed_weights {
 
     features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
-        int a_begin = msa.anchorColumnsBegin_incl;
-        int a_end = msa.anchorColumnsEnd_excl;
+        int a_begin = msa.subjectColumnsBegin_incl;
+        int a_end = msa.subjectColumnsEnd_excl;
         int c_begin = a_begin + task.alignmentShifts[cand];
         int c_end = c_begin + task.candidateSequencesLengths[cand];
         int pos = c_begin + i;
@@ -669,9 +698,13 @@ struct extract_cands_normed_weights {
 struct extract_anchor_transformed_normed_weights {
     using features_t = std::array<float, 37>;
 
+    constexpr operator auto() {
+        return u8"37 extract_anchor_transformed_normed_weights";
+    }
+
     features_t operator()(const ClfAgentDecisionInputData& data, int i, const CorrectionOptions& opt) noexcept {   
-        int a_begin = data.anchorColumnsBegin_incl;
-        int a_end = data.anchorColumnsEnd_excl;
+        int a_begin = data.subjectColumnsBegin_incl;
+        int a_end = data.subjectColumnsEnd_excl;
         int pos = a_begin + i;
         char orig = data.decodedAnchor[i];
         float countsACGT = data.coverages[pos];
@@ -719,8 +752,8 @@ struct extract_anchor_transformed_normed_weights {
 
     features_t operator()(const CpuErrorCorrectorTask& task, int i, const CorrectionOptions& opt) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
-        int a_begin = msa.anchorColumnsBegin_incl;
-        int a_end = msa.anchorColumnsEnd_excl;
+        int a_begin = msa.subjectColumnsBegin_incl;
+        int a_end = msa.subjectColumnsEnd_excl;
         int pos = a_begin + i;
         char orig = task.decodedAnchor[i];
         float countsACGT = msa.countsA[pos] + msa.countsC[pos] + msa.countsG[pos] + msa.countsT[pos];
@@ -770,9 +803,13 @@ struct extract_anchor_transformed_normed_weights {
 struct extract_cands_transformed_normed_weights {
     using features_t = std::array<float, 42>;
 
+    constexpr operator auto() {
+        return u8"42 extract_cands_transformed_normed_weights";
+    }
+
     features_t operator()(const ClfAgentDecisionInputData& data, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
-        int a_begin = data.anchorColumnsBegin_incl;
-        int a_end = data.anchorColumnsEnd_excl;
+        int a_begin = data.subjectColumnsBegin_incl;
+        int a_end = data.subjectColumnsEnd_excl;
         int c_begin = a_begin + data.alignmentShifts[cand];
         int c_end = c_begin + data.candidateSequencesLengths[cand];
         int pos = c_begin + i;
@@ -828,8 +865,8 @@ struct extract_cands_transformed_normed_weights {
 
     features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
-        int a_begin = msa.anchorColumnsBegin_incl;
-        int a_end = msa.anchorColumnsEnd_excl;
+        int a_begin = msa.subjectColumnsBegin_incl;
+        int a_end = msa.subjectColumnsEnd_excl;
         int c_begin = a_begin + task.alignmentShifts[cand];
         int c_end = c_begin + task.candidateSequencesLengths[cand];
         int pos = c_begin + i;
@@ -884,13 +921,259 @@ struct extract_cands_transformed_normed_weights {
     }
 };
 
+struct extract_anchor_v2 {
+
+    constexpr operator auto() {
+        return u8"11 extract_anchor_v2";
+    }
+
+    using features_t = std::array<float, 11>;
+    features_t operator()(const ClfAgentDecisionInputData& data, int i, const CorrectionOptions& opt) noexcept{   
+        int a_begin = data.subjectColumnsBegin_incl;
+        int pos = a_begin + i;
+        float weightsACGT = data.weightsA[pos] + data.weightsC[pos] + data.weightsG[pos] + data.weightsT[pos];
+        float weightCons = 0, countCons = 0;
+        float weightOrig = 0, countOrig = 0;
+
+        switch (data.consensus[pos]) {
+            case 'A':
+                weightCons = data.weightsA[pos];
+                countCons = data.countsA[pos];
+                break;
+            case 'C':
+                weightCons = data.weightsC[pos];
+                countCons = data.countsC[pos];
+                break;
+            case 'G':
+                weightCons = data.weightsG[pos];
+                countCons = data.countsG[pos];
+                break;
+            case 'T':
+                weightCons = data.weightsT[pos];
+                countCons = data.countsT[pos];
+                break;
+        }
+
+        switch (data.decodedAnchor[i]) {
+            case 'A':
+                weightOrig = data.weightsA[pos];
+                countOrig = data.countsA[pos];
+                break;
+            case 'C':
+                weightOrig = data.weightsC[pos];
+                countOrig = data.countsC[pos];
+                break;
+            case 'G':
+                weightOrig = data.weightsG[pos];
+                countOrig = data.countsG[pos];
+                break;
+            case 'T':
+                weightOrig = data.weightsT[pos];
+                countOrig = data.countsT[pos];
+                break;
+        }
+
+        return {
+            countOrig / data.coverages[pos],
+            weightOrig / weightsACGT,
+            weightOrig / data.coverages[pos],
+            countCons / data.coverages[pos],
+            weightCons / weightsACGT,
+            weightCons / data.coverages[pos],
+            weightsACGT / data.coverages[pos],
+            data.anchorMsaProperties.avg_support,
+            data.anchorMsaProperties.min_support,
+            float(data.anchorMsaProperties.max_coverage)/opt.estimatedCoverage,
+            float(data.anchorMsaProperties.min_coverage)/opt.estimatedCoverage
+        };
+    }
+
+    features_t operator()(const CpuErrorCorrectorTask& task, int i, const CorrectionOptions& opt) noexcept {   
+        auto& msa = task.multipleSequenceAlignment;
+        int a_begin = msa.subjectColumnsBegin_incl;
+        int pos = a_begin + i;
+        float weightsACGT = msa.weightsA[pos] + msa.weightsC[pos] + msa.weightsG[pos] + msa.weightsT[pos];
+        float weightCons = 0, countCons = 0;
+
+        switch (msa.consensus[pos]) {
+            case 'A':
+                weightCons = msa.weightsA[pos];
+                countCons = msa.countsA[pos];
+                break;
+            case 'C':
+                weightCons = msa.weightsC[pos];
+                countCons = msa.countsC[pos];
+                break;
+            case 'G':
+                weightCons = msa.weightsG[pos];
+                countCons = msa.countsG[pos];
+                break;
+            case 'T':
+                weightCons = msa.weightsT[pos];
+                countCons = msa.countsT[pos];
+                break;
+        }
+        return {
+            float(msa.origCoverages[pos]) / msa.coverage[pos],
+            msa.origWeights[pos] / weightsACGT,
+            msa.origWeights[pos] / msa.coverage[pos],
+            countCons / msa.coverage[pos],
+            msa.support[pos],
+            weightCons / msa.coverage[pos],
+            weightsACGT / msa.coverage[pos],
+            task.msaProperties.avg_support,
+            task.msaProperties.min_support,
+            float(task.msaProperties.max_coverage)/opt.estimatedCoverage,
+            float(task.msaProperties.min_coverage)/opt.estimatedCoverage
+        };
+    }
+};
+
+struct extract_cands_v2 {
+
+    constexpr operator auto() {
+        return u8"12 extract_cands_v2";
+    }
+
+    using features_t = std::array<float, 12>;
+    features_t operator()(const ClfAgentDecisionInputData& data, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
+        int a_begin = data.subjectColumnsBegin_incl;
+        int a_end = data.subjectColumnsEnd_excl;
+        int c_begin = a_begin + data.alignmentShifts[cand];
+        int c_end = c_begin + data.candidateSequencesLengths[cand];
+        int pos = c_begin + i;
+        float weightsACGT = data.weightsA[pos] + data.weightsC[pos] + data.weightsG[pos] + data.weightsT[pos];
+        MSAProperties props = data.getMSAProperties(c_begin, c_end, opt.estimatedErrorrate, opt.estimatedCoverage, opt.m_coverage);
+        float weightCons = 0, countCons = 0;
+        float weightOrig = 0, countOrig = 0;
+
+        switch (data.consensus[pos]) {
+            case 'A':
+                weightCons = data.weightsA[pos];
+                countCons = data.countsA[pos];
+                break;
+            case 'C':
+                weightCons = data.weightsC[pos];
+                countCons = data.countsC[pos];
+                break;
+            case 'G':
+                weightCons = data.weightsG[pos];
+                countCons = data.countsG[pos];
+                break;
+            case 'T':
+                weightCons = data.weightsT[pos];
+                countCons = data.countsT[pos];
+                break;
+        }
+
+        switch (data.decodedCandidateSequences[offset+i]) {
+            case 'A':
+                weightOrig = data.weightsA[pos];
+                countOrig = data.countsA[pos];
+                break;
+            case 'C':
+                weightOrig = data.weightsC[pos];
+                countOrig = data.countsC[pos];
+                break;
+            case 'G':
+                weightOrig = data.weightsG[pos];
+                countOrig = data.countsG[pos];
+                break;
+            case 'T':
+                weightOrig = data.weightsT[pos];
+                countOrig = data.countsT[pos];
+                break;
+        }
+        return {
+            countOrig / data.coverages[pos],
+            weightOrig / weightsACGT,
+            weightOrig / data.coverages[pos],
+            countCons / data.coverages[pos],
+            weightCons / weightsACGT,
+            weightCons / data.coverages[pos],
+            weightsACGT / data.coverages[pos],
+            props.avg_support,
+            props.min_support,
+            float(props.max_coverage)/opt.estimatedCoverage,
+            float(props.min_coverage)/opt.estimatedCoverage,
+            float(std::min(a_end, c_end)-std::max(a_begin, c_begin))/(std::max(a_end, c_end)-std::min(a_begin, c_begin)) // jaccard
+        };
+    }
+
+    features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
+        auto& msa = task.multipleSequenceAlignment;
+        int a_begin = msa.subjectColumnsBegin_incl;
+        int a_end = msa.subjectColumnsEnd_excl;
+        int c_begin = a_begin + task.alignmentShifts[cand];
+        int c_end = c_begin + task.candidateSequencesLengths[cand];
+        int pos = c_begin + i;
+        float weightsACGT = msa.weightsA[pos] + msa.weightsC[pos] + msa.weightsG[pos] + msa.weightsT[pos];
+        MSAProperties props = msa.getMSAProperties(c_begin, c_end, opt.estimatedErrorrate, opt.estimatedCoverage, opt.m_coverage);
+        float weightCons = 0, countCons = 0;
+        float weightOrig = 0, countOrig = 0;
+
+        switch (msa.consensus[pos]) {
+            case 'A':
+                weightCons = msa.weightsA[pos];
+                countCons = msa.countsA[pos];
+                break;
+            case 'C':
+                weightCons = msa.weightsC[pos];
+                countCons = msa.countsC[pos];
+                break;
+            case 'G':
+                weightCons = msa.weightsG[pos];
+                countCons = msa.countsG[pos];
+                break;
+            case 'T':
+                weightCons = msa.weightsT[pos];
+                countCons = msa.countsT[pos];
+                break;
+        }
+        switch (task.decodedCandidateSequences[offset+i]) {
+            case 'A':
+                weightOrig = msa.weightsA[pos];
+                countOrig = msa.countsA[pos];
+                break;
+            case 'C':
+                weightOrig = msa.weightsC[pos];
+                countOrig = msa.countsC[pos];
+                break;
+            case 'G':
+                weightOrig = msa.weightsG[pos];
+                countOrig = msa.countsG[pos];
+                break;
+            case 'T':
+                weightOrig = msa.weightsT[pos];
+                countOrig = msa.countsT[pos];
+                break;
+        }
+        return {
+            float(countOrig) / msa.coverage[pos],
+            weightOrig / weightsACGT,
+            weightOrig / msa.coverage[pos],
+            countCons / msa.coverage[pos],
+            msa.support[pos],
+            weightCons / msa.coverage[pos],
+            weightsACGT / msa.coverage[pos],
+            props.avg_support,
+            props.min_support,
+            float(props.max_coverage)/opt.estimatedCoverage,
+            float(props.min_coverage)/opt.estimatedCoverage,
+            float(std::min(a_end, c_end)-std::max(a_begin, c_begin))/(std::max(a_end, c_end)-std::min(a_begin, c_begin)) // jaccard
+        };
+    }
+};
+
+
+
 } //namespace detail
 
 
 //--------------------------------------------------------------------------------
 
-using anchor_extractor = detail::extract_anchor_transformed;
-using cands_extractor = detail::extract_cands_transformed;
+using anchor_extractor = detail::extract_anchor_v2;
+using cands_extractor = detail::extract_cands_v2;
 
 using anchor_clf_t = ForestClf<anchor_extractor>;
 using cands_clf_t = ForestClf<cands_extractor>;
