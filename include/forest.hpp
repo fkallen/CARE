@@ -52,15 +52,15 @@ class ForestClf {
         }
     }
 
-    float decide(const features_t& features, const Tree& tree, size_t i = 0) const {
+    float prob(const features_t& features, const Tree& tree, size_t i = 0) const {
         if (features[tree[i].att] < tree[i].thresh) {
             if (tree[i].flag / 2)
                 return tree[i].lhs.prob;
-            return decide(features, tree, tree[i].lhs.idx);
+            return prob(features, tree, tree[i].lhs.idx);
         } else {
             if (tree[i].flag % 2)
                 return tree[i].rhs.prob;
-            return decide(features, tree, tree[i].rhs.idx);
+            return prob(features, tree, tree[i].rhs.idx);
         }
     }
 
@@ -98,11 +98,27 @@ public:
         return thresh_;
     }
 
-    bool decide(const features_t& features) const {
-        float prob = 0.f;
+    float prob(const features_t& features) const {
+        float sum = 0.f;
         for (const Tree& tree: forest_)
-            prob += decide(features, tree);
-        return prob/forest_.size() >= thresh_;
+            sum += prob(features, tree);
+        return sum/forest_.size();
+    }
+
+    float prob_debug(const features_t& features) const {
+        float sum = 0.f;
+        std::cerr << "# ";
+        for (const Tree& tree: forest_) {
+            auto tmp = prob(features, tree);
+            sum += tmp;
+            std::cerr << tmp << " ";
+        }
+        std::cerr << "# ";
+        return sum/forest_.size();
+    }
+
+    bool decide(const features_t& features) const {
+        return prob(features) >= thresh_;
     }
 };
 
