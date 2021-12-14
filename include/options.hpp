@@ -89,10 +89,16 @@ namespace care
         std::string mlForestfileCands = "";
         std::vector<std::string> inputfiles;
         std::vector<std::string> outputfilenames;
+
+        ProgramOptions() = default;
+        ProgramOptions(const ProgramOptions&) = default;
+        ProgramOptions(ProgramOptions&&) = default;
+
+        ProgramOptions(const cxxopts::ParseResult& pr);
+
+        bool isValid() const noexcept;
     };
 
-    ProgramOptions makeProgramOptions(const cxxopts::ParseResult& pr);
-    bool isValid(const ProgramOptions& opt);
 
     template<class ReadStorage>
     std::size_t getNumReadsToProcess(const ReadStorage* readStorage, const ProgramOptions& options){

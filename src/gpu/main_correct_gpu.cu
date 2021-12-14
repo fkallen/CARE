@@ -61,9 +61,9 @@ int main(int argc, char** argv){
 
 	bool help = false;
 
-	cxxopts::Options options(argv[0], "CARE: Context-Aware Read Error Correction for Illumina reads");
+	cxxopts::Options commandLineOptions(argv[0], "CARE: Context-Aware Read Error Correction for Illumina reads");
 
-	options.add_options("Mandatory")
+	commandLineOptions.add_options("Mandatory")
 		("d,outdir", "The output directory. Will be created if it does not exist yet.", 
 		cxxopts::value<std::string>())
 		("c,coverage", "Estimated coverage of input file. (i.e. number_of_reads * read_length / genome_size)", 
@@ -91,7 +91,7 @@ int main(int argc, char** argv){
 		("g,gpu", "Comma-separated list of GPU device ids to be used for correction. (Example: --gpu 0,1 to use GPU 0 and GPU 1)", cxxopts::value<std::vector<int>>());
 
 
-	options.add_options("Additional")
+	commandLineOptions.add_options("Additional")
 			
 		("help", "Show this help message", cxxopts::value<bool>(help))
 		("tempdir", "Directory to store temporary files. Default: output directory", cxxopts::value<std::string>())
@@ -185,12 +185,12 @@ int main(int argc, char** argv){
 		("singlehash", "Use 1 hashtables with h smallest unique hashes. Default: " + tostring(ProgramOptions{}.singlehash), cxxopts::value<bool>())
 	;
 
-	//options.parse_positional({"deviceIds"});
+	//commandLineOptions.parse_positional({"deviceIds"});
 
-	auto parseresults = options.parse(argc, argv);
+	auto parseresults = commandLineOptions.parse(argc, argv);
 
 	if(help) {
-		std::cout << options.help({"", "Mandatory", "Additional"}) << std::endl;
+		std::cout << commandLineOptions.help({"", "Mandatory", "Additional"}) << std::endl;
 		std::exit(0);
 	}
 
@@ -198,13 +198,13 @@ int main(int argc, char** argv){
 
 	const bool mandatoryPresent = checkMandatoryArguments(parseresults);
 	if(!mandatoryPresent){
-		std::cout << options.help({"Mandatory"}) << std::endl;
+		std::cout << commandLineOptions.help({"Mandatory"}) << std::endl;
 		std::exit(0);
 	}
 
-	ProgramOptions programOptions = makeProgramOptions(parseresults);
+	ProgramOptions programOptions(parseresults);
 
-	if(!isValid(programOptions)) throw std::runtime_error("Invalid program options!");
+	if(!programOptions.isValid()) throw std::runtime_error("Invalid program options!");
 
     programOptions.deviceIds = correction::getUsableDeviceIds(programOptions.deviceIds);
     programOptions.canUseGpu = programOptions.deviceIds.size() > 0;

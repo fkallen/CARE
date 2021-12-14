@@ -51,8 +51,8 @@ namespace care{
         }
     }
 
-    ProgramOptions makeProgramOptions(const cxxopts::ParseResult& pr){
-        ProgramOptions result;
+    ProgramOptions::ProgramOptions(const cxxopts::ParseResult& pr){
+        ProgramOptions& result = *this;
 
         if(pr.count("minalignmentoverlap")){
             result.min_overlap = pr["minalignmentoverlap"].as<int>();
@@ -355,10 +355,10 @@ namespace care{
             result.outputfilenames = pr["outputfilenames"].as<std::vector<std::string>>();
         }
 
-        return result;
     }
 
-    bool isValid(const ProgramOptions& opt){
+    bool ProgramOptions::isValid() const noexcept{
+        const ProgramOptions& opt = *this;
         bool valid = true;
 
         if(opt.maxErrorRate < 0.0f || opt.maxErrorRate > 1.0f){
