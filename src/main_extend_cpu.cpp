@@ -60,7 +60,8 @@ std::string tostring(const bool& b){
 int main(int argc, char** argv){
 
 	bool help = false;
-
+	bool showVersion = false;
+	
 	cxxopts::Options commandLineOptions(argv[0], "CARE-Extender");
 
 	commandLineOptions.add_options("Mandatory")
@@ -98,9 +99,9 @@ int main(int argc, char** argv){
 			"The name of the output file containing extended reads",
 			cxxopts::value<std::string>());
 
-	commandLineOptions.add_options("Additional")
-			
+	commandLineOptions.add_options("Additional")			
 		("help", "Show this help message", cxxopts::value<bool>(help))
+		("version", "Print version", cxxopts::value<bool>(showVersion))
 		("tempdir", "Directory to store temporary files. Default: output directory", cxxopts::value<std::string>())
 		("h,hashmaps", "The requested number of hash maps. Must be greater than 0. "
 			"The actual number of used hash maps may be lower to respect the set memory limit. "
@@ -177,6 +178,11 @@ int main(int argc, char** argv){
 	//commandLineOptions.parse_positional({"deviceIds"});
 
 	auto parseresults = commandLineOptions.parse(argc, argv);
+
+	if(showVersion){
+		std::cout << "CARE version " << CARE_VERSION_STRING << std::endl;
+		std::exit(0);
+	}
 
 	if(help) {
 		std::cout << commandLineOptions.help({"", "Mandatory", "Additional"}) << std::endl;
