@@ -522,6 +522,143 @@ namespace care{
     }
 
 
+    void ProgramOptions::printMandatoryOptions(std::ostream& stream) const{
+        stream << "Output directory: " << outputdirectory << "\n";
+        stream << "Estimated dataset coverage: " << estimatedCoverage << "\n";
+        stream << "Input files: ";
+        for(auto& s : inputfiles){
+            stream << s << ' ';
+        }
+        stream << "\n";
+        stream << "Output file names: ";
+        for(auto& s : outputfilenames){
+            stream << s << ' ';
+        }
+        stream << "Paired mode: " << to_string(pairType) << "\n";
+    }
+
+    void ProgramOptions::printMandatoryOptionsCorrect(std::ostream&) const{
+        //nothing
+    }
+
+    void ProgramOptions::printMandatoryOptionsCorrectCpu(std::ostream&) const{
+        //nothing
+    }
+
+    void ProgramOptions::printMandatoryOptionsCorrectGpu(std::ostream& stream) const{
+        stream << "Can use GPU(s): " << canUseGpu << "\n";
+        if(canUseGpu){
+            stream << "GPU device ids: [";
+            for(int id : deviceIds){
+                stream << " " << id;
+            }
+            stream << " ]\n";
+        }
+    }
+
+    void ProgramOptions::printMandatoryOptionsExtend(std::ostream& stream) const{
+        stream << "Insert size: " << insertSize << "\n";
+	    stream << "Insert size deviation: " << insertSizeStddev << "\n";
+        stream << "Extended reads output file: " << extendedReadsOutputfilename << "\n";
+    }
+
+    void ProgramOptions::printMandatoryOptionsExtendCpu(std::ostream&) const{
+        //nothing
+    }
+
+    void ProgramOptions::printMandatoryOptionsExtendGpu(std::ostream& stream) const{
+        stream << "Can use GPU(s): " << canUseGpu << "\n";
+        if(canUseGpu){
+            stream << "GPU device ids: [";
+            for(int id : deviceIds){
+                stream << " " << id;
+            }
+            stream << " ]\n";
+        }
+    }
+
+    void ProgramOptions::printAdditionalOptions(std::ostream& stream) const{
+        stream << "Number of hash tables / hash functions: " << numHashFunctions << "\n";
+        if(autodetectKmerlength){
+            stream << "K-mer size for hashing: auto\n";
+        }else{
+            stream << "K-mer size for hashing: " << kmerlength << "\n";
+        }
+        stream << "Enforce number of hash tables: " << mustUseAllHashfunctions << "\n";
+        stream << "Threads: " << threads << "\n";
+        stream << "Use quality scores: " << useQualityScores << "\n";
+        stream << "Bits per quality score: " << qualityScoreBits << "\n";
+        stream << "Exclude ambigious reads: " << excludeAmbiguousReads << "\n";
+        stream << "Alignment absolute required overlap: " << min_overlap << "\n";
+        stream << "Alignment relative required overlap: " << min_overlap_ratio << "\n";
+        stream << "Alignment max relative number of mismatches in overlap: " << maxErrorRate << "\n";
+        stream << "errorfactortuning: " << estimatedErrorrate << "\n";
+        stream << "coveragefactortuning: " << m_coverage << "\n";
+        stream << "Show progress bar: " << showProgress << "\n";
+        stream << "Output directory: " << outputdirectory << "\n";
+        stream << "Temporary directory: " << tempdirectory << "\n";
+        stream << "Save preprocessed reads to file: " << save_binary_reads_to << "\n";
+        stream << "Load preprocessed reads from file: " << load_binary_reads_from << "\n";
+        stream << "Save hash tables to file: " << save_hashtables_to << "\n";
+        stream << "Load hash tables from file: " << load_hashtables_from << "\n";
+        stream << "Maximum memory for hash tables: " << memoryForHashtables << "\n";
+        stream << "Maximum memory total: " << memoryTotalLimit << "\n";
+        stream << "Hashtable load factor: " << hashtableLoadfactor << "\n";
+        stream << "Fixed number of reads: " << fixedNumberOfReads << "\n";
+        //stream << "singlehash: " << singlehash << "\n";
+    
+    }
+
+    void ProgramOptions::printAdditionalOptionsCorrect(std::ostream& stream) const{
+        stream << "Correct candidate reads: " << correctCandidates << "\n";
+	    stream << "Max shift for candidate correction: " << new_columns_to_correct << "\n";
+        stream << "Correction type (anchor): " << int(correctionType) 
+		    << " (" << to_string(correctionType) << ")\n";
+	    stream << "Correction type (cands): " << int(correctionTypeCands) 
+		    << " (" << to_string(correctionTypeCands) << ")\n";
+        stream << "ml-forestfile: " << mlForestfileAnchor << "\n";
+        stream << "ml-cands-forestfile: " << mlForestfileCands << "\n";
+        stream << "classification thresholds: " << thresholdAnchor << " | " << thresholdCands << "\n";
+        stream << "anchor sampling rate: " << sampleRateAnchor << "\n";
+        stream << "cands sampling rate: " << sampleRateCands << "\n";
+        stream << "pairedthreshold1: " << pairedthreshold1 << "\n";        
+    }
+
+    void ProgramOptions::printAdditionalOptionsExtend(std::ostream& stream) const{
+        stream << "Allow extension outside of gap: " << allowOutwardExtension << "\n";
+        stream << "Sort extended reads: " << sortedOutput << "\n";
+        stream << "Output remaining reads: " << outputRemainingReads << "\n";
+        stream << "fixedStddev: " << fixedStddev << "\n";
+	    stream << "fixedStepsize: " << fixedStepsize << "\n";
+    }
+
+    void ProgramOptions::printAdditionalOptionsCorrectCpu(std::ostream&) const{
+        //nothing
+    }
+
+    void ProgramOptions::printAdditionalOptionsCorrectGpu(std::ostream& stream) const{
+        stream << "Batch size: " << batchsize << "\n";
+        stream << "Warpcore: " << warpcore << "\n";
+	    stream << "Replicate GPU data: " << replicateGpuData << "\n";
+    }
+
+    void ProgramOptions::printAdditionalOptionsExtendCpu(std::ostream&) const{
+        //nothing
+    }
+
+    void ProgramOptions::printAdditionalOptionsExtendGpu(std::ostream& stream) const{
+        stream << "Batch size: " << batchsize << "\n";
+        stream << "Warpcore: " << warpcore << "\n";
+	    stream << "Replicate GPU data: " << replicateGpuData << "\n";
+    }
+
+
+
+
+
+
+
+
     template<class T>
     std::string tostring(const T& t){
         return std::to_string(t);
@@ -637,6 +774,7 @@ namespace care{
             cxxopts::value<float>())
             ("p,showProgress", "If set, progress bar is shown during correction",
             cxxopts::value<bool>()->implicit_value("true"))
+            ("tempdir", "Directory to store temporary files. Default: output directory", cxxopts::value<std::string>())
             ("save-preprocessedreads-to", "Save binary dump of data structure which stores input reads to disk",
             cxxopts::value<std::string>())
             ("load-preprocessedreads-from", "Load binary dump of read data structure from disk",
@@ -663,9 +801,9 @@ namespace care{
             ("candidateCorrectionNewColumns", "If candidateCorrection is set, a candidates with an absolute shift of candidateCorrectionNewColumns compared to anchor are corrected. "
                 "Default: " + tostring(ProgramOptions{}.new_columns_to_correct),
             cxxopts::value<int>())
-            ("correctionType", "0: Classic, 1: Forest",
+            ("correctionType", "0: Classic, 1: Forest, 2: Print . Print is only supported in the cpu version",
                 cxxopts::value<int>()->default_value("0"))
-            ("correctionTypeCands", "0: Classic, 1: Forest",
+            ("correctionTypeCands", "0: Classic, 1: Forest, 2: Print. Print is only supported in the cpu version",
                 cxxopts::value<int>()->default_value("0"))
             ("ml-forestfile", "The file for interfaceing with the scikit-learn classifier (Anchor correction)",
                 cxxopts::value<std::string>())
@@ -683,7 +821,7 @@ namespace care{
     }
 
     void addAdditionalOptionsExtend(cxxopts::Options& commandLineOptions){
-            commandLineOptions.add_options("Additional")
+        commandLineOptions.add_options("Additional")
             ("allowOutwardExtension", "Will try to fill the gap and extend to the outside"
                 "Default: " + tostring(ProgramOptions{}.allowOutwardExtension), cxxopts::value<bool>()->implicit_value("true"))	
             ("sortedOutput", "Extended reads in output file will be sorted by read id."

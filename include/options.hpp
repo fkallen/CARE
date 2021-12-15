@@ -8,6 +8,7 @@
 
 #include <string>
 #include <vector>
+#include <ostream>
 
 namespace care
 {
@@ -97,6 +98,22 @@ namespace care
         ProgramOptions(const cxxopts::ParseResult& pr);
 
         bool isValid() const noexcept;
+
+        void printMandatoryOptions(std::ostream& stream) const;
+        void printMandatoryOptionsCorrect(std::ostream& stream) const;
+        void printMandatoryOptionsCorrectCpu(std::ostream& stream) const;
+        void printMandatoryOptionsCorrectGpu(std::ostream& stream) const;
+        void printMandatoryOptionsExtend(std::ostream& stream) const;
+        void printMandatoryOptionsExtendCpu(std::ostream& stream) const;
+        void printMandatoryOptionsExtendGpu(std::ostream& stream) const;
+
+        void printAdditionalOptions(std::ostream& stream) const;
+        void printAdditionalOptionsCorrect(std::ostream& stream) const;
+        void printAdditionalOptionsExtend(std::ostream& stream) const;
+        void printAdditionalOptionsCorrectCpu(std::ostream& stream) const;
+        void printAdditionalOptionsCorrectGpu(std::ostream& stream) const;
+        void printAdditionalOptionsExtendCpu(std::ostream& stream) const;
+        void printAdditionalOptionsExtendGpu(std::ostream& stream) const;
     };
 
 
