@@ -139,7 +139,7 @@ int main(int argc, char** argv){
 
 	if(programOptions.pairType == SequencePairType::SingleEnd || programOptions.pairType == SequencePairType::Invalid){
 		std::cout << "Only paired-end extension is supported. Abort.\n";
-		return std::exit(0);;
+		std::exit(0);
 	}
 
     const int numThreads = programOptions.threads;
