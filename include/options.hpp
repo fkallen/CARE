@@ -111,11 +111,20 @@ namespace care
 
 
     void addMandatoryOptions(cxxopts::Options& commandLineOptions);
-    void addMandatoryOptionsExtend(cxxopts::Options& commandLineOptions);
+    void addMandatoryOptionsCorrect(cxxopts::Options& commandLineOptions);
     void addMandatoryOptionsCorrectCpu(cxxopts::Options& commandLineOptions);
     void addMandatoryOptionsCorrectGpu(cxxopts::Options& commandLineOptions);
+    void addMandatoryOptionsExtend(cxxopts::Options& commandLineOptions);
     void addMandatoryOptionsExtendCpu(cxxopts::Options& commandLineOptions);
     void addMandatoryOptionsExtendGpu(cxxopts::Options& commandLineOptions);
+
+    void addAdditionalOptions(cxxopts::Options& commandLineOptions);
+    void addAdditionalOptionsCorrect(cxxopts::Options& commandLineOptions);
+    void addAdditionalOptionsExtend(cxxopts::Options& commandLineOptions);
+    void addAdditionalOptionsCorrectCpu(cxxopts::Options& commandLineOptions);
+    void addAdditionalOptionsCorrectGpu(cxxopts::Options& commandLineOptions);
+    void addAdditionalOptionsExtendCpu(cxxopts::Options& commandLineOptions);
+    void addAdditionalOptionsExtendGpu(cxxopts::Options& commandLineOptions);
 
 
 }

@@ -65,100 +65,18 @@ int main(int argc, char** argv){
 	cxxopts::Options commandLineOptions(argv[0], "CARE: Context-Aware Read Error Correction for Illumina reads");
 
 	addMandatoryOptions(commandLineOptions);
+	addMandatoryOptionsCorrect(commandLineOptions);
 	addMandatoryOptionsCorrectGpu(commandLineOptions);
+
+	addAdditionalOptions(commandLineOptions);
+	addAdditionalOptionsCorrect(commandLineOptions);
+	addAdditionalOptionsCorrectGpu(commandLineOptions);
 
 	commandLineOptions.add_options("Additional")
 		("help", "Show this help message", cxxopts::value<bool>(help))
 		("version", "Print version", cxxopts::value<bool>(showVersion))
-		("tempdir", "Directory to store temporary files. Default: output directory", cxxopts::value<std::string>())
-		("h,hashmaps", "The requested number of hash maps. Must be greater than 0. "
-			"The actual number of used hash maps may be lower to respect the set memory limit. "
-			"Default: " + tostring(ProgramOptions{}.numHashFunctions), 
-			cxxopts::value<int>())
-		("k,kmerlength", "The kmer length for minhashing. If 0 or missing, it is automatically determined.", cxxopts::value<int>())
-		("enforceHashmapCount",
-			"If the requested number of hash maps cannot be fullfilled, the program terminates without error correction. "
-			"Default: " + tostring(ProgramOptions{}.mustUseAllHashfunctions),
-			cxxopts::value<bool>()->implicit_value("true")
-		)
-		("t,threads", "Maximum number of thread to use. Must be greater than 0", cxxopts::value<int>())
-		("batchsize", "Number of reads to correct in a single batch. Must be greater than 0. "
-			"Default: " + tostring(ProgramOptions{}.batchsize),
-		cxxopts::value<int>())
-		("q,useQualityScores", "If set, quality scores (if any) are considered during read correction. "
-			"Default: " + tostring(ProgramOptions{}.useQualityScores),
-		cxxopts::value<bool>()->implicit_value("true"))
-		("excludeAmbiguous", 
-			"If set, reads which contain at least one ambiguous nucleotide will not be corrected. "
-			"Default: " + tostring(ProgramOptions{}.excludeAmbiguousReads),
-		cxxopts::value<bool>()->implicit_value("true"))
-		("candidateCorrection", "If set, candidate reads will be corrected,too. "
-			"Default: " + tostring(ProgramOptions{}.correctCandidates),
-		cxxopts::value<bool>()->implicit_value("true"))
-        ("candidateCorrectionNewColumns", "If candidateCorrection is set, a candidates with an absolute shift of candidateCorrectionNewColumns compared to anchor are corrected. "
-			"Default: " + tostring(ProgramOptions{}.new_columns_to_correct),
-		cxxopts::value<int>())
-		("maxmismatchratio", "Overlap between anchor and candidate must contain at "
-			"most (maxmismatchratio * overlapsize) mismatches. "
-			"Default: " + tostring(ProgramOptions{}.maxErrorRate),
-		cxxopts::value<float>())
-		("minalignmentoverlap", "Overlap between anchor and candidate must be at least this long. "
-			"Default: " + tostring(ProgramOptions{}.min_overlap),
-		cxxopts::value<int>())
-		("minalignmentoverlapratio", "Overlap between anchor and candidate must be at least as "
-			"long as (minalignmentoverlapratio * candidatelength). "
-			"Default: " + tostring(ProgramOptions{}.min_overlap_ratio),
-		cxxopts::value<float>())
-		("errorfactortuning", "errorfactortuning. "
-			"Default: " + tostring(ProgramOptions{}.estimatedErrorrate),
-		cxxopts::value<float>())
-		("coveragefactortuning", "coveragefactortuning. "
-			"Default: " + tostring(ProgramOptions{}.m_coverage),
-		cxxopts::value<float>())
-		("p,showProgress", "If set, progress bar is shown during correction",
-		cxxopts::value<bool>()->implicit_value("true"))
-		("save-preprocessedreads-to", "Save binary dump of data structure which stores input reads to disk",
-		cxxopts::value<std::string>())
-		("load-preprocessedreads-from", "Load binary dump of read data structure from disk",
-		cxxopts::value<std::string>())
-		("save-hashtables-to", "Save binary dump of hash tables to disk. Ignored for GPU hashtables.",
-		cxxopts::value<std::string>())
-		("load-hashtables-from", "Load binary dump of hash tables from disk. Ignored for GPU hashtables.",
-		cxxopts::value<std::string>())
-		("memHashtables", "Memory limit in bytes for hash tables and hash table construction. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: A bit less than memTotal.",
-		cxxopts::value<std::string>())
-		("m,memTotal", "Total memory limit in bytes. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: All free memory.",
-		cxxopts::value<std::string>())
 
-		("correctionType", "0: Classic, 1: Forest",
-			cxxopts::value<int>()->default_value("0"))
-		("correctionTypeCands", "0: Classic, 1: Forest",
-			cxxopts::value<int>()->default_value("0"))
-		("ml-forestfile", "The file for interfaceing with the scikit-learn classifier (Anchor correction)",
-			cxxopts::value<std::string>())
-		("ml-cands-forestfile", "The file for interfaceing with the scikit-learn classifier (Candidate correction)",
-			cxxopts::value<std::string>())
-		("thresholdAnchor", "Classification threshold for anchor classifier (\"Forest\") mode",
-			cxxopts::value<float>())
-		("thresholdCands", "Classification threshold for candidates classifier (\"Forest\") mode",
-			cxxopts::value<float>())
-		("samplingRateAnchor", "sampling rate for anchor features (print mode)",
-			cxxopts::value<float>())
-		("samplingRateCands", "sampling rate for candidates features (print mode)",
-			cxxopts::value<float>())
-		("warpcore", "Enable warpcore hash tables. 0: Disabled, 1: Enabled. "
-			"Default: " + tostring(ProgramOptions{}.warpcore),
-		cxxopts::value<int>())
-		("pairedthreshold1", "pairedthreshold1", cxxopts::value<float>())
-		("hashloadfactor", "Load factor of hashtables. 0.0 < hashloadfactor < 1.0. Smaller values can improve the runtime at the expense of greater memory usage."
-			"Default: " + std::to_string(ProgramOptions{}.hashtableLoadfactor), cxxopts::value<float>())
-		("replicateGpuData", "If a GPU data structure fits into the memory of a single GPU, allow its replication to other GPUs. This can improve the runtime when multiple GPUs are used."
-			"Default: " + std::to_string(ProgramOptions{}.replicateGpuData), cxxopts::value<bool>())
-		("qualityScoreBits", "How many bits should be used to store a single quality score. Allowed values: 1,2,8. If not 8, a lossy compression via binning is used."
-			"Default: " + tostring(ProgramOptions{}.qualityScoreBits), cxxopts::value<int>())
 
-		("fixedNumberOfReads", "Process only the first n reads. Default: " + tostring(ProgramOptions{}.fixedNumberOfReads), cxxopts::value<std::size_t>())
-		("singlehash", "Use 1 hashtables with h smallest unique hashes. Default: " + tostring(ProgramOptions{}.singlehash), cxxopts::value<bool>())
 	;
 
 	//commandLineOptions.parse_positional({"deviceIds"});
