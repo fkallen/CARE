@@ -108,6 +108,16 @@ namespace care
             return options.fixedNumberOfReads;
         }
     }
+
+
+    void addMandatoryOptions(cxxopts::Options& commandLineOptions);
+    void addMandatoryOptionsExtend(cxxopts::Options& commandLineOptions);
+    void addMandatoryOptionsCorrectCpu(cxxopts::Options& commandLineOptions);
+    void addMandatoryOptionsCorrectGpu(cxxopts::Options& commandLineOptions);
+    void addMandatoryOptionsExtendCpu(cxxopts::Options& commandLineOptions);
+    void addMandatoryOptionsExtendGpu(cxxopts::Options& commandLineOptions);
+
+
 }
 
 #endif

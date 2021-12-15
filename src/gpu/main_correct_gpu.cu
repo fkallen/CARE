@@ -64,33 +64,8 @@ int main(int argc, char** argv){
 
 	cxxopts::Options commandLineOptions(argv[0], "CARE: Context-Aware Read Error Correction for Illumina reads");
 
-	commandLineOptions.add_options("Mandatory")
-		("d,outdir", "The output directory. Will be created if it does not exist yet.", 
-		cxxopts::value<std::string>())
-		("c,coverage", "Estimated coverage of input file. (i.e. number_of_reads * read_length / genome_size)", 
-		cxxopts::value<float>())
-		("i,inputfiles", 
-			"The file(s) to correct. "
-			"Fasta or Fastq format. May be gzip'ed. "
-			"Repeat this option for each input file (e.g. -i file1.fastq -i file2.fastq). "
-			"Must not mix fasta and fastq files. "
-			"The collection of input files is treated as a single read library",
-			cxxopts::value<std::vector<std::string>>())
-		("o,outputfilenames", 
-			"The names of outputfiles. "
-			"Repeat this option for each output file (e.g. -o file1_corrected.fastq -o file2_corrected.fastq). "
-			"If a single output file is specified, it will contain the concatenated results of all input files. "
-			"If multiple output files are specified, the number of output files must be equal to the number of input files. "
-			"In this case, output file i will contain the results of input file i. "
-			"Output files are uncompressed.", 
-			cxxopts::value<std::vector<std::string>>())
-		("pairmode", 
-			"Type of input reads."
-			"SE / se : Single-end reads"
-			"PE / pe : Paired-end reads",
-			cxxopts::value<std::string>())
-		("g,gpu", "Comma-separated list of GPU device ids to be used for correction. (Example: --gpu 0,1 to use GPU 0 and GPU 1)", cxxopts::value<std::vector<int>>());
-    
+	addMandatoryOptions(commandLineOptions);
+	addMandatoryOptionsCorrectGpu(commandLineOptions);
 
 	commandLineOptions.add_options("Additional")
 		("help", "Show this help message", cxxopts::value<bool>(help))
