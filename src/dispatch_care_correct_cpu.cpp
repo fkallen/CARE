@@ -48,13 +48,7 @@ namespace care{
         }
     }
 
-    void performCorrection(
-        CorrectionOptions correctionOptions,
-        RuntimeOptions runtimeOptions,
-        MemoryOptions memoryOptions,
-        FileOptions fileOptions,
-        GoodAlignmentProperties goodAlignmentProperties
-    ){
+    void performCorrection(ProgramOptions programOptions){
 
         // {
         //     DoublePassMultiValueHashTable<int, char> table(0, 0.8f);
@@ -112,15 +106,7 @@ namespace care{
 
         helpers::CpuTimer buildReadStorageTimer("build_readstorage");
 
-        const int numQualityBits = memoryOptions.qualityScoreBits;
-
-        std::unique_ptr<ChunkedReadStorage> cpuReadStorage = constructChunkedReadStorageFromFiles(
-            runtimeOptions,
-            memoryOptions,
-            fileOptions,
-            correctionOptions.useQualityScores,
-            numQualityBits
-        );
+        std::unique_ptr<ChunkedReadStorage> cpuReadStorage = constructChunkedReadStorageFromFiles(programOptions);
 
         buildReadStorageTimer.print();
 
@@ -131,15 +117,15 @@ namespace care{
         std::cout << "Maximum sequence length: " << cpuReadStorage->getSequenceLengthUpperBound() << "\n";
         std::cout << "----------------------------------------\n";
 
-        if(fileOptions.save_binary_reads_to != ""){
-            std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
+        if(programOptions.save_binary_reads_to != ""){
+            std::cout << "Saving reads to file " << programOptions.save_binary_reads_to << std::endl;
             helpers::CpuTimer timer("save_to_file");
-            cpuReadStorage->saveToFile(fileOptions.save_binary_reads_to);
+            cpuReadStorage->saveToFile(programOptions.save_binary_reads_to);
             timer.print();
             std::cout << "Saved reads" << std::endl;
         }
         
-        if(correctionOptions.autodetectKmerlength){
+        if(programOptions.autodetectKmerlength){
             const int maxlength = cpuReadStorage->getSequenceLengthUpperBound();
 
             auto getKmerSizeForHashing = [](int maximumReadLength){
@@ -150,30 +136,27 @@ namespace care{
                 }
             };
 
-            correctionOptions.kmerlength = getKmerSizeForHashing(maxlength);
+            programOptions.kmerlength = getKmerSizeForHashing(maxlength);
 
-            std::cout << "Will use k-mer length = " << correctionOptions.kmerlength << " for hashing.\n";
+            std::cout << "Will use k-mer length = " << programOptions.kmerlength << " for hashing.\n";
         }
 
         std::cout << "Reads with ambiguous bases: " << cpuReadStorage->getNumberOfReadsWithN() << std::endl;        
 
         printDataStructureMemoryUsage(*cpuReadStorage, "reads");
 
-        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after cpureadstorage");
+        //compareMaxRssToLimit(programOptions.memoryTotalLimit, "Error memorylimit after cpureadstorage");
 
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
 
         auto minhasherAndType = constructCpuMinhasherFromCpuReadStorage(
-            fileOptions,
-            runtimeOptions,
-            memoryOptions,
-            correctionOptions,
+            programOptions,
             *cpuReadStorage,
             CpuMinhasherType::Ordinary
         );
 
-        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after cpuminhasher");
+        //compareMaxRssToLimit(programOptions.memoryTotalLimit, "Error memorylimit after cpuminhasher");
 
 
         CpuMinhasher* cpuMinhasher = minhasherAndType.first.get();
@@ -188,10 +171,10 @@ namespace care{
             return;
         }
 
-        if(correctionOptions.mustUseAllHashfunctions 
-            && correctionOptions.numHashFunctions != cpuMinhasher->getNumberOfMaps()){
+        if(programOptions.mustUseAllHashfunctions 
+            && programOptions.numHashFunctions != cpuMinhasher->getNumberOfMaps()){
             std::cout << "Cannot use specified number of hash functions (" 
-                << correctionOptions.numHashFunctions <<")\n";
+                << programOptions.numHashFunctions <<")\n";
             std::cout << "Abort!\n";
             return;
         }
@@ -201,9 +184,9 @@ namespace care{
             OrdinaryCpuMinhasher* ordinaryCpuMinhasher = dynamic_cast<OrdinaryCpuMinhasher*>(cpuMinhasher);
             assert(ordinaryCpuMinhasher != nullptr);
 
-            if(fileOptions.save_hashtables_to != "") {
-                std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
-                std::ofstream os(fileOptions.save_hashtables_to);
+            if(programOptions.save_hashtables_to != "") {
+                std::cout << "Saving minhasher to file " << programOptions.save_hashtables_to << std::endl;
+                std::ofstream os(programOptions.save_hashtables_to);
                 assert((bool)os);
                 helpers::CpuTimer timer("save_to_file");
                 ordinaryCpuMinhasher->writeToStream(os);
@@ -223,11 +206,7 @@ namespace care{
         helpers::CpuTimer step2Timer("STEP2");
 
         auto partialResults = cpu::correct_cpu(
-            goodAlignmentProperties, 
-            correctionOptions,
-            runtimeOptions, 
-            fileOptions, 
-            memoryOptions, 
+            programOptions, 
             *cpuMinhasher, 
             *cpuReadStorage
         );
@@ -239,7 +218,7 @@ namespace care{
         std::cerr << "Constructed " << partialResults.size() << " corrections. ";
         std::cerr << "They occupy a total of " << (partialResults.dataBytes() + partialResults.offsetBytes()) << " bytes\n";
 
-        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after correction");
+        //compareMaxRssToLimit(programOptions.memoryTotalLimit, "Error memorylimit after correction");
 
         minhasherAndType.first.reset();
         cpuMinhasher = nullptr;        
@@ -251,12 +230,12 @@ namespace care{
         const auto partialResultMemUsage = partialResults.getMemoryInfo();
 
         // std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
-        // std::cerr << "memoryLimitOption = " << memoryOptions.memoryTotalLimit << "\n";
+        // std::cerr << "memoryLimitOption = " << programOptions.memoryTotalLimit << "\n";
         // std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
 
         std::size_t memoryForSorting = std::min(
             availableMemoryInBytes,
-            memoryOptions.memoryTotalLimit - partialResultMemUsage.host
+            programOptions.memoryTotalLimit - partialResultMemUsage.host
         );
 
         if(memoryForSorting > 1*(std::size_t(1) << 30)){
@@ -278,24 +257,24 @@ namespace care{
         sorttimer.print();
 
         std::vector<FileFormat> formats;
-        for(const auto& inputfile : fileOptions.inputfiles){
+        for(const auto& inputfile : programOptions.inputfiles){
             formats.emplace_back(getFileFormat(inputfile));
         }
         std::vector<std::string> outputfiles;
-        for(const auto& outputfilename : fileOptions.outputfilenames){
-            outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
+        for(const auto& outputfilename : programOptions.outputfilenames){
+            outputfiles.emplace_back(programOptions.outputdirectory + "/" + outputfilename);
         }
         constructOutputFileFromCorrectionResults(
-            fileOptions.inputfiles, 
+            programOptions.inputfiles, 
             partialResults, 
             formats[0],
             outputfiles,
-            runtimeOptions.showProgress
+            programOptions.showProgress
         );
 
         step3Timer.print();
 
-        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after output construction");
+        //compareMaxRssToLimit(programOptions.memoryTotalLimit, "Error memorylimit after output construction");
 
         std::cout << "Construction of output file(s) finished." << std::endl;
 

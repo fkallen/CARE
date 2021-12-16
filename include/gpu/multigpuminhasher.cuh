@@ -477,7 +477,7 @@ namespace gpu{
         }
 
         int constructFromReadStorage(
-            const RuntimeOptions &runtimeOptions,
+            const ProgramOptions& programOptions,
             std::uint64_t nReads,
             const GpuReadStorage& gpuReadStorage,
             int upperBoundSequenceLength,
@@ -507,7 +507,7 @@ namespace gpu{
 
                     auto mh = std::make_unique<SingleGpuMinhasher>(nReads, resultsPerMapThreshold, kmerSize);
                     const int createdTables =  mh->constructFromReadStorage(
-                        runtimeOptions, 
+                        programOptions, 
                         nReads, 
                         gpuReadStorage, 
                         upperBoundSequenceLength, 

@@ -47,8 +47,8 @@ public:
     template<class ResultProcessor, class BatchCompletion>
     void runToCompletion(
         cpu::RangeGenerator<read_number>& readIdGenerator,
-        const CorrectionOptions& correctionOptions,
-        const GoodAlignmentProperties& goodAlignmentProperties,
+        const CorrectionOptions& programOptions,
+        const GoodAlignmentProperties& programOptions,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted
@@ -65,25 +65,25 @@ public:
             encodedSequencePitchInInts2Bit,
             decodedSequencePitchInBytes,
             qualityPitchInBytes,
-            correctionOptions,
-            goodAlignmentProperties,
+            programOptions,
+            programOptions,
             *candidateIdsProvider,
             *readProvider,
             correctionFlags
         );
 
-        HostContainer<read_number> batchReadIds(correctionOptions.batchsize);
-        HostContainer<unsigned int> batchEncodedData(correctionOptions.batchsize * encodedSequencePitchInInts2Bit);
-        HostContainer<char> batchQualities(correctionOptions.batchsize * qualityPitchInBytes);
-        HostContainer<int> batchReadLengths(correctionOptions.batchsize);
+        HostContainer<read_number> batchReadIds(programOptions.batchsize);
+        HostContainer<unsigned int> batchEncodedData(programOptions.batchsize * encodedSequencePitchInInts2Bit);
+        HostContainer<char> batchQualities(programOptions.batchsize * qualityPitchInBytes);
+        HostContainer<int> batchReadLengths(programOptions.batchsize);
 
-        std::vector<read_number> tmpids(correctionOptions.batchsize);
+        std::vector<read_number> tmpids(programOptions.batchsize);
 
         while(!(readIdGenerator.empty())){
-            tmpids.resize(correctionOptions.batchsize);            
+            tmpids.resize(programOptions.batchsize);            
 
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(
-                correctionOptions.batchsize, 
+                programOptions.batchsize, 
                 tmpids.begin()
             );
             
@@ -110,7 +110,7 @@ public:
                 encodedSequencePitchInInts2Bit
             );
 
-            if(correctionOptions.useQualityScores){
+            if(programOptions.useQualityScores){
                 readProvider->gatherSequenceQualities(
                     batchQualities.data(),
                     qualityPitchInBytes
@@ -126,7 +126,7 @@ public:
                 input.encodedAnchors[i] = batchEncodedData.data() + encodedSequencePitchInInts2Bit * i;
             }
 
-            if(correctionOptions.useQualityScores){
+            if(programOptions.useQualityScores){
                 input.anchorQualityscores.resize(numAnchors);
                 for(int i = 0; i < numAnchors; i++){
                     input.anchorQualityscores[i] = batchQualities.data() + qualityPitchInBytes * i;
@@ -200,8 +200,7 @@ public:
     RunStatistics runToCompletion(
         int deviceId,
         IdGenerator& readIdGenerator,
-        const CorrectionOptions& correctionOptions,
-        const GoodAlignmentProperties& goodAlignmentProperties,
+        const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted
@@ -212,8 +211,7 @@ public:
         return run_impl(
             deviceId,
             readIdGenerator,
-            correctionOptions,
-            goodAlignmentProperties,
+            programOptions,
             correctionFlags,
             processResults,
             batchCompleted,
@@ -225,8 +223,7 @@ public:
     RunStatistics runSomeBatches(
         int deviceId,
         IdGenerator& readIdGenerator,
-        const CorrectionOptions& correctionOptions,
-        const GoodAlignmentProperties& goodAlignmentProperties,
+        const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted,
@@ -238,8 +235,7 @@ public:
         return run_impl(
             deviceId,
             readIdGenerator,
-            correctionOptions,
-            goodAlignmentProperties,
+            programOptions,
             correctionFlags,
             processResults,
             batchCompleted,
@@ -251,8 +247,7 @@ public:
     RunStatistics runToCompletionDoubleBuffered(
         int deviceId,
         IdGenerator& readIdGenerator,
-        const CorrectionOptions& correctionOptions,
-        const GoodAlignmentProperties& goodAlignmentProperties,
+        const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted
@@ -265,8 +260,7 @@ public:
         return runDoubleBuffered_impl(
             deviceId,
             readIdGenerator,
-            correctionOptions,
-            goodAlignmentProperties,
+            programOptions,
             correctionFlags,
             useThreadForOutputConstruction,
             processResults,
@@ -279,8 +273,7 @@ public:
     RunStatistics runToCompletionDoubleBufferedWithExtraThread(
         int deviceId,
         IdGenerator& readIdGenerator,
-        const CorrectionOptions& correctionOptions,
-        const GoodAlignmentProperties& goodAlignmentProperties,
+        const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted
@@ -293,8 +286,7 @@ public:
         return runDoubleBuffered_impl(
             deviceId,
             readIdGenerator,
-            correctionOptions,
-            goodAlignmentProperties,
+            programOptions,
             correctionFlags,
             useThreadForOutputConstruction,
             processResults,
@@ -307,8 +299,7 @@ public:
     RunStatistics runSomeBatchesDoubleBuffered(
         int deviceId,
         IdGenerator& readIdGenerator,
-        const CorrectionOptions& correctionOptions,
-        const GoodAlignmentProperties& goodAlignmentProperties,
+        const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted,
@@ -322,8 +313,7 @@ public:
         return runDoubleBuffered_impl(
             deviceId,
             readIdGenerator,
-            correctionOptions,
-            goodAlignmentProperties,
+            programOptions,
             correctionFlags,
             useThreadForOutputConstruction,
             processResults,
@@ -336,8 +326,7 @@ public:
     RunStatistics runSomeBatchesDoubleBufferedWithExtraThread(
         int deviceId,
         IdGenerator& readIdGenerator,
-        const CorrectionOptions& correctionOptions,
-        const GoodAlignmentProperties& goodAlignmentProperties,
+        const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted,
@@ -351,8 +340,7 @@ public:
         return runDoubleBuffered_impl(
             deviceId,
             readIdGenerator,
-            correctionOptions,
-            goodAlignmentProperties,
+            programOptions,
             correctionFlags,
             useThreadForOutputConstruction,
             processResults,
@@ -365,8 +353,7 @@ public:
     RunStatistics runDoubleBuffered_impl(
         int deviceId,
         IdGenerator& readIdGenerator,
-        const CorrectionOptions& correctionOptions,
-        const GoodAlignmentProperties& goodAlignmentProperties,
+        const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         bool useThreadForOutputConstruction,
         ResultProcessor processResults,
@@ -413,9 +400,8 @@ public:
         GpuErrorCorrector gpuErrorCorrector{
             *readStorage,
             correctionFlags,
-            correctionOptions,
-            goodAlignmentProperties,
-            correctionOptions.batchsize,
+            programOptions,
+            programOptions.batchsize,
             mr,
             threadPool,
             gpuForestAnchor,
@@ -424,7 +410,7 @@ public:
 
         OutputConstructor outputConstructor(            
             correctionFlags,
-            correctionOptions
+            programOptions
         );
 
         int iterations = 0;
@@ -485,7 +471,7 @@ public:
 
         RunStatistics runStatistics;
 
-        std::vector<read_number> anchorIds(correctionOptions.batchsize);
+        std::vector<read_number> anchorIds(programOptions.batchsize);
 
         int globalcounter = 0;
 
@@ -496,9 +482,9 @@ public:
 
                 helpers::CpuTimer hashingTimer;
             
-                anchorIds.resize(correctionOptions.batchsize);
+                anchorIds.resize(programOptions.batchsize);
                 readIdGenerator.process_next_n(
-                    correctionOptions.batchsize, 
+                    programOptions.batchsize, 
                     [&](auto begin, auto end){
                         auto readIdsEnd = std::copy(begin, end, anchorIds.begin());
                         anchorIds.erase(readIdsEnd, anchorIds.end());
@@ -520,7 +506,7 @@ public:
                 gpuAnchorHasher.makeErrorCorrectorInput(
                     anchorIds.data(),
                     anchorIds.size(),
-                    correctionOptions.useQualityScores,
+                    programOptions.useQualityScores,
                     *inputPtr,
                     stream
                 );
@@ -549,9 +535,9 @@ public:
 
         while(continueCondition()){            
             
-            anchorIds.resize(correctionOptions.batchsize);
+            anchorIds.resize(programOptions.batchsize);
             readIdGenerator.process_next_n(
-                correctionOptions.batchsize, 
+                programOptions.batchsize, 
                 [&](auto begin, auto end){
                     auto readIdsEnd = std::copy(begin, end, anchorIds.begin());
                     anchorIds.erase(readIdsEnd, anchorIds.end());
@@ -574,7 +560,7 @@ public:
                 gpuAnchorHasher.makeErrorCorrectorInput(
                     anchorIds.data(),
                     anchorIds.size(),
-                    correctionOptions.useQualityScores,
+                    programOptions.useQualityScores,
                     *inputPtr,
                     stream
                 );
@@ -668,8 +654,7 @@ public:
     RunStatistics run_impl(
         int deviceId,
         IdGenerator& readIdGenerator,
-        const CorrectionOptions& correctionOptions,
-        const GoodAlignmentProperties& goodAlignmentProperties,
+        const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted,
@@ -700,9 +685,8 @@ public:
         GpuErrorCorrector gpuErrorCorrector{
             *readStorage,
             correctionFlags,
-            correctionOptions,
-            goodAlignmentProperties,
-            correctionOptions.batchsize,
+            programOptions,
+            programOptions.batchsize,
             mr,
             threadPool,
             gpuForestAnchor,
@@ -711,12 +695,12 @@ public:
 
         OutputConstructor outputConstructor(            
             correctionFlags,
-            correctionOptions
+            programOptions
         );
 
         RunStatistics runStatistics;
 
-        std::vector<read_number> anchorIds(correctionOptions.batchsize);
+        std::vector<read_number> anchorIds(programOptions.batchsize);
 
         int iterations = 0;
         std::vector<double> elapsedHashingTimes;
@@ -733,9 +717,9 @@ public:
 
             helpers::CpuTimer hashingTimer;
             
-            anchorIds.resize(correctionOptions.batchsize);
+            anchorIds.resize(programOptions.batchsize);
             readIdGenerator.process_next_n(
-                correctionOptions.batchsize, 
+                programOptions.batchsize, 
                 [&](auto begin, auto end){
                     auto readIdsEnd = std::copy(begin, end, anchorIds.begin());
                     anchorIds.erase(readIdsEnd, anchorIds.end());
@@ -752,7 +736,7 @@ public:
                 gpuAnchorHasher.makeErrorCorrectorInput(
                     anchorIds.data(),
                     anchorIds.size(),
-                    correctionOptions.useQualityScores,
+                    programOptions.useQualityScores,
                     input,
                     stream
                 );
@@ -876,8 +860,7 @@ public:
         int deviceId,
         const Config& config,
         IdGenerator& readIdGenerator,
-        const CorrectionOptions& correctionOptions,
-        const GoodAlignmentProperties& goodAlignmentProperties,
+        const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted
@@ -921,7 +904,7 @@ public:
                         std::launch::async,
                         [&](){ 
                             hasherThreadFunction(deviceId, readIdGenerator, 
-                                correctionOptions); 
+                                programOptions); 
                         }
                     )
                 );
@@ -932,8 +915,8 @@ public:
                     std::async(
                         std::launch::async,
                         [&](){ 
-                            correctorThreadFunctionMultiBufferWithOutput(deviceId, correctionOptions, 
-                                goodAlignmentProperties, 
+                            correctorThreadFunctionMultiBufferWithOutput(deviceId, 
+                                programOptions, 
                                 correctionFlags,
                                 processResults, batchCompleted);                          
                         }
@@ -968,7 +951,7 @@ public:
                         std::launch::async,
                         [&](){ 
                             hasherThreadFunction(deviceId, readIdGenerator, 
-                                correctionOptions); 
+                                programOptions); 
                         }
                     )
                 );
@@ -981,8 +964,7 @@ public:
                         [&](){ 
                             correctorThreadFunction(
                                 deviceId, 
-                                correctionOptions, 
-                                goodAlignmentProperties,
+                                programOptions, 
                                 correctionFlags
                             );                          
                         }
@@ -995,7 +977,7 @@ public:
                     std::async(
                         std::launch::async,
                         [&](){ 
-                            outputConstructorThreadFunction(correctionOptions, correctionFlags,
+                            outputConstructorThreadFunction(programOptions, correctionFlags,
                                 processResults, batchCompleted); 
                         }
                     )
@@ -1034,7 +1016,7 @@ public:
     void hasherThreadFunction(
         int deviceId,
         IdGenerator& readIdGenerator,
-        const CorrectionOptions& correctionOptions
+        const ProgramOptions& programOptions
     ){
         cudaSetDevice(deviceId);
 
@@ -1054,10 +1036,10 @@ public:
         while(!readIdGenerator.empty()){
             CUDACHECK(cudaStreamSynchronize(hasherStream));
 
-            std::vector<read_number> anchorIds(correctionOptions.batchsize);
+            std::vector<read_number> anchorIds(programOptions.batchsize);
 
             readIdGenerator.process_next_n(
-                correctionOptions.batchsize, 
+                programOptions.batchsize, 
                 [&](auto begin, auto end){
                     auto readIdsEnd = std::copy(begin, end, anchorIds.begin());
                     anchorIds.erase(readIdsEnd, anchorIds.end());
@@ -1074,7 +1056,7 @@ public:
             gpuAnchorHasher.makeErrorCorrectorInput(
                 anchorIds.data(),
                 anchorIds.size(),
-                correctionOptions.useQualityScores,
+                programOptions.useQualityScores,
                 *inputPtr,
                 hasherStream
             );
@@ -1110,8 +1092,7 @@ public:
 
     void correctorThreadFunction(
         int deviceId,
-        const CorrectionOptions& correctionOptions,
-        const GoodAlignmentProperties& goodAlignmentProperties,
+        const ProgramOptions& programOptions,
         const ReadCorrectionFlags& correctionFlags
     ){
         cudaSetDevice(deviceId);
@@ -1121,9 +1102,8 @@ public:
         GpuErrorCorrector gpuErrorCorrector{
             *readStorage,
             correctionFlags,
-            correctionOptions,
-            goodAlignmentProperties,
-            correctionOptions.batchsize,
+            programOptions,
+            programOptions.batchsize,
             mr,
             threadPool,
             gpuForestAnchor,
@@ -1206,8 +1186,7 @@ public:
     template<class ResultProcessor, class BatchCompletion>
     void correctorThreadFunctionMultiBufferWithOutput(
         int deviceId,
-        const CorrectionOptions& correctionOptions,
-        const GoodAlignmentProperties& goodAlignmentProperties,
+        const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted
@@ -1219,9 +1198,8 @@ public:
         GpuErrorCorrector gpuErrorCorrector{
             *readStorage,
             correctionFlags,
-            correctionOptions,
-            goodAlignmentProperties,
-            correctionOptions.batchsize,
+            programOptions,
+            programOptions.batchsize,
             mr,
             threadPool,
             gpuForestAnchor,
@@ -1230,7 +1208,7 @@ public:
 
         OutputConstructor outputConstructor(            
             correctionFlags,
-            correctionOptions
+            programOptions
         );
 
         ThreadPool::ParallelForHandle pforHandle;
@@ -1378,7 +1356,7 @@ public:
 
     template<class ResultProcessor, class BatchCompletion>
     void outputConstructorThreadFunction(
-        const CorrectionOptions& correctionOptions,
+        const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted
@@ -1386,7 +1364,7 @@ public:
 
         OutputConstructor outputConstructor(            
             correctionFlags,
-            correctionOptions
+            programOptions
         );
 
         ThreadPool::ParallelForHandle pforHandle;
@@ -1453,27 +1431,23 @@ private:
 
 template<class Minhasher>
 SerializedObjectStorage correct_gpu_impl(
-    const GoodAlignmentProperties& goodAlignmentProperties,
-    const CorrectionOptions& correctionOptions,
-    const RuntimeOptions& runtimeOptions,
-    const FileOptions& fileOptions,
-    const MemoryOptions& memoryOptions,
+    const ProgramOptions& programOptions,
     Minhasher& minhasher,
     GpuReadStorage& readStorage,
     const std::vector<GpuForest>& anchorForests,
     const std::vector<GpuForest>& candidateForests
 ){
 
-    assert(runtimeOptions.canUseGpu);
-    //assert(runtimeOptions.max_candidates > 0);
-    assert(runtimeOptions.deviceIds.size() > 0);
+    assert(programOptions.canUseGpu);
+    //assert(programOptions.max_candidates > 0);
+    assert(programOptions.deviceIds.size() > 0);
 
-    const auto& deviceIds = runtimeOptions.deviceIds;
+    const auto& deviceIds = programOptions.deviceIds;
 
     const auto rsMemInfo = readStorage.getMemoryInfo();
     const auto mhMemInfo = minhasher.getMemoryInfo();
 
-    std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
+    std::size_t memoryAvailableBytesHost = programOptions.memoryTotalLimit;
 
     if(memoryAvailableBytesHost > rsMemInfo.host){
         memoryAvailableBytesHost -= rsMemInfo.host;
@@ -1510,7 +1484,7 @@ SerializedObjectStorage correct_gpu_impl(
     const std::size_t memoryLimitData = memoryForPartialResultsInBytes * 0.75;
     const std::size_t memoryLimitOffsets = memoryForPartialResultsInBytes * 0.25;
 
-    SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, fileOptions.tempdirectory + "/");
+    SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, programOptions.tempdirectory + "/");
 
     //std::mutex outputstreamlock;
 
@@ -1564,11 +1538,11 @@ SerializedObjectStorage correct_gpu_impl(
         }
     };
 
-    outputThread.setMaximumQueueSize(runtimeOptions.threads);
+    outputThread.setMaximumQueueSize(programOptions.threads);
 
     outputThread.start();
 
-    const std::size_t numReadsToProcess = getNumReadsToProcess(&readStorage, runtimeOptions);
+    const std::size_t numReadsToProcess = getNumReadsToProcess(&readStorage, programOptions);
 
     IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(
         thrust::make_counting_iterator<read_number>(0),
@@ -1576,7 +1550,7 @@ SerializedObjectStorage correct_gpu_impl(
     );
 
     auto showProgress = [&](std::int64_t totalCount, int seconds){
-        if(runtimeOptions.showProgress){
+        if(programOptions.showProgress){
 
             int hours = seconds / 3600;
             seconds = seconds % 3600;
@@ -1604,7 +1578,7 @@ SerializedObjectStorage correct_gpu_impl(
         progressThread.addProgress(size);
     };
 
-    if(false /* && runtimeOptions.threads <= 6*/){
+    if(false /* && programOptions.threads <= 6*/){
         //execute a single thread pipeline with each available thread
 
         auto runPipeline = [&](int deviceId, 
@@ -1622,8 +1596,7 @@ SerializedObjectStorage correct_gpu_impl(
             pipeline.runToCompletion(
                 deviceId,
                 readIdGenerator,
-                correctionOptions,
-                goodAlignmentProperties,
+                programOptions,
                 correctionFlags,
                 processResults,
                 batchCompleted
@@ -1632,7 +1605,7 @@ SerializedObjectStorage correct_gpu_impl(
     
         std::vector<std::future<void>> futures;
     
-        for(int i = 0; i < runtimeOptions.threads; i++){
+        for(int i = 0; i < programOptions.threads; i++){
             const int position = i % deviceIds.size();
             const int deviceId = deviceIds[position];
 
@@ -1672,8 +1645,7 @@ SerializedObjectStorage correct_gpu_impl(
             runStatistics = pipeline.runSomeBatches(
                 deviceIds[0],
                 readIdGenerator,
-                correctionOptions,
-                goodAlignmentProperties,
+                programOptions,
                 correctionFlags,
                 processResults,
                 batchCompleted,
@@ -1700,8 +1672,7 @@ SerializedObjectStorage correct_gpu_impl(
             pipeline.runToCompletionDoubleBuffered(
                 deviceId,
                 readIdGenerator,
-                correctionOptions,
-                goodAlignmentProperties,
+                programOptions,
                 correctionFlags,
                 processResults,
                 batchCompleted
@@ -1723,8 +1694,8 @@ SerializedObjectStorage correct_gpu_impl(
         //     pipeline.runToCompletionDoubleBufferedWithExtraThread(
         //         deviceId,
         //         readIdGenerator,
-        //         correctionOptions,
-        //         goodAlignmentProperties,
+        //         programOptions,
+        //         programOptions,
         //         correctionFlags,
         //         processResults,
         //         batchCompleted
@@ -1748,8 +1719,7 @@ SerializedObjectStorage correct_gpu_impl(
                 deviceId,
                 config,
                 readIdGenerator,
-                correctionOptions,
-                goodAlignmentProperties,
+                programOptions,
                 correctionFlags,
                 processResults,
                 batchCompleted
@@ -1760,7 +1730,7 @@ SerializedObjectStorage correct_gpu_impl(
 
         const int numDevices = deviceIds.size();
         const int requiredNumThreadsForComplex = numHashersPerCorrectorByTime + (2 + 1 + 1);
-        int availableThreads = runtimeOptions.threads;
+        int availableThreads = programOptions.threads;
 
         for(int i = 0; i < numDevices; i++){ 
             if(availableThreads > 0){
@@ -1905,7 +1875,7 @@ SerializedObjectStorage correct_gpu_impl(
 
     //assert(threadPool.empty());
 
-    // std::ofstream flagsstream(fileOptions.outputfilenames[0] + "_flags");
+    // std::ofstream flagsstream(programOptions.outputfilenames[0] + "_flags");
 
     // for(std::uint64_t i = 0; i < gpuReadStorage->getNumberOfReads(); i++){
     //     flagsstream << correctionFlags.isCorrectedAsHQAnchor(i) << " " 
@@ -1916,11 +1886,7 @@ SerializedObjectStorage correct_gpu_impl(
 }
 
 SerializedObjectStorage correct_gpu(
-    const GoodAlignmentProperties& goodAlignmentProperties,
-    const CorrectionOptions& correctionOptions,
-    const RuntimeOptions& runtimeOptions,
-    const FileOptions& fileOptions,
-    const MemoryOptions& memoryOptions,
+    const ProgramOptions& programOptions,
     GpuMinhasher& minhasher,
     GpuReadStorage& readStorage,
     const std::vector<GpuForest>& anchorForests,
@@ -1928,11 +1894,7 @@ SerializedObjectStorage correct_gpu(
 ){
 
     return correct_gpu_impl(
-        goodAlignmentProperties,
-        correctionOptions,
-        runtimeOptions,
-        fileOptions,
-        memoryOptions,
+        programOptions,
         minhasher,
         readStorage,
         anchorForests,

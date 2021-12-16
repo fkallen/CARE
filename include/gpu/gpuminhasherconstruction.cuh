@@ -27,10 +27,7 @@ namespace gpu{
 
     std::pair<std::unique_ptr<GpuMinhasher>, GpuMinhasherType>
     constructGpuMinhasherFromGpuReadStorage(
-        const FileOptions &fileOptions,
-        const RuntimeOptions &runtimeOptions,
-        const MemoryOptions& memoryOptions,
-        const CorrectionOptions& correctionOptions,
+        const ProgramOptions& programOptions,
         const GpuReadStorage& gpuReadStorage,
         GpuMinhasherType requestedType = GpuMinhasherType::None
     );

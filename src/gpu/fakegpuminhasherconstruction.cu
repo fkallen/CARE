@@ -18,36 +18,30 @@ namespace gpu{
 
         std::unique_ptr<FakeGpuMinhasher>
         constructFakeGpuMinhasherFromGpuReadStorage(
-            const CorrectionOptions& correctionOptions,
-            const FileOptions& fileOptions,
-            const RuntimeOptions& runtimeOptions,
-            const MemoryOptions& memoryOptions,
+            const ProgramOptions& programOptions,
             const GpuReadStorage& gpuReadStorage
         ){
-            float loadfactor = memoryOptions.hashtableLoadfactor;
+            float loadfactor = programOptions.hashtableLoadfactor;
             
             auto gpuMinhasher = std::make_unique<FakeGpuMinhasher>(
                 gpuReadStorage.getNumberOfReads(),
-                calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage),
-                correctionOptions.kmerlength,
+                calculateResultsPerMapThreshold(programOptions.estimatedCoverage),
+                programOptions.kmerlength,
                 loadfactor
             );
 
-            if(fileOptions.load_hashtables_from != ""){
+            if(programOptions.load_hashtables_from != ""){
 
-                std::ifstream is(fileOptions.load_hashtables_from);
+                std::ifstream is(programOptions.load_hashtables_from);
                 assert((bool)is);
     
-                const int loadedMaps = gpuMinhasher->loadFromStream(is, correctionOptions.numHashFunctions);
+                const int loadedMaps = gpuMinhasher->loadFromStream(is, programOptions.numHashFunctions);
     
-                std::cout << "Loaded " << loadedMaps << " hash tables from " << fileOptions.load_hashtables_from << std::endl;
+                std::cout << "Loaded " << loadedMaps << " hash tables from " << programOptions.load_hashtables_from << std::endl;
             }else{
                 gpuMinhasher->constructFromReadStorage(
-                    fileOptions,
-                    runtimeOptions,
-                    memoryOptions,
+                    programOptions,
                     gpuReadStorage.getNumberOfReads(), 
-                    correctionOptions,
                     gpuReadStorage
                 );
             }
@@ -57,36 +51,30 @@ namespace gpu{
 
         std::unique_ptr<FakeGpuSingleHashMinhasher>
         constructFakeGpuSingleHashMinhasherFromGpuReadStorage(
-            const CorrectionOptions& correctionOptions,
-            const FileOptions& fileOptions,
-            const RuntimeOptions& runtimeOptions,
-            const MemoryOptions& memoryOptions,
+            const ProgramOptions& programOptions,
             const GpuReadStorage& gpuReadStorage
         ){
-            float loadfactor = memoryOptions.hashtableLoadfactor;
+            float loadfactor = programOptions.hashtableLoadfactor;
             
             auto gpuMinhasher = std::make_unique<FakeGpuSingleHashMinhasher>(
                 gpuReadStorage.getNumberOfReads(),
                 255,
-                correctionOptions.kmerlength,
+                programOptions.kmerlength,
                 loadfactor
             );
 
-            if(fileOptions.load_hashtables_from != ""){
+            if(programOptions.load_hashtables_from != ""){
 
-                std::ifstream is(fileOptions.load_hashtables_from);
+                std::ifstream is(programOptions.load_hashtables_from);
                 assert((bool)is);
 
-                const int loadedMaps = gpuMinhasher->loadFromStream(is, correctionOptions.numHashFunctions);
+                const int loadedMaps = gpuMinhasher->loadFromStream(is, programOptions.numHashFunctions);
 
-                std::cout << "Loaded " << loadedMaps << " hash tables from " << fileOptions.load_hashtables_from << std::endl;
+                std::cout << "Loaded " << loadedMaps << " hash tables from " << programOptions.load_hashtables_from << std::endl;
             }else{
                 gpuMinhasher->constructFromReadStorage(
-                    fileOptions,
-                    runtimeOptions,
-                    memoryOptions,
+                    programOptions,
                     gpuReadStorage.getNumberOfReads(), 
-                    correctionOptions,
                     gpuReadStorage
                 );
             }
