@@ -57,7 +57,7 @@ struct clf_agent
     std::shared_ptr<AnchorClf> classifier_anchor;
     std::shared_ptr<CandClf> classifier_cands;
     std::stringstream anchor_stream, cands_stream;
-    std::shared_ptr<std::ofstream> anchor_file, cands_file;
+    std::shared_ptr<std::ofstream> anchor_print_file, cands_print_file;
     std::mt19937 rng;
     std::bernoulli_distribution coinflip_anchor, coinflip_cands;
     AnchorExtractor extract_anchor;
@@ -66,26 +66,26 @@ struct clf_agent
     clf_agent(const ProgramOptions& opts) :
         classifier_anchor(opts.correctionType == CorrectionType::Forest ? std::make_shared<AnchorClf>(opts.mlForestfileAnchor, opts.thresholdAnchor) : nullptr),
         classifier_cands(opts.correctionTypeCands == CorrectionType::Forest ? std::make_shared<CandClf>(opts.mlForestfileCands, opts.thresholdCands) : nullptr),
-        anchor_file(opts.correctionType == CorrectionType::Print ? std::make_shared<std::ofstream>(opts.mlForestfileAnchor) : nullptr),
-        cands_file(opts.correctionTypeCands == CorrectionType::Print ? std::make_shared<std::ofstream>(opts.mlForestfileCands) : nullptr),
+        anchor_print_file(opts.correctionType == CorrectionType::Print ? std::make_shared<std::ofstream>(opts.mlForestfilePrintAnchor) : nullptr),
+        cands_print_file(opts.correctionTypeCands == CorrectionType::Print ? std::make_shared<std::ofstream>(opts.mlForestfilePrintCands) : nullptr),
         rng(44),
         coinflip_anchor(opts.sampleRateAnchor),
         coinflip_cands(opts.sampleRateCands)
     {
         if (opts.correctionType == CorrectionType::Print) {
-            *anchor_file << extract_anchor << std::endl;
+            *anchor_print_file << extract_anchor << std::endl;
         }
 
         if (opts.correctionTypeCands == CorrectionType::Print) {
-            *cands_file << extract_cands << std::endl;
+            *cands_print_file << extract_cands << std::endl;
         }
     }
 
     clf_agent(const clf_agent& other) :
         classifier_anchor(other.classifier_anchor),
         classifier_cands(other.classifier_cands),
-        anchor_file(other.anchor_file),
-        cands_file(other.cands_file),
+        anchor_print_file(other.anchor_print_file),
+        cands_print_file(other.cands_print_file),
         rng(44),
         coinflip_anchor(other.coinflip_anchor),
         coinflip_cands(other.coinflip_cands)
@@ -120,18 +120,18 @@ struct clf_agent
     }
 
     void flush() {
-        if (anchor_file && anchor_stream.peek() != decltype(anchor_stream)::traits_type::eof()) {
+        if (anchor_print_file && anchor_stream.peek() != decltype(anchor_stream)::traits_type::eof()) {
             #pragma omp critical
             {
-                *anchor_file << anchor_stream.rdbuf();
+                *anchor_print_file << anchor_stream.rdbuf();
             }
         }
         anchor_stream = std::stringstream();
 
-        if (cands_file && cands_stream.peek() != decltype(cands_stream)::traits_type::eof()) {
+        if (cands_print_file && cands_stream.peek() != decltype(cands_stream)::traits_type::eof()) {
             #pragma omp critical
             {
-                *cands_file << cands_stream.rdbuf();
+                *cands_print_file << cands_stream.rdbuf();
             }
         }
         cands_stream = std::stringstream();

@@ -116,7 +116,7 @@ int main(int argc, char** argv){
 		}
 	}
 
-	if(programOptions.correctionType != CorrectionType::Classic){
+	if(programOptions.correctionType == CorrectionType::Forest){
 		if(programOptions.mlForestfileAnchor == ""){
 			std::cerr << "CorrectionType is not set to Classic, but no valid classifier file is provided. Abort!\n";
 			std::exit(0);

@@ -347,6 +347,14 @@ namespace care{
             result.mlForestfileCands = pr["ml-cands-forestfile"].as<std::string>();
         }
 
+        if(pr.count("ml-print-forestfile")){
+            result.mlForestfilePrintAnchor = pr["ml-print-forestfile"].as<std::string>();
+        }
+
+        if(pr.count("ml-cands-print-forestfile")){
+            result.mlForestfilePrintCands = pr["ml-cands-print-forestfile"].as<std::string>();
+        }
+
         if(pr.count("inputfiles")){
             result.inputfiles = pr["inputfiles"].as<std::vector<std::string>>();
         }
@@ -632,8 +640,9 @@ namespace care{
 	    stream << "fixedStepsize: " << fixedStepsize << "\n";
     }
 
-    void ProgramOptions::printAdditionalOptionsCorrectCpu(std::ostream&) const{
-        //nothing
+    void ProgramOptions::printAdditionalOptionsCorrectCpu(std::ostream& stream) const{
+        stream << "ml-print-forestfile: " << mlForestfilePrintAnchor << "\n";
+        stream << "ml-cands-print-forestfile: " << mlForestfilePrintCands << "\n";
     }
 
     void ProgramOptions::printAdditionalOptionsCorrectGpu(std::ostream& stream) const{
@@ -836,8 +845,12 @@ namespace care{
             cxxopts::value<int>());
     }
 
-    void addAdditionalOptionsCorrectCpu(cxxopts::Options&){
-        //nothing
+    void addAdditionalOptionsCorrectCpu(cxxopts::Options& commandLineOptions){
+        commandLineOptions.add_options("Additional")
+            ("ml-print-forestfile", "The output file for extracted anchor features when correctionType = Print",
+                cxxopts::value<std::string>())
+            ("ml-cands-print-forestfile", "The output file for extracted candidate features when correctionTypeCands = Print",
+                cxxopts::value<std::string>());
     }
 
     void addAdditionalOptionsCorrectGpu(cxxopts::Options& commandLineOptions){

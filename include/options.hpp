@@ -88,6 +88,8 @@ namespace care
         std::string extendedReadsOutputfilename = "UNSET_";
         std::string mlForestfileAnchor = "";
         std::string mlForestfileCands = "";
+        std::string mlForestfilePrintAnchor = "anchorfeatures.txt";
+        std::string mlForestfilePrintCands = "candidatefeatures.txt";
         std::vector<std::string> inputfiles;
         std::vector<std::string> outputfilenames;
 
