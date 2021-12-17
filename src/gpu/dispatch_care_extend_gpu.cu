@@ -107,8 +107,25 @@ namespace care{
     }
 
     
+    struct UsageStatistics {
+        std::uint64_t reserved;
+        std::uint64_t reservedHigh;
+        std::uint64_t used;
+        std::uint64_t usedHigh;
+    };
 
+    void getUsageStatistics(cudaMemPool_t memPool, UsageStatistics* statistics){
+        cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrReservedMemCurrent, &statistics->reserved);
+        cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrReservedMemHigh, &statistics->reservedHigh);
+        cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrUsedMemCurrent, &statistics->used);
+        cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrUsedMemHigh, &statistics->usedHigh);
+    }
 
+    void printUsageStatistics(cudaMemPool_t memPool){
+        UsageStatistics stats;
+        getUsageStatistics(memPool, &stats);
+        std::cerr << "reserved: " << stats.reserved << ", reservedHigh: " << stats.reservedHigh << ", used: " << stats.used << ", usedHigh: " << stats.usedHigh << "\n";
+    }
 
 
     void performExtension(
@@ -127,25 +144,16 @@ namespace care{
         helpers::PeerAccessDebug peerAccess(programOptions.deviceIds, true);
         peerAccess.enableAllPeerAccesses();
 
-        //set up memory pools for malloc_async
-        for(auto id : programOptions.deviceIds){
-            cudaMemPool_t defaultMemoryPool;
-            CUDACHECK(cudaDeviceGetDefaultMemPool(&defaultMemoryPool, id));
-            uint64_t threshold = UINT64_MAX;
-            CUDACHECK(cudaMemPoolSetAttribute(defaultMemoryPool, cudaMemPoolAttrReleaseThreshold, &threshold));
-        }
-
-        //set up rmm resources
-        std::vector<std::unique_ptr<MyRMMCudaAsyncResource>> rmmCudaAsyncResources;
+        //Set up memory pool
+        std::vector<std::unique_ptr<rmm::mr::cuda_async_memory_resource>> rmmCudaAsyncResources;
         for(auto id : programOptions.deviceIds){
             cub::SwitchDevice sd(id);
 
-            cudaMemPool_t defaultMemoryPool;
-            CUDACHECK(cudaDeviceGetDefaultMemPool(&defaultMemoryPool, id));
+            auto resource = std::make_unique<rmm::mr::cuda_async_memory_resource>();
+            rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), resource.get());
 
-            rmmCudaAsyncResources.push_back(std::make_unique<MyRMMCudaAsyncResource>(defaultMemoryPool));
-
-            rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), rmmCudaAsyncResources.back().get());
+            CUDACHECK(cudaDeviceSetMemPool(id, resource->pool_handle()));
+            rmmCudaAsyncResources.push_back(std::move(resource));
         }
 
         helpers::CpuTimer step1timer("STEP1");

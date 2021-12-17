@@ -115,6 +115,25 @@ namespace care{
     }
 
 
+    struct UsageStatistics {
+        std::uint64_t reserved;
+        std::uint64_t reservedHigh;
+        std::uint64_t used;
+        std::uint64_t usedHigh;
+    };
+
+    void getUsageStatistics(cudaMemPool_t memPool, UsageStatistics* statistics){
+        cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrReservedMemCurrent, &statistics->reserved);
+        cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrReservedMemHigh, &statistics->reservedHigh);
+        cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrUsedMemCurrent, &statistics->used);
+        cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrUsedMemHigh, &statistics->usedHigh);
+    }
+
+    void printUsageStatistics(cudaMemPool_t memPool){
+        UsageStatistics stats;
+        getUsageStatistics(memPool, &stats);
+        std::cerr << "reserved: " << stats.reserved << ", reservedHigh: " << stats.reservedHigh << ", used: " << stats.used << ", usedHigh: " << stats.usedHigh << "\n";
+    }
 
 
     void performCorrection(
@@ -143,34 +162,19 @@ namespace care{
         helpers::PeerAccessDebug peerAccess(programOptions.deviceIds, true);
         peerAccess.enableAllPeerAccesses();
 
-        //set up memory pools for malloc_async
-        for(auto id : programOptions.deviceIds){
-            cudaMemPool_t defaultMemoryPool;
-            CUDACHECK(cudaDeviceGetDefaultMemPool(&defaultMemoryPool, id));
-            uint64_t threshold = UINT64_MAX;
-            CUDACHECK(cudaMemPoolSetAttribute(defaultMemoryPool, cudaMemPoolAttrReleaseThreshold, &threshold));
-        }
-
-        //set up rmm resources
-        std::vector<std::unique_ptr<MyRMMCudaAsyncResource>> rmmCudaAsyncResources;
-        //std::vector<std::unique_ptr<rmm::mr::logging_resource_adaptor<MyRMMCudaAsyncResource>>> rmmLoggingResources;
-        //std::vector<std::unique_ptr<std::ofstream>> logfilestreams;
-
+ 
+        //Set up memory pool
+        std::vector<std::unique_ptr<rmm::mr::cuda_async_memory_resource>> rmmCudaAsyncResources;
         for(auto id : programOptions.deviceIds){
             cub::SwitchDevice sd(id);
 
-            cudaMemPool_t defaultMemoryPool;
-            CUDACHECK(cudaDeviceGetDefaultMemPool(&defaultMemoryPool, id));
+            auto resource = std::make_unique<rmm::mr::cuda_async_memory_resource>();
+            rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), resource.get());
 
-            //const bool autoflush = true;
-
-            rmmCudaAsyncResources.push_back(std::make_unique<MyRMMCudaAsyncResource>(defaultMemoryPool));
-            // logfilestreams.push_back(std::make_unique<std::ofstream>("logging_device_0.txt"));
-            // rmmLoggingResources.push_back(std::make_unique<rmm::mr::logging_resource_adaptor<MyRMMCudaAsyncResource>>(rmmCudaAsyncResources.back().get(), *logfilestreams.back(), autoflush));
-
-            rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), rmmCudaAsyncResources.back().get());
-            //rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), rmmLoggingResources.back().get());
+            CUDACHECK(cudaDeviceSetMemPool(id, resource->pool_handle()));
+            rmmCudaAsyncResources.push_back(std::move(resource));
         }
+
 
         
         /*
@@ -355,43 +359,9 @@ namespace care{
 
         printDataStructureMemoryUsage(gpuReadStorage, "reads");
 
-        //compareMaxRssToLimit(programOptions.memoryTotalLimit, "Error memorylimit after gpureadstorage");
-
-        //std::cout << "constructed gpu readstorage " << std::endl;
-
-        
-
         if(gpuReadStorage.isStandalone()){
             cpuReadStorage.reset();
         }
-
-
-        // {
-        //     auto rshandle = gpuReadStorage.makeHandle();
-        //     helpers::SimpleAllocationPinnedHost<char> d_quality_data(128 * 10);
-        //     helpers::SimpleAllocationPinnedHost<read_number> readIds(10);
-        //     std::iota(readIds.begin(), readIds.end(), 0);
-
-        //     gpuReadStorage.gatherQualities(
-        //         rshandle,
-        //         d_quality_data,
-        //         128,
-        //         AsyncConstBufferWrapper<read_number>(readIds.data()),
-        //         readIds.data(),
-        //         10,
-        //         0
-        //     );
-        //     CUDACHECK(cudaDeviceSynchronize());
-
-        //     for(int k = 0; k < 10; k++){
-        //         for(int i = 0; i < 101; i++){
-        //             std::cerr << d_quality_data[128 * k + i];
-        //         }
-        //         std::cerr << "\n";
-        //     }
-        //     std::exit(0);
-        // }
-
 
         std::cout << "STEP 2: Error correction" << std::endl;
 
@@ -438,7 +408,7 @@ namespace care{
         if(memoryForSorting > 1*(std::size_t(1) << 30)){
             memoryForSorting = memoryForSorting - 1*(std::size_t(1) << 30);
         }
-        //std::cerr << "memoryForSorting = " << memoryForSorting << "\n";        
+        //std::cerr << "memoryForSorting = " << memoryForSorting << "\n";     
 
         std::cout << "STEP 3: Constructing output file(s)" << std::endl;
 
