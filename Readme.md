@@ -51,7 +51,7 @@ This command will attempt to correct the reads from file reads.fastq, assuming a
 The outputfile named correctedreads.fastq will be placed in the directory outputdir. The available program parameters are listed below.
 
 Input files must be in fasta or fastq format, and may be gzip'ed. Specifying both fasta files and fastq files together is not allowed.
-If the input files are unpaired, the setting `--pairmode SE` must be used, which selected the single-end correction path.
+If the input files are unpaired, the setting `--pairmode SE` must be used, which selects the single-end correction path.
 If the input files are paired instead, either `--pairmode SE` or `--pairmode PE` may be used.
 Output files will be uncompressed. The order of reads will be preserved. Read headers and quality scores (if fastq) remain unchanged.
 
