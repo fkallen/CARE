@@ -869,7 +869,6 @@ public:
 
         noMoreInputs = false;
         activeHasherThreads = config.numHashers;
-        noMoreRawOutputs = false;
         activeCorrectorThreads = config.numCorrectors;
         currentConfig = config;
 
@@ -1170,7 +1169,6 @@ public:
         activeCorrectorThreads--;
 
         if(activeCorrectorThreads == 0){
-            noMoreRawOutputs = true;
             for(int i = 0; i < 2*currentConfig.numOutputConstructors; i++){
                 unprocessedRawOutputs.push(nullptr);
             }
@@ -1344,7 +1342,6 @@ public:
         activeCorrectorThreads--;
 
         if(activeCorrectorThreads == 0){            
-            noMoreRawOutputs = true;
             for(int i = 0; i < 2*currentConfig.numOutputConstructors; i++){
                 unprocessedRawOutputs.push(nullptr);
             }
@@ -1371,13 +1368,6 @@ public:
         //ForLoopExecutor forLoopExecutor(&threadPool, &pforHandle);
         SequentialForLoopExecutor forLoopExecutor;
 
-        // GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputs.popOrDefault(
-        //     [&](){
-        //         return !noMoreRawOutputs;  //if noMoreRawOutputs, return nullptr
-        //     },
-        //     nullptr
-        // );
-
         GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputs.pop();
 
         while(rawOutputPtr != nullptr){
@@ -1395,12 +1385,6 @@ public:
             freeRawOutputs.push(rawOutputPtr);
 
             nvtx::push_range("getUnprocessedRawOutput", 2);
-            // rawOutputPtr = unprocessedRawOutputs.popOrDefault(
-            //     [&](){
-            //         return !noMoreRawOutputs;  //if noMoreRawOutputs, return nullptr
-            //     },
-            //     nullptr
-            // );  
 
             rawOutputPtr = unprocessedRawOutputs.pop();
 
@@ -1422,7 +1406,6 @@ private:
 
     std::atomic<bool> noMoreInputs{false};
     std::atomic<int> activeHasherThreads{0};
-    std::atomic<bool> noMoreRawOutputs{false};
     std::atomic<int> activeCorrectorThreads{0};
 
     Config currentConfig;
