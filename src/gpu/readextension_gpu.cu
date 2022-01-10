@@ -167,22 +167,17 @@ extension::SplittedExtensionOutput makeAndSplitExtensionOutput(
 
 template<class Callback>
 void extend_gpu_pairedend(
-    const GoodAlignmentProperties& goodAlignmentProperties,
-    const CorrectionOptions& correctionOptions,
-    const ExtensionOptions& extensionOptions,
-    const RuntimeOptions& runtimeOptions,
-    const FileOptions& /*fileOptions*/,
-    const MemoryOptions& /*memoryOptions*/,
+    const ProgramOptions& programOptions,
     const GpuMinhasher& minhasher,
     const GpuReadStorage& gpuReadStorage,
     Callback submitReadyResults
 ){
  
 
-    const std::uint64_t totalNumReadPairs = getNumReadsToProcess(&gpuReadStorage, runtimeOptions) / 2;
+    const std::uint64_t totalNumReadPairs = getNumReadsToProcess(&gpuReadStorage, programOptions) / 2;
 
     auto showProgress = [&](auto totalCount, auto seconds){
-        if(runtimeOptions.showProgress){
+        if(programOptions.showProgress){
 
             printf("Processed %10u of %10lu read pairs (Runtime: %03d:%02d:%02d)\r",
                     totalCount, totalNumReadPairs,
@@ -206,8 +201,8 @@ void extend_gpu_pairedend(
     cpu::QualityScoreConversion qualityConversion{};
 
     
-    const int insertSize = extensionOptions.insertSize;
-    const int insertSizeStddev = extensionOptions.insertSizeStddev;
+    const int insertSize = programOptions.insertSize;
+    const int insertSizeStddev = programOptions.insertSizeStddev;
     const int maximumSequenceLength = gpuReadStorage.getSequenceLengthUpperBound();
     const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
     const std::size_t decodedSequencePitchInBytes = SDIV(maximumSequenceLength, 128) * 128;
@@ -216,8 +211,8 @@ void extend_gpu_pairedend(
     const std::size_t min_overlap = std::max(
         1, 
         std::max(
-            goodAlignmentProperties.min_overlap, 
-            int(maximumSequenceLength * goodAlignmentProperties.min_overlap_ratio)
+            programOptions.min_overlap, 
+            int(maximumSequenceLength * programOptions.min_overlap_ratio)
         )
     );
     const std::size_t msa_max_column_count = (3*gpuReadStorage.getSequenceLengthUpperBound() - 2*min_overlap);
@@ -237,16 +232,16 @@ void extend_gpu_pairedend(
 
     //omp_set_num_threads(1);
 
-    CUDACHECK(cudaSetDevice(runtimeOptions.deviceIds[0]));
+    CUDACHECK(cudaSetDevice(programOptions.deviceIds[0]));
 
-    const int batchsizePairs = correctionOptions.batchsize;
+    const int batchsizePairs = programOptions.batchsize;
 
     constexpr bool isPairedEnd = true;           
 
-    assert(runtimeOptions.deviceIds.size() > 0);
+    assert(programOptions.deviceIds.size() > 0);
 
     //will need at least one thread per gpu
-    const int numDeviceIds = std::min(runtimeOptions.threads, int(runtimeOptions.deviceIds.size()));
+    const int numDeviceIds = std::min(programOptions.threads, int(programOptions.deviceIds.size()));
 
     struct GpuData{
         int deviceId;
@@ -269,7 +264,7 @@ void extend_gpu_pairedend(
     std::vector<GpuData> gpuDataVector;
 
     for(int d = 0; d < numDeviceIds; d++){
-        const int deviceId = runtimeOptions.deviceIds[d];
+        const int deviceId = programOptions.deviceIds[d];
         cub::SwitchDevice sd(deviceId);
 
         GpuData gpudata;
@@ -282,8 +277,7 @@ void extend_gpu_pairedend(
             msaColumnPitchInElements,
             isPairedEnd,
             gpuReadStorage, 
-            correctionOptions,
-            goodAlignmentProperties,
+            programOptions,
             qualityConversion,
             insertSize,
             insertSizeStddev,
@@ -325,7 +319,7 @@ void extend_gpu_pairedend(
         helpers::SimpleAllocationDevice<int> currentReadLengths(2 * batchsizePairs);
         helpers::SimpleAllocationDevice<char> currentQualityScores(2 * qualityPitchInBytes * batchsizePairs);
 
-        if(!correctionOptions.useQualityScores){
+        if(!programOptions.useQualityScores){
             helpers::call_fill_kernel_async(currentQualityScores.data(), currentQualityScores.size(), 'I', stream);
         }
 
@@ -360,7 +354,7 @@ void extend_gpu_pairedend(
 
             const std::size_t numExtended = splittedExtOutput.extendedReads.size();
 
-            if(!extensionOptions.allowOutwardExtension){
+            if(!programOptions.allowOutwardExtension){
                 for(auto& er : splittedExtOutput.extendedReads){
                     er.removeOutwardExtension();
                 }
@@ -392,7 +386,7 @@ void extend_gpu_pairedend(
                     currentIds.data(), 
                     currentReadLengths.data(), 
                     currentEncodedReads.data(),
-                    correctionOptions.useQualityScores,
+                    programOptions.useQualityScores,
                     currentQualityScores.data(), 
                     encodedSequencePitchInInts,
                     qualityPitchInBytes,
@@ -483,21 +477,21 @@ void extend_gpu_pairedend(
 
     bool isLastIteration = false;
     GpuReadExtender::IterationConfig iterationConfig;
-    iterationConfig.maxextensionPerStep = extensionOptions.fixedStepsize == 0 ? 20 : extensionOptions.fixedStepsize;
+    iterationConfig.maxextensionPerStep = programOptions.fixedStepsize == 0 ? 20 : programOptions.fixedStepsize;
     iterationConfig.minCoverageForExtension = 3;
 
     std::vector<read_number> pairsWhichShouldBeRepeated;
     std::vector<read_number> pairsWhichShouldBeRepeatedTmp;
 
     for(auto& x : gpuDataVector){
-        x.gpuReadExtender->insertSizeStddev = extensionOptions.fixedStddev == 0 ? extensionOptions.insertSizeStddev : extensionOptions.fixedStddev;
+        x.gpuReadExtender->insertSizeStddev = programOptions.fixedStddev == 0 ? programOptions.insertSizeStddev : programOptions.fixedStddev;
     }
 
 
     {
         std::vector<std::future<std::vector<read_number>>> futures;
 
-        const std::size_t numReadsToProcess = getNumReadsToProcess(&gpuReadStorage, runtimeOptions);
+        const std::size_t numReadsToProcess = getNumReadsToProcess(&gpuReadStorage, programOptions);
 
         // std::vector<read_number> idsToExtend{
         //     0, 1, 22, 23, 44, 45, 68, 69, 78, 79, 86, 87, 98, 99,
@@ -521,7 +515,7 @@ void extend_gpu_pairedend(
         //     thrust::make_counting_iterator<read_number>(0) + 9779224
         // );
 
-        const int maxNumThreads = runtimeOptions.threads;
+        const int maxNumThreads = programOptions.threads;
         const bool extraHashing = false;
 
         std::cerr << "First iteration. insertsizedev: " << gpuDataVector[0].gpuReadExtender->insertSizeStddev 
@@ -565,8 +559,8 @@ void extend_gpu_pairedend(
     if(!isLastIteration){
 
         for(auto& x : gpuDataVector){
-            x.gpuReadExtender->insertSizeStddev = extensionOptions.fixedStddev == 0 ? 40 : extensionOptions.fixedStddev;
-            //x.gpuReadExtender->insertSizeStddev = extensionOptions.fixedStddev == 0 ? 40 : 40;
+            x.gpuReadExtender->insertSizeStddev = programOptions.fixedStddev == 0 ? 40 : programOptions.fixedStddev;
+            //x.gpuReadExtender->insertSizeStddev = programOptions.fixedStddev == 0 ? 40 : 40;
         }
 
         const bool extraHashing = true;
@@ -594,7 +588,7 @@ void extend_gpu_pairedend(
             );
 
             const int threadsForPairs = SDIV(numPairsToRepeat, batchsizePairs);
-            const int maxNumThreads = std::min(threadsForPairs, runtimeOptions.threads);
+            const int maxNumThreads = std::min(threadsForPairs, programOptions.threads);
             std::cerr << "use " << maxNumThreads << " threads\n";
 
             std::vector<std::future<std::vector<read_number>>> futures;
@@ -661,12 +655,7 @@ void extend_gpu_pairedend(
 #if 0
 
 SerializedObjectStorage extend_gpu_singleend(
-    const GoodAlignmentProperties& goodAlignmentProperties,
-    const CorrectionOptions& correctionOptions,
-    const ExtensionOptions& extensionOptions,
-    const RuntimeOptions& runtimeOptions,
-    const FileOptions& fileOptions,
-    const MemoryOptions& memoryOptions,
+    const ProgramOptions& programOptions,
     const GpuMinhasher& minhasher,
     const GpuReadStorage& gpuReadStorage
 ){
@@ -677,35 +666,20 @@ SerializedObjectStorage extend_gpu_singleend(
 #endif
 
 void extend_gpu(
-    const GoodAlignmentProperties& goodAlignmentProperties,
-    const CorrectionOptions& correctionOptions,
-    const ExtensionOptions& extensionOptions,
-    const RuntimeOptions& runtimeOptions,
-    const FileOptions& fileOptions,
-    const MemoryOptions& memoryOptions,
+    const ProgramOptions& programOptions,
     const GpuMinhasher& gpumMinhasher,
     const GpuReadStorage& gpuReadStorage,
     SubmitReadyExtensionResultsCallback submitReadyResults
 ){
-    // if(fileOptions.pairType == SequencePairType::SingleEnd){
+    // if(programOptions.pairType == SequencePairType::SingleEnd){
     //     return extend_gpu_singleend(
-    //         goodAlignmentProperties,
-    //         correctionOptions,
-    //         extensionOptions,
-    //         runtimeOptions,
-    //         fileOptions,
-    //         memoryOptions,
+    //         programOptions,
     //         gpumMinhasher,
     //         gpuReadStorage
     //     );
     // }else{
         extend_gpu_pairedend(
-            goodAlignmentProperties,
-            correctionOptions,
-            extensionOptions,
-            runtimeOptions,
-            fileOptions,
-            memoryOptions,
+            programOptions,
             gpumMinhasher,
             gpuReadStorage,
             submitReadyResults

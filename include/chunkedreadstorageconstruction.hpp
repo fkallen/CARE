@@ -27,26 +27,24 @@
 namespace care{
 
 std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
-    RuntimeOptions runtimeOptions,
-    MemoryOptions memoryOptions,
-    FileOptions fileOptions,
-    bool useQualityScores,
-    int numQualityBits
+    const ProgramOptions& programOptions
 ){
+    const bool useQualityScores = programOptions.useQualityScores;
+    const int numQualityBits = programOptions.qualityScoreBits;
 
-    if(fileOptions.load_binary_reads_from != ""){
-        const bool pairedEnd = fileOptions.pairType == SequencePairType::PairedEnd;
+    if(programOptions.load_binary_reads_from != ""){
+        const bool pairedEnd = programOptions.pairType == SequencePairType::PairedEnd;
         std::unique_ptr<ChunkedReadStorage> readStorage = std::make_unique<ChunkedReadStorage>(pairedEnd, useQualityScores, numQualityBits);
 
-        readStorage->loadFromFile(fileOptions.load_binary_reads_from);
-        std::cerr << "Loaded readstorage from file " << fileOptions.load_binary_reads_from << "\n";
+        readStorage->loadFromFile(programOptions.load_binary_reads_from);
+        std::cerr << "Loaded readstorage from file " << programOptions.load_binary_reads_from << "\n";
 
         return readStorage;
     }else{
-        const bool pairedEnd = fileOptions.pairType == SequencePairType::PairedEnd;
+        const bool pairedEnd = programOptions.pairType == SequencePairType::PairedEnd;
         std::unique_ptr<ChunkedReadStorage> readStorage = std::make_unique<ChunkedReadStorage>(pairedEnd, useQualityScores, numQualityBits);
 
-        const bool showProgress = runtimeOptions.showProgress;
+        const bool showProgress = programOptions.showProgress;
 
         auto showProgressFunc = [showProgress](auto totalCount, auto seconds){
             if(showProgress){
@@ -380,12 +378,12 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
 
         std::size_t totalNumReads = 0;
 
-        if(fileOptions.pairType == SequencePairType::SingleEnd){
+        if(programOptions.pairType == SequencePairType::SingleEnd){
 
-            const int numInputFiles = fileOptions.inputfiles.size();
+            const int numInputFiles = programOptions.inputfiles.size();
 
             for(int i = 0; i < numInputFiles; i++){
-                std::string inputfile = fileOptions.inputfiles[i];
+                std::string inputfile = programOptions.inputfiles[i];
 
                 std::future<std::size_t> future = std::async(
                     std::launch::async,
@@ -397,18 +395,18 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
                 totalNumReads += numReads;
             }
 
-        }else if(fileOptions.pairType == SequencePairType::PairedEnd){
+        }else if(programOptions.pairType == SequencePairType::PairedEnd){
             //paired end may be one of the following. 1 file with interleaved reads,
             //or two files with separate reads
 
-            const int numInputFiles = fileOptions.inputfiles.size();
+            const int numInputFiles = programOptions.inputfiles.size();
 
             assert(numInputFiles > 0);
             assert(numInputFiles <= 2);
 
             if(numInputFiles == 1){
 
-                std::string inputfile = fileOptions.inputfiles[0];
+                std::string inputfile = programOptions.inputfiles[0];
 
                 std::cout << "Converting paired reads of file " 
                     << inputfile  << "\n";
@@ -425,8 +423,8 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
             }else{
                 assert(numInputFiles == 2);
 
-                std::string filename1 = fileOptions.inputfiles[0];
-                std::string filename2 = fileOptions.inputfiles[1];
+                std::string filename1 = programOptions.inputfiles[0];
+                std::string filename2 = programOptions.inputfiles[1];
 
                 std::cout << "Converting paired reads of files " 
                     << filename1 << " and " << filename2 << ", storing them in memory\n";
@@ -471,7 +469,7 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
         helpers::CpuTimer footimer("init readstorage after construction");
         
         readStorage->appendingFinished(
-            memoryOptions.memoryTotalLimit - readStorage->getMemoryInfo().host
+            programOptions.memoryTotalLimit - readStorage->getMemoryInfo().host
         );
 
         footimer.print();

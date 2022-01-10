@@ -19,11 +19,7 @@ namespace gpu {
 
 
 SerializedObjectStorage correct_gpu(
-	const GoodAlignmentProperties& goodAlignmentProperties,
-	const CorrectionOptions& correctionOptions,
-	const RuntimeOptions& runtimeOptions,
-	const FileOptions& fileOptions,
-	const MemoryOptions& memoryOptions,
+	const ProgramOptions& programOptions,
 	GpuMinhasher& minhasher,
 	GpuReadStorage& readStorage,
 	const std::vector<GpuForest>& anchorForests,

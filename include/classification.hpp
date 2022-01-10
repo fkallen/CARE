@@ -57,38 +57,41 @@ struct clf_agent
     std::shared_ptr<AnchorClf> classifier_anchor;
     std::shared_ptr<CandClf> classifier_cands;
     std::stringstream anchor_stream, cands_stream;
-    std::shared_ptr<std::ofstream> anchor_file, cands_file;
+    std::shared_ptr<std::ofstream> anchor_print_file, cands_print_file;
     std::mt19937 rng;
     std::bernoulli_distribution coinflip_anchor, coinflip_cands;
     AnchorExtractor extract_anchor;
     CandsExtractor extract_cands;
 
-    clf_agent(const CorrectionOptions& c_opts, const FileOptions& f_opts) :
-        classifier_anchor(c_opts.correctionType == CorrectionType::Forest ? std::make_shared<AnchorClf>(f_opts.mlForestfileAnchor, c_opts.thresholdAnchor) : nullptr),
-        classifier_cands(c_opts.correctionTypeCands == CorrectionType::Forest ? std::make_shared<CandClf>(f_opts.mlForestfileCands, c_opts.thresholdCands) : nullptr),
-        anchor_file(c_opts.correctionType == CorrectionType::Print ? std::make_shared<std::ofstream>(f_opts.mlForestfileAnchor) : nullptr),
-        cands_file(c_opts.correctionTypeCands == CorrectionType::Print ? std::make_shared<std::ofstream>(f_opts.mlForestfileCands) : nullptr),
+    clf_agent(const ProgramOptions& opts) :
+        classifier_anchor(opts.correctionType == CorrectionType::Forest ? std::make_shared<AnchorClf>(opts.mlForestfileAnchor, opts.thresholdAnchor) : nullptr),
+        classifier_cands(opts.correctionTypeCands == CorrectionType::Forest ? std::make_shared<CandClf>(opts.mlForestfileCands, opts.thresholdCands) : nullptr),
+        anchor_print_file(opts.correctionType == CorrectionType::Print ? std::make_shared<std::ofstream>(opts.mlForestfilePrintAnchor) : nullptr),
+        cands_print_file(opts.correctionTypeCands == CorrectionType::Print ? std::make_shared<std::ofstream>(opts.mlForestfilePrintCands) : nullptr),
         rng(44),
-        coinflip_anchor(c_opts.sampleRateAnchor),
-        coinflip_cands(c_opts.sampleRateCands)
+        coinflip_anchor(opts.sampleRateAnchor),
+        coinflip_cands(opts.sampleRateCands)
     {
-        if (c_opts.correctionType == CorrectionType::Print) {
-            *anchor_file << extract_anchor << std::endl;
-            *cands_file << extract_cands << std::endl;
+        if (opts.correctionType == CorrectionType::Print) {
+            *anchor_print_file << extract_anchor << std::endl;
+        }
+
+        if (opts.correctionTypeCands == CorrectionType::Print) {
+            *cands_print_file << extract_cands << std::endl;
         }
     }
 
     clf_agent(const clf_agent& other) :
         classifier_anchor(other.classifier_anchor),
         classifier_cands(other.classifier_cands),
-        anchor_file(other.anchor_file),
-        cands_file(other.cands_file),
+        anchor_print_file(other.anchor_print_file),
+        cands_print_file(other.cands_print_file),
         rng(44),
         coinflip_anchor(other.coinflip_anchor),
         coinflip_cands(other.coinflip_cands)
     {}
 
-    void print_anchor(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt) {       
+    void print_anchor(const CpuErrorCorrectorTask& task, size_t i, const ProgramOptions& opt) {       
         if(!coinflip_anchor(rng)) return;
 
         anchor_stream << task.input.anchorReadId << ' ' << i << ' ';
@@ -97,7 +100,7 @@ struct clf_agent
         anchor_stream << '\n';
     }
 
-    void print_cand(const CpuErrorCorrectorTask& task, int i, const CorrectionOptions& opt, size_t cand, size_t offset) {       
+    void print_cand(const CpuErrorCorrectorTask& task, int i, const ProgramOptions& opt, size_t cand, size_t offset) {       
         if(!coinflip_cands(rng)) return;
 
         cands_stream << task.candidateReadIds[cand] << ' ' << (task.alignmentFlags[cand]==AlignmentOrientation::ReverseComplement?-i-1:i) << ' ';
@@ -117,18 +120,18 @@ struct clf_agent
     }
 
     void flush() {
-        if (anchor_file && anchor_stream.peek() != decltype(anchor_stream)::traits_type::eof()) {
+        if (anchor_print_file && anchor_stream.peek() != decltype(anchor_stream)::traits_type::eof()) {
             #pragma omp critical
             {
-                *anchor_file << anchor_stream.rdbuf();
+                *anchor_print_file << anchor_stream.rdbuf();
             }
         }
         anchor_stream = std::stringstream();
 
-        if (cands_file && cands_stream.peek() != decltype(cands_stream)::traits_type::eof()) {
+        if (cands_print_file && cands_stream.peek() != decltype(cands_stream)::traits_type::eof()) {
             #pragma omp critical
             {
-                *cands_file << cands_stream.rdbuf();
+                *cands_print_file << cands_stream.rdbuf();
             }
         }
         cands_stream = std::stringstream();
@@ -139,7 +142,7 @@ namespace detail {
 
 struct extract_anchor {
     using features_t = std::array<float, 21>;
-    features_t operator()(const ClfAgentDecisionInputData& data, int i, const CorrectionOptions& opt) noexcept{   
+    features_t operator()(const ClfAgentDecisionInputData& data, int i, const ProgramOptions& opt) noexcept{   
         int a_begin = data.anchorColumnsBegin_incl;
         int a_end = data.anchorColumnsEnd_excl;
         int pos = a_begin + i;
@@ -170,7 +173,7 @@ struct extract_anchor {
         };
     }
 
-    features_t operator()(const CpuErrorCorrectorTask& task, int i, const CorrectionOptions& opt) noexcept {   
+    features_t operator()(const CpuErrorCorrectorTask& task, int i, const ProgramOptions& opt) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
         int a_begin = msa.anchorColumnsBegin_incl;
         int a_end = msa.anchorColumnsEnd_excl;
@@ -205,7 +208,7 @@ struct extract_anchor {
 
 struct extract_cands {
     using features_t = std::array<float, 26>;
-    features_t operator()(const ClfAgentDecisionInputData& data, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
+    features_t operator()(const ClfAgentDecisionInputData& data, size_t i, const ProgramOptions& opt, size_t cand, size_t offset) noexcept {   
         int a_begin = data.anchorColumnsBegin_incl;
         int a_end = data.anchorColumnsEnd_excl;
         int c_begin = a_begin + data.alignmentShifts[cand];
@@ -244,7 +247,7 @@ struct extract_cands {
         };
     }
 
-    features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
+    features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const ProgramOptions& opt, size_t cand, size_t offset) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
         int a_begin = msa.anchorColumnsBegin_incl;
         int a_end = msa.anchorColumnsEnd_excl;
@@ -292,7 +295,7 @@ struct extract_anchor_transformed {
         return u8"37 extract_anchor_transformed";
     }
 
-    features_t operator()(const ClfAgentDecisionInputData& data, int i, const CorrectionOptions& opt) noexcept{
+    features_t operator()(const ClfAgentDecisionInputData& data, int i, const ProgramOptions& opt) noexcept{
         int a_begin = data.anchorColumnsBegin_incl;
         int a_end = data.anchorColumnsEnd_excl;
         int pos = a_begin + i;
@@ -340,7 +343,7 @@ struct extract_anchor_transformed {
         };
     }
 
-    features_t operator()(const CpuErrorCorrectorTask& task, int i, const CorrectionOptions& opt) noexcept {   
+    features_t operator()(const CpuErrorCorrectorTask& task, int i, const ProgramOptions& opt) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
         int a_begin = msa.anchorColumnsBegin_incl;
         int a_end = msa.anchorColumnsEnd_excl;
@@ -396,7 +399,7 @@ struct extract_cands_transformed {
         return u8"37 extract_cands_transformed";
     }
 
-    features_t operator()(const ClfAgentDecisionInputData& data, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
+    features_t operator()(const ClfAgentDecisionInputData& data, size_t i, const ProgramOptions& opt, size_t cand, size_t offset) noexcept {   
 
         int a_begin = data.anchorColumnsBegin_incl;
         int a_end = data.anchorColumnsEnd_excl;
@@ -452,7 +455,7 @@ struct extract_cands_transformed {
         };
     }
 
-    features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
+    features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const ProgramOptions& opt, size_t cand, size_t offset) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
         int a_begin = msa.anchorColumnsBegin_incl;
         int a_end = msa.anchorColumnsEnd_excl;
@@ -512,7 +515,7 @@ struct extract_cands_transformed {
 struct extract_anchor_normed_weights {
     using features_t = std::array<float, 21>;
 
-    features_t operator()(const ClfAgentDecisionInputData& data, int i, const CorrectionOptions& opt) noexcept {   
+    features_t operator()(const ClfAgentDecisionInputData& data, int i, const ProgramOptions& opt) noexcept {   
         int a_begin = data.anchorColumnsBegin_incl;
         int a_end = data.anchorColumnsEnd_excl;
         int pos = a_begin + i;
@@ -544,7 +547,7 @@ struct extract_anchor_normed_weights {
         };
     }
 
-    features_t operator()(const CpuErrorCorrectorTask& task, int i, const CorrectionOptions& opt) noexcept {   
+    features_t operator()(const CpuErrorCorrectorTask& task, int i, const ProgramOptions& opt) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
         int a_begin = msa.anchorColumnsBegin_incl;
         int a_end = msa.anchorColumnsEnd_excl;
@@ -580,7 +583,7 @@ struct extract_anchor_normed_weights {
 
 struct extract_cands_normed_weights {
     using features_t = std::array<float, 26>;
-    features_t operator()(const ClfAgentDecisionInputData& data, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
+    features_t operator()(const ClfAgentDecisionInputData& data, size_t i, const ProgramOptions& opt, size_t cand, size_t offset) noexcept {   
 
         int a_begin = data.anchorColumnsBegin_incl;
         int a_end = data.anchorColumnsEnd_excl;
@@ -621,7 +624,7 @@ struct extract_cands_normed_weights {
         };
     }
 
-    features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
+    features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const ProgramOptions& opt, size_t cand, size_t offset) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
         int a_begin = msa.anchorColumnsBegin_incl;
         int a_end = msa.anchorColumnsEnd_excl;
@@ -666,7 +669,7 @@ struct extract_cands_normed_weights {
 struct extract_anchor_transformed_normed_weights {
     using features_t = std::array<float, 37>;
 
-    features_t operator()(const ClfAgentDecisionInputData& data, int i, const CorrectionOptions& opt) noexcept {   
+    features_t operator()(const ClfAgentDecisionInputData& data, int i, const ProgramOptions& opt) noexcept {   
         int a_begin = data.anchorColumnsBegin_incl;
         int a_end = data.anchorColumnsEnd_excl;
         int pos = a_begin + i;
@@ -714,7 +717,7 @@ struct extract_anchor_transformed_normed_weights {
         };
     }
 
-    features_t operator()(const CpuErrorCorrectorTask& task, int i, const CorrectionOptions& opt) noexcept {   
+    features_t operator()(const CpuErrorCorrectorTask& task, int i, const ProgramOptions& opt) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
         int a_begin = msa.anchorColumnsBegin_incl;
         int a_end = msa.anchorColumnsEnd_excl;
@@ -767,7 +770,7 @@ struct extract_anchor_transformed_normed_weights {
 struct extract_cands_transformed_normed_weights {
     using features_t = std::array<float, 42>;
 
-    features_t operator()(const ClfAgentDecisionInputData& data, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
+    features_t operator()(const ClfAgentDecisionInputData& data, size_t i, const ProgramOptions& opt, size_t cand, size_t offset) noexcept {   
         int a_begin = data.anchorColumnsBegin_incl;
         int a_end = data.anchorColumnsEnd_excl;
         int c_begin = a_begin + data.alignmentShifts[cand];
@@ -823,7 +826,7 @@ struct extract_cands_transformed_normed_weights {
         };
     }
 
-    features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
+    features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const ProgramOptions& opt, size_t cand, size_t offset) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
         int a_begin = msa.anchorColumnsBegin_incl;
         int a_end = msa.anchorColumnsEnd_excl;

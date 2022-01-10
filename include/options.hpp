@@ -2,11 +2,13 @@
 #define CARE_OPTIONS_HPP
 
 #include <config.hpp>
-
 #include <readlibraryio.hpp>
+
+#include "cxxopts/cxxopts.hpp"
 
 #include <string>
 #include <vector>
+#include <ostream>
 
 namespace care
 {
@@ -18,21 +20,6 @@ namespace care
         PairedEnd,
     };
 
-    __inline__ std::string to_string(SequencePairType s)
-    {
-        switch (s)
-        {
-        case SequencePairType::Invalid:
-            return "Invalid";
-        case SequencePairType::SingleEnd:
-            return "SingleEnd";
-        case SequencePairType::PairedEnd:
-            return "PairedEnd";
-        default:
-            return "Error";
-        }
-    }
-
     enum class CorrectionType : int
     {
         Classic,
@@ -40,36 +27,16 @@ namespace care
         Print
     };
 
-    __inline__ std::string to_string(CorrectionType t)
-    {
-        switch (t)
-        {
-        case CorrectionType::Classic:
-            return "Classic";
-            break;
-        case CorrectionType::Forest:
-            return "Forest";
-            break;
-        case CorrectionType::Print:
-            return "Print";
-            break;
-        default:
-            return "Forgot to name correction type";
-            break;
-        }
-    }
+    std::string to_string(SequencePairType s);
+    std::string to_string(CorrectionType t);
+
 
     //Options which can be parsed from command-line arguments
 
-    struct GoodAlignmentProperties
-    {
+    struct ProgramOptions{
         int min_overlap = 30;
         float maxErrorRate = 0.2f;
         float min_overlap_ratio = 0.30f;
-    };
-
-    struct CorrectionOptions
-    {
         bool excludeAmbiguousReads = false;
         bool correctCandidates = false;
         bool useQualityScores = false;
@@ -90,10 +57,6 @@ namespace care
         float sampleRateAnchor = 1.f;
         float sampleRateCands = 0.01f;
         float pairedthreshold1 = 0.06f;
-    };
-
-    struct ExtensionOptions
-    {
         bool allowOutwardExtension{};
         bool sortedOutput = false;
         bool outputRemainingReads = false;
@@ -101,10 +64,6 @@ namespace care
         int insertSizeStddev{};
         int fixedStddev{};
         int fixedStepsize{};
-    };
-
-    struct RuntimeOptions
-    {
         bool showProgress = false;
         bool canUseGpu = false;
         bool replicateGpuData = false;
@@ -112,19 +71,10 @@ namespace care
         int threads = 1;
         std::size_t fixedNumberOfReads = 0;
         std::vector<int> deviceIds;
-    };
-
-    struct MemoryOptions
-    {
         int qualityScoreBits = 8;
         float hashtableLoadfactor = 0.8f;
         std::size_t memoryForHashtables = 0;
         std::size_t memoryTotalLimit = 0;
-    };
-
-    struct FileOptions
-    {
-        bool mergedoutput = false;
         SequencePairType pairType = SequencePairType::SingleEnd;
         int minimum_sequence_length = 0;
         int maximum_sequence_length = 0;
@@ -138,26 +88,64 @@ namespace care
         std::string extendedReadsOutputfilename = "UNSET_";
         std::string mlForestfileAnchor = "";
         std::string mlForestfileCands = "";
+        std::string mlForestfilePrintAnchor = "anchorfeatures.txt";
+        std::string mlForestfilePrintCands = "candidatefeatures.txt";
         std::vector<std::string> inputfiles;
         std::vector<std::string> outputfilenames;
+
+        ProgramOptions() = default;
+        ProgramOptions(const ProgramOptions&) = default;
+        ProgramOptions(ProgramOptions&&) = default;
+
+        ProgramOptions(const cxxopts::ParseResult& pr);
+
+        bool isValid() const noexcept;
+
+        void printMandatoryOptions(std::ostream& stream) const;
+        void printMandatoryOptionsCorrect(std::ostream& stream) const;
+        void printMandatoryOptionsCorrectCpu(std::ostream& stream) const;
+        void printMandatoryOptionsCorrectGpu(std::ostream& stream) const;
+        void printMandatoryOptionsExtend(std::ostream& stream) const;
+        void printMandatoryOptionsExtendCpu(std::ostream& stream) const;
+        void printMandatoryOptionsExtendGpu(std::ostream& stream) const;
+
+        void printAdditionalOptions(std::ostream& stream) const;
+        void printAdditionalOptionsCorrect(std::ostream& stream) const;
+        void printAdditionalOptionsExtend(std::ostream& stream) const;
+        void printAdditionalOptionsCorrectCpu(std::ostream& stream) const;
+        void printAdditionalOptionsCorrectGpu(std::ostream& stream) const;
+        void printAdditionalOptionsExtendCpu(std::ostream& stream) const;
+        void printAdditionalOptionsExtendGpu(std::ostream& stream) const;
     };
 
-    struct AllOptions
-    {
-        GoodAlignmentProperties goodAlignmentProperties;
-        CorrectionOptions correctionOptions;
-        RuntimeOptions runtimeOptions;
-        FileOptions fileOptions;
-    };
 
     template<class ReadStorage>
-    std::size_t getNumReadsToProcess(const ReadStorage* readStorage, const RuntimeOptions& runtimeOptions){
-        if(runtimeOptions.fixedNumberOfReads == 0){ 
+    std::size_t getNumReadsToProcess(const ReadStorage* readStorage, const ProgramOptions& options){
+        if(options.fixedNumberOfReads == 0){ 
             return readStorage->getNumberOfReads();
         }else{
-            return runtimeOptions.fixedNumberOfReads;
+            return options.fixedNumberOfReads;
         }
     }
+
+
+    void addMandatoryOptions(cxxopts::Options& commandLineOptions);
+    void addMandatoryOptionsCorrect(cxxopts::Options& commandLineOptions);
+    void addMandatoryOptionsCorrectCpu(cxxopts::Options& commandLineOptions);
+    void addMandatoryOptionsCorrectGpu(cxxopts::Options& commandLineOptions);
+    void addMandatoryOptionsExtend(cxxopts::Options& commandLineOptions);
+    void addMandatoryOptionsExtendCpu(cxxopts::Options& commandLineOptions);
+    void addMandatoryOptionsExtendGpu(cxxopts::Options& commandLineOptions);
+
+    void addAdditionalOptions(cxxopts::Options& commandLineOptions);
+    void addAdditionalOptionsCorrect(cxxopts::Options& commandLineOptions);
+    void addAdditionalOptionsExtend(cxxopts::Options& commandLineOptions);
+    void addAdditionalOptionsCorrectCpu(cxxopts::Options& commandLineOptions);
+    void addAdditionalOptionsCorrectGpu(cxxopts::Options& commandLineOptions);
+    void addAdditionalOptionsExtendCpu(cxxopts::Options& commandLineOptions);
+    void addAdditionalOptionsExtendGpu(cxxopts::Options& commandLineOptions);
+
+
 }
 
 #endif

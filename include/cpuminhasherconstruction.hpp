@@ -22,10 +22,7 @@ namespace care{
 
     std::pair<std::unique_ptr<CpuMinhasher>, CpuMinhasherType>
     constructCpuMinhasherFromCpuReadStorage(
-        const FileOptions &fileOptions,
-        const RuntimeOptions &runtimeOptions,
-        const MemoryOptions& memoryOptions,
-        const CorrectionOptions& correctionOptions,
+        const ProgramOptions& programOptions,
         const CpuReadStorage& cpuReadStorage,
         CpuMinhasherType requestedType = CpuMinhasherType::None
     );

@@ -99,16 +99,13 @@ namespace care{
 
 
         void constructFromReadStorage(
-            const FileOptions &/*fileOptions*/,
-            const RuntimeOptions &runtimeOptions,
-            const MemoryOptions& memoryOptions,
+            const ProgramOptions& programOptions,
             std::uint64_t /*nReads*/,
-            const CorrectionOptions& correctionOptions,
             const CpuReadStorage& cpuReadStorage
         ){
             auto& readStorage = cpuReadStorage;
 
-            const int requestedNumberOfMaps = correctionOptions.numHashFunctions;
+            const int requestedNumberOfMaps = programOptions.numHashFunctions;
             numSmallest = requestedNumberOfMaps;
 
             const std::uint64_t numReads = readStorage.getNumberOfReads();
@@ -116,7 +113,7 @@ namespace care{
             const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
 
             const MemoryUsage memoryUsageOfReadStorage = readStorage.getMemoryInfo();
-            std::size_t totalLimit = memoryOptions.memoryTotalLimit;
+            std::size_t totalLimit = programOptions.memoryTotalLimit;
             if(totalLimit > memoryUsageOfReadStorage.host){
                 totalLimit -= memoryUsageOfReadStorage.host;
             }else{
@@ -127,12 +124,12 @@ namespace care{
             }
             std::size_t maxMemoryForTables = getAvailableMemoryInKB() * 1024;
             // std::cerr << "available: " << maxMemoryForTables 
-            //         << ",memoryForHashtables: " << memoryOptions.memoryForHashtables
-            //         << ", memoryTotalLimit: " << memoryOptions.memoryTotalLimit
+            //         << ",memoryForHashtables: " << programOptions.memoryForHashtables
+            //         << ", memoryTotalLimit: " << programOptions.memoryTotalLimit
             //         << ", rsHostUsage: " << memoryUsageOfReadStorage.host << "\n";
 
             maxMemoryForTables = std::min(maxMemoryForTables, 
-                                    std::min(memoryOptions.memoryForHashtables, totalLimit));
+                                    std::min(programOptions.memoryForHashtables, totalLimit));
 
             std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
 
@@ -140,7 +137,7 @@ namespace care{
 
             kvtable = std::make_unique<DoublePassMultiValueHashTable<kmer_type, read_number>>((numReads * numSmallest) / 8, loadfactor);
 
-            ThreadPool tpForHashing(runtimeOptions.threads);
+            ThreadPool tpForHashing(programOptions.threads);
             setThreadPool(&tpForHashing);
 
 

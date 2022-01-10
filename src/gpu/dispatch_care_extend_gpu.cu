@@ -107,50 +107,53 @@ namespace care{
     }
 
     
+    struct UsageStatistics {
+        std::uint64_t reserved;
+        std::uint64_t reservedHigh;
+        std::uint64_t used;
+        std::uint64_t usedHigh;
+    };
 
+    void getUsageStatistics(cudaMemPool_t memPool, UsageStatistics* statistics){
+        cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrReservedMemCurrent, &statistics->reserved);
+        cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrReservedMemHigh, &statistics->reservedHigh);
+        cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrUsedMemCurrent, &statistics->used);
+        cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrUsedMemHigh, &statistics->usedHigh);
+    }
 
+    void printUsageStatistics(cudaMemPool_t memPool){
+        UsageStatistics stats;
+        getUsageStatistics(memPool, &stats);
+        std::cerr << "reserved: " << stats.reserved << ", reservedHigh: " << stats.reservedHigh << ", used: " << stats.used << ", usedHigh: " << stats.usedHigh << "\n";
+    }
 
 
     void performExtension(
-        CorrectionOptions correctionOptions,
-        ExtensionOptions extensionOptions,
-        RuntimeOptions runtimeOptions,
-        MemoryOptions memoryOptions,
-        FileOptions fileOptions,
-        GoodAlignmentProperties goodAlignmentProperties
+        ProgramOptions programOptions
     ){
 
         std::cout << "Running CARE EXTEND GPU" << std::endl;
 
-        if(runtimeOptions.deviceIds.size() == 0){
+        if(programOptions.deviceIds.size() == 0){
             std::cout << "No device ids found. Abort!" << std::endl;
             return;
         }
 
-        CUDACHECK(cudaSetDevice(runtimeOptions.deviceIds[0]));
+        CUDACHECK(cudaSetDevice(programOptions.deviceIds[0]));
 
-        helpers::PeerAccessDebug peerAccess(runtimeOptions.deviceIds, true);
+        helpers::PeerAccessDebug peerAccess(programOptions.deviceIds, true);
         peerAccess.enableAllPeerAccesses();
 
-        //set up memory pools for malloc_async
-        for(auto id : runtimeOptions.deviceIds){
-            cudaMemPool_t defaultMemoryPool;
-            CUDACHECK(cudaDeviceGetDefaultMemPool(&defaultMemoryPool, id));
-            uint64_t threshold = UINT64_MAX;
-            CUDACHECK(cudaMemPoolSetAttribute(defaultMemoryPool, cudaMemPoolAttrReleaseThreshold, &threshold));
-        }
-
-        //set up rmm resources
-        std::vector<std::unique_ptr<MyRMMCudaAsyncResource>> rmmCudaAsyncResources;
-        for(auto id : runtimeOptions.deviceIds){
+        //Set up memory pool
+        std::vector<std::unique_ptr<rmm::mr::cuda_async_memory_resource>> rmmCudaAsyncResources;
+        for(auto id : programOptions.deviceIds){
             cub::SwitchDevice sd(id);
 
-            cudaMemPool_t defaultMemoryPool;
-            CUDACHECK(cudaDeviceGetDefaultMemPool(&defaultMemoryPool, id));
+            auto resource = std::make_unique<rmm::mr::cuda_async_memory_resource>();
+            rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), resource.get());
 
-            rmmCudaAsyncResources.push_back(std::make_unique<MyRMMCudaAsyncResource>(defaultMemoryPool));
-
-            rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), rmmCudaAsyncResources.back().get());
+            CUDACHECK(cudaDeviceSetMemPool(id, resource->pool_handle()));
+            rmmCudaAsyncResources.push_back(std::move(resource));
         }
 
         helpers::CpuTimer step1timer("STEP1");
@@ -159,14 +162,10 @@ namespace care{
 
         helpers::CpuTimer buildReadStorageTimer("build_readstorage");
 
-        const int numQualityBits = memoryOptions.qualityScoreBits;
+        const int numQualityBits = programOptions.qualityScoreBits;
         
         std::unique_ptr<ChunkedReadStorage> cpuReadStorage = constructChunkedReadStorageFromFiles(
-            runtimeOptions,
-            memoryOptions,
-            fileOptions,
-            correctionOptions.useQualityScores,
-            numQualityBits
+            programOptions
         );
 
         buildReadStorageTimer.print();
@@ -178,15 +177,15 @@ namespace care{
         std::cout << "Maximum sequence length: " << cpuReadStorage->getSequenceLengthUpperBound() << "\n";
         std::cout << "----------------------------------------\n";
 
-        if(fileOptions.save_binary_reads_to != ""){
-            std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
+        if(programOptions.save_binary_reads_to != ""){
+            std::cout << "Saving reads to file " << programOptions.save_binary_reads_to << std::endl;
             helpers::CpuTimer timer("save_to_file");
-            cpuReadStorage->saveToFile(fileOptions.save_binary_reads_to);
+            cpuReadStorage->saveToFile(programOptions.save_binary_reads_to);
             timer.print();
             std::cout << "Saved reads" << std::endl;
         }
 
-        if(correctionOptions.autodetectKmerlength){
+        if(programOptions.autodetectKmerlength){
             const int maxlength = cpuReadStorage->getSequenceLengthUpperBound();
 
             auto getKmerSizeForHashing = [](int maximumReadLength){
@@ -197,15 +196,15 @@ namespace care{
                 }
             };
 
-            correctionOptions.kmerlength = getKmerSizeForHashing(maxlength);
+            programOptions.kmerlength = getKmerSizeForHashing(maxlength);
 
-            std::cout << "Will use k-mer length = " << correctionOptions.kmerlength << " for hashing.\n";
+            std::cout << "Will use k-mer length = " << programOptions.kmerlength << " for hashing.\n";
         }
 
         std::cout << "Reads with ambiguous bases: " << cpuReadStorage->getNumberOfReadsWithN() << std::endl;      
 
 
-        std::vector<std::size_t> gpumemorylimits(runtimeOptions.deviceIds.size(), 0);
+        std::vector<std::size_t> gpumemorylimits(programOptions.deviceIds.size(), 0);
 
         // gpumemorylimits.resize(2);
         // std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 512000000);
@@ -215,7 +214,7 @@ namespace care{
 
         gpu::MultiGpuReadStorage gpuReadStorage(
             *cpuReadStorage, 
-            runtimeOptions.deviceIds,
+            programOptions.deviceIds,
             //tempids2,
             gpumemorylimits,
             0,
@@ -225,10 +224,7 @@ namespace care{
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
 
         auto minhasherAndType = gpu::constructGpuMinhasherFromGpuReadStorage(
-            fileOptions,
-            runtimeOptions,
-            memoryOptions,
-            correctionOptions,
+            programOptions,
             gpuReadStorage,
             gpu::GpuMinhasherType::Multi
         );
@@ -245,10 +241,10 @@ namespace care{
             return;
         }
 
-        if(correctionOptions.mustUseAllHashfunctions 
-            && correctionOptions.numHashFunctions != gpuMinhasher->getNumberOfMaps()){
+        if(programOptions.mustUseAllHashfunctions 
+            && programOptions.numHashFunctions != gpuMinhasher->getNumberOfMaps()){
             std::cout << "Cannot use specified number of hash functions (" 
-                << correctionOptions.numHashFunctions <<")\n";
+                << programOptions.numHashFunctions <<")\n";
             std::cout << "Abort!\n";
             return;
         }
@@ -258,9 +254,9 @@ namespace care{
             gpu::FakeGpuMinhasher* fakeGpuMinhasher = dynamic_cast<gpu::FakeGpuMinhasher*>(gpuMinhasher);
             assert(fakeGpuMinhasher != nullptr);
 
-            if(fileOptions.save_hashtables_to != "") {
-                std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
-                std::ofstream os(fileOptions.save_hashtables_to);
+            if(programOptions.save_hashtables_to != "") {
+                std::cout << "Saving minhasher to file " << programOptions.save_hashtables_to << std::endl;
+                std::ofstream os(programOptions.save_hashtables_to);
                 assert((bool)os);
                 helpers::CpuTimer timer("save_to_file");
                 fakeGpuMinhasher->writeToStream(os);
@@ -278,11 +274,11 @@ namespace care{
         //After minhasher is constructed, remaining gpu memory can be used to store reads
 
         auto getGpuMemoryLimits = [&](){
-            const std::size_t numGpus = runtimeOptions.deviceIds.size();
+            const std::size_t numGpus = programOptions.deviceIds.size();
             std::vector<std::size_t> limits(numGpus, 0);
 
             for(std::size_t i = 0; i < numGpus; i++){
-                cub::SwitchDevice sd{runtimeOptions.deviceIds[i]};
+                cub::SwitchDevice sd{programOptions.deviceIds[i]};
                 
                 std::size_t total = 0;
                 cudaMemGetInfo(&limits[i], &total);
@@ -299,7 +295,7 @@ namespace care{
 
         gpumemorylimits = getGpuMemoryLimits();
 
-        std::size_t memoryLimitHost = memoryOptions.memoryTotalLimit 
+        std::size_t memoryLimitHost = programOptions.memoryTotalLimit 
             - cpuReadStorage->getMemoryInfo().host
             - gpuMinhasher->getMemoryInfo().host;
 
@@ -312,7 +308,7 @@ namespace care{
         cpugputimer.start();
         gpuReadStorage.rebuild(
             *cpuReadStorage,
-            runtimeOptions.deviceIds, 
+            programOptions.deviceIds, 
             //tempids,
             gpumemorylimits,
             memoryLimitHost,
@@ -321,7 +317,7 @@ namespace care{
 
         gpumemorylimits = getGpuMemoryLimits();
         
-        if(runtimeOptions.replicateGpuData){
+        if(programOptions.replicateGpuData){
             if(gpuReadStorage.trySequenceReplication(gpumemorylimits)){
                 std::cerr << "Replicated gpu read sequences to each gpu\n";
                 gpumemorylimits = getGpuMemoryLimits();
@@ -347,12 +343,7 @@ namespace care{
         helpers::CpuTimer step2timer("STEP2");
 
         ExtensionAgent<gpu::GpuMinhasher, gpu::GpuReadStorage> extensionAgent(
-            goodAlignmentProperties, 
-            correctionOptions,
-            extensionOptions,
-            runtimeOptions, 
-            fileOptions, 
-            memoryOptions,
+            programOptions,
             *gpuMinhasher, 
             gpuReadStorage
         );

@@ -156,22 +156,19 @@ namespace gpu{
 
 
         void constructFromReadStorage(
-            const FileOptions &/*fileOptions*/,
-            const RuntimeOptions &runtimeOptions,
-            const MemoryOptions& memoryOptions,
+            const ProgramOptions& programOptions,
             std::uint64_t /*nReads*/,
-            const CorrectionOptions& correctionOptions,
             const GpuReadStorage& gpuReadStorage
         ){
             
             auto& readStorage = gpuReadStorage;
-            const auto& deviceIds = runtimeOptions.deviceIds;
+            const auto& deviceIds = programOptions.deviceIds;
 
             int deviceId = deviceIds[0];
 
             cub::SwitchDevice sd{deviceId};
 
-            const int requestedNumberOfMaps = correctionOptions.numHashFunctions;
+            const int requestedNumberOfMaps = programOptions.numHashFunctions;
 
             const read_number numReads = readStorage.getNumberOfReads();
             const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
@@ -185,7 +182,7 @@ namespace gpu{
             const int numIters = SDIV(numReads, parallelReads);
 
             const MemoryUsage memoryUsageOfReadStorage = readStorage.getMemoryInfo();
-            std::size_t totalLimit = memoryOptions.memoryTotalLimit;
+            std::size_t totalLimit = programOptions.memoryTotalLimit;
             if(totalLimit > memoryUsageOfReadStorage.host){
                 totalLimit -= memoryUsageOfReadStorage.host;
             }else{
@@ -196,12 +193,12 @@ namespace gpu{
             }
             std::size_t maxMemoryForTables = getAvailableMemoryInKB() * 1024;
             // std::cerr << "available: " << maxMemoryForTables 
-            //         << ",memoryForHashtables: " << memoryOptions.memoryForHashtables
-            //         << ", memoryTotalLimit: " << memoryOptions.memoryTotalLimit
+            //         << ",memoryForHashtables: " << programOptions.memoryForHashtables
+            //         << ", memoryTotalLimit: " << programOptions.memoryTotalLimit
             //         << ", rsHostUsage: " << memoryUsageOfReadStorage.host << "\n";
 
             maxMemoryForTables = std::min(maxMemoryForTables, 
-                                    std::min(memoryOptions.memoryForHashtables, totalLimit));
+                                    std::min(programOptions.memoryForHashtables, totalLimit));
 
             std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
 
@@ -237,8 +234,8 @@ namespace gpu{
                 (cudaStream_t)0
             );
             
-            ThreadPool tpForHashing(runtimeOptions.threads);
-            ThreadPool tpForCompacting(std::min(2,runtimeOptions.threads));
+            ThreadPool tpForHashing(programOptions.threads);
+            ThreadPool tpForCompacting(std::min(2,programOptions.threads));
 
             
             setMemoryLimitForConstruction(maxMemoryForTables);

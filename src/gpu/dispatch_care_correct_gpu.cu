@@ -115,66 +115,66 @@ namespace care{
     }
 
 
+    struct UsageStatistics {
+        std::uint64_t reserved;
+        std::uint64_t reservedHigh;
+        std::uint64_t used;
+        std::uint64_t usedHigh;
+    };
+
+    void getUsageStatistics(cudaMemPool_t memPool, UsageStatistics* statistics){
+        cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrReservedMemCurrent, &statistics->reserved);
+        cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrReservedMemHigh, &statistics->reservedHigh);
+        cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrUsedMemCurrent, &statistics->used);
+        cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrUsedMemHigh, &statistics->usedHigh);
+    }
+
+    void printUsageStatistics(cudaMemPool_t memPool){
+        UsageStatistics stats;
+        getUsageStatistics(memPool, &stats);
+        std::cerr << "reserved: " << stats.reserved << ", reservedHigh: " << stats.reservedHigh << ", used: " << stats.used << ", usedHigh: " << stats.usedHigh << "\n";
+    }
 
 
     void performCorrection(
-        CorrectionOptions correctionOptions,
-        RuntimeOptions runtimeOptions,
-        MemoryOptions memoryOptions,
-        FileOptions fileOptions,
-        GoodAlignmentProperties goodAlignmentProperties
+        ProgramOptions programOptions
     ){
 
         std::cout << "Running CARE GPU" << std::endl;
 
-        if(runtimeOptions.deviceIds.size() == 0){
+        if(programOptions.deviceIds.size() == 0){
             std::cout << "No device ids found. Abort!" << std::endl;
             return;
         }
 
-        if(correctionOptions.correctionType == CorrectionType::Print 
-            || correctionOptions.correctionTypeCands == CorrectionType::Print){
+        if(programOptions.correctionType == CorrectionType::Print 
+            || programOptions.correctionTypeCands == CorrectionType::Print){
 
             std::cout << "CorrectionType Print is not supported in CARE GPU. Please use CARE CPU instead to print features. Abort!" << std::endl;
             return;
         }
 
-        CUDACHECK(cudaSetDevice(runtimeOptions.deviceIds[0]));
+        CUDACHECK(cudaSetDevice(programOptions.deviceIds[0]));
 
         //debug buffer printf
-        CUDACHECK(cudaDeviceSetLimit(cudaLimitPrintfFifoSize, 1024*1024*512));
+        //CUDACHECK(cudaDeviceSetLimit(cudaLimitPrintfFifoSize, 1024*1024*512));
 
-        helpers::PeerAccessDebug peerAccess(runtimeOptions.deviceIds, true);
+        helpers::PeerAccessDebug peerAccess(programOptions.deviceIds, true);
         peerAccess.enableAllPeerAccesses();
 
-        //set up memory pools for malloc_async
-        for(auto id : runtimeOptions.deviceIds){
-            cudaMemPool_t defaultMemoryPool;
-            CUDACHECK(cudaDeviceGetDefaultMemPool(&defaultMemoryPool, id));
-            uint64_t threshold = UINT64_MAX;
-            CUDACHECK(cudaMemPoolSetAttribute(defaultMemoryPool, cudaMemPoolAttrReleaseThreshold, &threshold));
-        }
-
-        //set up rmm resources
-        std::vector<std::unique_ptr<MyRMMCudaAsyncResource>> rmmCudaAsyncResources;
-        std::vector<std::unique_ptr<rmm::mr::logging_resource_adaptor<MyRMMCudaAsyncResource>>> rmmLoggingResources;
-        std::vector<std::unique_ptr<std::ofstream>> logfilestreams;
-
-        for(auto id : runtimeOptions.deviceIds){
+ 
+        //Set up memory pool
+        std::vector<std::unique_ptr<rmm::mr::cuda_async_memory_resource>> rmmCudaAsyncResources;
+        for(auto id : programOptions.deviceIds){
             cub::SwitchDevice sd(id);
 
-            cudaMemPool_t defaultMemoryPool;
-            CUDACHECK(cudaDeviceGetDefaultMemPool(&defaultMemoryPool, id));
+            auto resource = std::make_unique<rmm::mr::cuda_async_memory_resource>();
+            rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), resource.get());
 
-            const bool autoflush = true;
-
-            rmmCudaAsyncResources.push_back(std::make_unique<MyRMMCudaAsyncResource>(defaultMemoryPool));
-            logfilestreams.push_back(std::make_unique<std::ofstream>("logging_device_0.txt"));
-            rmmLoggingResources.push_back(std::make_unique<rmm::mr::logging_resource_adaptor<MyRMMCudaAsyncResource>>(rmmCudaAsyncResources.back().get(), *logfilestreams.back(), autoflush));
-
-            rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), rmmCudaAsyncResources.back().get());
-            //rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), rmmLoggingResources.back().get());
+            CUDACHECK(cudaDeviceSetMemPool(id, resource->pool_handle()));
+            rmmCudaAsyncResources.push_back(std::move(resource));
         }
+
 
         
         /*
@@ -189,14 +189,10 @@ namespace care{
 
         helpers::CpuTimer buildReadStorageTimer("build_readstorage");
 
-        const int numQualityBits = memoryOptions.qualityScoreBits;
+        const int numQualityBits = programOptions.qualityScoreBits;
         
         std::unique_ptr<ChunkedReadStorage> cpuReadStorage = constructChunkedReadStorageFromFiles(
-            runtimeOptions,
-            memoryOptions,
-            fileOptions,
-            correctionOptions.useQualityScores,
-            numQualityBits
+            programOptions
         );
 
         buildReadStorageTimer.print();
@@ -208,15 +204,15 @@ namespace care{
         std::cout << "Maximum sequence length: " << cpuReadStorage->getSequenceLengthUpperBound() << "\n";
         std::cout << "----------------------------------------\n";
 
-        if(fileOptions.save_binary_reads_to != ""){
-            std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
+        if(programOptions.save_binary_reads_to != ""){
+            std::cout << "Saving reads to file " << programOptions.save_binary_reads_to << std::endl;
             helpers::CpuTimer timer("save_to_file");
-            cpuReadStorage->saveToFile(fileOptions.save_binary_reads_to);
+            cpuReadStorage->saveToFile(programOptions.save_binary_reads_to);
             timer.print();
             std::cout << "Saved reads" << std::endl;
         }
 
-        if(correctionOptions.autodetectKmerlength){
+        if(programOptions.autodetectKmerlength){
             const int maxlength = cpuReadStorage->getSequenceLengthUpperBound();
 
             auto getKmerSizeForHashing = [](int maximumReadLength){
@@ -227,16 +223,16 @@ namespace care{
                 }
             };
 
-            correctionOptions.kmerlength = getKmerSizeForHashing(maxlength);
+            programOptions.kmerlength = getKmerSizeForHashing(maxlength);
 
-            std::cout << "Will use k-mer length = " << correctionOptions.kmerlength << " for hashing.\n";
+            std::cout << "Will use k-mer length = " << programOptions.kmerlength << " for hashing.\n";
         }
 
         std::cout << "Reads with ambiguous bases: " << cpuReadStorage->getNumberOfReadsWithN() << std::endl;
 
-        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after cpureadstorage");
+        //compareMaxRssToLimit(programOptions.memoryTotalLimit, "Error memorylimit after cpureadstorage");
 
-        std::vector<std::size_t> gpumemorylimits(runtimeOptions.deviceIds.size(), 0);
+        std::vector<std::size_t> gpumemorylimits(programOptions.deviceIds.size(), 0);
 
         // gpumemorylimits.resize(2);
         // std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 512000000);
@@ -246,7 +242,7 @@ namespace care{
 
         gpu::MultiGpuReadStorage gpuReadStorage(
             *cpuReadStorage, 
-            runtimeOptions.deviceIds,
+            programOptions.deviceIds,
             //tempids2,
             gpumemorylimits,
             0,
@@ -257,15 +253,15 @@ namespace care{
         std::vector<gpu::GpuForest> candidateForests;
 
         {
-            ClfAgent clfAgent_(correctionOptions, fileOptions);
+            ClfAgent clfAgent_(programOptions);
 
-            for(int deviceId : runtimeOptions.deviceIds){
+            for(int deviceId : programOptions.deviceIds){
                 cub::SwitchDevice sd{deviceId};
-                if(correctionOptions.correctionType == CorrectionType::Forest){
+                if(programOptions.correctionType == CorrectionType::Forest){
                     anchorForests.emplace_back(*clfAgent_.classifier_anchor, deviceId);
                 }
 
-                if(correctionOptions.correctionTypeCands == CorrectionType::Forest){
+                if(programOptions.correctionTypeCands == CorrectionType::Forest){
                     candidateForests.emplace_back(*clfAgent_.classifier_cands, deviceId);
                 }
             }
@@ -275,15 +271,12 @@ namespace care{
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
 
         auto minhasherAndType = gpu::constructGpuMinhasherFromGpuReadStorage(
-            fileOptions,
-            runtimeOptions,
-            memoryOptions,
-            correctionOptions,
+            programOptions,
             gpuReadStorage,
             gpu::GpuMinhasherType::Multi
         );
 
-        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after gpuminhasher");
+        //compareMaxRssToLimit(programOptions.memoryTotalLimit, "Error memorylimit after gpuminhasher");
 
         gpu::GpuMinhasher* gpuMinhasher = minhasherAndType.first.get();
 
@@ -297,10 +290,10 @@ namespace care{
             return;
         }
 
-        if(correctionOptions.mustUseAllHashfunctions 
-            && correctionOptions.numHashFunctions != gpuMinhasher->getNumberOfMaps()){
+        if(programOptions.mustUseAllHashfunctions 
+            && programOptions.numHashFunctions != gpuMinhasher->getNumberOfMaps()){
             std::cout << "Cannot use specified number of hash functions (" 
-                << correctionOptions.numHashFunctions <<")\n";
+                << programOptions.numHashFunctions <<")\n";
             std::cout << "Abort!\n";
             return;
         }
@@ -310,9 +303,9 @@ namespace care{
             gpu::FakeGpuMinhasher* fakeGpuMinhasher = dynamic_cast<gpu::FakeGpuMinhasher*>(gpuMinhasher);
             assert(fakeGpuMinhasher != nullptr);
 
-            if(fileOptions.save_hashtables_to != "") {
-                std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
-                std::ofstream os(fileOptions.save_hashtables_to);
+            if(programOptions.save_hashtables_to != "") {
+                std::cout << "Saving minhasher to file " << programOptions.save_hashtables_to << std::endl;
+                std::ofstream os(programOptions.save_hashtables_to);
                 assert((bool)os);
                 helpers::CpuTimer timer("save_to_file");
                 fakeGpuMinhasher->writeToStream(os);
@@ -331,7 +324,7 @@ namespace care{
 
         //std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 2ull*1024ull*1024ull*1024ull);
         std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 0);
-        for(int i = 0; i < int(runtimeOptions.deviceIds.size()); i++){
+        for(int i = 0; i < int(programOptions.deviceIds.size()); i++){
             std::size_t total = 0;
             cudaMemGetInfo(&gpumemorylimits[i], &total);
 
@@ -343,7 +336,7 @@ namespace care{
             }
         }
 
-        std::size_t memoryLimitHost = memoryOptions.memoryTotalLimit 
+        std::size_t memoryLimitHost = programOptions.memoryTotalLimit 
             - cpuReadStorage->getMemoryInfo().host
             - gpuMinhasher->getMemoryInfo().host;
 
@@ -356,7 +349,7 @@ namespace care{
         cpugputimer.start();
         gpuReadStorage.rebuild(
             *cpuReadStorage,
-            runtimeOptions.deviceIds, 
+            programOptions.deviceIds, 
             //tempids,
             gpumemorylimits,
             memoryLimitHost,
@@ -366,54 +359,16 @@ namespace care{
 
         printDataStructureMemoryUsage(gpuReadStorage, "reads");
 
-        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after gpureadstorage");
-
-        //std::cout << "constructed gpu readstorage " << std::endl;
-
-        
-
         if(gpuReadStorage.isStandalone()){
             cpuReadStorage.reset();
         }
-
-
-        // {
-        //     auto rshandle = gpuReadStorage.makeHandle();
-        //     helpers::SimpleAllocationPinnedHost<char> d_quality_data(128 * 10);
-        //     helpers::SimpleAllocationPinnedHost<read_number> readIds(10);
-        //     std::iota(readIds.begin(), readIds.end(), 0);
-
-        //     gpuReadStorage.gatherQualities(
-        //         rshandle,
-        //         d_quality_data,
-        //         128,
-        //         AsyncConstBufferWrapper<read_number>(readIds.data()),
-        //         readIds.data(),
-        //         10,
-        //         0
-        //     );
-        //     CUDACHECK(cudaDeviceSynchronize());
-
-        //     for(int k = 0; k < 10; k++){
-        //         for(int i = 0; i < 101; i++){
-        //             std::cerr << d_quality_data[128 * k + i];
-        //         }
-        //         std::cerr << "\n";
-        //     }
-        //     std::exit(0);
-        // }
-
 
         std::cout << "STEP 2: Error correction" << std::endl;
 
         helpers::CpuTimer step2timer("STEP2");
 
         auto partialResults = gpu::correct_gpu(
-            goodAlignmentProperties, 
-            correctionOptions,
-            runtimeOptions,
-            fileOptions, 
-            memoryOptions,
+            programOptions,
             *gpuMinhasher, 
             gpuReadStorage,
             anchorForests,
@@ -427,7 +382,7 @@ namespace care{
         std::cerr << "Constructed " << partialResults.size() << " corrections. ";
         std::cerr << "They occupy a total of " << (partialResults.dataBytes() + partialResults.offsetBytes()) << " bytes\n";
 
-        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after correction");
+        //compareMaxRssToLimit(programOptions.memoryTotalLimit, "Error memorylimit after correction");
 
 
         minhasherAndType.first.reset();
@@ -442,18 +397,18 @@ namespace care{
         const auto partialResultMemUsage = partialResults.getMemoryInfo();
 
         // std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
-        // std::cerr << "memoryLimitOption = " << memoryOptions.memoryTotalLimit << "\n";
+        // std::cerr << "memoryLimitOption = " << programOptions.memoryTotalLimit << "\n";
         // std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
 
         std::size_t memoryForSorting = std::min(
             availableMemoryInBytes,
-            memoryOptions.memoryTotalLimit - partialResultMemUsage.host
+            programOptions.memoryTotalLimit - partialResultMemUsage.host
         );
 
         if(memoryForSorting > 1*(std::size_t(1) << 30)){
             memoryForSorting = memoryForSorting - 1*(std::size_t(1) << 30);
         }
-        //std::cerr << "memoryForSorting = " << memoryForSorting << "\n";        
+        //std::cerr << "memoryForSorting = " << memoryForSorting << "\n";     
 
         std::cout << "STEP 3: Constructing output file(s)" << std::endl;
 
@@ -469,24 +424,24 @@ namespace care{
         sorttimer.print();
 
         std::vector<FileFormat> formats;
-        for(const auto& inputfile : fileOptions.inputfiles){
+        for(const auto& inputfile : programOptions.inputfiles){
             formats.emplace_back(getFileFormat(inputfile));
         }
         std::vector<std::string> outputfiles;
-        for(const auto& outputfilename : fileOptions.outputfilenames){
-            outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
+        for(const auto& outputfilename : programOptions.outputfilenames){
+            outputfiles.emplace_back(programOptions.outputdirectory + "/" + outputfilename);
         }
         constructOutputFileFromCorrectionResults(
-            fileOptions.inputfiles, 
+            programOptions.inputfiles, 
             partialResults, 
             formats[0],
             outputfiles,
-            runtimeOptions.showProgress
+            programOptions.showProgress
         );
 
         step3timer.print();
 
-        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after output construction");
+        //compareMaxRssToLimit(programOptions.memoryTotalLimit, "Error memorylimit after output construction");
 
         std::cout << "Construction of output file(s) finished." << std::endl;
 

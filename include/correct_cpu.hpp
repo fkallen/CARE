@@ -15,11 +15,7 @@ namespace cpu{
 
 
 	SerializedObjectStorage correct_cpu(
-		const GoodAlignmentProperties& goodAlignmentProperties,
-		const CorrectionOptions& correctionOptions,
-		const RuntimeOptions& runtimeOptions,
-		const FileOptions& fileOptions,
-		const MemoryOptions& memoryOptions,
+		const ProgramOptions& programOptions,
 		CpuMinhasher& minhasher,
 		CpuReadStorage& readStorage
 	);

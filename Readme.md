@@ -1,17 +1,17 @@
 # CARE: Context-Aware Read Error correction for Illumina reads.
 
 ## Prerequisites
-* GCC with c++14 support
+* C++17 
 * OpenMP
 * Zlib
 * GNU Make
 
 ## Additional prerequisites for GPU version
 * CUDA Toolkit 11 or newer
-* A CUDA-capable graphics card with Pascal architecture (i.e. Nvidia GTX 1080) or newer.
+* A CUDA-capable graphics card with Pascal architecture (e.g. Nvidia GTX 1080) or newer.
 
 # Download
-Clone the repository and initialize submodules: `git clone --recurse-submodules url`
+Clone the repository and initialize submodules: `git clone --recurse-submodules https://github.com/fkallen/CARE.git`
 
 
 # Build
@@ -51,7 +51,7 @@ This command will attempt to correct the reads from file reads.fastq, assuming a
 The outputfile named correctedreads.fastq will be placed in the directory outputdir. The available program parameters are listed below.
 
 Input files must be in fasta or fastq format, and may be gzip'ed. Specifying both fasta files and fastq files together is not allowed.
-If the input files are unpaired, the setting `--pairmode SE` must be used, which selected the single-end correction path.
+If the input files are unpaired, the setting `--pairmode SE` must be used, which selects the single-end correction path.
 If the input files are paired instead, either `--pairmode SE` or `--pairmode PE` may be used.
 Output files will be uncompressed. The order of reads will be preserved. Read headers and quality scores (if fastq) remain unchanged.
 
@@ -70,7 +70,7 @@ Two consecutive reads form a read pair. Use `-i reads_interleaved` .
 Read number N in file 1 and read number N in file 2 form a read pair. Use `-i reads_1 -i reads_2`.
 
 # Available program parameters
-Please execute `./care-cpu --help` or `./care-cpu --help` to print a list of available parameters. Both versions share a common subset of parameters.
+Please execute `./care-cpu --help` or `./care-gpu --help` to print a list of available parameters. Both versions share a common subset of parameters.
 
 The following list is a selection of usefull options.
 

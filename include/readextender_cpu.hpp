@@ -37,8 +37,7 @@ public:
         int maximumSequenceLength_,
         const CpuReadStorage& rs, 
         const CpuMinhasher& mh,
-        const CorrectionOptions& coropts,
-        const GoodAlignmentProperties& gap,
+        const ProgramOptions& programOptions_,
         const cpu::QualityScoreConversion* qualityConversion_
     ) : 
         readStorage(&rs), minhasher(&mh), 
@@ -50,8 +49,7 @@ public:
         encodedSequencePitchInInts(SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength_)),
         decodedSequencePitchInBytes(maximumSequenceLength_),
         qualityPitchInBytes(maximumSequenceLength_),
-        correctionOptions(coropts),
-        goodAlignmentProperties(gap),
+        programOptions(programOptions_),
         minhashHandle{mh.makeMinhasherHandle()}{
 
         setActiveReadStorage(readStorage);
@@ -335,7 +333,7 @@ private:
         activeReadStorage->areSequencesAmbiguous(&containsN, &readId, 1);
 
         //exclude anchors with ambiguous bases
-        if(!(correctionOptions.excludeAmbiguousReads && containsN)){
+        if(!(programOptions.excludeAmbiguousReads && containsN)){
 
             int numValuesPerSequence = 0;
             int totalNumValues = 0;
@@ -366,7 +364,7 @@ private:
 
             //exclude candidates with ambiguous bases
 
-            if(correctionOptions.excludeAmbiguousReads){
+            if(programOptions.excludeAmbiguousReads){
                 auto minhashResultsEnd = std::remove_if(
                     result.begin(),
                     result.end(),
@@ -927,9 +925,9 @@ private:
                 encodedSequencePitchInInts,
                 task.candidateSequenceLengths.data(),
                 numCandidates,
-                goodAlignmentProperties.min_overlap,
-                goodAlignmentProperties.maxErrorRate,
-                goodAlignmentProperties.min_overlap_ratio
+                programOptions.min_overlap,
+                programOptions.maxErrorRate,
+                programOptions.min_overlap_ratio
             );
 
             care::cpu::shd::cpuShiftedHammingDistancePopcount2BitWithDirection<care::cpu::shd::ShiftDirection::Right>(
@@ -941,9 +939,9 @@ private:
                 encodedSequencePitchInInts,
                 task.candidateSequenceLengths.data(),
                 numCandidates,
-                goodAlignmentProperties.min_overlap,
-                goodAlignmentProperties.maxErrorRate,
-                goodAlignmentProperties.min_overlap_ratio
+                programOptions.min_overlap,
+                programOptions.maxErrorRate,
+                programOptions.min_overlap_ratio
             );
 
             //decide whether to keep forward or reverse complement, and keep it
@@ -958,9 +956,9 @@ private:
                     revcAlignment,
                     task.currentAnchorLength,
                     candidateLength,
-                    goodAlignmentProperties.min_overlap_ratio,
-                    goodAlignmentProperties.min_overlap,
-                    correctionOptions.estimatedErrorrate
+                    programOptions.min_overlap_ratio,
+                    programOptions.min_overlap,
+                    programOptions.estimatedErrorrate
                 );
 
                 if(task.alignmentFlags[c] == AlignmentOrientation::Forward){
@@ -996,7 +994,7 @@ private:
                         const float overlap = task.alignments[c].overlap;
                         const float relativeOverlap = overlap / float(task.currentAnchorLength);
 
-                        if(relativeOverlap < 1.0f && fgeq(relativeOverlap, goodAlignmentProperties.min_overlap_ratio)){
+                        if(relativeOverlap < 1.0f && fgeq(relativeOverlap, programOptions.min_overlap_ratio)){
                             goodAlignmentExists = true;
                             const float tmp = floorf(relativeOverlap * 10.0f) / 10.0f;
                             relativeOverlapThreshold = fmaxf(relativeOverlapThreshold, tmp);
@@ -1128,7 +1126,7 @@ private:
                     task.currentAnchorLength, 
                     task.alignments[c].nOps,
                     task.alignments[c].overlap,
-                    goodAlignmentProperties.maxErrorRate
+                    programOptions.maxErrorRate
                 );
             }
 
@@ -1256,7 +1254,7 @@ private:
 
             for(int numIterations = 0; numIterations < getNumRefinementIterations(); numIterations++){
                 const auto minimizationResult = msa.findCandidatesOfDifferentRegion(
-                    correctionOptions.estimatedCoverage
+                    programOptions.estimatedCoverage
                 );
 
                 if(minimizationResult.performedMinimization){
@@ -1283,7 +1281,7 @@ private:
 
         std::vector<char> candidateQualities(task.numRemainingCandidates * qualityPitchInBytes);
 
-        if(correctionOptions.useQualityScores){
+        if(programOptions.useQualityScores){
 
             activeReadStorage->gatherQualities(
                 candidateQualities.data(),
@@ -1318,7 +1316,7 @@ private:
                     task.currentAnchorLength, 
                     task.alignments[c].nOps,
                     task.alignments[c].overlap,
-                    goodAlignmentProperties.maxErrorRate
+                    programOptions.maxErrorRate
                 );
             }
 
@@ -1445,7 +1443,7 @@ private:
 
             for(int numIterations = 0; numIterations < getNumRefinementIterations(); numIterations++){
                 const auto minimizationResult = msa.findCandidatesOfDifferentRegion(
-                    correctionOptions.estimatedCoverage
+                    programOptions.estimatedCoverage
                 );
 
                 if(minimizationResult.performedMinimization){
@@ -1644,7 +1642,7 @@ private:
 
         std::vector<char> candidateQualities(totalNumberOfCandidates * qualityPitchInBytes);
 
-        if(correctionOptions.useQualityScores){
+        if(programOptions.useQualityScores){
 
             activeReadStorage->gatherQualities(
                 candidateQualities.data(),
@@ -1936,8 +1934,7 @@ private:
     std::size_t decodedSequencePitchInBytes{};
     std::size_t qualityPitchInBytes{};
 
-    CorrectionOptions correctionOptions{};
-    GoodAlignmentProperties goodAlignmentProperties{};
+    ProgramOptions programOptions{};
 
     mutable MinhasherHandle minhashHandle;
     mutable cpu::shd::CpuAlignmentHandle alignmentHandle;
