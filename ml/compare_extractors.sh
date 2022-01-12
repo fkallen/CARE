@@ -44,8 +44,8 @@ run_clf() {
 	$CAREGPU -i ${files[${1}]} -c ${cov[${1}]} -o out/${prefixes[${1}]}_${2}-${3}-${4}${6}.fq $CARE_FLAGS \
 		--correctionType 1 --ml-forestfile ${2}_anchor.rf \
 		--candidateCorrection --correctionTypeCands 1 --ml-cands-forestfile ${2}_cands.rf \
-		--thresholdAnchor ${3} --thresholdCands ${4} ${5} \
-		$(auto_preprocess ${prefixes[${1}]})
+		--thresholdAnchor ${3} --thresholdCands ${4} ${5}
+		# $(auto_preprocess ${prefixes[${1}]})
 
 	$ARTEVAL ${files[${1}]} ${files_ef[${1}]} out/${prefixes[${1}]}_${2}-${3}-${4}${6}.fq >> out/${prefixes[${1}]}_${2}${6}_eval
 	rm out/${prefixes[${1}]}_${2}-${3}-${4}${6}.fq
@@ -70,7 +70,7 @@ EVALDIR=/home/jcascitt/care/${EVALDIRNAME}
 
 CARE=/home/jcascitt/errorcorrector/care-cpu
 CAREGPU="/home/jcascitt/errorcorrector/care-gpu -g 0 --warpcore 1"
-CARE_FLAGS="-d . -h 48 -q --excludeAmbiguous --minalignmentoverlap 30 --minalignmentoverlapratio 0.3 -m 64G -p -t 128 --samplingRateAnchor 0.0025 --samplingRateCands 0.0001 --enforceHashmapCount"
+CARE_FLAGS="-d . -h 48 -q --excludeAmbiguous --minalignmentoverlap 30 --minalignmentoverlapratio 0.3 -m 64G -p -t 128 --samplingRateAnchor 0.025 --samplingRateCands 0.001 --enforceHashmapCount"
 
 ARTEVAL=/home/jcascitt/errorcorrector/evaluationtool/arteval
 
@@ -86,25 +86,25 @@ files_ef[1]=/share/errorcorrection/datasets/arthiseq2000humanchr15/humanchr1530c
 cov[1]=30
 prefixes[1]=humanchr15-30
 
-# files[2]=/share/errorcorrection/datasets/arthiseq2000athaliana/athaliana30cov.fq
-# files_ef[2]=/share/errorcorrection/datasets/arthiseq2000athaliana/athaliana30cov_errFree.fq
-# cov[2]=30
-# prefixes[2]=atha-30
+files[2]=/share/errorcorrection/datasets/arthiseq2000athaliana/athaliana30cov.fq
+files_ef[2]=/share/errorcorrection/datasets/arthiseq2000athaliana/athaliana30cov_errFree.fq
+cov[2]=30
+prefixes[2]=atha-30
 
-# files[3]=/share/errorcorrection/datasets/arthiseq2000elegans/elegans30cov.fq
-# files_ef[3]=/share/errorcorrection/datasets/arthiseq2000elegans/elegans30cov_errFree.fq
-# cov[3]=30
-# prefixes[3]=ele-30
+files[3]=/share/errorcorrection/datasets/arthiseq2000elegans/elegans30cov.fq
+files_ef[3]=/share/errorcorrection/datasets/arthiseq2000elegans/elegans30cov_errFree.fq
+cov[3]=30
+prefixes[3]=ele-30
 
-# files[4]=/share/errorcorrection/datasets/arthiseq2000melanogaster/melanogaster30cov.fq
-# files_ef[4]=/share/errorcorrection/datasets/arthiseq2000melanogaster/melanogaster30cov_errFree.fq
-# cov[4]=30
-# prefixes[4]=melan-30
+files[4]=/share/errorcorrection/datasets/arthiseq2000melanogaster/melanogaster30cov.fq
+files_ef[4]=/share/errorcorrection/datasets/arthiseq2000melanogaster/melanogaster30cov_errFree.fq
+cov[4]=30
+prefixes[4]=melan-30
 
-# files[5]=/share/errorcorrection/datasets/arthiseq2000mus/mus_chr15_30cov.fq
-# files_ef[5]=/share/errorcorrection/datasets/arthiseq2000mus/mus_chr15_30cov_errFree.fq
-# cov[5]=30
-# prefixes[5]=muschr15-30
+files[5]=/share/errorcorrection/datasets/arthiseq2000mus/mus_chr15_30cov.fq
+files_ef[5]=/share/errorcorrection/datasets/arthiseq2000mus/mus_chr15_30cov_errFree.fq
+cov[5]=30
+prefixes[5]=muschr15-30
 
 ###########################################################
 
@@ -125,7 +125,7 @@ cp $SCRIPTPATH $SCRIPTNAME.log.${num}
 
 # ###########################################################
 
-for (( i="0"; i<="1"; i+="1" )); do
+for (( i="0"; i<"6"; i+="1" )); do
     run_print $i "--pairmode SE"
 done
 
@@ -156,9 +156,9 @@ EOF
 
 # ############################################################
 
-# for (( i="0"; i<="5"; i+="1" )); do
-#     grid_search $i ${prefixes[${i}]}_${EVALDIRNAME} 10 90 10 10 90 10 "--pairmode SE"
-# done
+for (( i="0"; i<="5"; i+="1" )); do
+    grid_search $i ${prefixes[${i}]}_${EVALDIRNAME} 10 90 10 10 90 10 "--pairmode SE"
+done
 
 ############################################################
 

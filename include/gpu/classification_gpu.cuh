@@ -571,10 +571,10 @@ namespace gpu{
 
                 *(features + 0) = float(input.msa.origCoverages[msaPos]) / countsACGT;
                 *(features + 1) = input.msa.origWeights[msaPos] / weightsACGT;
-                *(features + 2) = input.msa.origWeights[msaPos] / countsACGT;
+                *(features + 2) = input.msa.origWeights[msaPos] / float(input.msa.origCoverages[msaPos]);
                 *(features + 3) = countCons / countsACGT;
                 *(features + 4) = input.msa.support[msaPos];
-                *(features + 5) = weightCons / countsACGT;
+                *(features + 5) = weightCons / countCons;
                 *(features + 6) = weightsACGT / countsACGT;
                 *(features + 7) = input.msaProperties.avg_support;
                 *(features + 8) = input.msaProperties.min_support;
@@ -612,7 +612,7 @@ namespace gpu{
                 const float* const weightsT = &input.msa.weights[3 * pitch];
                 const float weightsACGT = weightsA[msaPos] + weightsC[msaPos] + weightsG[msaPos] + weightsT[msaPos];
 
-                float weightCons = 0, countCons = 0;
+                float weightCons = 0, countCons = 0, weightOrig = 0, countOrig = 0;
 
                 switch (input.consensusBase) {
                     case 'A':
@@ -634,12 +634,32 @@ namespace gpu{
                     default: break;
                 }
 
-                *(features + 0) = float(input.msa.origCoverages[msaPos]) / countsACGT;
-                *(features + 1) = input.msa.origWeights[msaPos] / weightsACGT;
-                *(features + 2) = input.msa.origWeights[msaPos] / countsACGT;
+                switch (input.origBase) {
+                    case 'A':
+                        weightOrig = weightsA[msaPos];
+                        countOrig = countsA[msaPos];
+                        break;
+                    case 'C':
+                        weightOrig = weightsC[msaPos];
+                        countOrig = countsC[msaPos];
+                        break;
+                    case 'G':
+                        weightOrig = weightsG[msaPos];
+                        countOrig = countsG[msaPos];
+                        break;
+                    case 'T':
+                        weightOrig = weightsT[msaPos];
+                        countOrig = countsT[msaPos];
+                        break;
+                    default: break;
+                }
+
+                *(features + 0) = countOrig / countsACGT;
+                *(features + 1) = weightOrig / weightsACGT;
+                *(features + 2) = weightOrig / countOrig;
                 *(features + 3) = countCons / countsACGT;
                 *(features + 4) = input.msa.support[msaPos];
-                *(features + 5) = weightCons / countsACGT;
+                *(features + 5) = weightCons / countCons;
                 *(features + 6) = weightsACGT / countsACGT;
                 *(features + 7) = input.msaProperties.avg_support;
                 *(features + 8) = input.msaProperties.min_support;
@@ -664,6 +684,8 @@ namespace gpu{
         template<> struct GpuExtractorSelection<care::detail::extract_cands_transformed_normed_weights>{using type = care::gpu::detail::extract_cands_transformed_normed_weights;};
         template<> struct GpuExtractorSelection<care::detail::extract_anchor_v2>{using type = care::gpu::detail::extract_anchor_v2;};
         template<> struct GpuExtractorSelection<care::detail::extract_cands_v2>{using type = care::gpu::detail::extract_cands_v2;};
+        template<> struct GpuExtractorSelection<care::detail::extract_anchor_support>{using type = care::gpu::detail::extract_anchor_v2;};
+        template<> struct GpuExtractorSelection<care::detail::extract_cands_support>{using type = care::gpu::detail::extract_cands_v2;};
 
     } //namespace detail
 

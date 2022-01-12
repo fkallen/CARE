@@ -218,7 +218,7 @@ def process(clf_t, clf_args, train_map, test_map, name):
     
     pickle.dump(clf, open(name+".rf.p", "wb"))
 
-    # extract_clf(clf, name+".rf")
+    extract_clf(clf, name+".rf")
 
 ### stuff ###
 
