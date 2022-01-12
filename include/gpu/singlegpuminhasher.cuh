@@ -99,7 +99,7 @@ namespace gpu{
         }
 
         int constructFromReadStorage(
-            const RuntimeOptions &runtimeOptions,
+            const ProgramOptions& programOptions,
             std::uint64_t nReads,
             const GpuReadStorage& gpuReadStorage,
             int upperBoundSequenceLength,
@@ -118,7 +118,7 @@ namespace gpu{
 
             rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
 
-            const int numThreads = runtimeOptions.threads;
+            const int numThreads = programOptions.threads;
             ThreadPool::ParallelForHandle pforHandle;
             ThreadPool threadPool(numThreads);
 
@@ -150,7 +150,7 @@ namespace gpu{
             auto sequencehandle = gpuReadStorage.makeHandle();
 
             // auto showProgress = [&](auto totalCount, auto seconds){
-            //     if(runtimeOptions.showProgress){
+            //     if(programOptions.showProgress){
             //         std::cout << "Hashed " << totalCount << " / " << numReads << " reads. Elapsed time: " 
             //                 << seconds << " seconds.\n";
             //     }

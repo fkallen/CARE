@@ -2,7 +2,6 @@
 #include <config.hpp>
 
 #include <cxxopts/cxxopts.hpp>
-#include <args.hpp>
 #include <options.hpp>
 #include <gpu/dispatch_care_correct_gpu.cuh>
 
@@ -61,175 +60,51 @@ std::string tostring(const bool& b){
 int main(int argc, char** argv){
 
 	bool help = false;
+	bool showVersion = false;
 
-	cxxopts::Options options(argv[0], "CARE: Context-Aware Read Error Correction for Illumina reads");
+	cxxopts::Options commandLineOptions(argv[0], "CARE: Context-Aware Read Error Correction for Illumina reads");
 
-	options.add_options("Mandatory")
-		("d,outdir", "The output directory. Will be created if it does not exist yet.", 
-		cxxopts::value<std::string>())
-		("c,coverage", "Estimated coverage of input file. (i.e. number_of_reads * read_length / genome_size)", 
-		cxxopts::value<float>())
-		("i,inputfiles", 
-			"The file(s) to correct. "
-			"Fasta or Fastq format. May be gzip'ed. "
-			"Repeat this option for each input file (e.g. -i file1.fastq -i file2.fastq). "
-			"Must not mix fasta and fastq files. "
-			"The collection of input files is treated as a single read library",
-			cxxopts::value<std::vector<std::string>>())
-		("o,outputfilenames", 
-			"The names of outputfiles. "
-			"Repeat this option for each output file (e.g. -o file1_corrected.fastq -o file2_corrected.fastq). "
-			"If a single output file is specified, it will contain the concatenated results of all input files. "
-			"If multiple output files are specified, the number of output files must be equal to the number of input files. "
-			"In this case, output file i will contain the results of input file i. "
-			"Output files are uncompressed.", 
-			cxxopts::value<std::vector<std::string>>())
-		("pairmode", 
-			"Type of input reads."
-			"SE / se : Single-end reads"
-			"PE / pe : Paired-end reads",
-			cxxopts::value<std::string>())
-		("g,gpu", "Comma-separated list of GPU device ids to be used for correction. (Example: --gpu 0,1 to use GPU 0 and GPU 1)", cxxopts::value<std::vector<int>>());
+	addMandatoryOptions(commandLineOptions);
+	addMandatoryOptionsCorrect(commandLineOptions);
+	addMandatoryOptionsCorrectGpu(commandLineOptions);
 
+	addAdditionalOptions(commandLineOptions);
+	addAdditionalOptionsCorrect(commandLineOptions);
+	addAdditionalOptionsCorrectGpu(commandLineOptions);
 
-	options.add_options("Additional")
-			
+	commandLineOptions.add_options("Additional")
 		("help", "Show this help message", cxxopts::value<bool>(help))
-		("tempdir", "Directory to store temporary files. Default: output directory", cxxopts::value<std::string>())
-		("h,hashmaps", "The requested number of hash maps. Must be greater than 0. "
-			"The actual number of used hash maps may be lower to respect the set memory limit. "
-			"Default: " + tostring(CorrectionOptions{}.numHashFunctions), 
-			cxxopts::value<int>())
-		("k,kmerlength", "The kmer length for minhashing. If 0 or missing, it is automatically determined.", cxxopts::value<int>())
-		("enforceHashmapCount",
-			"If the requested number of hash maps cannot be fullfilled, the program terminates without error correction. "
-			"Default: " + tostring(CorrectionOptions{}.mustUseAllHashfunctions),
-			cxxopts::value<bool>()->implicit_value("true")
-		)
-		("t,threads", "Maximum number of thread to use. Must be greater than 0", cxxopts::value<int>())
-		("batchsize", "Number of reads to correct in a single batch. Must be greater than 0. "
-			"Default: " + tostring(CorrectionOptions{}.batchsize),
-		cxxopts::value<int>())
-		("q,useQualityScores", "If set, quality scores (if any) are considered during read correction. "
-			"Default: " + tostring(CorrectionOptions{}.useQualityScores),
-		cxxopts::value<bool>()->implicit_value("true"))
-		("excludeAmbiguous", 
-			"If set, reads which contain at least one ambiguous nucleotide will not be corrected. "
-			"Default: " + tostring(CorrectionOptions{}.excludeAmbiguousReads),
-		cxxopts::value<bool>()->implicit_value("true"))
-		("candidateCorrection", "If set, candidate reads will be corrected,too. "
-			"Default: " + tostring(CorrectionOptions{}.correctCandidates),
-		cxxopts::value<bool>()->implicit_value("true"))
-        ("candidateCorrectionNewColumns", "If candidateCorrection is set, a candidates with an absolute shift of candidateCorrectionNewColumns compared to anchor are corrected. "
-			"Default: " + tostring(CorrectionOptions{}.new_columns_to_correct),
-		cxxopts::value<int>())
-		("maxmismatchratio", "Overlap between anchor and candidate must contain at "
-			"most (maxmismatchratio * overlapsize) mismatches. "
-			"Default: " + tostring(GoodAlignmentProperties{}.maxErrorRate),
-		cxxopts::value<float>())
-		("minalignmentoverlap", "Overlap between anchor and candidate must be at least this long. "
-			"Default: " + tostring(GoodAlignmentProperties{}.min_overlap),
-		cxxopts::value<int>())
-		("minalignmentoverlapratio", "Overlap between anchor and candidate must be at least as "
-			"long as (minalignmentoverlapratio * candidatelength). "
-			"Default: " + tostring(GoodAlignmentProperties{}.min_overlap_ratio),
-		cxxopts::value<float>())
-		("errorfactortuning", "errorfactortuning. "
-			"Default: " + tostring(CorrectionOptions{}.estimatedErrorrate),
-		cxxopts::value<float>())
-		("coveragefactortuning", "coveragefactortuning. "
-			"Default: " + tostring(CorrectionOptions{}.m_coverage),
-		cxxopts::value<float>())
-		("p,showProgress", "If set, progress bar is shown during correction",
-		cxxopts::value<bool>()->implicit_value("true"))
-		("save-preprocessedreads-to", "Save binary dump of data structure which stores input reads to disk",
-		cxxopts::value<std::string>())
-		("load-preprocessedreads-from", "Load binary dump of read data structure from disk",
-		cxxopts::value<std::string>())
-		("save-hashtables-to", "Save binary dump of hash tables to disk. Ignored for GPU hashtables.",
-		cxxopts::value<std::string>())
-		("load-hashtables-from", "Load binary dump of hash tables from disk. Ignored for GPU hashtables.",
-		cxxopts::value<std::string>())
-		("memHashtables", "Memory limit in bytes for hash tables and hash table construction. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: A bit less than memTotal.",
-		cxxopts::value<std::string>())
-		("m,memTotal", "Total memory limit in bytes. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: All free memory.",
-		cxxopts::value<std::string>())
+		("version", "Print version", cxxopts::value<bool>(showVersion));
 
-		("correctionType", "0: Classic, 1: Forest",
-			cxxopts::value<int>()->default_value("0"))
-		("correctionTypeCands", "0: Classic, 1: Forest",
-			cxxopts::value<int>()->default_value("0"))
-		("ml-forestfile", "The file for interfaceing with the scikit-learn classifier (Anchor correction)",
-			cxxopts::value<std::string>())
-		("ml-cands-forestfile", "The file for interfaceing with the scikit-learn classifier (Candidate correction)",
-			cxxopts::value<std::string>())
-		("thresholdAnchor", "Classification threshold for anchor classifier (\"Forest\") mode",
-			cxxopts::value<float>())
-		("thresholdCands", "Classification threshold for candidates classifier (\"Forest\") mode",
-			cxxopts::value<float>())
-		("samplingRateAnchor", "sampling rate for anchor features (print mode)",
-			cxxopts::value<float>())
-		("samplingRateCands", "sampling rate for candidates features (print mode)",
-			cxxopts::value<float>())
-		("warpcore", "Enable warpcore hash tables. 0: Disabled, 1: Enabled. "
-			"Default: " + tostring(RuntimeOptions{}.warpcore),
-		cxxopts::value<int>())
-		("pairedthreshold1", "pairedthreshold1", cxxopts::value<float>())
-		("hashloadfactor", "Load factor of hashtables. 0.0 < hashloadfactor < 1.0. Smaller values can improve the runtime at the expense of greater memory usage."
-			"Default: " + std::to_string(MemoryOptions{}.hashtableLoadfactor), cxxopts::value<float>())
-		("replicateGpuData", "If a GPU data structure fits into the memory of a single GPU, allow its replication to other GPUs. This can improve the runtime when multiple GPUs are used."
-			"Default: " + std::to_string(RuntimeOptions{}.replicateGpuData), cxxopts::value<bool>())
-		("qualityScoreBits", "How many bits should be used to store a single quality score. Allowed values: 1,2,8. If not 8, a lossy compression via binning is used."
-			"Default: " + tostring(MemoryOptions{}.qualityScoreBits), cxxopts::value<int>())
+	auto parseresults = commandLineOptions.parse(argc, argv);
 
-		("fixedNumberOfReads", "Process only the first n reads. Default: " + tostring(RuntimeOptions{}.fixedNumberOfReads), cxxopts::value<std::size_t>())
-		("singlehash", "Use 1 hashtables with h smallest unique hashes. Default: " + tostring(CorrectionOptions{}.singlehash), cxxopts::value<bool>())
-	;
-
-	//options.parse_positional({"deviceIds"});
-
-	auto parseresults = options.parse(argc, argv);
-
-	if(help) {
-		std::cout << options.help({"", "Mandatory", "Additional"}) << std::endl;
+	if(showVersion){
+		std::cout << "CARE version " << CARE_VERSION_STRING << std::endl;
 		std::exit(0);
 	}
 
-	//printCommandlineArguments(std::cerr, parseresults);
+	if(help) {
+		std::cout << commandLineOptions.help({"", "Mandatory", "Additional"}) << std::endl;
+		std::exit(0);
+	}
 
 	const bool mandatoryPresent = checkMandatoryArguments(parseresults);
 	if(!mandatoryPresent){
-		std::cout << options.help({"Mandatory"}) << std::endl;
+		std::cout << commandLineOptions.help({"Mandatory"}) << std::endl;
 		std::exit(0);
 	}
 
-	GoodAlignmentProperties goodAlignmentProperties = args::to<GoodAlignmentProperties>(parseresults);
-	CorrectionOptions correctionOptions = args::to<CorrectionOptions>(parseresults);
-	RuntimeOptions runtimeOptions = args::to<RuntimeOptions>(parseresults);
-	MemoryOptions memoryOptions = args::to<MemoryOptions>(parseresults);
-	FileOptions fileOptions = args::to<FileOptions>(parseresults);
+	ProgramOptions programOptions(parseresults);
 
-	if(!args::isValid(goodAlignmentProperties)) throw std::runtime_error("Invalid goodAlignmentProperties!");
-	if(!args::isValid(correctionOptions)) throw std::runtime_error("Invalid correctionOptions!");
-	if(!args::isValid(runtimeOptions)) throw std::runtime_error("Invalid runtimeOptions!");
-	if(!args::isValid(memoryOptions)) throw std::runtime_error("Invalid memoryOptions!");
-	if(!args::isValid(fileOptions)) throw std::runtime_error("Invalid fileOptions!");
+	if(!programOptions.isValid()) throw std::runtime_error("Invalid program options!");
 
-    runtimeOptions.deviceIds = correction::getUsableDeviceIds(runtimeOptions.deviceIds);
-    runtimeOptions.canUseGpu = runtimeOptions.deviceIds.size() > 0;
+    programOptions.deviceIds = correction::getUsableDeviceIds(programOptions.deviceIds);
+    programOptions.canUseGpu = programOptions.deviceIds.size() > 0;
 
-	if(correctionOptions.useQualityScores){
-		// const bool fileHasQscores = hasQualityScores(fileOptions.inputfile);
-
-		// if(!fileHasQscores){
-		// 	std::cerr << "Quality scores have been disabled because no quality scores were found in the input file.\n";
-			
-		// 	correctionOptions.useQualityScores = false;
-		// }
-		
+	if(programOptions.useQualityScores){
 		const bool hasQ = std::all_of(
-			fileOptions.inputfiles.begin(),
-			fileOptions.inputfiles.end(),
+			programOptions.inputfiles.begin(),
+			programOptions.inputfiles.end(),
 			[](const auto& s){
 				return hasQualityScores(s);
 			}
@@ -238,128 +113,61 @@ int main(int argc, char** argv){
 		if(!hasQ){
 			std::cout << "Quality scores have been disabled because there exist reads in an input file without quality scores.\n";
 			
-			correctionOptions.useQualityScores = false;
+			programOptions.useQualityScores = false;
 		}
-
 	}
 
-	if(correctionOptions.correctionType != CorrectionType::Classic){
+	if(programOptions.correctionType != CorrectionType::Classic){
 		//disable print mode in gpu version
-		if(correctionOptions.correctionType != CorrectionType::Forest){
+		if(programOptions.correctionType != CorrectionType::Forest){
 			std::cout << "CorrectionType is invalid. Abort!\n";
-			return 0;
+			std::exit(0);
 		}
-		if(fileOptions.mlForestfileAnchor == ""){
+		if(programOptions.mlForestfileAnchor == ""){
 			std::cout << "CorrectionType is not set to Classic, but no valid classifier file is provided. Abort!\n";
-			return 0;
+			std::exit(0);
 		}
 
-		if(fileOptions.mlForestfileCands == ""){
-			fileOptions.mlForestfileCands = fileOptions.mlForestfileAnchor;
+		if(programOptions.mlForestfileCands == ""){
+			programOptions.mlForestfileCands = programOptions.mlForestfileAnchor;
 		}
 	}
 
-	if(correctionOptions.correctionTypeCands != CorrectionType::Classic){
+	if(programOptions.correctionTypeCands != CorrectionType::Classic){
 		//disable print mode in gpu version
-		if(correctionOptions.correctionTypeCands != CorrectionType::Forest){
+		if(programOptions.correctionTypeCands != CorrectionType::Forest){
 			std::cout << "CorrectionTypeCands is invalid. Abort!\n";
-			return 0;
+			std::exit(0);
 		}
 	}
 
-
-	//print all options that will be used
 	std::cout << std::boolalpha;
 	std::cout << "CARE CORRECT GPU  will be started with the following parameters:\n";
-
 	std::cout << "----------------------------------------\n";
 
+	programOptions.printMandatoryOptions(std::cout);
+	programOptions.printMandatoryOptionsCorrect(std::cout);
+	programOptions.printMandatoryOptionsCorrectGpu(std::cout);
 
-	std::cout << "Alignment absolute required overlap: " << goodAlignmentProperties.min_overlap << "\n";
-	std::cout << "Alignment relative required overlap: " << goodAlignmentProperties.min_overlap_ratio << "\n";
-	std::cout << "Alignment max relative number of mismatches in overlap: " << goodAlignmentProperties.maxErrorRate << "\n";
+	programOptions.printAdditionalOptions(std::cout);
+	programOptions.printAdditionalOptionsCorrect(std::cout);
+	programOptions.printAdditionalOptionsCorrectGpu(std::cout);
 
-	std::cout << "Number of hash tables / hash functions: " << correctionOptions.numHashFunctions << "\n";
-	if(correctionOptions.autodetectKmerlength){
-		std::cout << "K-mer size for hashing: auto\n";
-	}else{
-		std::cout << "K-mer size for hashing: " << correctionOptions.kmerlength << "\n";
-	}
-	
-	std::cout << "Exclude ambigious reads from correction: " << correctionOptions.excludeAmbiguousReads << "\n";
-	std::cout << "Correct candidate reads: " << correctionOptions.correctCandidates << "\n";
-	std::cout << "Max shift for candidate correction: " << correctionOptions.new_columns_to_correct << "\n";
-	std::cout << "Use quality scores: " << correctionOptions.useQualityScores << "\n";
-	std::cout << "Estimated dataset coverage: " << correctionOptions.estimatedCoverage << "\n";
-	std::cout << "errorfactortuning: " << correctionOptions.estimatedErrorrate << "\n";
-	std::cout << "coveragefactortuning: " << correctionOptions.m_coverage << "\n";
-	std::cout << "Batch size: " << correctionOptions.batchsize << "\n";
-	std::cout << "Correction type (anchor): " << int(correctionOptions.correctionType) 
-		<< " (" << to_string(correctionOptions.correctionType) << ")\n";
-	std::cout << "Correction type (cands): " << int(correctionOptions.correctionTypeCands) 
-		<< " (" << to_string(correctionOptions.correctionTypeCands) << ")\n";
-
-	std::cout << "pairedthreshold1 " << correctionOptions.pairedthreshold1 << "\n";
-	std::cout << "Threads: " << runtimeOptions.threads << "\n";
-	std::cout << "Show progress bar: " << runtimeOptions.showProgress << "\n";
-	std::cout << "Can use GPU(s): " << runtimeOptions.canUseGpu << "\n";
-	if(runtimeOptions.canUseGpu){
-		std::cout << "GPU device ids: [";
-		for(int id : runtimeOptions.deviceIds){
-			std::cout << " " << id;
-		}
-		std::cout << " ]\n";
-	}
-	std::cout << "Warpcore: " << runtimeOptions.warpcore << "\n";
-	std::cout << "Replicate GPU data: " << runtimeOptions.replicateGpuData << "\n";
-
-	std::cout << "Maximum memory for hash tables: " << memoryOptions.memoryForHashtables << "\n";
-	std::cout << "Maximum memory total: " << memoryOptions.memoryTotalLimit << "\n";
-	std::cout << "Hashtable load factor: " << memoryOptions.hashtableLoadfactor << "\n";
-	std::cout << "Bits per quality score: " << memoryOptions.qualityScoreBits << "\n";
-
-	std::cout << "Paired mode: " << to_string(fileOptions.pairType) << "\n";
-	std::cout << "Output directory: " << fileOptions.outputdirectory << "\n";
-	std::cout << "Temporary directory: " << fileOptions.tempdirectory << "\n";
-	std::cout << "Save preprocessed reads to file: " << fileOptions.save_binary_reads_to << "\n";
-	std::cout << "Load preprocessed reads from file: " << fileOptions.load_binary_reads_from << "\n";
-	std::cout << "Save hash tables to file: " << fileOptions.save_hashtables_to << "\n";
-	std::cout << "Load hash tables from file: " << fileOptions.load_hashtables_from << "\n";
-	std::cout << "Input files: ";
-	for(auto& s : fileOptions.inputfiles){
-		std::cout << s << ' ';
-	}
-	std::cout << "\n";
-	std::cout << "Output file names: ";
-	for(auto& s : fileOptions.outputfilenames){
-		std::cout << s << ' ';
-	}
-	std::cout << "\n";
-	std::cout << "ml-forestfile: " << fileOptions.mlForestfileAnchor << "\n";
-	std::cout << "ml-cands-forestfile: " << fileOptions.mlForestfileCands << "\n";
-	std::cout << "anchor sampling rate: " << correctionOptions.sampleRateAnchor << "\n";
-	std::cout << "cands sampling rate: " << correctionOptions.sampleRateCands << "\n";
-	std::cout << "classification thresholds: " << correctionOptions.thresholdAnchor << " | " << correctionOptions.thresholdCands << "\n";
 	std::cout << "----------------------------------------\n";
 	std::cout << std::noboolalpha;
 
 
-	if(!runtimeOptions.canUseGpu){
+	if(!programOptions.canUseGpu){
 		std::cout << "No valid GPUs selected. Abort\n";
-		return 0;
+		std::exit(0);
 	}
 
-
-    const int numThreads = runtimeOptions.threads;
+    const int numThreads = programOptions.threads;
 
 	omp_set_num_threads(numThreads);
 
     care::performCorrection(
-		correctionOptions,
-		runtimeOptions,
-		memoryOptions,
-		fileOptions,
-		goodAlignmentProperties
+		programOptions
 	);
 
 	return 0;

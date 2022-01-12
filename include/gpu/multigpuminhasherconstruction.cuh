@@ -19,10 +19,7 @@ namespace gpu{
 
         std::unique_ptr<MultiGpuMinhasher>
         constructMultiGpuMinhasherFromGpuReadStorage(
-            const CorrectionOptions& correctionOptions,
-            const FileOptions& fileOptions,
-            const RuntimeOptions& runtimeOptions,
-            const MemoryOptions& memoryOptions,
+            const ProgramOptions& programOptions,
             const GpuReadStorage& gpuReadStorage
         );
 

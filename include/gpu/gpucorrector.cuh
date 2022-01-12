@@ -572,10 +572,10 @@ namespace gpu{
 
         OutputConstructor(
             ReadCorrectionFlags& correctionFlags_,
-            const CorrectionOptions& correctionOptions_
+            const ProgramOptions& programOptions_
         ) :
             correctionFlags{&correctionFlags_},
-            correctionOptions{&correctionOptions_}
+            programOptions{&programOptions_}
         {
 
         }
@@ -612,11 +612,11 @@ namespace gpu{
         std::vector<std::pair<int,int>> getCandidateIndicesToProcess(const GpuErrorCorrectorRawOutput& currentOutput) const{
             std::vector<std::pair<int,int>> candidateIndicesToProcess;
 
-            if(correctionOptions->correctCandidates){
+            if(programOptions->correctCandidates){
                 candidateIndicesToProcess.reserve(16 * currentOutput.numAnchors);
             }
 
-            if(correctionOptions->correctCandidates){
+            if(programOptions->correctCandidates){
 
                 nvtx::push_range("preprocess candidate results",0);
 
@@ -666,7 +666,7 @@ namespace gpu{
             CorrectionOutput correctionOutput;
             correctionOutput.anchorCorrections.resize(numCorrectedAnchors);
 
-            if(correctionOptions->correctCandidates){
+            if(programOptions->correctCandidates){
                 correctionOutput.candidateCorrections.resize(numCorrectedCandidates);
             }
 
@@ -737,11 +737,11 @@ namespace gpu{
                     const read_number candidate_read_id = currentOutput.h_candidate_read_ids[offsetForCorrectedCandidateData + candidateIndex];
                     const int candidate_shift = currentOutput.h_alignment_shifts[offsetForCorrectedCandidateData + candidateIndex];
 
-                    if(correctionOptions->new_columns_to_correct < candidate_shift){
+                    if(programOptions->new_columns_to_correct < candidate_shift){
                         std::cerr << "readid " << anchorReadId << " candidate readid " << candidate_read_id << " : "
-                        << candidate_shift << " " << correctionOptions->new_columns_to_correct <<"\n";
+                        << candidate_shift << " " << programOptions->new_columns_to_correct <<"\n";
 
-                        assert(correctionOptions->new_columns_to_correct >= candidate_shift);
+                        assert(programOptions->new_columns_to_correct >= candidate_shift);
                     }                
                     
                     tmp.type = TempCorrectedSequenceType::Candidate;
@@ -774,7 +774,7 @@ namespace gpu{
             };
 
 
-            if(!correctionOptions->correctCandidates){
+            if(!programOptions->correctCandidates){
                 loopExecutor(
                     0, 
                     numCorrectedAnchors, 
@@ -825,7 +825,7 @@ namespace gpu{
             EncodedCorrectionOutput encodedCorrectionOutput;
             encodedCorrectionOutput.encodedAnchorCorrections.resize(numCorrectedAnchors);
 
-            if(correctionOptions->correctCandidates){
+            if(programOptions->correctCandidates){
                 encodedCorrectionOutput.encodedCandidateCorrections.resize(numCorrectedCandidates);
             }
 
@@ -901,11 +901,11 @@ namespace gpu{
                     const read_number candidate_read_id = currentOutput.h_candidate_read_ids[offsetForCorrectedCandidateData + candidateIndex];
                     const int candidate_shift = currentOutput.h_alignment_shifts[offsetForCorrectedCandidateData + candidateIndex];
 
-                    if(correctionOptions->new_columns_to_correct < candidate_shift){
+                    if(programOptions->new_columns_to_correct < candidate_shift){
                         std::cerr << "readid " << anchorReadId << " candidate readid " << candidate_read_id << " : "
-                        << candidate_shift << " " << correctionOptions->new_columns_to_correct <<"\n";
+                        << candidate_shift << " " << programOptions->new_columns_to_correct <<"\n";
 
-                        assert(correctionOptions->new_columns_to_correct >= candidate_shift);
+                        assert(programOptions->new_columns_to_correct >= candidate_shift);
                     }
 
                     edits.clear();
@@ -948,7 +948,7 @@ namespace gpu{
             };
 
 
-            if(!correctionOptions->correctCandidates){
+            if(!programOptions->correctCandidates){
                 loopExecutor(
                     0, 
                     numCorrectedAnchors, 
@@ -985,7 +985,7 @@ namespace gpu{
         }
     public: //private:
         ReadCorrectionFlags* correctionFlags;
-        const CorrectionOptions* correctionOptions;
+        const ProgramOptions* programOptions;
     };
 
     class GpuErrorCorrector{
@@ -1011,8 +1011,7 @@ namespace gpu{
         GpuErrorCorrector(
             const GpuReadStorage& gpuReadStorage_,
             const ReadCorrectionFlags& correctionFlags_,
-            const CorrectionOptions& correctionOptions_,
-            const GoodAlignmentProperties& goodAlignmentProperties_,
+            const ProgramOptions& programOptions_,
             int maxAnchorsPerCall,
             rmm::mr::device_memory_resource* mr_,
             ThreadPool* threadPool_,
@@ -1023,8 +1022,7 @@ namespace gpu{
             maxCandidates{0},
             correctionFlags{&correctionFlags_},
             gpuReadStorage{&gpuReadStorage_},
-            correctionOptions{&correctionOptions_},
-            goodAlignmentProperties{&goodAlignmentProperties_},
+            programOptions{&programOptions_},
             mr{mr_},
             threadPool{threadPool_},
             gpuForestAnchor{gpuForestAnchor_},
@@ -1076,11 +1074,11 @@ namespace gpu{
             d_candidates_per_anchor_prefixsum{0, cudaStreamPerThread, mr}, 
             d_candidatesBeginOffsets{0, cudaStreamPerThread, mr}
         {
-            if(correctionOptions->correctionType != CorrectionType::Classic){
+            if(programOptions->correctionType != CorrectionType::Classic){
                 assert(gpuForestAnchor != nullptr);
             }
 
-            if(correctionOptions->correctionTypeCands != CorrectionType::Classic){
+            if(programOptions->correctionTypeCands != CorrectionType::Classic){
                 assert(gpuForestCandidate != nullptr);
             }
 
@@ -1102,8 +1100,8 @@ namespace gpu{
             const std::size_t min_overlap = std::max(
                 1, 
                 std::max(
-                    goodAlignmentProperties->min_overlap, 
-                    int(gpuReadStorage->getSequenceLengthUpperBound() * goodAlignmentProperties->min_overlap_ratio)
+                    programOptions->min_overlap, 
+                    int(gpuReadStorage->getSequenceLengthUpperBound() * programOptions->min_overlap_ratio)
                 )
             );
             const std::size_t msa_max_column_count = (3*gpuReadStorage->getSequenceLengthUpperBound() - 2*min_overlap);
@@ -1204,7 +1202,7 @@ namespace gpu{
 
             DEBUGSTREAMSYNC(stream);
 
-            // if(correctionOptions->useQualityScores){
+            // if(programOptions->useQualityScores){
 
             //     CUDACHECK(cudaMemcpyAsync(
             //         d_anchor_qualities.data(),
@@ -1264,7 +1262,7 @@ namespace gpu{
             copyAnchorResultsFromDeviceToHost(stream);
             nvtx::pop_range();
 
-            if(correctionOptions->correctCandidates){
+            if(programOptions->correctCandidates){
                 nvtx::push_range("copyCandidateResultsFromDeviceToHost", 4);
                 copyCandidateResultsFromDeviceToHost(stream);
                 nvtx::pop_range();
@@ -1407,7 +1405,7 @@ namespace gpu{
             //does not depend on number of candidates
             d_anchorContainsN.resize(maxAnchors, stream);
 
-            if(correctionOptions->useQualityScores){
+            if(programOptions->useQualityScores){
                 d_anchor_qualities.resize(maxAnchors * qualityPitchInBytes, stream);
             }
 
@@ -1496,7 +1494,7 @@ namespace gpu{
 
             h_flagsCandidates.resize(maxCandidates);
             
-            if(correctionOptions->useQualityScores){
+            if(programOptions->useQualityScores){
                 d_candidate_qualities.resize(maxCandidates * qualityPitchInBytes, stream);
 
                 d_candidate_qualities_compact.resize(maxCandidates * qualityPitchInBytes, stream);
@@ -1738,7 +1736,7 @@ namespace gpu{
             getCandidateAlignments(stream); 
             nvtx::pop_range();
 
-            // if(correctionOptions->useQualityScores) {
+            // if(programOptions->useQualityScores) {
                 
             //     nvtx::push_range("getQualities", 4);
 
@@ -1772,7 +1770,7 @@ namespace gpu{
             correctAnchors(stream);
             nvtx::pop_range();
 
-            if(correctionOptions->correctCandidates) {                        
+            if(programOptions->correctCandidates) {                        
 
                 nvtx::push_range("correctCandidates", 9);
                 correctCandidates(stream);
@@ -1782,9 +1780,9 @@ namespace gpu{
         }
 
         void copyAnchorResultsFromDeviceToHost(cudaStream_t stream){
-            if(correctionOptions->correctionType == CorrectionType::Classic){
+            if(programOptions->correctionType == CorrectionType::Classic){
                 copyAnchorResultsFromDeviceToHostClassic(stream);
-            }else if(correctionOptions->correctionType == CorrectionType::Forest){
+            }else if(programOptions->correctionType == CorrectionType::Forest){
                 copyAnchorResultsFromDeviceToHostForestGpu(stream);
             }else{
                 throw std::runtime_error("copyAnchorResultsFromDeviceToHost not implemented for this correctionType");
@@ -1913,9 +1911,9 @@ namespace gpu{
         }
 
         void copyCandidateResultsFromDeviceToHost(cudaStream_t stream){
-            if(correctionOptions->correctionTypeCands == CorrectionType::Classic){
+            if(programOptions->correctionTypeCands == CorrectionType::Classic){
                 copyCandidateResultsFromDeviceToHostClassic(stream);
-            }else if(correctionOptions->correctionTypeCands == CorrectionType::Forest){
+            }else if(programOptions->correctionTypeCands == CorrectionType::Forest){
                 copyCandidateResultsFromDeviceToHostForestGpu(stream);
             }else{
                 throw std::runtime_error("copyCandidateResultsFromDeviceToHost not implemented for this correctionTypeCands");
@@ -2142,7 +2140,7 @@ namespace gpu{
 
 //         void getQualities(cudaStream_t stream){
 
-//             if(correctionOptions->useQualityScores) {
+//             if(programOptions->useQualityScores) {
 
 // //#define COMPACT_GATHER
 
@@ -2307,8 +2305,8 @@ namespace gpu{
         void getCandidateAlignments(cudaStream_t stream){
 
 
-            const bool removeAmbiguousAnchors = correctionOptions->excludeAmbiguousReads;
-            const bool removeAmbiguousCandidates = correctionOptions->excludeAmbiguousReads;
+            const bool removeAmbiguousAnchors = programOptions->excludeAmbiguousReads;
+            const bool removeAmbiguousCandidates = programOptions->excludeAmbiguousReads;
             
             rmm::device_uvector<bool> d_alignment_isValid(maxCandidates, stream, mr);
 
@@ -2339,10 +2337,10 @@ namespace gpu{
                 maxCandidates,
                 gpuReadStorage->getSequenceLengthUpperBound(),
                 encodedSequencePitchInInts,
-                goodAlignmentProperties->min_overlap,
-                goodAlignmentProperties->maxErrorRate,
-                goodAlignmentProperties->min_overlap_ratio,
-                correctionOptions->estimatedErrorrate,
+                programOptions->min_overlap,
+                programOptions->maxErrorRate,
+                programOptions->min_overlap_ratio,
+                programOptions->estimatedErrorrate,
                 stream
             );
 
@@ -2373,10 +2371,10 @@ namespace gpu{
                 maxCandidates,
                 gpuReadStorage->getSequenceLengthUpperBound(),
                 encodedSequencePitchInInts,
-                goodAlignmentProperties->min_overlap,
-                goodAlignmentProperties->maxErrorRate,
-                goodAlignmentProperties->min_overlap_ratio,
-                correctionOptions->estimatedErrorrate,
+                programOptions->min_overlap,
+                programOptions->maxErrorRate,
+                programOptions->min_overlap_ratio,
+                programOptions->estimatedErrorrate,
                 stream
             );
 
@@ -2392,8 +2390,8 @@ namespace gpu{
                     d_numCandidates.data(),
                     maxAnchors,
                     maxCandidates,
-                    correctionOptions->estimatedErrorrate,
-                    correctionOptions->estimatedCoverage * correctionOptions->m_coverage,
+                    programOptions->estimatedErrorrate,
+                    programOptions->estimatedCoverage * programOptions->m_coverage,
                     stream
                 );
             }else{
@@ -2404,10 +2402,10 @@ namespace gpu{
                         overlaps = d_alignment_overlaps.data(),
                         d_candidates_per_anchor_prefixsum = d_candidates_per_anchor_prefixsum.data(),
                         n_anchors = currentNumAnchors,
-                        mismatchratioBaseFactor = correctionOptions->estimatedErrorrate,
-                        goodAlignmentsCountThreshold = correctionOptions->estimatedCoverage * correctionOptions->m_coverage,
+                        mismatchratioBaseFactor = programOptions->estimatedErrorrate,
+                        goodAlignmentsCountThreshold = programOptions->estimatedCoverage * programOptions->m_coverage,
                         d_isPairedCandidate = d_isPairedCandidate.data(),
-                        pairedthreshold1 = correctionOptions->pairedthreshold1
+                        pairedthreshold1 = programOptions->pairedthreshold1
                     ] __device__(){
                         using BlockReduceInt = cub::BlockReduce<int, 128>;
 
@@ -2528,8 +2526,8 @@ namespace gpu{
                     d_numCandidates.data(),
                     maxAnchors,
                     maxCandidates,
-                    correctionOptions->estimatedErrorrate,
-                    correctionOptions->estimatedCoverage * correctionOptions->m_coverage,
+                    programOptions->estimatedErrorrate,
+                    programOptions->estimatedCoverage * programOptions->m_coverage,
                     stream
                 );
             #endif
@@ -2563,7 +2561,7 @@ namespace gpu{
 
         void buildAndRefineMultipleSequenceAlignment(cudaStream_t stream){
 
-            if(correctionOptions->useQualityScores){
+            if(programOptions->useQualityScores){
 
                 gpuReadStorage->gatherQualities(
                     readstorageHandle,
@@ -2611,8 +2609,8 @@ namespace gpu{
                 d_numAnchors.data(),
                 encodedSequencePitchInInts,
                 qualityPitchInBytes,
-                correctionOptions->useQualityScores,
-                goodAlignmentProperties->maxErrorRate,
+                programOptions->useQualityScores,
+                programOptions->maxErrorRate,
                 MSAColumnCount{static_cast<int>(msaColumnPitchInElements)},
                 stream
             );
@@ -2646,9 +2644,9 @@ namespace gpu{
                     d_numAnchors.data(),
                     encodedSequencePitchInInts,
                     qualityPitchInBytes,
-                    correctionOptions->useQualityScores,
-                    goodAlignmentProperties->maxErrorRate,
-                    correctionOptions->estimatedCoverage,
+                    programOptions->useQualityScores,
+                    programOptions->maxErrorRate,
+                    programOptions->estimatedCoverage,
                     getNumRefinementIterations(),
                     stream,
                     d_anchorReadIds.data()
@@ -2665,9 +2663,9 @@ namespace gpu{
 
 
         void correctAnchors(cudaStream_t stream){
-            if(correctionOptions->correctionType == CorrectionType::Classic){
+            if(programOptions->correctionType == CorrectionType::Classic){
                 correctAnchorsClassic(stream);
-            }else if(correctionOptions->correctionType == CorrectionType::Forest){
+            }else if(programOptions->correctionType == CorrectionType::Forest){
                 correctAnchorsForestGpu(stream);
             }else{
                 throw std::runtime_error("correctAnchors not implemented for this correctionType");
@@ -2676,12 +2674,12 @@ namespace gpu{
 
         void correctAnchorsClassic(cudaStream_t stream){
 
-            const float avg_support_threshold = 1.0f - 1.0f * correctionOptions->estimatedErrorrate;
-            const float min_support_threshold = 1.0f - 3.0f * correctionOptions->estimatedErrorrate;
+            const float avg_support_threshold = 1.0f - 1.0f * programOptions->estimatedErrorrate;
+            const float min_support_threshold = 1.0f - 3.0f * programOptions->estimatedErrorrate;
             // coverage is always >= 1
             const float min_coverage_threshold = std::max(1.0f,
-                correctionOptions->m_coverage / 6.0f * correctionOptions->estimatedCoverage);
-            //const float max_coverage_threshold = 0.5 * correctionOptions->estimatedCoverage;
+                programOptions->m_coverage / 6.0f * programOptions->estimatedCoverage);
+            //const float max_coverage_threshold = 0.5 * programOptions->estimatedCoverage;
 
             // correct anchors
 
@@ -2696,7 +2694,7 @@ namespace gpu{
                 maxAnchors,
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
-                correctionOptions->estimatedErrorrate,
+                programOptions->estimatedErrorrate,
                 avg_support_threshold,
                 min_support_threshold,
                 min_coverage_threshold,
@@ -2736,12 +2734,12 @@ namespace gpu{
 
         void correctAnchorsForestGpu(cudaStream_t stream){
 
-            const float avg_support_threshold = 1.0f - 1.0f * correctionOptions->estimatedErrorrate;
-            const float min_support_threshold = 1.0f - 3.0f * correctionOptions->estimatedErrorrate;
+            const float avg_support_threshold = 1.0f - 1.0f * programOptions->estimatedErrorrate;
+            const float min_support_threshold = 1.0f - 3.0f * programOptions->estimatedErrorrate;
             // coverage is always >= 1
             const float min_coverage_threshold = std::max(1.0f,
-                correctionOptions->m_coverage / 6.0f * correctionOptions->estimatedCoverage);
-            const float max_coverage_threshold = 0.5 * correctionOptions->estimatedCoverage;
+                programOptions->m_coverage / 6.0f * programOptions->estimatedCoverage);
+            const float max_coverage_threshold = 0.5 * programOptions->estimatedCoverage;
 
             // correct anchors
 
@@ -2751,15 +2749,15 @@ namespace gpu{
                 d_is_high_quality_anchor.data(),
                 managedgpumsa->multiMSAView(),
                 *gpuForestAnchor,
-                correctionOptions->thresholdAnchor,
+                programOptions->thresholdAnchor,
                 d_anchor_sequences_data.data(),
                 d_indices_per_anchor.data(),
                 currentNumAnchors,
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
                 gpuReadStorage->getSequenceLengthUpperBound(),
-                correctionOptions->estimatedErrorrate,
-                correctionOptions->estimatedCoverage,
+                programOptions->estimatedErrorrate,
+                programOptions->estimatedCoverage,
                 avg_support_threshold,
                 min_support_threshold,
                 min_coverage_threshold,
@@ -2797,9 +2795,9 @@ namespace gpu{
         }
         
         void correctCandidates(cudaStream_t stream){
-            if(correctionOptions->correctionTypeCands == CorrectionType::Classic){
+            if(programOptions->correctionTypeCands == CorrectionType::Classic){
                 correctCandidatesClassic(stream);
-            }else if(correctionOptions->correctionTypeCands == CorrectionType::Forest){
+            }else if(programOptions->correctionTypeCands == CorrectionType::Forest){
                 correctCandidatesForestGpu(stream);
             }else{
                 throw std::runtime_error("correctCandidates not implemented for this correctionTypeCands");
@@ -2808,11 +2806,11 @@ namespace gpu{
 
         void correctCandidatesClassic(cudaStream_t stream){
 
-            const float min_support_threshold = 1.0f-3.0f*correctionOptions->estimatedErrorrate;
+            const float min_support_threshold = 1.0f-3.0f*programOptions->estimatedErrorrate;
             // coverage is always >= 1
             const float min_coverage_threshold = std::max(1.0f,
-                correctionOptions->m_coverage / 6.0f * correctionOptions->estimatedCoverage);
-            const int new_columns_to_correct = correctionOptions->new_columns_to_correct;
+                programOptions->m_coverage / 6.0f * programOptions->estimatedCoverage);
+            const int new_columns_to_correct = programOptions->new_columns_to_correct;
 
             rmm::device_uvector<bool> d_candidateCanBeCorrected(maxCandidates, stream, mr);
 
@@ -2980,11 +2978,11 @@ namespace gpu{
 
         void correctCandidatesForestGpu(cudaStream_t stream){
 
-            const float min_support_threshold = 1.0f-3.0f*correctionOptions->estimatedErrorrate;
+            const float min_support_threshold = 1.0f-3.0f*programOptions->estimatedErrorrate;
             // coverage is always >= 1
             const float min_coverage_threshold = std::max(1.0f,
-                correctionOptions->m_coverage / 6.0f * correctionOptions->estimatedCoverage);
-            const int new_columns_to_correct = correctionOptions->new_columns_to_correct;
+                programOptions->m_coverage / 6.0f * programOptions->estimatedCoverage);
+            const int new_columns_to_correct = programOptions->new_columns_to_correct;
 
             rmm::device_uvector<bool> d_candidateCanBeCorrected(maxCandidates, stream, mr);
 
@@ -3081,8 +3079,8 @@ namespace gpu{
                 d_numEditsPerCorrectedCandidate.data(),              
                 managedgpumsa->multiMSAView(),
                 *gpuForestCandidate,
-                correctionOptions->thresholdCands,
-                correctionOptions->estimatedCoverage,
+                programOptions->thresholdCands,
+                programOptions->estimatedCoverage,
                 d_alignment_shifts.data(),
                 d_alignment_best_alignment_flags.data(),
                 d_candidate_sequences_data.data(),
@@ -3154,8 +3152,7 @@ namespace gpu{
 
         const GpuReadStorage* gpuReadStorage;
 
-        const CorrectionOptions* correctionOptions;
-        const GoodAlignmentProperties* goodAlignmentProperties;
+        const ProgramOptions* programOptions;
 
         GpuErrorCorrectorInput* currentInput;
         GpuErrorCorrectorRawOutput* currentOutput;

@@ -26,36 +26,30 @@ namespace care{
 
         std::unique_ptr<OrdinaryCpuMinhasher>
         constructOrdinaryCpuMinhasherFromCpuReadStorage(
-            const CorrectionOptions& correctionOptions,
-            const FileOptions& fileOptions,
-            const RuntimeOptions& runtimeOptions,
-            const MemoryOptions& memoryOptions,
+            const ProgramOptions& programOptions,
             const CpuReadStorage& cpuReadStorage
         ){
-            float loadfactor = memoryOptions.hashtableLoadfactor;
+            float loadfactor = programOptions.hashtableLoadfactor;
 
             auto cpuMinhasher = std::make_unique<OrdinaryCpuMinhasher>(
                 cpuReadStorage.getNumberOfReads(),
-                calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage),
-                correctionOptions.kmerlength,
+                calculateResultsPerMapThreshold(programOptions.estimatedCoverage),
+                programOptions.kmerlength,
                 loadfactor
             );
 
-            if(fileOptions.load_hashtables_from != ""){
+            if(programOptions.load_hashtables_from != ""){
 
-                std::ifstream is(fileOptions.load_hashtables_from);
+                std::ifstream is(programOptions.load_hashtables_from);
                 assert((bool)is);
     
-                const int loadedMaps = cpuMinhasher->loadFromStream(is, correctionOptions.numHashFunctions);
+                const int loadedMaps = cpuMinhasher->loadFromStream(is, programOptions.numHashFunctions);
     
-                std::cout << "Loaded " << loadedMaps << " hash tables from " << fileOptions.load_hashtables_from << std::endl;
+                std::cout << "Loaded " << loadedMaps << " hash tables from " << programOptions.load_hashtables_from << std::endl;
             }else{
                 cpuMinhasher->constructFromReadStorage(
-                    fileOptions,
-                    runtimeOptions,
-                    memoryOptions,
+                    programOptions,
                     cpuReadStorage.getNumberOfReads(), 
-                    correctionOptions,
                     cpuReadStorage
                 );
             }
@@ -65,36 +59,30 @@ namespace care{
 
         std::unique_ptr<SingleHashCpuMinhasher>
         constructSingleHashCpuMinhasherFromCpuReadStorage(
-            const CorrectionOptions& correctionOptions,
-            const FileOptions& fileOptions,
-            const RuntimeOptions& runtimeOptions,
-            const MemoryOptions& memoryOptions,
+            const ProgramOptions& programOptions,
             const CpuReadStorage& cpuReadStorage
         ){
-            float loadfactor = memoryOptions.hashtableLoadfactor;
+            float loadfactor = programOptions.hashtableLoadfactor;
 
             auto cpuMinhasher = std::make_unique<SingleHashCpuMinhasher>(
                 cpuReadStorage.getNumberOfReads(),
-                255,//calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage),
-                correctionOptions.kmerlength,
+                255,//calculateResultsPerMapThreshold(programOptions.estimatedCoverage),
+                programOptions.kmerlength,
                 loadfactor
             );
 
-            if(fileOptions.load_hashtables_from != ""){
+            if(programOptions.load_hashtables_from != ""){
 
-                std::ifstream is(fileOptions.load_hashtables_from);
+                std::ifstream is(programOptions.load_hashtables_from);
                 assert((bool)is);
     
-                const int loadedMaps = cpuMinhasher->loadFromStream(is, correctionOptions.numHashFunctions);
+                const int loadedMaps = cpuMinhasher->loadFromStream(is, programOptions.numHashFunctions);
     
-                std::cout << "Loaded " << loadedMaps << " hash tables from " << fileOptions.load_hashtables_from << std::endl;
+                std::cout << "Loaded " << loadedMaps << " hash tables from " << programOptions.load_hashtables_from << std::endl;
             }else{
                 cpuMinhasher->constructFromReadStorage(
-                    fileOptions,
-                    runtimeOptions,
-                    memoryOptions,
+                    programOptions,
                     cpuReadStorage.getNumberOfReads(), 
-                    correctionOptions,
                     cpuReadStorage
                 );
             }
@@ -105,21 +93,15 @@ namespace care{
 
         std::pair<std::unique_ptr<CpuMinhasher>, CpuMinhasherType>
         constructCpuMinhasherFromCpuReadStorage(
-            const FileOptions& fileOptions,
-            const RuntimeOptions& runtimeOptions,
-            const MemoryOptions& memoryOptions,
-            const CorrectionOptions& correctionOptions,
+            const ProgramOptions& programOptions,
             const CpuReadStorage& cpuReadStorage,
             CpuMinhasherType requestedType
         ){
             if(requestedType == CpuMinhasherType::Ordinary){
-                if(correctionOptions.singlehash){
+                if(programOptions.singlehash){
                     return std::make_pair(
                         constructSingleHashCpuMinhasherFromCpuReadStorage(
-                            correctionOptions,
-                            fileOptions,
-                            runtimeOptions,
-                            memoryOptions,
+                            programOptions,
                             cpuReadStorage
                         ),
                         CpuMinhasherType::OrdinarySingleHash
@@ -127,10 +109,7 @@ namespace care{
                 }else{
                     return std::make_pair(
                         constructOrdinaryCpuMinhasherFromCpuReadStorage(
-                            correctionOptions,
-                            fileOptions,
-                            runtimeOptions,
-                            memoryOptions,
+                            programOptions,
                             cpuReadStorage
                         ),
                         CpuMinhasherType::Ordinary
@@ -139,10 +118,7 @@ namespace care{
             }else{
                 return std::make_pair(
                     constructOrdinaryCpuMinhasherFromCpuReadStorage(
-                        correctionOptions,
-                        fileOptions,
-                        runtimeOptions,
-                        memoryOptions,
+                        programOptions,
                         cpuReadStorage
                     ),
                     CpuMinhasherType::Ordinary

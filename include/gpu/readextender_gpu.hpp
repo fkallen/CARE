@@ -2361,8 +2361,7 @@ struct GpuReadExtender{
         std::size_t msaColumnPitchInElements_,
         bool isPairedEnd_,
         const gpu::GpuReadStorage& rs, 
-        const CorrectionOptions& coropts,
-        const GoodAlignmentProperties& gap,
+        const ProgramOptions& programOptions_,
         const cpu::QualityScoreConversion& qualityConversion_,
         int insertSize_,
         int insertSizeStddev_,
@@ -2374,8 +2373,7 @@ struct GpuReadExtender{
         insertSizeStddev(insertSizeStddev_),
         mr(mr_),
         gpuReadStorage(&rs),
-        correctionOptions(&coropts),
-        goodAlignmentProperties(&gap),
+        programOptions(&programOptions_),
         qualityConversion(&qualityConversion_),
         readStorageHandle(gpuReadStorage->makeHandle()),
         d_mateIdHasBeenRemoved(0, stream, mr),
@@ -2793,10 +2791,10 @@ struct GpuReadExtender{
         const int maxNumCandidates = initialNumCandidates; //this does not need to be exact, but it must be >= d_numCandidatesPerAnchorPrefixSum[tasks->size()]
         const int maximumSequenceLength = encodedSequencePitchInInts * 16;
         const int encodedSequencePitchInInts2Bit = encodedSequencePitchInInts;
-        const int min_overlap = goodAlignmentProperties->min_overlap;
-        const float maxErrorRate = goodAlignmentProperties->maxErrorRate;
-        const float min_overlap_ratio = goodAlignmentProperties->min_overlap_ratio;
-        const float estimatedNucleotideErrorRate = correctionOptions->estimatedErrorrate;
+        const int min_overlap = programOptions->min_overlap;
+        const float maxErrorRate = programOptions->maxErrorRate;
+        const float min_overlap_ratio = programOptions->min_overlap_ratio;
+        const float estimatedNucleotideErrorRate = programOptions->estimatedErrorrate;
 
         auto callAlignmentKernel = [&](void* d_tempstorage, size_t& tempstoragebytes){
 
@@ -2863,7 +2861,7 @@ struct GpuReadExtender{
             d_numCandidatesPerAnchorPrefixSum.data(),
             d_isPairedCandidate.data(),
             d_keepflags.data(),
-            goodAlignmentProperties->min_overlap_ratio,
+            programOptions->min_overlap_ratio,
             tasks->size(),
             d_currentNumCandidates,
             initialNumCandidates
@@ -2986,7 +2984,7 @@ struct GpuReadExtender{
             encodedSequencePitchInInts,
             qualityPitchInBytes,
             useQualityScoresForMSA,
-            goodAlignmentProperties->maxErrorRate,
+            programOptions->maxErrorRate,
             gpu::MSAColumnCount(msaColumnPitchInElements),
             stream
         );
@@ -3015,8 +3013,8 @@ struct GpuReadExtender{
             encodedSequencePitchInInts,
             qualityPitchInBytes,
             useQualityScoresForMSA,
-            goodAlignmentProperties->maxErrorRate,
-            correctionOptions->estimatedCoverage,
+            programOptions->maxErrorRate,
+            programOptions->estimatedCoverage,
             getNumRefinementIterations(),
             stream,
             tasks->myReadId.data()
@@ -3803,7 +3801,7 @@ struct GpuReadExtender{
             encodedSequencePitchInInts,
             qualityPitchInBytes,
             false, //useQualityScores
-            goodAlignmentProperties->maxErrorRate,
+            programOptions->maxErrorRate,
             gpu::MSAColumnCount::unknown(),
             stream
         );
@@ -4080,7 +4078,7 @@ struct GpuReadExtender{
     void loadCandidateQualityScores(cudaStream_t stream, char* d_qualityscores){
         char* outputQualityScores = d_qualityscores;
 
-        if(correctionOptions->useQualityScores){
+        if(programOptions->useQualityScores){
 
             CUDACHECK(cudaEventSynchronizeWrapper(h_numCandidatesEvent));
 
@@ -4468,8 +4466,7 @@ struct GpuReadExtender{
 
     rmm::mr::device_memory_resource* mr{};
     const gpu::GpuReadStorage* gpuReadStorage{};
-    const CorrectionOptions* correctionOptions{};
-    const GoodAlignmentProperties* goodAlignmentProperties{};
+    const ProgramOptions* programOptions{};
     const cpu::QualityScoreConversion* qualityConversion{};
     mutable ReadStorageHandle readStorageHandle{};
 

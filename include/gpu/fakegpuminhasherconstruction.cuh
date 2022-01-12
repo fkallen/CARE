@@ -18,19 +18,13 @@ namespace gpu{
 
     std::unique_ptr<FakeGpuMinhasher>
     constructFakeGpuMinhasherFromGpuReadStorage(
-        const CorrectionOptions& correctionOptions,
-        const FileOptions& fileOptions,
-        const RuntimeOptions& runtimeOptions,
-        const MemoryOptions& memoryOptions,
+        const ProgramOptions& programOptions,
         const GpuReadStorage& gpuReadStorage
     );
 
     std::unique_ptr<FakeGpuSingleHashMinhasher>
     constructFakeGpuSingleHashMinhasherFromGpuReadStorage(
-        const CorrectionOptions& correctionOptions,
-        const FileOptions& fileOptions,
-        const RuntimeOptions& runtimeOptions,
-        const MemoryOptions& memoryOptions,
+        const ProgramOptions& programOptions,
         const GpuReadStorage& gpuReadStorage
     );
 

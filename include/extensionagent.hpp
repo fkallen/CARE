@@ -19,12 +19,7 @@ namespace care{
 
     template<class MinhasherType, class ReadStorageType>
     struct ExtensionAgent{
-        const GoodAlignmentProperties goodAlignmentProperties;
-        const CorrectionOptions correctionOptions;
-        const ExtensionOptions extensionOptions;
-        const RuntimeOptions runtimeOptions;
-        const FileOptions fileOptions;
-        const MemoryOptions memoryOptions;
+        const ProgramOptions programOptions;
         const MinhasherType* minhasher;
         const ReadStorageType* readStorage;
 
@@ -34,31 +29,21 @@ namespace care{
         std::unique_ptr<SequenceFileWriter> writer;
 
         ExtensionAgent(
-            const GoodAlignmentProperties& goodAlignmentProperties_,
-            const CorrectionOptions& correctionOptions_,
-            const ExtensionOptions& extensionOptions_,
-            const RuntimeOptions& runtimeOptions_,
-            const FileOptions& fileOptions_,
-            const MemoryOptions& memoryOptions_,
+            const ProgramOptions& programOptions_,
             const MinhasherType& minhasher_,
             const ReadStorageType& readStorage_
         ) : 
-            goodAlignmentProperties(goodAlignmentProperties_),
-            correctionOptions(correctionOptions_),
-            extensionOptions(extensionOptions_),
-            runtimeOptions(runtimeOptions_),
-            fileOptions(fileOptions_),
-            memoryOptions(memoryOptions_),
+            programOptions(programOptions_),
             minhasher(&minhasher_),
             readStorage(&readStorage_),
             outputThread(false)
         {
-            if(extensionOptions.sortedOutput){
+            if(programOptions.sortedOutput){
 
                 const auto rsMemInfo = readStorage->getMemoryInfo();
                 const auto mhMemInfo = minhasher->getMemoryInfo();
 
-                std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
+                std::size_t memoryAvailableBytesHost = programOptions.memoryTotalLimit;
                 if(memoryAvailableBytesHost > rsMemInfo.host){
                     memoryAvailableBytesHost -= rsMemInfo.host;
                 }else{
@@ -83,16 +68,16 @@ namespace care{
                 const std::size_t memoryLimitData = memoryForPartialResultsInBytes * 0.75;
                 const std::size_t memoryLimitOffsets = memoryForPartialResultsInBytes * 0.25;
 
-                partialResults = std::make_unique<SerializedObjectStorage>(memoryLimitData, memoryLimitOffsets, fileOptions.tempdirectory + "/");
+                partialResults = std::make_unique<SerializedObjectStorage>(memoryLimitData, memoryLimitOffsets, programOptions.tempdirectory + "/");
             }else{
-                auto outputFormat = getFileFormat(fileOptions.inputfiles[0]);
+                auto outputFormat = getFileFormat(programOptions.inputfiles[0]);
                 //no gz output
                 if(outputFormat == FileFormat::FASTQGZ)
                     outputFormat = FileFormat::FASTQ;
                 if(outputFormat == FileFormat::FASTAGZ)
                     outputFormat = FileFormat::FASTA;
 
-                const std::string extendedOutputfile = fileOptions.outputdirectory + "/" + fileOptions.extendedReadsOutputfilename;
+                const std::string extendedOutputfile = programOptions.outputdirectory + "/" + programOptions.extendedReadsOutputfilename;
 
                 writer = makeSequenceWriter(
                     extendedOutputfile,
@@ -103,18 +88,13 @@ namespace care{
 
         template<class ExtensionEntryFunction, class Callback>
         void run(ExtensionEntryFunction doExtend, Callback callbackAfterExtenderFinished){
-            outputThread.setMaximumQueueSize(runtimeOptions.threads);
+            outputThread.setMaximumQueueSize(programOptions.threads);
 
             outputThread.start();
 
-            if(extensionOptions.sortedOutput){
+            if(programOptions.sortedOutput){
                 doExtend(
-                    goodAlignmentProperties, 
-                    correctionOptions,
-                    extensionOptions,
-                    runtimeOptions, 
-                    fileOptions, 
-                    memoryOptions,
+                    programOptions,
                     *minhasher, 
                     *readStorage,
                     [&](auto a, auto b, auto c){ submitReadyResultsForSorted(std::move(a), std::move(b), std::move(c)); }
@@ -132,7 +112,7 @@ namespace care{
 
                 std::size_t memoryForSorting = std::min(
                     availableMemoryInBytes,
-                    memoryOptions.memoryTotalLimit - partialResultMemUsage.host
+                    programOptions.memoryTotalLimit - partialResultMemUsage.host
                 );
 
                 if(memoryForSorting > 1*(std::size_t(1) << 30)){
@@ -153,34 +133,34 @@ namespace care{
                 sorttimer.print();
 
                 std::vector<FileFormat> formats;
-                for(const auto& inputfile : fileOptions.inputfiles){
+                for(const auto& inputfile : programOptions.inputfiles){
                     formats.emplace_back(getFileFormat(inputfile));
                 }
                 std::vector<std::string> outputfiles;
-                for(const auto& outputfilename : fileOptions.outputfilenames){
-                    outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
+                for(const auto& outputfilename : programOptions.outputfilenames){
+                    outputfiles.emplace_back(programOptions.outputdirectory + "/" + outputfilename);
                 }
 
-                auto outputFormat = getFileFormat(fileOptions.inputfiles[0]);
+                auto outputFormat = getFileFormat(programOptions.inputfiles[0]);
                 //no gz output
                 if(outputFormat == FileFormat::FASTQGZ)
                     outputFormat = FileFormat::FASTQ;
                 if(outputFormat == FileFormat::FASTAGZ)
                     outputFormat = FileFormat::FASTA;
 
-                const std::string extendedOutputfile = fileOptions.outputdirectory + "/" + fileOptions.extendedReadsOutputfilename;
+                const std::string extendedOutputfile = programOptions.outputdirectory + "/" + programOptions.extendedReadsOutputfilename;
 
-                if(extensionOptions.outputRemainingReads){
+                if(programOptions.outputRemainingReads){
                     std::sort(notExtendedIds.begin(), notExtendedIds.end());
 
                     constructOutputFileFromExtensionResults(
-                        fileOptions.inputfiles,
+                        programOptions.inputfiles,
                         *partialResults, 
                         notExtendedIds,
                         outputFormat, 
                         extendedOutputfile,
                         outputfiles,
-                        fileOptions.pairType
+                        programOptions.pairType
                     );
                 }else{
                     constructOutputFileFromExtensionResults(
@@ -193,22 +173,17 @@ namespace care{
                 step3timer.print();
             }else{
 
-                auto outputFormat = getFileFormat(fileOptions.inputfiles[0]);
+                auto outputFormat = getFileFormat(programOptions.inputfiles[0]);
                 //no gz output
                 if(outputFormat == FileFormat::FASTQGZ)
                     outputFormat = FileFormat::FASTQ;
                 if(outputFormat == FileFormat::FASTAGZ)
                     outputFormat = FileFormat::FASTA;
 
-                const std::string extendedOutputfile = fileOptions.outputdirectory + "/" + fileOptions.extendedReadsOutputfilename;
+                const std::string extendedOutputfile = programOptions.outputdirectory + "/" + programOptions.extendedReadsOutputfilename;
 
                 doExtend(
-                    goodAlignmentProperties, 
-                    correctionOptions,
-                    extensionOptions,
-                    runtimeOptions, 
-                    fileOptions, 
-                    memoryOptions,
+                    programOptions,
                     *minhasher, 
                     *readStorage,
                     [&](auto a, auto b, auto c){ submitReadyResultsForUnsorted(std::move(a), std::move(b), std::move(c)); }
@@ -221,17 +196,17 @@ namespace care{
                 std::cout << "STEP 3: Constructing output file(s)" << std::endl;
                 helpers::CpuTimer step3timer("STEP 3");
 
-                if(extensionOptions.outputRemainingReads){
+                if(programOptions.outputRemainingReads){
 
                     std::sort(notExtendedIds.begin(), notExtendedIds.end());
 
                     std::vector<std::string> outputfiles;
-                    for(const auto& outputfilename : fileOptions.outputfilenames){
-                        outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
+                    for(const auto& outputfilename : programOptions.outputfilenames){
+                        outputfiles.emplace_back(programOptions.outputdirectory + "/" + outputfilename);
                     }
                 
                     outputUnchangedReadPairs(
-                        fileOptions.inputfiles,
+                        programOptions.inputfiles,
                         notExtendedIds,
                         outputFormat,
                         outputfiles[0]

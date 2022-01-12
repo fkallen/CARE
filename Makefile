@@ -32,7 +32,6 @@ LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -lz -ldl
 
 #sources for correct_cpu
 SOURCES_CORRECT_CPU = \
-    src/args.cpp \
     src/correct_cpu.cpp \
     src/correctionresultoutput.cpp \
     src/cpu_alignment.cpp \
@@ -40,13 +39,14 @@ SOURCES_CORRECT_CPU = \
     src/dispatch_care_correct_cpu.cpp \
     src/main_correct_cpu.cpp \
     src/msa.cpp \
+    src/options.cpp \
     src/readlibraryio.cpp \
     src/threadpool.cpp
 
 #sources for correct_gpu
 SOURCES_CORRECT_GPU = \
-    src/args.cpp \
 	src/correctionresultoutput.cpp \
+    src/options.cpp \
     src/readlibraryio.cpp \
     src/threadpool.cpp \
     src/gpu/alignmentkernels.cu \
@@ -64,21 +64,21 @@ SOURCES_CORRECT_GPU = \
 
 #sources for extend_cpu
 SOURCES_EXTEND_CPU = \
-    src/args.cpp \
     src/cpu_alignment.cpp \
     src/cpuminhasherconstruction.cpp \
     src/dispatch_care_extend_cpu.cpp \
     src/extensionresultoutput.cpp \
     src/main_extend_cpu.cpp \
     src/msa.cpp \
+    src/options.cpp \
     src/readextension.cpp \
     src/readlibraryio.cpp \
     src/threadpool.cpp
 
 #sources for correct_gpu
 SOURCES_EXTEND_GPU = \
-    src/args.cpp \
     src/extensionresultoutput.cpp \
+    src/options.cpp \
     src/readlibraryio.cpp \
     src/threadpool.cpp \
     src/gpu/alignmentkernels.cu \
@@ -196,8 +196,6 @@ clean :
 $(DIR):
 	mkdir $(DIR)
 
-$(DIR)/args.o : src/args.cpp
-	$(COMPILE)
 
 $(DIR)/correct_cpu.o : src/correct_cpu.cpp
 	$(COMPILE)
@@ -227,6 +225,9 @@ $(DIR)/main_extend_cpu.o : src/main_extend_cpu.cpp
 	$(COMPILE)
 
 $(DIR)/msa.o : src/msa.cpp
+	$(COMPILE)
+	
+$(DIR)/options.o : src/options.cpp
 	$(COMPILE)
 
 $(DIR)/readextension.o : src/readextension.cpp
