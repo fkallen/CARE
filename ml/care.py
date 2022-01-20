@@ -93,6 +93,7 @@ def read_data(paths):
                 descr = check_descr(descr, infile["desc"])
                 if infile['samples'].dtype != row_t:
                     raise ValueError("Data dtype does not match!")
+                infile["samples"]["fileId"] = file_id
                 samples[offsets[file_id]:offsets[file_id+1]] = infile["samples"]
         else:
             tqdm.write("parse: "+path["X"])
@@ -149,7 +150,7 @@ def extract_node(tree_, i, out_file):
         out_file.write(struct.pack("f", (tree_.value[i][0][1]/(tree_.value[i][0][0]+tree_.value[i][0][1]))))
     else:
         out_file.write(struct.pack("B", tree_.feature[i]))
-        out_file.write(struct.pack("f", tree_.threshold[i]))
+        out_file.write(struct.pack("d", tree_.threshold[i]))
         
         lhs, rhs = tree_.children_left[i], tree_.children_right[i]
         

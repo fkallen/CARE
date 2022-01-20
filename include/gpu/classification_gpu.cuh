@@ -670,6 +670,158 @@ namespace gpu{
             }
         };
 
+        struct extract_anchor_v3 {
+
+            HOSTDEVICEQUALIFIER
+            static constexpr int numFeatures() noexcept{
+                return 13;
+            }
+
+            template<class OutIter>
+            HOSTDEVICEQUALIFIER
+            void operator()(OutIter features, const ExtractAnchorInputData& input) const noexcept{
+                const int msaPos = input.msaPos;
+                const int pitch = input.msa.columnPitchInElements;
+                const int* const countsA = &input.msa.counts[0 * pitch];
+                const int* const countsC = &input.msa.counts[1 * pitch];
+                const int* const countsG = &input.msa.counts[2 * pitch];
+                const int* const countsT = &input.msa.counts[3 * pitch];
+
+                const float* const weightsA = &input.msa.weights[0 * pitch];
+                const float* const weightsC = &input.msa.weights[1 * pitch];
+                const float* const weightsG = &input.msa.weights[2 * pitch];
+                const float* const weightsT = &input.msa.weights[3 * pitch];
+
+                const float countsACGT = input.msa.coverages[msaPos];
+                const float weightsACGT = weightsA[msaPos] + weightsC[msaPos] + weightsG[msaPos] + weightsT[msaPos];
+
+                float weightCons = 0, countCons = 0;
+
+                switch (input.consensusBase) {
+                    case 'A':
+                        weightCons = weightsA[msaPos];
+                        countCons = countsA[msaPos];
+                        break;
+                    case 'C':
+                        weightCons = weightsC[msaPos];
+                        countCons = countsC[msaPos];
+                        break;
+                    case 'G':
+                        weightCons = weightsG[msaPos];
+                        countCons = countsG[msaPos];
+                        break;
+                    case 'T':
+                        weightCons = weightsT[msaPos];
+                        countCons = countsT[msaPos];
+                        break;
+                    default: break;
+                }
+
+                *(features + 0) = float(input.msa.origCoverages[msaPos]) / countsACGT;
+                *(features + 1) = input.msa.origWeights[msaPos] / weightsACGT;
+                *(features + 2) = input.msa.origWeights[msaPos] / float(input.msa.origCoverages[msaPos]);
+                *(features + 3) = countCons / countsACGT;
+                *(features + 4) = input.msa.support[msaPos];
+                *(features + 5) = weightCons / countCons;
+                *(features + 6) = weightsACGT / countsACGT;
+                *(features + 7) = countsACGT / input.estimatedCoverage;
+                *(features + 8) = weightsACGT / input.estimatedCoverage;
+                *(features + 9) = input.msaProperties.avg_support;
+                *(features + 10) = input.msaProperties.min_support;
+                *(features + 11) = float(input.msaProperties.max_coverage) / input.estimatedCoverage;
+                *(features + 12) = float(input.msaProperties.min_coverage) / input.estimatedCoverage;
+             }
+        };
+
+        struct extract_cands_v3 {
+
+            HOSTDEVICEQUALIFIER
+            static constexpr int numFeatures() noexcept{
+                return 14;
+            }
+
+            template<class OutIter>
+            HOSTDEVICEQUALIFIER
+            void operator()(OutIter features, const ExtractCandidateInputData& input) const noexcept{
+                const int a_begin = input.anchorColumnsBegin_incl;
+                const int a_end = input.anchorColumnsEnd_excl;
+                const int c_begin = input.queryColumnsBegin_incl;
+                const int c_end = input.queryColumnsEnd_excl;
+
+                const int msaPos = input.msaPos;
+                const int pitch = input.msa.columnPitchInElements;
+                const float countsACGT = input.msa.coverages[msaPos];
+                const int* const countsA = &input.msa.counts[0 * pitch];
+                const int* const countsC = &input.msa.counts[1 * pitch];
+                const int* const countsG = &input.msa.counts[2 * pitch];
+                const int* const countsT = &input.msa.counts[3 * pitch];
+
+                const float* const weightsA = &input.msa.weights[0 * pitch];
+                const float* const weightsC = &input.msa.weights[1 * pitch];
+                const float* const weightsG = &input.msa.weights[2 * pitch];
+                const float* const weightsT = &input.msa.weights[3 * pitch];
+                const float weightsACGT = weightsA[msaPos] + weightsC[msaPos] + weightsG[msaPos] + weightsT[msaPos];
+
+                float weightCons = 0, countCons = 0, weightOrig = 0, countOrig = 0;
+
+                switch (input.consensusBase) {
+                    case 'A':
+                        weightCons = weightsA[msaPos];
+                        countCons = countsA[msaPos];
+                        break;
+                    case 'C':
+                        weightCons = weightsC[msaPos];
+                        countCons = countsC[msaPos];
+                        break;
+                    case 'G':
+                        weightCons = weightsG[msaPos];
+                        countCons = countsG[msaPos];
+                        break;
+                    case 'T':
+                        weightCons = weightsT[msaPos];
+                        countCons = countsT[msaPos];
+                        break;
+                    default: break;
+                }
+
+                switch (input.origBase) {
+                    case 'A':
+                        weightOrig = weightsA[msaPos];
+                        countOrig = countsA[msaPos];
+                        break;
+                    case 'C':
+                        weightOrig = weightsC[msaPos];
+                        countOrig = countsC[msaPos];
+                        break;
+                    case 'G':
+                        weightOrig = weightsG[msaPos];
+                        countOrig = countsG[msaPos];
+                        break;
+                    case 'T':
+                        weightOrig = weightsT[msaPos];
+                        countOrig = countsT[msaPos];
+                        break;
+                    default: break;
+                }
+
+                *(features + 0) = countOrig / countsACGT;
+                *(features + 1) = weightOrig / weightsACGT;
+                *(features + 2) = weightOrig / countOrig;
+                *(features + 3) = countCons / countsACGT;
+                *(features + 4) = input.msa.support[msaPos];
+                *(features + 5) = weightCons / countCons;
+                *(features + 6) = weightsACGT / countsACGT;
+                *(features + 7) = countsACGT / input.estimatedCoverage;
+                *(features + 8) = weightsACGT / input.estimatedCoverage;
+                *(features + 9) = input.msaProperties.avg_support;
+                *(features + 10) = input.msaProperties.min_support;
+                *(features + 11) = float(input.msaProperties.max_coverage) / input.estimatedCoverage;
+                *(features + 12) = float(input.msaProperties.min_coverage) / input.estimatedCoverage;
+                *(features + 13) = float(std::min(a_end, c_end)-std::max(a_begin, c_begin))
+                    / (std::max(a_end, c_end)-std::min(a_begin, c_begin)); // jaccard
+            }
+        };
+
 
         //map cpu extractors to corresponding gpu extractors
 
@@ -686,6 +838,8 @@ namespace gpu{
         template<> struct GpuExtractorSelection<care::detail::extract_cands_v2>{using type = care::gpu::detail::extract_cands_v2;};
         template<> struct GpuExtractorSelection<care::detail::extract_anchor_support>{using type = care::gpu::detail::extract_anchor_v2;};
         template<> struct GpuExtractorSelection<care::detail::extract_cands_support>{using type = care::gpu::detail::extract_cands_v2;};
+        template<> struct GpuExtractorSelection<care::detail::extract_anchor_v3>{using type = care::gpu::detail::extract_anchor_v3;};
+        template<> struct GpuExtractorSelection<care::detail::extract_cands_v3>{using type = care::gpu::detail::extract_cands_v3;};
 
     } //namespace detail
 

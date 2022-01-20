@@ -123,12 +123,12 @@ struct clf_agent
     template<typename... Args>
     bool decide_anchor(Args&&...args) {
         auto feats = extract_anchor(std::forward<Args>(args)...);
-        #pragma omp critical
-        {
-            for (const auto& f: feats)
-                std::cerr << f << ' ';
-            std::cerr << "=>  " << classifier_anchor->prob_debug(feats) << std::endl;
-        }
+        // #pragma omp critical
+        // {
+        //     for (const auto& f: feats)
+        //         std::cerr << f << ' ';
+        //     std::cerr << "=>  " << classifier_anchor->prob_debug(feats) << std::endl;
+        // }
         return classifier_anchor->decide(feats);
     }
 
@@ -745,6 +745,137 @@ struct extract_cands_support {
     }
 };
 
+struct extract_anchor_v3 {
+
+    constexpr operator auto() {
+        return u8"13 extract_anchor_v3";
+    }
+
+    using features_t = std::array<float, 13>;
+
+    features_t operator()(const CpuErrorCorrectorTask& task, int i, const ProgramOptions& opt) noexcept {   
+        auto& msa = task.multipleSequenceAlignment;
+        int a_begin = msa.anchorColumnsBegin_incl;
+        int pos = a_begin + i;
+        float weightsACGT = msa.weightsA[pos] + msa.weightsC[pos] + msa.weightsG[pos] + msa.weightsT[pos];
+        float weightCons = 0, countCons = 0;
+
+        switch (msa.consensus[pos]) {
+            case 'A':
+                weightCons = msa.weightsA[pos];
+                countCons = msa.countsA[pos];
+                break;
+            case 'C':
+                weightCons = msa.weightsC[pos];
+                countCons = msa.countsC[pos];
+                break;
+            case 'G':
+                weightCons = msa.weightsG[pos];
+                countCons = msa.countsG[pos];
+                break;
+            case 'T':
+                weightCons = msa.weightsT[pos];
+                countCons = msa.countsT[pos];
+                break;
+        }
+        return {
+            float(msa.origCoverages[pos]) / msa.coverage[pos],
+            msa.origWeights[pos] / weightsACGT,
+            msa.origWeights[pos] / msa.origCoverages[pos],
+            countCons / msa.coverage[pos],
+            msa.support[pos],
+            weightCons / countCons,
+            weightsACGT / msa.coverage[pos],
+            msa.coverage[pos] / opt.estimatedCoverage,
+            weightsACGT / opt.estimatedCoverage,
+            task.msaProperties.avg_support,
+            task.msaProperties.min_support,
+            float(task.msaProperties.max_coverage)/opt.estimatedCoverage,
+            float(task.msaProperties.min_coverage)/opt.estimatedCoverage
+        };
+    }
+};
+
+struct extract_cands_v3 {
+
+    constexpr operator auto() {
+        return u8"14 extract_cands_v3";
+    }
+
+    using features_t = std::array<float, 14>;
+
+    features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const ProgramOptions& opt, size_t cand, size_t offset) noexcept {   
+        auto& msa = task.multipleSequenceAlignment;
+        int a_begin = msa.anchorColumnsBegin_incl;
+        int a_end = msa.anchorColumnsEnd_excl;
+        int c_begin = a_begin + task.alignmentShifts[cand];
+        int c_end = c_begin + task.candidateSequencesLengths[cand];
+        int pos = c_begin + i;
+        float weightsACGT = msa.weightsA[pos] + msa.weightsC[pos] + msa.weightsG[pos] + msa.weightsT[pos];
+        MSAProperties props = msa.getMSAProperties(c_begin, c_end, opt.estimatedErrorrate, opt.estimatedCoverage, opt.m_coverage);
+        float weightCons = 0, countCons = 0, weightOrig = 0, countOrig = 0;
+
+        switch (msa.consensus[pos]) {
+            case 'A':
+                weightCons = msa.weightsA[pos];
+                countCons = msa.countsA[pos];
+                break;
+            case 'C':
+                weightCons = msa.weightsC[pos];
+                countCons = msa.countsC[pos];
+                break;
+            case 'G':
+                weightCons = msa.weightsG[pos];
+                countCons = msa.countsG[pos];
+                break;
+            case 'T':
+                weightCons = msa.weightsT[pos];
+                countCons = msa.countsT[pos];
+                break;
+        }
+
+        switch (task.decodedCandidateSequences[offset+i]) {
+            case 'A':
+                weightOrig = msa.weightsA[pos];
+                countOrig = msa.countsA[pos];
+                break;
+            case 'C':
+                weightOrig = msa.weightsC[pos];
+                countOrig = msa.countsC[pos];
+                break;
+            case 'G':
+                weightOrig = msa.weightsG[pos];
+                countOrig = msa.countsG[pos];
+                break;
+            case 'T':
+                weightOrig = msa.weightsT[pos];
+                countOrig = msa.countsT[pos];
+                break;
+        }
+
+        return {
+            countOrig / msa.coverage[pos],
+            weightOrig / weightsACGT,
+            weightOrig / countOrig,
+
+            countCons / msa.coverage[pos],
+            msa.support[pos],
+            weightCons / countCons,
+
+            weightsACGT / msa.coverage[pos],
+
+            msa.coverage[pos] / opt.estimatedCoverage,
+            weightsACGT / opt.estimatedCoverage,
+
+            props.avg_support,
+            props.min_support,
+            float(props.max_coverage)/opt.estimatedCoverage,
+            float(props.min_coverage)/opt.estimatedCoverage,
+            float(std::min(a_end, c_end)-std::max(a_begin, c_begin))/(std::max(a_end, c_end)-std::min(a_begin, c_begin)) // jaccard
+        };
+    }
+};
+
 
 
 } //namespace detail
@@ -752,8 +883,8 @@ struct extract_cands_support {
 
 //--------------------------------------------------------------------------------
 
-using anchor_extractor = detail::extract_anchor_v2;
-using cands_extractor = detail::extract_cands_v2;
+using anchor_extractor = detail::extract_anchor_v3;
+using cands_extractor = detail::extract_cands_v3;
 
 using anchor_clf_t = ForestClf<anchor_extractor>;
 using cands_clf_t = ForestClf<cands_extractor>;

@@ -15,7 +15,7 @@ auto_preprocess() {
 }
 
 run_classic() {
-	$CAREGPU -i ${files[${1}]} -c ${cov[${1}]} -o out/${prefixes[${1}]}_cc${3}.fq ${CARE_FLAGS} \
+	$CAREGPU -i ${files[${1}]} -c ${cov[${1}]} -o ${prefixes[${1}]}_cc${3}.fq ${CARE_FLAGS} \
 		--candidateCorrection ${2} \
 		$(auto_preprocess ${prefixes[${1}]})
 	
@@ -25,7 +25,7 @@ run_classic() {
 }
 
 # run_classic_cpu() {
-# 	$CARE -i ${files[${1}]} -c ${cov[${1}]} -o out/${prefixes[${1}]}_cc.fq ${CARE_FLAGS} \
+# 	$CARE -i ${files[${1}]} -c ${cov[${1}]} -o ${prefixes[${1}]}_cc.fq ${CARE_FLAGS} \
 # 		--candidateCorrection \
 # 		$(auto_preprocess ${prefixes[${1}]})
 	
@@ -35,13 +35,13 @@ run_classic() {
 
 run_print() {
 	$CARE -i ${files[${1}]} -c ${cov[${1}]} -o null $CARE_FLAGS \
-		--correctionType 2 --ml-forestfile ${prefixes[${1}]}_${EVALDIRNAME}_anchor.samples \
-		--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${prefixes[${1}]}_${EVALDIRNAME}_cands.samples ${2} \
+		--correctionType 2 --ml-print-forestfile ${prefixes[${1}]}_${EVALDIRNAME}_anchor.samples \
+		--candidateCorrection --correctionTypeCands 2 --ml-cands-print-forestfile ${prefixes[${1}]}_${EVALDIRNAME}_cands.samples ${2} \
 		$(auto_preprocess ${prefixes[${1}]})
 }
 
 run_clf() {
-	$CAREGPU -i ${files[${1}]} -c ${cov[${1}]} -o out/${prefixes[${1}]}_${2}-${3}-${4}${6}.fq $CARE_FLAGS \
+	$CAREGPU -i ${files[${1}]} -c ${cov[${1}]} -o ${prefixes[${1}]}_${2}-${3}-${4}${6}.fq $CARE_FLAGS \
 		--correctionType 1 --ml-forestfile ${2}_anchor.rf \
 		--candidateCorrection --correctionTypeCands 1 --ml-cands-forestfile ${2}_cands.rf \
 		--thresholdAnchor ${3} --thresholdCands ${4} ${5}
@@ -66,45 +66,40 @@ SCRIPTPATH=$(readlink -nf $0)
 
 MLCDIR=/home/jcascitt/errorcorrector/ml
 EVALDIRNAME=${1}
-EVALDIR=/home/jcascitt/care/${EVALDIRNAME}
+EVALDIR=/home/jcascitt/care/paired/${EVALDIRNAME}
 
-CARE=/home/jcascitt/errorcorrector/care-cpu
-CAREGPU="/home/jcascitt/errorcorrector/care-gpu -g 0 --warpcore 1"
-CARE_FLAGS="-d . -h 48 -q --excludeAmbiguous --minalignmentoverlap 30 --minalignmentoverlapratio 0.3 -m 64G -p -t 128 --samplingRateAnchor 0.025 --samplingRateCands 0.001 --enforceHashmapCount"
+CARE="/home/jcascitt/errorcorrector/care-cpu-${EVALDIRNAME} -t 88"
+CAREGPU="/home/jcascitt/errorcorrector/care-gpu-${EVALDIRNAME} -g ${2} --warpcore 1 -t 88"
+CARE_FLAGS="-d out -h 48 -q --excludeAmbiguous --minalignmentoverlap 30 --minalignmentoverlapratio 0.3 -m 64G -p --samplingRateAnchor 0.25 --samplingRateCands 0.01 --enforceHashmapCount"
 
 ARTEVAL=/home/jcascitt/errorcorrector/evaluationtool/arteval
 
 ### files
 
-files[0]=/share/errorcorrection/datasets/arthiseq2000humanchr14/humanchr1430cov.fq
-files_ef[0]=/share/errorcorrection/datasets/arthiseq2000humanchr14/humanchr1430cov_errFree.fq
+files[0]=/share/errorcorrection/datasets/artpairedhumanchr15/humanchr15_500_10.fastq
+files_ef[0]=/share/errorcorrection/datasets/artpairedhumanchr15/humanchr15_500_10_errFree.fastq
 cov[0]=30
-prefixes[0]=humanchr14-30
+prefixes[0]=humanchr15-30p
 
-files[1]=/share/errorcorrection/datasets/arthiseq2000humanchr15/humanchr1530cov.fq
-files_ef[1]=/share/errorcorrection/datasets/arthiseq2000humanchr15/humanchr1530cov_errFree.fq
+files[1]=/share/errorcorrection/datasets/artpairedathaliana/athaliana_500_10.fastq
+files_ef[1]=/share/errorcorrection/datasets/artpairedathaliana/athaliana_500_10_errFree.fastq
 cov[1]=30
-prefixes[1]=humanchr15-30
+prefixes[1]=atha-30p
 
-files[2]=/share/errorcorrection/datasets/arthiseq2000athaliana/athaliana30cov.fq
-files_ef[2]=/share/errorcorrection/datasets/arthiseq2000athaliana/athaliana30cov_errFree.fq
+files[2]=/share/errorcorrection/datasets/artpairedelegans/elegans30cov_500_10.fq
+files_ef[2]=/share/errorcorrection/datasets/artpairedelegans/elegans30cov_500_10_errFree.fastq
 cov[2]=30
-prefixes[2]=atha-30
+prefixes[2]=ele-30p
 
-files[3]=/share/errorcorrection/datasets/arthiseq2000elegans/elegans30cov.fq
-files_ef[3]=/share/errorcorrection/datasets/arthiseq2000elegans/elegans30cov_errFree.fq
+files[3]=/share/errorcorrection/datasets/artpairedmuschr15/muschr15_500_10.fastq
+files_ef[3]=/share/errorcorrection/datasets/artpairedmuschr15/muschr15_500_10_errFree.fastq
 cov[3]=30
-prefixes[3]=ele-30
+prefixes[3]=muschr15-30p
 
-files[4]=/share/errorcorrection/datasets/arthiseq2000melanogaster/melanogaster30cov.fq
-files_ef[4]=/share/errorcorrection/datasets/arthiseq2000melanogaster/melanogaster30cov_errFree.fq
+files[4]=/share/errorcorrection/datasets/artpairedmelanogaster/melanogaster30cov_500_10.fastq
+files_ef[4]=/share/errorcorrection/datasets/artpairedmelanogaster/melanogaster30cov_500_10_errFree.fastq
 cov[4]=30
-prefixes[4]=melan-30
-
-files[5]=/share/errorcorrection/datasets/arthiseq2000mus/mus_chr15_30cov.fq
-files_ef[5]=/share/errorcorrection/datasets/arthiseq2000mus/mus_chr15_30cov_errFree.fq
-cov[5]=30
-prefixes[5]=muschr15-30
+prefixes[4]=melan-30p
 
 ###########################################################
 
@@ -112,8 +107,9 @@ spack load cuda@11.5.0
 
 if [ ! -d $EVALDIR ]; then
 	mkdir $EVALDIR
-	ln -s /dev/null $EVALDIR/null
 	mkdir $EVALDIR/out
+	ln -s /dev/null $EVALDIR/out/null
+
 fi
 cd $EVALDIR
 SCRIPTNAME=$(basename $SCRIPTPATH)
@@ -123,42 +119,52 @@ while [ -f ${SCRIPTNAME}.log.${num} ]; do
 done
 cp $SCRIPTPATH $SCRIPTNAME.log.${num}
 
+CARE_TESTIDX=0
+
+
 # ###########################################################
 
-for (( i="0"; i<"6"; i+="1" )); do
-    run_print $i "--pairmode SE"
-done
+# run_classic ${CARE_TESTIDX} "--pairmode PE --pairedthreshold1 0.06"
 
-###########################################################
+# ###########################################################
 
-python3 - <<EOF
-import sys
-sys.path.append("$MLCDIR")
-import care
-from tqdm import tqdm
-prefixes = [$(printf "\"%s\"," "${prefixes[@]}")]
-effiles = [$(printf "\"%s\"," "${files_ef[@]}")]
-anchor_map = [{"X":prefix+"_${EVALDIRNAME}_anchor.samples", "y":effile, "np":prefix+"_${EVALDIRNAME}_anchor.npz"} for prefix, effile in zip(prefixes, effiles)]
-cands_map = [{"X":prefix+"_${EVALDIRNAME}_cands.samples", "y":effile, "np":prefix+"_${EVALDIRNAME}_cands.npz"} for prefix, effile in zip(prefixes, effiles)]
+# for (( i="0"; i<"5"; i+="1" )); do
+#     run_print $i "--pairmode PE --pairedthreshold1 0.06"
+# done
 
-NJOBS = 100
-for i in tqdm(range(len(prefixes)), total=len(prefixes), miniters=1, mininterval=0, leave=False):
-	anchor_map_train, cands_map_train = list(anchor_map), list(cands_map)
-	anchor_map_test, cands_map_test = [anchor_map_train.pop(i)], [cands_map_train.pop(i)]
+# ###########################################################
 
-	care.process(care.RandomForestClassifier, {"n_jobs":NJOBS}, anchor_map_train, anchor_map_test, prefixes[i]+"_${EVALDIRNAME}_anchor")
-	care.process(care.RandomForestClassifier, {"n_jobs":NJOBS}, cands_map_train, cands_map_test, prefixes[i]+"_${EVALDIRNAME}_cands")
-	
-	# care.process(care.RandomForestClassifier, {"n_jobs":NJOBS, "max_depth":22}, anchor_map_train, anchor_map_test, prefixes[i]+"_${EVALDIRNAME}_md22_anchor")
-	# care.process(care.RandomForestClassifier, {"n_jobs":NJOBS, "max_depth":22}, cands_map_train, cands_map_test, prefixes[i]+"_${EVALDIRNAME}_md22_cands")
 
-EOF
 
-# ############################################################
+# CARE_TESTIDX=0
 
-for (( i="0"; i<="5"; i+="1" )); do
-    grid_search $i ${prefixes[${i}]}_${EVALDIRNAME} 10 90 10 10 90 10 "--pairmode SE"
-done
+# python3 - <<EOF
+# import sys
+# sys.path.append("$MLCDIR")
+# import care
+# from tqdm import tqdm
+# prefixes = [$(printf "\"%s\"," "${prefixes[@]}")]
+# effiles = [$(printf "\"%s\"," "${files_ef[@]}")]
+# anchor_map = [{"X":prefix+"_${EVALDIRNAME}_anchor.samples", "y":effile, "np":prefix+"_${EVALDIRNAME}_anchor.npz"} for prefix, effile in zip(prefixes, effiles)]
+# cands_map = [{"X":prefix+"_${EVALDIRNAME}_cands.samples", "y":effile, "np":prefix+"_${EVALDIRNAME}_cands.npz"} for prefix, effile in zip(prefixes, effiles)]
+
+# NJOBS = 88
+# # for i in tqdm(range(len(prefixes)), total=len(prefixes), miniters=1, mininterval=0, leave=False):
+# i = ${CARE_TESTIDX}
+# anchor_map_train, cands_map_train = list(anchor_map), list(cands_map)
+# anchor_map_test, cands_map_test = [anchor_map_train.pop(i)], [cands_map_train.pop(i)]
+
+# # modeselect = ${3}
+
+# care.process(care.RandomForestClassifier, {"n_jobs":NJOBS, "n_estimators":512}, anchor_map_train, anchor_map_test, prefixes[i]+"_${EVALDIRNAME}_anchor")
+# care.process(care.RandomForestClassifier, {"n_jobs":NJOBS, "n_estimators":512}, cands_map_train, cands_map_test, prefixes[i]+"_${EVALDIRNAME}_cands")
+
+# EOF
+
+# # ############################################################
+
+grid_search ${CARE_TESTIDX} ${prefixes[${CARE_TESTIDX}]}_${EVALDIRNAME} 90 90 1 30 30 1 "--pairmode PE --pairedthreshold1 0.06"
+
 
 ############################################################
 

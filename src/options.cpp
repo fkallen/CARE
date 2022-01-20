@@ -141,12 +141,12 @@ namespace care{
 
         if(pr.count("thresholdAnchor")){
             float t = pr["thresholdAnchor"].as<float>();
-            result.thresholdAnchor = t>1.0?t/100:t;
+            result.thresholdAnchor = t>=1.0?t/100:t;
         }
 
         if(pr.count("thresholdCands")){
             float t = pr["thresholdCands"].as<float>();
-            result.thresholdCands = t>1.0?t/100:t;
+            result.thresholdCands = t>=1.0?t/100:t;
         }
 
         if(pr.count("samplingRateAnchor")){
