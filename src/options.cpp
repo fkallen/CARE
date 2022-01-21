@@ -125,6 +125,14 @@ namespace care{
             result.batchsize = pr["batchsize"].as<int>();
         }
 
+        if(pr.count("maxNumTreesAnchorForest")){
+            result.maxNumTreesAnchorForest = pr["maxNumTreesAnchorForest"].as<int>();
+        }
+
+        if(pr.count("maxNumTreesCandidateForest")){
+            result.maxNumTreesCandidateForest = pr["maxNumTreesCandidateForest"].as<int>();
+        }
+
         if(pr.count("candidateCorrectionNewColumns")){
             result.new_columns_to_correct = pr["candidateCorrectionNewColumns"].as<int>();
         }
@@ -445,6 +453,16 @@ namespace care{
             std::cout << "Error: qualityScoreBits must be 1,2,or 8, is " + std::to_string(opt.qualityScoreBits) << std::endl;
         }
 
+        if(opt.maxNumTreesAnchorForest < 1){
+            valid = false;
+            std::cout << "Error: maxNumTreesAnchorForest must be > 0, is " + std::to_string(opt.maxNumTreesAnchorForest) << std::endl;
+        }
+
+        if(opt.maxNumTreesCandidateForest < 1){
+            valid = false;
+            std::cout << "Error: maxNumTreesCandidateForest must be > 0, is " + std::to_string(opt.maxNumTreesCandidateForest) << std::endl;
+        }
+
         if(!filesys::exists(opt.tempdirectory)){
             bool created = filesys::create_directories(opt.tempdirectory);
             if(!created){
@@ -629,7 +647,9 @@ namespace care{
         stream << "classification thresholds: " << thresholdAnchor << " | " << thresholdCands << "\n";
         stream << "anchor sampling rate: " << sampleRateAnchor << "\n";
         stream << "cands sampling rate: " << sampleRateCands << "\n";
-        stream << "pairedthreshold1: " << pairedthreshold1 << "\n";        
+        stream << "pairedthreshold1: " << pairedthreshold1 << "\n";
+        stream << "maxNumTreesAnchorForest: " << maxNumTreesAnchorForest << "\n";
+        stream << "maxNumTreesCandidateForest: " << maxNumTreesCandidateForest << "\n";
     }
 
     void ProgramOptions::printAdditionalOptionsExtend(std::ostream& stream) const{
@@ -826,7 +846,9 @@ namespace care{
                 cxxopts::value<float>())
             ("samplingRateCands", "sampling rate for candidates features (print mode)",
                 cxxopts::value<float>())
-            ("pairedthreshold1", "pairedthreshold1", cxxopts::value<float>());
+            ("pairedthreshold1", "pairedthreshold1", cxxopts::value<float>())
+            ("maxNumTreesAnchorForest", "Maximum number of forests to load from anchor forest file", cxxopts::value<int>())
+            ("maxNumTreesCandidateForest", "Maximum number of forests to load from candidate forest file", cxxopts::value<int>());
     }
 
     void addAdditionalOptionsExtend(cxxopts::Options& commandLineOptions){

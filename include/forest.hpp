@@ -71,7 +71,7 @@ class ForestClf {
 
 public:
 
-    ForestClf (const std::string& path, float t = 0.5f) : 
+    ForestClf (const std::string& path, std::uint32_t maxNumTrees, float t = 0.5f) : 
         thresh_(t) 
     {
         std::ifstream is(path, std::ios::binary);
@@ -82,10 +82,14 @@ public:
         auto expected = std::string(extractor_t());
         if (desc != expected)
             throw std::runtime_error("Classifier and extractor descriptors do not match! Expected: " + expected + " Received: " + desc);
-    
-        forest_ = Forest(read_one<uint32_t>(is));
+
+        const auto numTrees = read_one<uint32_t>(is);
+        const auto usableNumTrees = std::max(1u, std::min(numTrees, maxNumTrees));
+        //std::cerr << "numTrees = " << numTrees << ", usableNumTrees = " << usableNumTrees << "\n";
+        forest_ = Forest(usableNumTrees);
         for (Tree& tree: forest_) {
-            tree.reserve(read_one<uint32_t>(is));
+            const auto numNodesInTree = read_one<uint32_t>(is);
+            tree.reserve(numNodesInTree);
             populate(is, tree);
         }
     }

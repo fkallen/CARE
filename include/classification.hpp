@@ -70,8 +70,8 @@ struct clf_agent
     CandsExtractor extract_cands;
 
     clf_agent(const ProgramOptions& opts) :
-        classifier_anchor(opts.correctionType == CorrectionType::Forest ? std::make_shared<AnchorClf>(opts.mlForestfileAnchor, opts.thresholdAnchor) : nullptr),
-        classifier_cands(opts.correctionTypeCands == CorrectionType::Forest ? std::make_shared<CandClf>(opts.mlForestfileCands, opts.thresholdCands) : nullptr),
+        classifier_anchor(opts.correctionType == CorrectionType::Forest ? std::make_shared<AnchorClf>(opts.mlForestfileAnchor, opts.maxNumTreesAnchorForest, opts.thresholdAnchor) : nullptr),
+        classifier_cands(opts.correctionTypeCands == CorrectionType::Forest ? std::make_shared<CandClf>(opts.mlForestfileCands, opts.maxNumTreesCandidateForest, opts.thresholdCands) : nullptr),
         anchor_print_file(opts.correctionType == CorrectionType::Print ? std::make_shared<std::ofstream>(opts.mlForestfilePrintAnchor) : nullptr),
         cands_print_file(opts.correctionTypeCands == CorrectionType::Print ? std::make_shared<std::ofstream>(opts.mlForestfilePrintCands) : nullptr),
         rng(get_seed()),
