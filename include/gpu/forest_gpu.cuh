@@ -32,7 +32,7 @@ struct GpuForest {
     struct Node {
         uint8_t att;
         uint8_t flag;
-        float thresh;
+        double thresh;
         union {
             uint32_t idx;
             float prob; 
@@ -48,7 +48,7 @@ struct GpuForest {
         template<class Iter>
         HOSTDEVICEQUALIFIER
         float decide(Iter features, const Node* tree, size_t i = 0) const {
-            if (*(features + tree[i].att) < tree[i].thresh) {
+            if (*(features + tree[i].att) <= tree[i].thresh) {
                 if (tree[i].flag / 2)
                     return tree[i].lhs.prob;
                 return decide(features, tree, tree[i].lhs.idx);

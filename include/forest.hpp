@@ -23,7 +23,7 @@ class ForestClf {
     struct Node {
         uint8_t att;
         uint8_t flag;
-        float thresh;
+        double thresh;
         union {
             uint32_t idx;
             float prob; 
@@ -52,15 +52,15 @@ class ForestClf {
         }
     }
 
-    float decide(const features_t& features, const Tree& tree, size_t i = 0) const {
-        if (features[tree[i].att] < tree[i].thresh) {
+    float prob(const features_t& features, const Tree& tree, size_t i = 0) const {
+        if (features[tree[i].att] <= tree[i].thresh) {
             if (tree[i].flag / 2)
                 return tree[i].lhs.prob;
-            return decide(features, tree, tree[i].lhs.idx);
+            return prob(features, tree, tree[i].lhs.idx);
         } else {
             if (tree[i].flag % 2)
                 return tree[i].rhs.prob;
-            return decide(features, tree, tree[i].rhs.idx);
+            return prob(features, tree, tree[i].rhs.idx);
         }
     }
 
@@ -71,7 +71,7 @@ class ForestClf {
 
 public:
 
-    ForestClf (const std::string& path, float t = 0.5f) : 
+    ForestClf (const std::string& path, std::uint32_t maxNumTrees, float t = 0.5f) : 
         thresh_(t) 
     {
         std::ifstream is(path, std::ios::binary);
@@ -82,10 +82,14 @@ public:
         auto expected = std::string(extractor_t());
         if (desc != expected)
             throw std::runtime_error("Classifier and extractor descriptors do not match! Expected: " + expected + " Received: " + desc);
-    
-        forest_ = Forest(read_one<uint32_t>(is));
+
+        const auto numTrees = read_one<uint32_t>(is);
+        const auto usableNumTrees = std::max(1u, std::min(numTrees, maxNumTrees));
+        //std::cerr << "numTrees = " << numTrees << ", usableNumTrees = " << usableNumTrees << "\n";
+        forest_ = Forest(usableNumTrees);
         for (Tree& tree: forest_) {
-            tree.reserve(read_one<uint32_t>(is));
+            const auto numNodesInTree = read_one<uint32_t>(is);
+            tree.reserve(numNodesInTree);
             populate(is, tree);
         }
     }
@@ -98,11 +102,27 @@ public:
         return thresh_;
     }
 
-    bool decide(const features_t& features) const {
-        float prob = 0.f;
+    float prob(const features_t& features) const {
+        float sum = 0.f;
         for (const Tree& tree: forest_)
-            prob += decide(features, tree);
-        return prob/forest_.size() >= thresh_;
+            sum += prob(features, tree);
+        return sum/forest_.size();
+    }
+
+    float prob_debug(const features_t& features) const {
+        float sum = 0.f;
+        std::cerr << "# ";
+        for (const Tree& tree: forest_) {
+            auto tmp = prob(features, tree);
+            sum += tmp;
+            std::cerr << tmp << " ";
+        }
+        std::cerr << "# ";
+        return sum/forest_.size();
+    }
+
+    bool decide(const features_t& features) const {
+        return prob(features) >= thresh_;
     }
 };
 
