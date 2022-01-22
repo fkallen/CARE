@@ -560,6 +560,7 @@ namespace care{
         for(auto& s : outputfilenames){
             stream << s << ' ';
         }
+        stream << "\n";
         stream << "Paired mode: " << to_string(pairType) << "\n";
     }
 
