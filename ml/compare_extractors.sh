@@ -129,42 +129,39 @@ CARE_TESTIDX=0
 # ###########################################################
 
 # for (( i="0"; i<"5"; i+="1" )); do
-#     run_print $i "--pairmode PE --pairedthreshold1 0.06"
+# 	run_print $i "--pairmode PE --pairedthreshold1 0.06"
 # done
 
 # ###########################################################
 
+python3 - <<EOF
 
+if ${3} == 1: 
+	import sys
+	sys.path.append("$MLCDIR")
+	import care
+	from tqdm import tqdm
+	prefixes = [$(printf "\"%s\"," "${prefixes[@]}")]
+	effiles = [$(printf "\"%s\"," "${files_ef[@]}")]
+	anchor_map = [{"X":prefix+"_${EVALDIRNAME}_anchor.samples", "y":effile, "np":prefix+"_${EVALDIRNAME}_anchor.npz"} for prefix, effile in zip(prefixes, effiles)]
+	cands_map = [{"X":prefix+"_${EVALDIRNAME}_cands.samples", "y":effile, "np":prefix+"_${EVALDIRNAME}_cands.npz"} for prefix, effile in zip(prefixes, effiles)]
 
-# CARE_TESTIDX=0
+	NJOBS = 88
+	for i in tqdm(range(1, 5), total=4, miniters=1, mininterval=0, leave=False):
+	# i = ${CARE_TESTIDX}
+		anchor_map_train, cands_map_train = list(anchor_map), list(cands_map)
+		anchor_map_test, cands_map_test = [anchor_map_train.pop(i)], [cands_map_train.pop(i)]
+		care.process(care.RandomForestClassifier, {"n_jobs":NJOBS, "n_estimators":512}, anchor_map_train, anchor_map_test, prefixes[i]+"_${EVALDIRNAME}_anchor")
+		care.process(care.RandomForestClassifier, {"n_jobs":NJOBS, "n_estimators":512}, cands_map_train, cands_map_test, prefixes[i]+"_${EVALDIRNAME}_cands")
 
-# python3 - <<EOF
-# import sys
-# sys.path.append("$MLCDIR")
-# import care
-# from tqdm import tqdm
-# prefixes = [$(printf "\"%s\"," "${prefixes[@]}")]
-# effiles = [$(printf "\"%s\"," "${files_ef[@]}")]
-# anchor_map = [{"X":prefix+"_${EVALDIRNAME}_anchor.samples", "y":effile, "np":prefix+"_${EVALDIRNAME}_anchor.npz"} for prefix, effile in zip(prefixes, effiles)]
-# cands_map = [{"X":prefix+"_${EVALDIRNAME}_cands.samples", "y":effile, "np":prefix+"_${EVALDIRNAME}_cands.npz"} for prefix, effile in zip(prefixes, effiles)]
-
-# NJOBS = 88
-# # for i in tqdm(range(len(prefixes)), total=len(prefixes), miniters=1, mininterval=0, leave=False):
-# i = ${CARE_TESTIDX}
-# anchor_map_train, cands_map_train = list(anchor_map), list(cands_map)
-# anchor_map_test, cands_map_test = [anchor_map_train.pop(i)], [cands_map_train.pop(i)]
-
-# # modeselect = ${3}
-
-# care.process(care.RandomForestClassifier, {"n_jobs":NJOBS, "n_estimators":512}, anchor_map_train, anchor_map_test, prefixes[i]+"_${EVALDIRNAME}_anchor")
-# care.process(care.RandomForestClassifier, {"n_jobs":NJOBS, "n_estimators":512}, cands_map_train, cands_map_test, prefixes[i]+"_${EVALDIRNAME}_cands")
-
-# EOF
+EOF
 
 # # ############################################################
 
-grid_search ${CARE_TESTIDX} ${prefixes[${CARE_TESTIDX}]}_${EVALDIRNAME} 90 90 1 30 30 1 "--pairmode PE --pairedthreshold1 0.06"
-
+for (( i="0"; i<"1"; i+="1" )); do
+	echo "starting search" ${i}
+	grid_search ${i} ${prefixes[${i}]}_${EVALDIRNAME} 94 94 1 20 20 5 "--maxForestTreesAnchor 4 --maxForestTreesCands 1 --pairmode PE --pairedthreshold1 0.06"
+done
 
 ############################################################
 
