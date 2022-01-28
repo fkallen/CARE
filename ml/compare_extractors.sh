@@ -68,8 +68,8 @@ MLCDIR=/home/jcascitt/errorcorrector/ml
 EVALDIRNAME=${1}
 EVALDIR=/home/jcascitt/care/paired/${EVALDIRNAME}
 
-CARE="/home/jcascitt/errorcorrector/care-cpu-${EVALDIRNAME} -t 88"
-CAREGPU="/home/jcascitt/errorcorrector/care-gpu-${EVALDIRNAME} -g ${2} --warpcore 1 -t 88"
+CARE="/home/jcascitt/errorcorrector/care-cpu-v3 -t 88"
+CAREGPU="/home/jcascitt/errorcorrector/care-gpu-v3 -g ${2} --warpcore 1 -t 88"
 CARE_FLAGS="-d out -h 48 -q --excludeAmbiguous --minalignmentoverlap 30 --minalignmentoverlapratio 0.3 -m 64G -p --samplingRateAnchor 0.25 --samplingRateCands 0.01 --enforceHashmapCount"
 
 ARTEVAL=/home/jcascitt/errorcorrector/evaluationtool/arteval
@@ -91,15 +91,15 @@ files_ef[2]=/share/errorcorrection/datasets/artpairedelegans/elegans30cov_500_10
 cov[2]=30
 prefixes[2]=ele-30p
 
-files[3]=/share/errorcorrection/datasets/artpairedmuschr15/muschr15_500_10.fastq
-files_ef[3]=/share/errorcorrection/datasets/artpairedmuschr15/muschr15_500_10_errFree.fastq
-cov[3]=30
-prefixes[3]=muschr15-30p
+# files[3]=/share/errorcorrection/datasets/artpairedmuschr15/muschr15_500_10.fastq
+# files_ef[3]=/share/errorcorrection/datasets/artpairedmuschr15/muschr15_500_10_errFree.fastq
+# cov[3]=30
+# prefixes[3]=muschr15-30p
 
-files[4]=/share/errorcorrection/datasets/artpairedmelanogaster/melanogaster30cov_500_10.fastq
-files_ef[4]=/share/errorcorrection/datasets/artpairedmelanogaster/melanogaster30cov_500_10_errFree.fastq
-cov[4]=30
-prefixes[4]=melan-30p
+# files[4]=/share/errorcorrection/datasets/artpairedmelanogaster/melanogaster30cov_500_10.fastq
+# files_ef[4]=/share/errorcorrection/datasets/artpairedmelanogaster/melanogaster30cov_500_10_errFree.fastq
+# cov[4]=30
+# prefixes[4]=melan-30p
 
 ###########################################################
 
@@ -128,7 +128,7 @@ CARE_TESTIDX=0
 
 # ###########################################################
 
-# for (( i="0"; i<"5"; i+="1" )); do
+# for (( i="0"; i<"3"; i+="1" )); do
 # 	run_print $i "--pairmode PE --pairedthreshold1 0.06"
 # done
 
@@ -136,23 +136,21 @@ CARE_TESTIDX=0
 
 python3 - <<EOF
 
-if ${3} == 1: 
-	import sys
-	sys.path.append("$MLCDIR")
-	import care
-	from tqdm import tqdm
-	prefixes = [$(printf "\"%s\"," "${prefixes[@]}")]
-	effiles = [$(printf "\"%s\"," "${files_ef[@]}")]
-	anchor_map = [{"X":prefix+"_${EVALDIRNAME}_anchor.samples", "y":effile, "np":prefix+"_${EVALDIRNAME}_anchor.npz"} for prefix, effile in zip(prefixes, effiles)]
-	cands_map = [{"X":prefix+"_${EVALDIRNAME}_cands.samples", "y":effile, "np":prefix+"_${EVALDIRNAME}_cands.npz"} for prefix, effile in zip(prefixes, effiles)]
 
-	NJOBS = 88
-	for i in tqdm(range(1, 5), total=4, miniters=1, mininterval=0, leave=False):
-	# i = ${CARE_TESTIDX}
-		anchor_map_train, cands_map_train = list(anchor_map), list(cands_map)
-		anchor_map_test, cands_map_test = [anchor_map_train.pop(i)], [cands_map_train.pop(i)]
-		care.process(care.RandomForestClassifier, {"n_jobs":NJOBS, "n_estimators":512}, anchor_map_train, anchor_map_test, prefixes[i]+"_${EVALDIRNAME}_anchor")
-		care.process(care.RandomForestClassifier, {"n_jobs":NJOBS, "n_estimators":512}, cands_map_train, cands_map_test, prefixes[i]+"_${EVALDIRNAME}_cands")
+import sys
+sys.path.append("$MLCDIR")
+import care
+from tqdm import tqdm
+prefixes = [$(printf "\"%s\"," "${prefixes[@]}")]
+effiles = [$(printf "\"%s\"," "${files_ef[@]}")]
+anchor_map = [{"X":prefix+"_${EVALDIRNAME}_anchor.samples", "y":effile, "np":prefix+"_${EVALDIRNAME}_anchor.npz"} for prefix, effile in zip(prefixes, effiles)]
+cands_map = [{"X":prefix+"_${EVALDIRNAME}_cands.samples", "y":effile, "np":prefix+"_${EVALDIRNAME}_cands.npz"} for prefix, effile in zip(prefixes, effiles)]
+
+for i in range(0, 3):
+	anchor_map_train, cands_map_train = list(anchor_map), list(cands_map)
+	anchor_map_test, cands_map_test = [anchor_map_train.pop(i)], [cands_map_train.pop(i)]
+	care._process("RF", {"n_estimators":16, "max_depth":4}, anchor_map_train, anchor_map_test, prefixes[i]+"_${EVALDIRNAME}_anchor.rf")
+	care._process("RF", {"n_estimators":16, "max_depth":4}, cands_map_train, cands_map_test, prefixes[i]+"_${EVALDIRNAME}_cands.rf")
 
 EOF
 
