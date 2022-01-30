@@ -1,13 +1,7 @@
 #!/usr/bin/python3
 
-from random import Random
-from click import pass_context
-import matplotlib
-matplotlib.use('Agg')
-from matplotlib import pyplot as plt
 from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import StandardScaler
 from sklearn import metrics
 from sklearn.tree._tree import TREE_LEAF
 import numpy as np
@@ -18,8 +12,7 @@ import os
 import pickle
 import zipfile
 
-
-class Dataset(object):
+class Dataset:
 
     @staticmethod
     def _check_desc(old, new):
@@ -136,7 +129,22 @@ class Dataset(object):
         self.data = samples
         tqdm.write("Dataset initialized.\n")
 
-class Classifier(object):
+class ClassifierType(type):
+
+    def __call__(cls, dataset, **clf_args):
+        if cls is Classifier:
+            clf_t_str = clf_args.pop("clf_t_str", "RF")
+            if clf_t_str not in Classifier._clfs:
+                raise ValueError(f"Unknown CARE classifier type: {clf_t_str}")
+            else:
+                return Classifier._clfs[clf_t_str](dataset, **clf_args)
+        return super().__call__(dataset, **clf_args)
+
+class Classifier(metaclass=ClassifierType):
+
+    _clfs = {}
+    def __init_subclass__(cls, clf_t_str):
+        Classifier._clfs[clf_t_str] = cls
 
     def __init__(self, dataset):
         self.datapaths = dataset.paths
@@ -162,8 +170,9 @@ class Classifier(object):
         tqdm.write(f"AUROC: {auroc}")
         tqdm.write(f"AVGPS: {avgps}")
         tqdm.write("\n")
+        return auroc, avgps
 
-class RandomForest(Classifier):
+class RandomForest(Classifier, clf_t_str="RF"):
 
     def __init__(self, dataset, **clf_args):
         super().__init__(dataset)
@@ -200,9 +209,9 @@ class RandomForest(Classifier):
             self._extract_node(tree.tree_, 0, out_file)
 
 
-class LogReg(Classifier):
+class LogReg(Classifier, clf_t_str="LR"):
 
-    def __init__(self, data, **clf_args):
+    def __init__(self, dataset, **clf_args):
         raise NotImplementedError("LogReg classifier it not implemented yet.")
 
     def _extract(self, out_file):
@@ -214,17 +223,10 @@ class LogReg(Classifier):
         print(self._clf.intercept_[0])
         out_file.write(struct.pack("f", self._clf.intercept_[0]))
 
-def train(dataset, clf_t_str="RF", **clf_args):
-    _clfs = {"RF":RandomForest}
-    if clf_t_str not in _clfs:
-        raise ValueError(f"Unknown CARE classifier type: {clf_t_str}")
-    else:
-        return _clfs[clf_t_str](dataset, **clf_args)
-
 def _process(clf_t_str, clf_args, train_paths, test_paths, clf_path):
     trainset = Dataset(train_paths)
     testset = Dataset(test_paths)
-    clf = train(trainset, clf_t_str, **clf_args)
+    clf = Classifier(trainset, **clf_args)
     clf.verify(trainset)
     clf.verify(testset)
     pickle.dump(clf, open(clf_path+".p", "wb"))
