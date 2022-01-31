@@ -1,18 +1,20 @@
 # Training Classifiers for CARE Error Correction
 
+The CARE Python module provides functionality for the fitting of custom classifiers and their serialization in a CARE-compatible binary format for use with CARE 2.0's classifier-based error correction mode.
 
+As of right now, classifiers are trained using the scikit-learn python library and serialized in a custom format compatible with the CARE application. By default, CARE uses sklearn's `RandomForestClassifier`.
+
+Other classifiers and classifiers based on other libraries might be added in the future and the module was written with this possibility in mind.
 
 ## Requirements:
 
-
-- Python 3.8+ (lower version might work)
 - CARE Python Module
+  - Python 3.8+ (lower versions might work)
   - scikit-learn
   - numpy
   - tqdm
 - Training Data
   - Containing Errors + Error-Free copy
-
 
 ## Step 1: Sampling Data
 
@@ -36,7 +38,7 @@ care-cpu [...] \
 
 ## Step 2: The CARE Python Module
 
-The care python module provides a simple interface for training CARE-compatible classifiers.
+The care python module provides a simple interface for training and serializing CARE-compatible classifiers.
 
 ### Example Usage
 
@@ -62,7 +64,8 @@ trainset = care.Dataset(train_paths) # Trains clf on all 3 of datasets
                                      # reads from "np" paths if file exists
 
 clf = care.Classifier(trainset, n_jobs=128) # number of threads
-clf.extract("anchor.rf") # serializes classifier in CARE-compatible binary format (see below)
+
+clf.serialize("anchor.rf") # serializes classifier in CARE-compatible binary format
 ```
 See advanced section for more details.
 
@@ -80,7 +83,7 @@ care-gpu -i error_reads.fq -c 30 -o corrected_reads.fq [...] \
 
 ### Verifying Classifiers
 
-The CARE python module provides an easy interface for testing classifiers on datasets, calculating the AUROC (area under ROC curve) and
+CARE classifiers can be verified using a test dataset and calculating the AUROC (area under ROC curve) and
 average precision (area under precision-recall curve)
 statistics.
 
