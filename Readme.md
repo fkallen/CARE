@@ -93,6 +93,7 @@ The following list is a selection of usefull options.
                               K,M,G , e.g. 20G means 20 gigabyte. This option
                               is not a hard limit. Default: All free
                               memory.
+```
 
 If an option allows multiple values to be specified, the option can be repeated with different values.
 As an alternative, multiple values can be separated by comma (,). Both ways can be used simultaneously.
