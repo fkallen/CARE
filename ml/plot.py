@@ -26,13 +26,24 @@ def add_eval(ext, atct, sample, tp, fp, fn, tn):
 
 def reduce():
     shared_samples = set.intersection(*(set(res[e][a].keys()) for e in res for a in res[e]))
+    print(*(set(res[e][a].keys()) for e in res for a in res[e]))
+    print(shared_samples)
     for ext in res:
         for atct in res[ext]:
-            for sample in set(res[ext][atct]):
+            for sample in list(res[ext][atct]):
                 if sample not in shared_samples:
                     res[ext][atct].pop(sample, None)
-    print(shared_samples)
 
+def require(*reqs):
+    for ext in res:
+        for atct in list(res[ext]):
+            for req in reqs:
+                if req not in res[ext][atct]:
+                    del res[ext][atct]
+                    break
+                for sample in list(res[ext][atct]):
+                    if sample not in reqs:
+                        res[ext][atct].pop(sample, None)
 
 def make_frontier(elements):
     keep = []
@@ -72,7 +83,7 @@ def frontierize_global():
             if (ext, atct) not in frontier:
                 res[ext].pop(atct)
 
-extdirs = ["paired/t", "paired/v2", "paired/v3", "paired/cc"]
+extdirs = ["paired/t", "paired/v3"]
 def load():
     for extdir in extdirs:
         extdir = f"/home/jcascitt/care/{extdir}/out"
@@ -97,7 +108,7 @@ def load():
                     tn = int(line.split()[-1])
                     add_eval(ext, (at, ct), sample, tp, fp, fn, tn)    
 
-    reduce()
+    require("melan-30p", "muschr15-30p", "ele-30p", "atha-30p", "humanchr15-30p")
     frontierize()
     print(res)
     pickle.dump(res, open("plot.p", "wb"))

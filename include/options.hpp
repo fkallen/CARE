@@ -78,8 +78,8 @@ namespace care
         SequencePairType pairType = SequencePairType::SingleEnd;
         int minimum_sequence_length = 0;
         int maximum_sequence_length = 0;
-        int maxNumTreesAnchorForest = std::numeric_limits<int>::max();
-        int maxNumTreesCandidateForest = std::numeric_limits<int>::max();
+        uint32_t maxForestTreesAnchor = std::numeric_limits<uint32_t>::max();
+        uint32_t maxForestTreesCands = std::numeric_limits<uint32_t>::max();
         std::uint64_t nReads = 0;
         std::string outputdirectory = "";
         std::string save_binary_reads_to = "";

@@ -125,12 +125,14 @@ namespace care{
             result.batchsize = pr["batchsize"].as<int>();
         }
 
-        if(pr.count("maxNumTreesAnchorForest")){
-            result.maxNumTreesAnchorForest = pr["maxNumTreesAnchorForest"].as<int>();
+        if(pr.count("maxForestTreesAnchor")){
+            int n = pr["maxForestTreesAnchor"].as<int>();
+            if (n>0) result.maxForestTreesAnchor = n;
         }
 
-        if(pr.count("maxNumTreesCandidateForest")){
-            result.maxNumTreesCandidateForest = pr["maxNumTreesCandidateForest"].as<int>();
+        if(pr.count("maxForestTreesCands")){
+            int n = pr["maxForestTreesCands"].as<int>();
+            if (n>0) result.maxForestTreesCands = n;
         }
 
         if(pr.count("candidateCorrectionNewColumns")){
@@ -453,16 +455,6 @@ namespace care{
             std::cout << "Error: qualityScoreBits must be 1,2,or 8, is " + std::to_string(opt.qualityScoreBits) << std::endl;
         }
 
-        if(opt.maxNumTreesAnchorForest < 1){
-            valid = false;
-            std::cout << "Error: maxNumTreesAnchorForest must be > 0, is " + std::to_string(opt.maxNumTreesAnchorForest) << std::endl;
-        }
-
-        if(opt.maxNumTreesCandidateForest < 1){
-            valid = false;
-            std::cout << "Error: maxNumTreesCandidateForest must be > 0, is " + std::to_string(opt.maxNumTreesCandidateForest) << std::endl;
-        }
-
         if(!filesys::exists(opt.tempdirectory)){
             bool created = filesys::create_directories(opt.tempdirectory);
             if(!created){
@@ -649,8 +641,8 @@ namespace care{
         stream << "anchor sampling rate: " << sampleRateAnchor << "\n";
         stream << "cands sampling rate: " << sampleRateCands << "\n";
         stream << "pairedthreshold1: " << pairedthreshold1 << "\n";
-        stream << "maxNumTreesAnchorForest: " << maxNumTreesAnchorForest << "\n";
-        stream << "maxNumTreesCandidateForest: " << maxNumTreesCandidateForest << "\n";
+        stream << "maxForestTreesAnchor: " << maxForestTreesAnchor << "\n";
+        stream << "maxForestTreesCands: " << maxForestTreesCands << "\n";
     }
 
     void ProgramOptions::printAdditionalOptionsExtend(std::ostream& stream) const{
@@ -835,9 +827,9 @@ namespace care{
                 cxxopts::value<int>()->default_value("0"))
             ("correctionTypeCands", "0: Classic, 1: Forest, 2: Print. Print is only supported in the cpu version",
                 cxxopts::value<int>()->default_value("0"))
-            ("ml-forestfile", "The file for interfaceing with the scikit-learn classifier (Anchor correction)",
+            ("ml-forestfile", "Path of the Random Forest classifier (Anchor correction)",
                 cxxopts::value<std::string>())
-            ("ml-cands-forestfile", "The file for interfaceing with the scikit-learn classifier (Candidate correction)",
+            ("ml-cands-forestfile", "Path of the Random Forest classifier (Candidate correction)",
                 cxxopts::value<std::string>())
             ("thresholdAnchor", "Classification threshold for anchor classifier (\"Forest\") mode",
                 cxxopts::value<float>())
@@ -848,8 +840,8 @@ namespace care{
             ("samplingRateCands", "sampling rate for candidates features (print mode)",
                 cxxopts::value<float>())
             ("pairedthreshold1", "pairedthreshold1", cxxopts::value<float>())
-            ("maxNumTreesAnchorForest", "Maximum number of forests to load from anchor forest file", cxxopts::value<int>())
-            ("maxNumTreesCandidateForest", "Maximum number of forests to load from candidate forest file", cxxopts::value<int>());
+            ("maxForestTreesAnchor", "Max. no. of forests to load from anchor forest file. (-1 = all)", cxxopts::value<int>())
+            ("maxForestTreesCands", "Max. no. of forests to load from candidate forest file. (-1 = all)", cxxopts::value<int>());
     }
 
     void addAdditionalOptionsExtend(cxxopts::Options& commandLineOptions){

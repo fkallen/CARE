@@ -23,7 +23,7 @@ class ForestClf {
     struct Node {
         uint8_t att;
         uint8_t flag;
-        double thresh;
+        double split;
         union {
             uint32_t idx;
             float prob; 
@@ -36,7 +36,7 @@ class ForestClf {
     void populate(std::ifstream& is, Tree& tree) {
         Node& node = *tree.emplace(tree.end());
         read_one(is, node.att);
-        read_one(is, node.thresh);
+        read_one(is, node.split);
         read_one(is, node.flag);
         if (node.flag / 2)
             new(&node.lhs.prob) float(read_one<float>(is));
@@ -53,7 +53,7 @@ class ForestClf {
     }
 
     float prob(const features_t& features, const Tree& tree, size_t i = 0) const {
-        if (features[tree[i].att] <= tree[i].thresh) {
+        if (features[tree[i].att] <= tree[i].split) {
             if (tree[i].flag / 2)
                 return tree[i].lhs.prob;
             return prob(features, tree, tree[i].lhs.idx);
@@ -71,7 +71,7 @@ class ForestClf {
 
 public:
 
-    ForestClf (const std::string& path, std::uint32_t maxNumTrees, float t = 0.5f) : 
+    ForestClf (const std::string& path, uint32_t max_trees, float t = 0.5f) : 
         thresh_(t) 
     {
         std::ifstream is(path, std::ios::binary);
@@ -83,13 +83,12 @@ public:
         if (desc != expected)
             throw std::runtime_error("Classifier and extractor descriptors do not match! Expected: " + expected + " Received: " + desc);
 
-        const auto numTrees = read_one<uint32_t>(is);
-        const auto usableNumTrees = std::max(1u, std::min(numTrees, maxNumTrees));
-        //std::cerr << "numTrees = " << numTrees << ", usableNumTrees = " << usableNumTrees << "\n";
-        forest_ = Forest(usableNumTrees);
+        const auto n_trees = read_one<uint32_t>(is);
+        max_trees = std::min(max_trees, n_trees);
+        // std::cerr << "Using " << max_trees << " of " << n_trees << "trees.\n";
+        forest_ = Forest(max_trees);
         for (Tree& tree: forest_) {
-            const auto numNodesInTree = read_one<uint32_t>(is);
-            tree.reserve(numNodesInTree);
+            tree.reserve(read_one<uint32_t>(is)); // reserve space for nodes
             populate(is, tree);
         }
     }
