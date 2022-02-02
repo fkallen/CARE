@@ -64,10 +64,10 @@ class Dataset:
 
         `"y"` maps to path str to the error free read file corresponding to the reads sampled in print mode, and
 
-        `"np"` maps to a path str to an a numpy .npz file.
+        `"np"` maps to a path str to a numpy .npz file.
 
-        For each element of `paths`: if `np` is provided and points to existing file, a dataset will be read from there.
-        Otherwise, a dataset will created by reading the `X` and `y` paths and stored in the `np` path if provided.
+        For each element of `paths`: if `np` is provided and points to an existing file, a dataset is read from there.
+        Otherwise, a dataset is created by reading the `X` and `y` paths and stored in the `np` path if provided.
 
         The final `Dataset` object is the concatenation of the datasets thus created.
         """
@@ -156,7 +156,7 @@ class _ClassifierType(type):
 
     def __call__(cls, dataset, **clf_args):
         """
-        Creates a classifier of the type determined by optional keyword argument `clf_t_str`.
+        Creates a classifier of the type determined by the keyword argument `clf_t_str`.
         Reverts to `"RF"`, i.e. `RandomForest`, if not provided.
 
         Currently supported classifiers:
@@ -182,7 +182,7 @@ class Classifier(metaclass=_ClassifierType):
     __pdoc_show_meta_call = True
     def __init__(self, dataset):
         self.datapaths = dataset.paths
-        """The paths which with the dataset used for training was created. See `Dataset.paths`."""
+        """The paths from which the dataset used for training was created. See `Dataset.paths`."""
         self.desc: str = dataset.desc
         """Description string of the feature transformation function used by CARE to create the training set. See `Dataset.desc`."""
 
@@ -202,7 +202,7 @@ class Classifier(metaclass=_ClassifierType):
         
     def verify(self, dataset):
         """
-        Applies classifier to a test set and calculates the AUC ("area under curve") of the receiver operating characteristic and precision-recall curves.
+        Applies the classifier to a test set and calculates the AUC ("area under curve") of the receiver operating characteristic and precision-recall curves.
         The latter is also referred to as "average precision score".
 
         Returns the tuple `(area-under-roc, average-precision)`.
