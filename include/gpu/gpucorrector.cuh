@@ -2405,7 +2405,7 @@ namespace gpu{
                         mismatchratioBaseFactor = programOptions->estimatedErrorrate,
                         goodAlignmentsCountThreshold = programOptions->estimatedCoverage * programOptions->m_coverage,
                         d_isPairedCandidate = d_isPairedCandidate.data(),
-                        pairedthreshold1 = programOptions->pairedthreshold1
+                        pairedFilterThreshold = programOptions->pairedFilterThreshold
                     ] __device__(){
                         using BlockReduceInt = cub::BlockReduce<int, 128>;
 
@@ -2441,7 +2441,7 @@ namespace gpu{
                                         const float mismatchratio = float(alignment_nops) / alignment_overlap;
 
                                         //if(mismatchratio >= 1 * mismatchratioBaseFactor) {
-                                        if(mismatchratio >= pairedthreshold1) {
+                                        if(mismatchratio >= pairedFilterThreshold) {
                                             bestAlignmentFlags[candidate_index] = AlignmentOrientation::None;
                                         }else{
 

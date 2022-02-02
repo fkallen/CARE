@@ -169,8 +169,8 @@ namespace care{
             result.sampleRateCands = t>1.0?t/100:t;
         }
 
-        if(pr.count("pairedthreshold1")){
-            result.pairedthreshold1 = pr["pairedthreshold1"].as<float>();
+        if(pr.count("pairedFilterThreshold")){
+            result.pairedFilterThreshold = pr["pairedFilterThreshold"].as<float>();
         }
 
         if(pr.count("insertsize")){
@@ -640,7 +640,7 @@ namespace care{
         stream << "classification thresholds: " << thresholdAnchor << " | " << thresholdCands << "\n";
         stream << "anchor sampling rate: " << sampleRateAnchor << "\n";
         stream << "cands sampling rate: " << sampleRateCands << "\n";
-        stream << "pairedthreshold1: " << pairedthreshold1 << "\n";
+        stream << "pairedFilterThreshold: " << pairedFilterThreshold << "\n";
         stream << "maxForestTreesAnchor: " << maxForestTreesAnchor << "\n";
         stream << "maxForestTreesCands: " << maxForestTreesCands << "\n";
     }
@@ -839,7 +839,7 @@ namespace care{
                 cxxopts::value<float>())
             ("samplingRateCands", "sampling rate for candidates features (print mode)",
                 cxxopts::value<float>())
-            ("pairedthreshold1", "pairedthreshold1", cxxopts::value<float>())
+            ("pairedFilterThreshold", "Controls alignment quality of unpaired candidates which can pass the candidate alignment filter. Candidate alignments with (num_mismatches / overlap_size) > threshold are removed.", cxxopts::value<float>())
             ("maxForestTreesAnchor", "Max. no. of forests to load from anchor forest file. (-1 = all)", cxxopts::value<int>())
             ("maxForestTreesCands", "Max. no. of forests to load from candidate forest file. (-1 = all)", cxxopts::value<int>());
     }

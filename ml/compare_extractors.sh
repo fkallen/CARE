@@ -124,12 +124,12 @@ CARE_TESTIDX=0
 
 # ###########################################################
 
-# run_classic ${CARE_TESTIDX} "--pairmode PE --pairedthreshold1 0.06"
+# run_classic ${CARE_TESTIDX} "--pairmode PE --pairedFilterThreshold 0.06"
 
 # ###########################################################
 
 # for (( i="0"; i<"3"; i+="1" )); do
-# 	run_print $i "--pairmode PE --pairedthreshold1 0.06"
+# 	run_print $i "--pairmode PE --pairedFilterThreshold 0.06"
 # done
 
 # ###########################################################
@@ -158,7 +158,7 @@ EOF
 
 for (( i="0"; i<"1"; i+="1" )); do
 	echo "starting search" ${i}
-	grid_search ${i} ${prefixes[${i}]}_${EVALDIRNAME} 94 94 1 20 20 5 "--maxForestTreesAnchor 4 --maxForestTreesCands 1 --pairmode PE --pairedthreshold1 0.06"
+	grid_search ${i} ${prefixes[${i}]}_${EVALDIRNAME} 94 94 1 20 20 5 "--maxForestTreesAnchor 4 --maxForestTreesCands 1 --pairmode PE --pairedFilterThreshold 0.06"
 done
 
 ############################################################

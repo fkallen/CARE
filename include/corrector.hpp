@@ -1148,7 +1148,7 @@ private:
     }
 
     void filterCandidatesByAlignmentMismatchRatioWithPairFlags(CpuErrorCorrectorTask& task) const{
-        const float threshold = programOptions->pairedthreshold1;
+        const float threshold = programOptions->pairedFilterThreshold;
         const int numCandidates = task.candidateReadIds.size();
 
         int insertpos = 0;
