@@ -105,6 +105,14 @@ For example, to specify three single-end input files the following options are e
 -i file1 -i file2,file3
 ```
 
+## Forests for CARE 2.0
+CARE 2.0 introduces a Random-Forest-based error correction mode. To use this mode, trained random forest classifiers need to be supplied using the program parameters
+`--correctionType 1 --ml-forestfile anchorforest.rf ` and `--correctionTypeCands 1 --ml-cands-forestfile candsforest.rf` for anchor correction and candidate correction, respectively.
+The same forest files can be used for both the CPU version and the GPU version.
+
+A small collection of pre-trained forests is available [here](https://seafile.rlp.net/d/e784b6f809a240d095c8/)
+
+For more information about training the random forests please see the descriptions in [ml/readme.md](ml/readme.md)
 
 
 # Algorithm
