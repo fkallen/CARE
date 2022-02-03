@@ -5,6 +5,7 @@
 * OpenMP
 * Zlib
 * GNU Make
+* Python 3.8 (optional. See section 'Forests for CARE 2.0')
 
 ## Additional prerequisites for GPU version
 * CUDA Toolkit 11 or newer
