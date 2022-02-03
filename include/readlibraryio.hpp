@@ -2,7 +2,6 @@
 #define CARE_SEQUENCEFILEIO_HPP
 
 #include <config.hpp>
-#include <memoryfile.hpp>
 
 #include <kseqpp/kseqpp.hpp>
 

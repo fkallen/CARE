@@ -20,7 +20,7 @@
 #include <queue>
 
 
-
+#include <cstdlib>
 
 
 template<class T>
@@ -155,19 +155,69 @@ std::vector<std::string> split(const std::string& str, char c){
 	return result;
 }
 
+// https://devblogs.microsoft.com/oldnewthing/20170102-00/?p=95095
+// permutes data according to indices. indices is left in unspecified state
+template<class T, class Index>
+void permute(T* data, Index* indices, std::size_t N){
+    using std::swap;
+
+    for (size_t i = 0; i < N; i++) {
+        auto current = i;
+        while (i != indices[current]) {
+            auto next = indices[current];
+            swap(data[current], data[next]);
+            indices[current] = current;
+            current = next;
+        }
+        indices[current] = current;
+    }
+}
+
+template<class T, std::size_t N>
+struct FixedCapacityVector{
+    std::size_t size_{};
+    std::array<T,N> array{};
+
+    void push_back(T elem){
+        assert(size() < N);
+        array[size_++] = std::move(elem);
+    }
+
+    std::size_t size() const noexcept{
+        return size_;
+    }
+
+    auto begin() noexcept{
+        return array.begin();
+    }
+
+    auto end() noexcept{
+        return array.begin() + size();
+    }
+
+    T& operator[](std::size_t i) noexcept{
+        assert(i < size());
+        return array[i];
+    }
+
+    const T& operator[](std::size_t i) const noexcept{
+        assert(i < size());
+        return array[i];
+    }
+};
 
 
 /*
     Performs a set union of multiple ranges into a single output range
 */
-template<class T>
+
 struct SetUnionHandle{
-    std::vector<T> buffer;
+    std::vector<char> buffer{};
 };
 
-template<class T, class OutputIt, class Iter>
+template<class OutputIt, class Iter>
 OutputIt k_way_set_union(
-        SetUnionHandle<T>& handle,
+        SetUnionHandle& handle,
         OutputIt outputbegin, 
         std::pair<Iter, Iter>* ranges,
         int numRanges){
@@ -176,9 +226,8 @@ OutputIt k_way_set_union(
     using InputType = typename std::iterator_traits<Iter>::value_type;
 
     static_assert(std::is_same<OutputType, InputType>::value, "");
-    static_assert(std::is_same<T, InputType>::value, "");
 
-    //using T = InputType;
+    using T = InputType;
 
     //handle simple cases
 
@@ -212,10 +261,10 @@ OutputIt k_way_set_union(
     }
 
     auto& temp = handle.buffer;
-    temp.resize(totalElements);
+    temp.resize(sizeof(T) * totalElements);
 
-    auto tempbegin = temp.begin();
-    auto tempend = tempbegin;
+    T* tempbegin = reinterpret_cast<T*>(temp.data());
+    T* tempend = tempbegin;
     auto outputend = outputbegin;
 
     //to avoid a final copy from temp to outputrange, both ranges are swapped in the beginning if number of ranges is odd.
@@ -237,29 +286,6 @@ OutputIt k_way_set_union(
 
     return outputend;
 }
-
-// template<class T, class OutputIt, class Iter>
-// OutputIt k_way_set_union(
-//         SetUnionHandle<T>& handle,
-//         OutputIt outputbegin, 
-//         std::vector<std::pair<const Iter, const Iter>>& ranges){
-
-//     return k_way_set_union(handle, outputbegin, ranges.data(), ranges.size());
-// }
-
-// template<class T, class OutputIt, class Iter>
-// OutputIt k_way_set_union(
-//         OutputIt outputbegin, 
-//         std::vector<std::pair<Iter,Iter>>& ranges){
-
-//     SetUnionHandle<T> handle;
-
-//     return k_way_set_union(
-//         handle,
-//         outputbegin, 
-//         ranges
-//     );
-//}
 
 
 
@@ -738,6 +764,25 @@ OutputIt k_way_merge_sorted(OutputIt destinationbegin, std::vector<Iter> iters){
     return destinationend;
 }
 
+
+template<class OutputIter, class Iter, class FlagIter>
+OutputIter select_if(Iter begin, Iter end, FlagIter flags, OutputIter output){
+
+    while(begin != end){
+        if(*flags){
+            *output = *begin;
+            ++output;
+        }
+
+        ++begin;
+        ++flags;
+    }
+
+    return output;
+}
+
+
+
 /*
     Removes elements from sorted range which occure less than k times.
     Returns end of the new range
@@ -969,80 +1014,244 @@ OutputIt set_intersection_n_or_empty(InputIt1 first1, InputIt1 last1,
 }
 
 
-template<class F>
-void print_multiple_sequence_alignment_sorted_by_shift(std::ostream& out, const char* data, int nrows, int ncolumns, std::size_t rowpitch, F get_shift_of_row){
-    std::vector<int> indices(nrows);
-    std::iota(indices.begin(), indices.end(), 0);
+template<class InputIt1, class InputIt2,
+         class OutputIt1, class OutputIt2,
+         class CompareOther, class CompareSame1, class CompareSame2,
+         class LessThan12, class LessThan21>
+std::pair<OutputIt1, OutputIt2> flagPairedCandidates(
+    InputIt1 first1, 
+    InputIt1 last1,
+    InputIt2 first2, 
+    InputIt2 last2,
+    OutputIt1 d_first1, 
+    OutputIt2 d_first2, 
+    CompareOther isSameReadPairInOtherRange,
+    CompareSame1 isSameReadPairInSameRange1,
+    CompareSame2 isSameReadPairInSameRange2,
+    LessThan12 lessThan12,
+    LessThan21 lessThan21
+){
+    auto outputbegin1 = d_first1;
+    auto outputbegin2 = d_first2;
 
-    std::sort(indices.begin(), indices.end(),
-            [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
-    //for(auto i : indices)
-    //    out << get_shift_of_row(i) << ' ';
-    //out << '\n';
-    //assert(std::is_sorted(indices.begin(), indices.end(), [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);}));
-    for(int row = 0; row < nrows; row++) {
-        int sortedrow = indices[row];
-        if(sortedrow == 0)
-            out << ">> ";
-        else
-            out << "   ";
-        for(int col = 0; col < ncolumns; col++) {
-            const char c = data[sortedrow * rowpitch + col];
-            out << (c == '\0' ? '0' : c);
+    while (first1 != last1 && first2 != last2) {
+        const auto nextfirst1 = std::next(first1);
+        const auto nextfirst2 = std::next(first2);
+
+        int elems1 = 1;
+        if(nextfirst1 != last1){
+            if(isSameReadPairInSameRange1(*first1, *nextfirst1)){
+                elems1 = 2;
+            }
         }
-        if(sortedrow == 0)
-            out << " <<";
-        else
-            out << "   ";
-        out << '\n';
+
+        int elems2 = 1;
+        if(nextfirst2 != last2){
+            if(isSameReadPairInSameRange2(*first2, *nextfirst2)){
+                elems2 = 2;
+            }
+        }
+
+        if(elems1 == 1 && elems2 == 1){
+            if(isSameReadPairInOtherRange(*first1, *first2)){
+                //if *first1 != *first2
+                if(lessThan12(*first1,*first2) || lessThan21(*first2, *first1)){
+                    *d_first1++ = *first1++;
+                    *d_first2++ = *first2++;
+                }else{
+                    ++first1;
+                    ++first2;
+                }
+            }else{
+                if(lessThan12(*first1,*first2)){
+                    ++first1;
+                }else{
+                    ++first2;
+                }
+            }
+        }else if (elems1 == 2 && elems2 == 2){
+            if(isSameReadPairInOtherRange(*first1, *first2)){
+                *d_first1++ = *first1++;
+                *d_first2++ = *first2++;
+                *d_first1++ = *first1++;
+                *d_first2++ = *first2++;
+            }else{
+                if(lessThan12(*first1,*first2)){
+                    ++first1;
+                    ++first1;
+                }else{
+                    ++first2;
+                    ++first2;
+                }
+            }
+
+        }else if (elems1 == 2 && elems2 == 1){
+            if(isSameReadPairInOtherRange(*first1, *first2)){
+                //if *first1 == *first2 , e.g (4,5) , (4)
+                if(!lessThan12(*first1,*first2) && !lessThan21(*first2, *first1)){
+                    //discard first entry of first range, keep rest
+                    ++first1;
+                    *d_first1++ = *first1++;
+                    *d_first2++ = *first2++;
+                }else{ // e.g (4,5) , (5)
+                    //keep first entry of first range, discard second entry
+                    *d_first1++ = *first1++;
+                    *d_first2++ = *first2++;
+                    ++first1;
+                }
+            }else{
+                if(lessThan12(*first1,*first2)){
+                    ++first1;
+                    ++first1;
+                }else{
+                    ++first2;
+                }
+            }
+            
+        }else {
+            //(elems1 == 1 && elems2 == 2)
+
+            if(isSameReadPairInOtherRange(*first1, *first2)){
+                //if *first1 == *first2 , e.g (4) , (4,5)
+                if(!lessThan12(*first1,*first2) && !lessThan21(*first2, *first1)){
+                    //discard first entry of second range, keep rest
+                    ++first2;
+                    *d_first1++ = *first1++;
+                    *d_first2++ = *first2++;
+                }else{
+                    //keep first entry of second range, discard second entry of second range
+                    *d_first1++ = *first1++;
+                    *d_first2++ = *first2++;
+                    ++first2;
+                }
+            }else{
+                if(lessThan12(*first1,*first2)){
+                    ++first1;
+                }else{
+                    ++first2;
+                    ++first2;
+                }
+            }            
+        }
     }
+    
+    assert(std::distance(outputbegin1, d_first1) == std::distance(outputbegin2, d_first2));
+
+    return std::make_pair(d_first1, d_first2);
 }
 
-template<class F>
-void print_multiple_sequence_alignment_consensusdiff_sorted_by_shift(std::ostream& out, const char* data, const char* consensus,
-                                                                        int nrows, int ncolumns, std::size_t rowpitch, F get_shift_of_row){
-    std::vector<int> indices(nrows);
-    std::iota(indices.begin(), indices.end(), 0);
-
-    std::sort(indices.begin(), indices.end(),
-            [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
-    //for(auto i : indices)
-    //    out << get_shift_of_row(i) << ' ';
-    //out << '\n';
-    //assert(std::is_sorted(indices.begin(), indices.end(), [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);}));
-    for(int row = 0; row < nrows; row++) {
-        int sortedrow = indices[row];
-        if(sortedrow == 0)
-            out << ">> ";
-        else
-            out << "   ";
-        for(int col = 0; col < ncolumns; col++) {
-            const char c = data[sortedrow * rowpitch + col];
-            const char c2 = c == consensus[col] ? '=' : c;
-            out << (c2 == '\0' ? '0' : c2);
-        }
-        if(sortedrow == 0)
-            out << " <<";
-        else
-            out << "   ";
-        out << '\n';
-    }
-}
-
-std::array<int, 5> onehotbase(char base);
-void print_multiple_sequence_alignment(std::ostream& out, const char* data, int nrows, int ncolumns, std::size_t rowpitch);
 
 /*
-    Bit shifts of bit array
+    Input: Two sorted ranges of read ids.
+    Two read ids x,y form a pair if x / 2 == y / 2
+
+    Output ranges will contain positions of those read ids for which its pair id exists in the respective other range
 */
+template<class InputIt1, class InputIt2,
+         class OutputIt1, class OutputIt2>
+std::pair<OutputIt1, OutputIt2> findPositionsOfPairedReadIds(
+    InputIt1 first1, 
+    InputIt1 last1,
+    InputIt2 first2, 
+    InputIt2 last2,
+    OutputIt1 d_first1, 
+    OutputIt2 d_first2
+){
+    std::vector<int> indexlist1(std::distance(first1, last1));
+    std::iota(indexlist1.begin(), indexlist1.end(), 0);
 
-void shiftBitsLeftBy(unsigned char* array, int bytes, int shiftamount);
+    std::vector<int> indexlist2(std::distance(first2, last2));
+    std::iota(indexlist2.begin(), indexlist2.end(), 0);
 
-void shiftBitsRightBy(unsigned char* array, int bytes, int shiftamount);
+    auto isSameReadPairInOtherRange = [&](int l, int r){
+        return *(first1 + l) / 2 == *(first2 + r) / 2;
+    };
 
-void shiftBitsBy(unsigned char* array, int bytes, int shiftamount);
+    auto isSameReadPairInSameRange1 = [&](int l, int r){
+        return*(first1 + l)  / 2 == *(first1 + r) / 2;
+    };
 
-int hammingdistanceHiLo(const std::uint8_t* l, const std::uint8_t* r, int length_l, int length_r, int bytes);
+    auto isSameReadPairInSameRange2 = [&](int l, int r){
+        return *(first2 + l) / 2 == *(first2 + r) / 2;
+    };
+
+    auto lessThan12 = [&](int l, int r){
+        return *(first1 + l) < *(first2 + r);
+    };
+
+    auto lessThan21 = [&](int l, int r){
+        return *(first2 + l) < *(first1 + r);
+    };
+
+    return flagPairedCandidates(
+        indexlist1.begin(), 
+        indexlist1.end(),
+        indexlist2.begin(), 
+        indexlist2.end(),
+        d_first1, 
+        d_first2, 
+        isSameReadPairInOtherRange,
+        isSameReadPairInSameRange1,
+        isSameReadPairInSameRange2,
+        lessThan12,
+        lessThan21
+    );
+}
+
+
+
+/*
+    Input: Two sorted ranges of read ids.
+    Two read ids x,y form a pair if x / 2 == y / 2
+
+    Output ranges will contain read ids for which its pair id exists in the respective other range
+*/
+template<class InputIt1, class InputIt2,
+         class OutputIt1, class OutputIt2>
+std::pair<OutputIt1, OutputIt2> findPairedReadIds(
+    InputIt1 first1, 
+    InputIt1 last1,
+    InputIt2 first2, 
+    InputIt2 last2,
+    OutputIt1 d_first1, 
+    OutputIt2 d_first2
+){
+
+    auto isSameReadPairInOtherRange = [](const auto& l, const auto& r){
+        return l / 2 == r / 2;
+    };
+
+    auto isSameReadPairInSameRange1 = [](const auto& l, const auto& r){
+        return l / 2 == r / 2;
+    };
+
+    auto isSameReadPairInSameRange2 = [](const auto& l, const auto& r){
+        return l / 2 == r / 2;
+    };
+
+    auto lessThan12 = [](const auto& l, const auto& r){
+        return l < r;
+    };
+
+    auto lessThan21 = [](const auto& l, const auto& r){
+        return l < r;
+    };
+
+    return flagPairedCandidates(
+        first1, 
+        last1,
+        first2, 
+        last2,
+        d_first1, 
+        d_first2, 
+        isSameReadPairInOtherRange,
+        isSameReadPairInSameRange1,
+        isSameReadPairInSameRange2,
+        lessThan12,
+        lessThan21
+    );
+}
+
 
 
 #endif

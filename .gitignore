@@ -1,9 +1,14 @@
-buildcpu/
-buildgpu/
+build_correct_cpu/
+build_correct_gpu/
+build_extend_cpu/
+build_extend_gpu/
 care-cpu
 care-gpu
+care-extend-cpu
+care-extend-gpu
 care-cpu-debug
 care-gpu-debug
+findgpus
 .CUB_INCDIR
 .CUDA_DIR
 .PREFIX
@@ -12,3 +17,4 @@ evaluationtool/arteval
 evaluationtool/artevalsmallercorrected
 evaluationtool/findkmersingenome
 evaluationtool/findmissingkmers
+.vscode

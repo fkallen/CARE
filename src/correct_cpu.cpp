@@ -1,30 +1,28 @@
 
-//#include <cpu_correction_thread.hpp>
-
-#include <correctionresultprocessing.hpp>
 
 #include <config.hpp>
 
-#include "options.hpp"
-
-#include <minhasher.hpp>
-#include <readstorage.hpp>
-#include "cpu_alignment.hpp"
-#include "bestalignment.hpp"
+#include <options.hpp>
+#include <cpureadstorage.hpp>
+#include <cpu_alignment.hpp>
+#include <alignmentorientation.hpp>
 #include <msa.hpp>
-#include "qualityscoreweights.hpp"
-#include "rangegenerator.hpp"
+#include <qualityscoreweights.hpp>
+#include <rangegenerator.hpp>
+#include <correctedsequence.hpp>
 
 #include <threadpool.hpp>
-#include <memoryfile.hpp>
+#include <serializedobjectstorage.hpp>
 #include <util.hpp>
 #include <filehelpers.hpp>
 #include <hostdevicefunctions.cuh>
 
+#include <classification.hpp>
 
-#define ENABLE_CPU_CORRECTOR_TIMING
+
+//#define ENABLE_CPU_CORRECTOR_TIMING
 #include <corrector.hpp>
-
+#include <cpuminhasher.hpp>
 
 #include <array>
 #include <chrono>
@@ -39,31 +37,25 @@
 
 #include <omp.h>
 
-
+#include <thrust/iterator/counting_iterator.h>
 
 
 namespace care{
 namespace cpu{
 
 
-MemoryFileFixedSize<EncodedTempCorrectedSequence>
-correct_cpu(
-    const GoodAlignmentProperties& goodAlignmentProperties,
-    const CorrectionOptions& correctionOptions,
-    const RuntimeOptions& runtimeOptions,
-    const FileOptions& fileOptions,
-    const MemoryOptions& memoryOptions,
-    const SequenceFileProperties& sequenceFileProperties,
-    Minhasher& minhasher,
-    cpu::ContiguousReadStorage& readStorage
+SerializedObjectStorage correct_cpu(
+    const ProgramOptions& programOptions,
+    CpuMinhasher& minhasher,
+    CpuReadStorage& readStorage
 ){
 
-    omp_set_num_threads(runtimeOptions.threads);
+    omp_set_num_threads(programOptions.threads);
 
     const auto rsMemInfo = readStorage.getMemoryInfo();
     const auto mhMemInfo = minhasher.getMemoryInfo();
 
-    std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
+    std::size_t memoryAvailableBytesHost = programOptions.memoryTotalLimit;
     if(memoryAvailableBytesHost > rsMemInfo.host){
         memoryAvailableBytesHost -= rsMemInfo.host;
     }else{
@@ -76,7 +68,7 @@ correct_cpu(
     }
 
 
-    CpuErrorCorrector::ReadCorrectionFlags correctionFlags(sequenceFileProperties.nReads);
+    ReadCorrectionFlags correctionFlags(readStorage.getNumberOfReads());
 
 
     std::cerr << "correctionStatusFlagsPerRead bytes: " << correctionFlags.sizeInBytes() / 1024. / 1024. << " MB\n";
@@ -94,86 +86,89 @@ correct_cpu(
         memoryForPartialResultsInBytes = availableMemoryInBytes - 2*(std::size_t(1) << 30);
     }
 
-    const std::string tmpfilename{fileOptions.tempdirectory + "/" + "MemoryFileFixedSizetmp"};
-    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfilename);
+    std::cerr << "Partial results may occupy " << (memoryForPartialResultsInBytes /1024. / 1024. / 1024.) 
+        << " GB in memory. Remaining partial results will be stored in temp directory. \n";
 
+    const std::size_t memoryLimitData = memoryForPartialResultsInBytes * 0.75;
+    const std::size_t memoryLimitOffsets = memoryForPartialResultsInBytes * 0.25;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    //cpu::RangeGenerator<read_number> readIdGenerator(1000000); 
+    SerializedObjectStorage partialResults(memoryLimitData, memoryLimitOffsets, programOptions.tempdirectory + "/");
+
+    const std::size_t numReadsToProcess = getNumReadsToProcess(&readStorage, programOptions);
+
+    IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(
+        thrust::make_counting_iterator<read_number>(0),
+        thrust::make_counting_iterator<read_number>(0) + numReadsToProcess
+    );
     
-    auto saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
-        //std::unique_lock<std::mutex> l(outputstreammutex);
-        //std::cerr << tmp.readId  << " hq " << tmp.hq << " " << "useedits " << tmp.useEdits << " emptyedits " << tmp.edits.empty() << "\n";
-        if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
-            //std::cerr << tmp.readId << " " << tmp << '\n';
-            partialResults.storeElement(std::move(encoded));
-        }
-    };
-
     BackgroundThread outputThread(true);
+    outputThread.setMaximumQueueSize(programOptions.threads);
 
     CpuErrorCorrector::TimeMeasurements timingsOfAllThreads;
+
+    ClfAgent clfAgent_(programOptions);
     
     auto showProgress = [&](auto totalCount, auto seconds){
-        if(runtimeOptions.showProgress){
+        if(programOptions.showProgress){
+            std::size_t totalNumReads = numReadsToProcess;
 
             printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
-                    totalCount, sequenceFileProperties.nReads,
+                    totalCount, totalNumReads,
                     int(seconds / 3600),
                     int(seconds / 60) % 60,
                     int(seconds) % 60);
             std::cout.flush();
-        }
 
-        if(totalCount == sequenceFileProperties.nReads){
-            std::cerr << '\n';
-        }
+            if(totalCount == totalNumReads){
+                std::cout << '\n';
+            }
+        }        
     };
 
     auto updateShowProgressInterval = [](auto duration){
         return duration;
     };
 
-    ProgressThread<read_number> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
-
-    const int numThreads = runtimeOptions.threads;
+    ProgressThread<read_number> progressThread(numReadsToProcess, showProgress, updateShowProgressInterval);
 
     #pragma omp parallel
     {
         //const int threadId = omp_get_thread_num();
 
-        const std::size_t encodedSequencePitchInInts2Bit = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
-        const std::size_t decodedSequencePitchInBytes = sequenceFileProperties.maxSequenceLength;
-        const std::size_t qualityPitchInBytes = sequenceFileProperties.maxSequenceLength;
+        ClfAgent clfAgent = clfAgent_;
+        const std::size_t encodedSequencePitchInInts2Bit = SequenceHelpers::getEncodedNumInts2Bit(readStorage.getSequenceLengthUpperBound());
+        const std::size_t decodedSequencePitchInBytes = readStorage.getSequenceLengthUpperBound();
+        const std::size_t qualityPitchInBytes = readStorage.getSequenceLengthUpperBound();
+
+        const int myBatchsize = std::max((readStorage.isPairedEnd() ? 2 : 1), programOptions.batchsize);
 
         CpuErrorCorrector errorCorrector(
             encodedSequencePitchInInts2Bit,
             decodedSequencePitchInBytes,
             qualityPitchInBytes,
-            correctionOptions,
-            goodAlignmentProperties,
+            programOptions,
             minhasher,
             readStorage,
-            correctionFlags
+            correctionFlags,
+            clfAgent
         );
 
-        ContiguousReadStorage::GatherHandle readStorageGatherHandle;
-
-        std::vector<read_number> batchReadIds(correctionOptions.batchsize);
-        std::vector<unsigned int> batchEncodedData(correctionOptions.batchsize * encodedSequencePitchInInts2Bit);
-        std::vector<char> batchQualities(correctionOptions.batchsize * qualityPitchInBytes);
-        std::vector<int> batchReadLengths(correctionOptions.batchsize);    
+        std::vector<read_number> batchReadIds(myBatchsize);
+        std::vector<unsigned int> batchEncodedData(myBatchsize * encodedSequencePitchInInts2Bit);
+        std::vector<char> batchQualities(myBatchsize * qualityPitchInBytes);
+        std::vector<int> batchReadLengths(myBatchsize);    
 
         while(!(readIdGenerator.empty())){
 
-            batchReadIds.resize(correctionOptions.batchsize);
+            batchReadIds.resize(myBatchsize);
 
-            auto readIdsEnd = readIdGenerator.next_n_into_buffer(
-                correctionOptions.batchsize, 
-                batchReadIds.begin()
+            readIdGenerator.process_next_n(
+                myBatchsize, 
+                [&](auto begin, auto end){
+                    auto readIdsEnd = std::copy(begin, end, batchReadIds.begin());
+                    batchReadIds.erase(readIdsEnd, batchReadIds.end());
+                }
             );
-            
-            batchReadIds.erase(readIdsEnd, batchReadIds.end());
 
             if(batchReadIds.empty()){
                 continue;
@@ -182,85 +177,126 @@ correct_cpu(
             //collect input data of all reads in batch
 
             readStorage.gatherSequenceLengths(
-                readStorageGatherHandle,
+                batchReadLengths.data(),
                 batchReadIds.data(),
-                batchReadIds.size(),
-                batchReadLengths.data()
+                batchReadIds.size()
             );
 
-            readStorage.gatherSequenceData(
-                readStorageGatherHandle,
-                batchReadIds.data(),
-                batchReadIds.size(),
+            readStorage.gatherSequences(
                 batchEncodedData.data(),
-                encodedSequencePitchInInts2Bit
+                encodedSequencePitchInInts2Bit,
+                batchReadIds.data(),
+                batchReadIds.size()
             );
 
-            if(correctionOptions.useQualityScores){
-                readStorage.gatherSequenceQualities(
-                    readStorageGatherHandle,
-                    batchReadIds.data(),
-                    batchReadIds.size(),
+            if(programOptions.useQualityScores){
+                readStorage.gatherQualities(
                     batchQualities.data(),
-                    qualityPitchInBytes
+                    qualityPitchInBytes,
+                    batchReadIds.data(),
+                    batchReadIds.size()
                 );
             }
 
-            std::vector<TempCorrectedSequence> anchorCorrections;
-            std::vector<TempCorrectedSequence> candidateCorrections;
-            std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
-            std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
+            CorrectionOutput correctionOutput;
 
-            for(size_t i = 0; i < batchReadIds.size(); i++){
-                const read_number readId = batchReadIds[i];
+            if(readStorage.isPairedEnd()){
+                assert(batchReadIds.size() % 2 == 0);
 
-                CpuErrorCorrector::CorrectionInput input;
-                input.anchorReadId = readId;
-                input.encodedAnchor = batchEncodedData.data() + i * encodedSequencePitchInInts2Bit;
-                input.anchorQualityscores = batchQualities.data() + i * qualityPitchInBytes;
-                input.anchorLength = batchReadLengths[i];
+                CpuErrorCorrectorMultiInput input{};
+                input.anchorLengths.resize(batchReadIds.size());
+                input.anchorReadIds.resize(batchReadIds.size());
+                input.encodedAnchors.resize(batchReadIds.size());
+                input.anchorQualityscores.resize(batchReadIds.size());
 
-                auto output = errorCorrector.process(input);
-
-                if(output.hasAnchorCorrection){
-                    encodedAnchorCorrections.emplace_back(output.anchorCorrection.encode());
-                    anchorCorrections.emplace_back(std::move(output.anchorCorrection));
+                for(size_t i = 0; i < batchReadIds.size(); i++){
+                    input.anchorReadIds[i] = batchReadIds[i];
+                    input.encodedAnchors[i] = batchEncodedData.data() + i * encodedSequencePitchInInts2Bit;
+                    input.anchorQualityscores[i] = batchQualities.data() + i * qualityPitchInBytes;
+                    input.anchorLengths[i] = batchReadLengths[i];
                 }
 
-                for(auto& tmp : output.candidateCorrections){
-                    encodedCandidateCorrections.emplace_back(tmp.encode());
-                    candidateCorrections.emplace_back(std::move(tmp));
+                auto outputs = errorCorrector.processMulti(input);
+
+                for(auto& output : outputs){
+
+                    if(output.hasAnchorCorrection){
+                        correctionOutput.anchorCorrections.emplace_back(std::move(output.anchorCorrection));
+                    }
+
+                    for(auto& tmp : output.candidateCorrections){
+                        correctionOutput.candidateCorrections.emplace_back(std::move(tmp));
+                    }
+                }
+
+            }else{
+
+                for(size_t i = 0; i < batchReadIds.size(); i++){
+                    const read_number readId = batchReadIds[i];
+
+                    CpuErrorCorrectorInput input;
+                    input.anchorReadId = readId;
+                    input.encodedAnchor = batchEncodedData.data() + i * encodedSequencePitchInInts2Bit;
+                    input.anchorQualityscores = batchQualities.data() + i * qualityPitchInBytes;
+                    input.anchorLength = batchReadLengths[i];
+
+                    auto output = errorCorrector.process(input);
+
+                    if(output.hasAnchorCorrection){
+                        correctionOutput.anchorCorrections.emplace_back(std::move(output.anchorCorrection));
+                    }
+
+                    for(auto& tmp : output.candidateCorrections){
+                        correctionOutput.candidateCorrections.emplace_back(std::move(tmp));
+                    }
                 }
             }
 
+            EncodedCorrectionOutput encodedCorrectionOutput = correctionOutput;
+
             auto outputfunction = [
                 &, 
-                encodedAnchorCorrections = std::move(encodedAnchorCorrections),
-                anchorCorrections = std::move(anchorCorrections),
-                encodedCandidateCorrections = std::move(encodedCandidateCorrections),
-                candidateCorrections = std::move(candidateCorrections)
+                encodedCorrectionOutput = std::move(encodedCorrectionOutput)
             ](){
-                const int numA = anchorCorrections.size();
-                const int numC = candidateCorrections.size();
+                std::vector<std::uint8_t> tempbuffer(256);
+
+                auto saveEncodedCorrectedSequence = [&](const EncodedTempCorrectedSequence* encoded){
+                    if(!(encoded->isHQ() && encoded->useEdits() && encoded->getNumEdits() == 0)){
+                        const std::size_t serializedSize = encoded->getSerializedNumBytes();
+                        tempbuffer.resize(serializedSize);
+
+                        auto end = encoded->copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
+                        assert(end != nullptr);
+
+                        partialResults.insert(tempbuffer.data(), end);
+                    }
+                };
+
+                const int numA = encodedCorrectionOutput.encodedAnchorCorrections.size();
+                const int numC = encodedCorrectionOutput.encodedCandidateCorrections.size();
 
                 for(int i = 0; i < numA; i++){
-                    saveCorrectedSequence(
-                        std::move(anchorCorrections[i]), 
-                        std::move(encodedAnchorCorrections[i])
+                    saveEncodedCorrectedSequence(
+                        &encodedCorrectionOutput.encodedAnchorCorrections[i]
                     );
                 }
 
                 for(int i = 0; i < numC; i++){
-                    saveCorrectedSequence(
-                        std::move(candidateCorrections[i]), 
-                        std::move(encodedCandidateCorrections[i])
+                    saveEncodedCorrectedSequence(
+                        &encodedCorrectionOutput.encodedCandidateCorrections[i]
                     );
                 }
             };
 
             outputThread.enqueue(std::move(outputfunction));
 
+            clfAgent.flush();
+
             progressThread.addProgress(batchReadIds.size()); 
+
+            // if(omp_get_thread_num() == 0){
+            //     std::cerr << "getCandidatesTimeTotal: " << errorCorrector.getTimings().getCandidatesTimeTotal.count() << "\n";
+            // }
             
         } //while unprocessed reads exist loop end   
 
@@ -275,12 +311,10 @@ correct_cpu(
 
     outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
-    //outputstream.flush();
-    partialResults.flush();
-
     #ifdef ENABLE_CPU_CORRECTOR_TIMING
 
     auto totalDurationOfThreads = timingsOfAllThreads.getSumOfDurations();
+    const int numThreads = programOptions.threads;
 
     auto printDuration = [&](const auto& name, const auto& duration){
         std::cout << "# average time per thread ("<< name << "): "
@@ -290,7 +324,7 @@ correct_cpu(
 
     #define printme(x) printDuration((#x), timingsOfAllThreads.x);
 
-    printme(getSubjectSequenceDataTimeTotal);
+    printme(getAnchorSequenceDataTimeTotal);
     printme(getCandidatesTimeTotal);
     printme(copyCandidateDataToBufferTimeTotal);
     printme(getAlignmentsTimeTotal);
@@ -303,7 +337,7 @@ correct_cpu(
     printme(msaAddSequencesTimeTotal);
     printme(msaFindConsensusTimeTotal);
     printme(msaMinimizationTimeTotal);
-    printme(msaCorrectSubjectTimeTotal);
+    printme(msaCorrectAnchorTimeTotal);
     printme(msaCorrectCandidatesTimeTotal);
 
     #undef printme

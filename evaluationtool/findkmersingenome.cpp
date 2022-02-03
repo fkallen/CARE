@@ -147,9 +147,10 @@ int main(int argc, char** argv){
                 notfound++;
             }
         }
-
-        output << sstream.rdbuf();
-        reset_stringstream();
+        if(sstream.rdbuf()->in_avail() > 0){
+            output << sstream.rdbuf();
+            reset_stringstream();
+        }
     }
     
     std::cerr << "num found " << found << "\n";

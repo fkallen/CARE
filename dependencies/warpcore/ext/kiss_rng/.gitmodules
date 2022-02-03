@@ -1,0 +1,3 @@
+[submodule "ext/cudahelpers"]
+	path = ext/cudahelpers
+	url = https://github.com/gravitino/cudahelpers.git

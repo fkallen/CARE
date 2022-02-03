@@ -4,6 +4,7 @@
 #include <hpc_helpers.cuh>
 #include <config.hpp>
 #include <cassert>
+#include <gpu/cudaerrorcheck.cuh>
 
 namespace care{
 
@@ -109,11 +110,11 @@ GpuBitArray<Index_t> makeGpuBitArray(size_t numBits){
     GpuBitArray<Index_t> array;
     
     const size_t dataElements = SDIV(numBits, 8 * sizeof(Data_t));
-    cudaMalloc(&array.data, sizeof(Data_t) * dataElements); CUERR;
+    CUDACHECK(cudaMalloc(&array.data, sizeof(Data_t) * dataElements));
     array.numBits = numBits;
     array.numAllocatedBytes = dataElements * sizeof(Data_t);
 
-    cudaMemset(array.data, 0, dataElements); CUERR;
+    CUDACHECK(cudaMemset(array.data, 0, dataElements));
 
     return array;
 }
@@ -125,18 +126,18 @@ GpuBitArray<Index_t> makeGpuBitArrayFrom(const CpuBitArray<Index_t>& other){
     GpuBitArray<Index_t> array;
     
     const size_t dataElements = SDIV(other.numBits, 8 * sizeof(Data_t));
-    cudaMalloc(&array.data, sizeof(Data_t) * dataElements); CUERR;
+    CUDACHECK(cudaMalloc(&array.data, sizeof(Data_t) * dataElements));
     array.numBits = other.numBits;
     array.numAllocatedBytes = dataElements * sizeof(Data_t);
 
-    cudaMemcpy(array.data, other.data, sizeof(Data_t) * dataElements, H2D); CUERR
+    CUDACHECK(cudaMemcpy(array.data, other.data, sizeof(Data_t) * dataElements, H2D));
 
     return array;
 }
 
 template<class Index_t>
 void destroyGpuBitArray(GpuBitArray<Index_t>& array){  
-    cudaFree(array.data); CUERR;
+    CUDACHECK(cudaFree(array.data));
     array.data = nullptr;
     array.numBits = 0;
     array.numAllocatedBytes = 0;

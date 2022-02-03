@@ -1,15 +1,15 @@
 #include <msa.hpp>
 #include <hostdevicefunctions.cuh>
-#include <bestalignment.hpp>
+#include <alignmentorientation.hpp>
 
 #include <map>
-
+#include <bitset>
 namespace care{
 
 void MultipleSequenceAlignment::build(const InputData& args){
 
-    assert(args.subjectLength > 0);
-    assert(args.subject != nullptr);
+    assert(args.anchorLength > 0);
+    assert(args.anchor != nullptr);
 
     inputData = args;
     addedSequences = 0;
@@ -18,7 +18,7 @@ void MultipleSequenceAlignment::build(const InputData& args){
 
     //determine number of columns in pileup image
     int startindex = 0;
-    int endindex = args.subjectLength;
+    int endindex = args.anchorLength;
 
     for(int i = 0; i < nCandidates; ++i){
         const int shift = args.candidateShifts[i];
@@ -29,14 +29,14 @@ void MultipleSequenceAlignment::build(const InputData& args){
 
     nColumns = endindex - startindex;
 
-    subjectColumnsBegin_incl = std::max(-startindex,0);
-    subjectColumnsEnd_excl = subjectColumnsBegin_incl + args.subjectLength;
+    anchorColumnsBegin_incl = std::max(-startindex,0);
+    anchorColumnsEnd_excl = anchorColumnsBegin_incl + args.anchorLength;
 
     resize(nColumns);
 
     fillzero();
 
-    addSequence(args.useQualityScores, args.subject, args.subjectQualities, args.subjectLength, 0, 1.0f);
+    addSequence(args.useQualityScores, args.anchor, args.anchorQualities, args.anchorLength, 0, 1.0f);
 
     for(int candidateIndex = 0; candidateIndex < nCandidates; candidateIndex++){
         const char* ptr = args.candidates + candidateIndex * args.candidatesPitch;
@@ -50,7 +50,7 @@ void MultipleSequenceAlignment::build(const InputData& args){
 
     findConsensus();
 
-    findOrigWeightAndCoverage(args.subject);
+    findOrigWeightAndCoverage(args.anchor);
 }
 
 void MultipleSequenceAlignment::resize(int cols){
@@ -95,7 +95,7 @@ void MultipleSequenceAlignment::addSequence(bool useQualityScores, const char* s
     assert(!useQualityScores || quality != nullptr);
 
     for(int i = 0; i < length; i++){
-        const int globalIndex = subjectColumnsBegin_incl + shift + i;
+        const int globalIndex = anchorColumnsBegin_incl + shift + i;
         const char base = sequence[i];
         const float weight = defaultWeightFactor * (useQualityScores ? qualityConversion->getWeight(quality[i]) : 1.0f);
         switch(base){
@@ -117,7 +117,7 @@ void MultipleSequenceAlignment::removeSequence(bool useQualityScores, const char
     assert(!useQualityScores || quality != nullptr);
 
     for(int i = 0; i < length; i++){
-        const int globalIndex = subjectColumnsBegin_incl + shift + i;
+        const int globalIndex = anchorColumnsBegin_incl + shift + i;
         const char base = sequence[i];
         const float weight = defaultWeightFactor * (useQualityScores ? qualityConversion.getWeight(quality[i]) : 1.0f);
         switch(base){
@@ -156,15 +156,15 @@ void MultipleSequenceAlignment::findConsensus(){
     }
 }
 
-void MultipleSequenceAlignment::findOrigWeightAndCoverage(const char* subject){
-    for(int column = subjectColumnsBegin_incl; column < subjectColumnsEnd_excl; ++column){
+void MultipleSequenceAlignment::findOrigWeightAndCoverage(const char* anchor){
+    for(int column = anchorColumnsBegin_incl; column < anchorColumnsEnd_excl; ++column){
 
-        const int localIndex = column - subjectColumnsBegin_incl;
-        const char subjectBase = subject[localIndex];
-        switch(subjectBase){
+        const int localIndex = column - anchorColumnsBegin_incl;
+        const char anchorBase = anchor[localIndex];
+        switch(anchorBase){
             case 'A':origWeights[column] = weightsA[column]; origCoverages[column] = countsA[column]; break;
-            case 'C':origWeights[column] = weightsG[column]; origCoverages[column] = countsC[column]; break;
-            case 'G':origWeights[column] = weightsC[column]; origCoverages[column] = countsG[column]; break;
+            case 'C':origWeights[column] = weightsC[column]; origCoverages[column] = countsC[column]; break;
+            case 'G':origWeights[column] = weightsG[column]; origCoverages[column] = countsG[column]; break;
             case 'T':origWeights[column] = weightsT[column]; origCoverages[column] = countsT[column]; break;
             default: assert(false); break;
         }
@@ -191,15 +191,15 @@ void MultipleSequenceAlignment::print(std::ostream& os) const{
         if(sortedrow == 0){
             os << ">> ";
 
-            for(int i = 0; i < subjectColumnsBegin_incl; i++){
+            for(int i = 0; i < anchorColumnsBegin_incl; i++){
                 os << "0";
             }
 
-            for(int i = 0; i < inputData.subjectLength; i++){
-                os << inputData.subject[i];
+            for(int i = 0; i < inputData.anchorLength; i++){
+                os << inputData.anchor[i];
             }
 
-            for(int i = subjectColumnsEnd_excl; i < nColumns; i++){
+            for(int i = anchorColumnsEnd_excl; i < nColumns; i++){
                 os << "0";
             }
 
@@ -207,7 +207,7 @@ void MultipleSequenceAlignment::print(std::ostream& os) const{
         }else{
             os << "   ";
             int written = 0;
-            for(int i = 0; i < subjectColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
+            for(int i = 0; i < anchorColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
                 os << "0";
                 written++;
             }
@@ -217,7 +217,7 @@ void MultipleSequenceAlignment::print(std::ostream& os) const{
                 written++;
             }
 
-            for(int i = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) 
+            for(int i = anchorColumnsBegin_incl + get_shift_of_row(sortedrow) 
                         + inputData.candidateLengths[sortedrow-1]; 
                     i < nColumns; i++){
                 os << "0";
@@ -252,17 +252,17 @@ void MultipleSequenceAlignment::printWithDiffToConsensus(std::ostream& os) const
         if(sortedrow == 0){
             os << ">> ";
 
-            for(int i = 0; i < subjectColumnsBegin_incl; i++){
+            for(int i = 0; i < anchorColumnsBegin_incl; i++){
                 os << "0";
             }
 
-            for(int i = 0; i < inputData.subjectLength; i++){
-                const int globalIndex = subjectColumnsBegin_incl + i;
-                const char c = consensus[globalIndex] == inputData.subject[i] ? '=' : inputData.subject[i];
+            for(int i = 0; i < inputData.anchorLength; i++){
+                const int globalIndex = anchorColumnsBegin_incl + i;
+                const char c = consensus[globalIndex] == inputData.anchor[i] ? '=' : inputData.anchor[i];
                 os << c;
             }
 
-            for(int i = subjectColumnsEnd_excl; i < nColumns; i++){
+            for(int i = anchorColumnsEnd_excl; i < nColumns; i++){
                 os << "0";
             }
 
@@ -270,13 +270,13 @@ void MultipleSequenceAlignment::printWithDiffToConsensus(std::ostream& os) const
         }else{
             os << "   ";
             int written = 0;
-            for(int i = 0; i < subjectColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
+            for(int i = 0; i < anchorColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
                 os << "0";
                 written++;
             }
 
             for(int i = 0; i < inputData.candidateLengths[sortedrow-1]; i++){
-                const int globalIndex = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) + i;
+                const int globalIndex = anchorColumnsBegin_incl + get_shift_of_row(sortedrow) + i;
                 const char base = inputData.candidates[(sortedrow-1) * inputData.candidatesPitch + i];
                 const char c = consensus[globalIndex] == base ? '=' : base;
 
@@ -284,7 +284,7 @@ void MultipleSequenceAlignment::printWithDiffToConsensus(std::ostream& os) const
                 written++;
             }
 
-            for(int i = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) 
+            for(int i = anchorColumnsBegin_incl + get_shift_of_row(sortedrow) 
                         + inputData.candidateLengths[sortedrow-1]; 
                     i < nColumns; i++){
                 os << "0";
@@ -315,8 +315,8 @@ MSAProperties MultipleSequenceAlignment::getMSAProperties(
     const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
     const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
 
-    //const int firstCol = subjectColumnsBegin_incl; //0;
-    //const int lastCol = subjectColumnsEnd_excl; //nColumns; //exclusive
+    //const int firstCol = anchorColumnsBegin_incl; //0;
+    //const int lastCol = anchorColumnsEnd_excl; //nColumns; //exclusive
     const int distance = lastCol - firstCol;
 
     MSAProperties msaProperties;
@@ -376,12 +376,12 @@ MSAProperties MultipleSequenceAlignment::getMSAProperties(
 }
 
 
-CorrectionResult MultipleSequenceAlignment::getCorrectedSubject(
+CorrectionResult MultipleSequenceAlignment::getCorrectedAnchor(
     MSAProperties msaProperties,
     float estimatedErrorrate,
     float estimatedCoverage,
     float m_coverage,
-    int neighborRegionSize,
+    int /*neighborRegionSize*/,
     read_number /* readId*/
 ) const {
 
@@ -420,7 +420,7 @@ CorrectionResult MultipleSequenceAlignment::getCorrectedSubject(
 
     CorrectionResult result{};
     result.isCorrected = false;
-    result.correctedSequence.resize(inputData.subjectLength);
+    result.correctedSequence.resize(inputData.anchorLength);
 
     result.isCorrected = true;
 
@@ -433,18 +433,18 @@ CorrectionResult MultipleSequenceAlignment::getCorrectedSubject(
 
     if(flag > 0){
         std::copy_n(
-            consensus.data() + subjectColumnsBegin_incl,
-            inputData.subjectLength,
+            consensus.data() + anchorColumnsBegin_incl,
+            inputData.anchorLength,
             result.correctedSequence.begin()
         );
     }else{
         //correct only positions with high support to consensus, else leave position unchanged.
-        for(int i = 0; i < inputData.subjectLength; i += 1){
+        for(int i = 0; i < inputData.anchorLength; i += 1){
             //assert(consensus[i] == 'A' || consensus[i] == 'C' || consensus[i] == 'G' || consensus[i] == 'T');
-            if(support[subjectColumnsBegin_incl + i] > 0.90f && origCoverages[subjectColumnsBegin_incl + i] <= 2){
-                result.correctedSequence[i] = consensus[subjectColumnsBegin_incl + i];
+            if(support[anchorColumnsBegin_incl + i] > 0.90f && origCoverages[anchorColumnsBegin_incl + i] <= 2){
+                result.correctedSequence[i] = consensus[anchorColumnsBegin_incl + i];
             }else{
-                result.correctedSequence[i] = inputData.subject[i];
+                result.correctedSequence[i] = inputData.anchor[i];
             }
         }
     }
@@ -470,23 +470,23 @@ std::vector<CorrectedCandidate> MultipleSequenceAlignment::getCorrectedCandidate
 
     for(int candidate_index = 0; candidate_index < inputData.nCandidates; ++candidate_index){
 
-        const int queryColumnsBegin_incl = subjectColumnsBegin_incl + inputData.candidateShifts[candidate_index];
+        const int queryColumnsBegin_incl = anchorColumnsBegin_incl + inputData.candidateShifts[candidate_index];
         const int candidateLength = inputData.candidateLengths[candidate_index];
         const int queryColumnsEnd_excl = queryColumnsBegin_incl + candidateLength;
 
         bool candidateShouldBeCorrected = false;
 
         //check range condition and length condition
-        if(subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
-            && queryColumnsBegin_incl <= subjectColumnsBegin_incl + new_columns_to_correct
-            && queryColumnsEnd_excl <= subjectColumnsEnd_excl + new_columns_to_correct){
+        if(anchorColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
+            && queryColumnsBegin_incl <= anchorColumnsBegin_incl + new_columns_to_correct
+            && queryColumnsEnd_excl <= anchorColumnsEnd_excl + new_columns_to_correct){
 
             float newColMinSupport = 1.0f;
             int newColMinCov = std::numeric_limits<int>::max();
 
-            //check new columns left of subject
-            for(int columnindex = subjectColumnsBegin_incl - new_columns_to_correct;
-                columnindex < subjectColumnsBegin_incl;
+            //check new columns left of anchor
+            for(int columnindex = anchorColumnsBegin_incl - new_columns_to_correct;
+                columnindex < anchorColumnsBegin_incl;
                 columnindex++){
 
                 assert(columnindex < nColumns);
@@ -496,9 +496,9 @@ std::vector<CorrectedCandidate> MultipleSequenceAlignment::getCorrectedCandidate
                     newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
                 }
             }
-            //check new columns right of subject
-            for(int columnindex = subjectColumnsEnd_excl;
-                columnindex < subjectColumnsEnd_excl + new_columns_to_correct
+            //check new columns right of anchor
+            for(int columnindex = anchorColumnsEnd_excl;
+                columnindex < anchorColumnsEnd_excl + new_columns_to_correct
                 && columnindex < nColumns;
                 columnindex++){
 
@@ -549,17 +549,17 @@ RegionSelectionResult MultipleSequenceAlignment::findCandidatesOfDifferentRegion
     int consindex = 0;
 
     //if anchor has no mismatch to consensus, don't minimize
-    auto pair = std::mismatch(inputData.subject,
-                                inputData.subject + inputData.subjectLength,
-                                consensus.data() + subjectColumnsBegin_incl);
+    auto pair = std::mismatch(inputData.anchor,
+                                inputData.anchor + inputData.anchorLength,
+                                consensus.data() + anchorColumnsBegin_incl);
 
-    if(pair.first == inputData.subject + inputData.subjectLength){
+    if(pair.first == inputData.anchor + inputData.anchorLength){
         RegionSelectionResult result;
         result.performedMinimization = false;
         return result;
     }
 
-    for(int columnindex = subjectColumnsBegin_incl; columnindex < subjectColumnsEnd_excl && !foundColumn; columnindex++){
+    for(int columnindex = anchorColumnsBegin_incl; columnindex < anchorColumnsEnd_excl && !foundColumn; columnindex++){
         std::array<int,4> counts;
         //std::array<float,4> weights;
 
@@ -583,7 +583,7 @@ RegionSelectionResult MultipleSequenceAlignment::findCandidatesOfDifferentRegion
             case 'T': consindex = 3;break;
         }
 
-        //const char originalbase = subject[columnindex - columnProperties.subjectColumnsBegin_incl];
+        //const char originalbase = anchor[columnindex - columnProperties.anchorColumnsBegin_incl];
 
         //find out if there is a non-consensus base with significant coverage
         int significantBaseIndex = -1;
@@ -621,7 +621,7 @@ RegionSelectionResult MultipleSequenceAlignment::findCandidatesOfDifferentRegion
         result.differentRegionCandidate.resize(nCandidates);
 
         //compare found base to original base
-        const char originalbase = inputData.subject[col - subjectColumnsBegin_incl];
+        const char originalbase = inputData.anchor[col - anchorColumnsBegin_incl];
 
         result.significantBase = foundBase;
         result.originalBase = originalbase;
@@ -643,7 +643,7 @@ RegionSelectionResult MultipleSequenceAlignment::findCandidatesOfDifferentRegion
 
             for(int candidateIndex = 0; candidateIndex < nCandidates; candidateIndex++){
                 //check if row is affected by column col
-                const int row_begin_incl = subjectColumnsBegin_incl + inputData.candidateShifts[candidateIndex];
+                const int row_begin_incl = anchorColumnsBegin_incl + inputData.candidateShifts[candidateIndex];
                 const int row_end_excl = row_begin_incl + inputData.candidateLengths[candidateIndex];
                 const bool notAffected = (col < row_begin_incl || row_end_excl <= col);
                 const char base = notAffected ? 'F' : inputData.candidates[candidateIndex * inputData.candidatesPitch + (col - row_begin_incl)];
@@ -664,7 +664,13 @@ RegionSelectionResult MultipleSequenceAlignment::findCandidatesOfDifferentRegion
                 if(base == 'G') seenCounts[2]++;
                 if(base == 'T') seenCounts[3]++;
 
-                if(notAffected || (!(keepMatching ^ (base == foundBase)))){
+                if(notAffected){
+                    result.differentRegionCandidate[candidateIndex] = false;
+                }else if(keepMatching && (base == foundBase)){
+                    //keep candidates which match the found base
+                    result.differentRegionCandidate[candidateIndex] = false;
+                }else if(!keepMatching && (base != foundBase)){
+                    //keep candidates which do not match the found base
                     result.differentRegionCandidate[candidateIndex] = false;
                 }else{
                     result.differentRegionCandidate[candidateIndex] = true;
@@ -732,15 +738,13 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
     return inspectColumnsRegionSplit(firstColumn, nColumns);
 }
 
-
-
-
 MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectColumnsRegionSplit(int firstColumn, int lastColumnExcl) const{
     assert(lastColumnExcl >= 0);
     assert(lastColumnExcl <= nColumns);
 
     std::vector<PossibleSplitColumn> possibleColumns;
 
+    //find columns in which two different nucleotides each make up approx 50% (40% - 60%) of the column
     for(int col = firstColumn; col < lastColumnExcl; col++){
         std::array<PossibleSplitColumn, 4> array{};
         int numPossibleNucs = 0;
@@ -773,9 +777,17 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
 
         //calculate proper results
         {
-            //std::map<unsigned int, std::pair<std::vector<PossibleSplitColumn>, std::vector<int>>> map;
-            std::map<unsigned int, std::vector<int>> map;
+            
 
+            //for each candidate check if it appears in the selected columns
+            //there can be at most 16 selected columns.the result is bit-encoded in 32 bits, 2 bits per column
+            //0b10 - candidate base matches first selected nuc in column
+            //0b11 - candidate base matches second selected nuc in column
+            //0b00 - candidate base does not match, or candidate does not occupy column
+
+            //map groups candidates with the same bit pattern
+            std::map<unsigned int, std::vector<int>> map;
+            
             for(int l = 0; l < nCandidates; l++){
                 const int candidateRow = l;
 
@@ -793,7 +805,7 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
                     const PossibleSplitColumn psc1 = possibleColumns[2*k+1];
                     assert(psc0.column == psc1.column);
 
-                    const int candidateColumnsBegin_incl = inputData.candidateShifts[candidateRow] + subjectColumnsBegin_incl;
+                    const int candidateColumnsBegin_incl = inputData.candidateShifts[candidateRow] + anchorColumnsBegin_incl;
                     const int candidateColumnsEnd_excl = inputData.candidateLengths[candidateRow] + candidateColumnsBegin_incl;
                     
                     //column range check for row
@@ -915,7 +927,7 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
                     const PossibleSplitColumn psc1 = possibleColumns[2*k+1];
                     assert(psc0.column == psc1.column);
 
-                    const int candidateColumnsBegin_incl = inputData.candidateShifts[candidateRow] + subjectColumnsBegin_incl;
+                    const int candidateColumnsBegin_incl = inputData.candidateShifts[candidateRow] + anchorColumnsBegin_incl;
                     const int candidateColumnsEnd_excl = inputData.candidateLengths[candidateRow] + candidateColumnsBegin_incl;
                     
                     //column range check for row
@@ -1063,11 +1075,351 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
     //         os << "\n";
     //     }
     // }
+
 }
 
+std::vector<MultipleSequenceAlignment::PossibleSplitColumn> computePossibleSplitColumns(
+    int firstColumn, 
+    int lastColumnExcl,
+    const int* countsA,
+    const int* countsC,
+    const int* countsG,
+    const int* countsT,
+    const int* coverages
+){
+    std::vector<MultipleSequenceAlignment::PossibleSplitColumn> possibleColumns;
+
+    //find columns in which two different nucleotides each make up approx 50% (40% - 60%) of the column
+    for(int col = firstColumn; col < lastColumnExcl; col++){
+        std::array<MultipleSequenceAlignment::PossibleSplitColumn, 4> array{};
+        int numPossibleNucs = 0;
+
+        auto checkNuc = [&](const auto& counts, const char nuc){
+            const float ratio = float(counts[col]) / float(coverages[col]);
+            //if((counts[col] == 2 && fgeq(ratio, 0.4f) && fleq(ratio, 0.6f)) || counts[col] > 2){
+            if(counts[col] >= 2 && fgeq(ratio, 0.4f) && fleq(ratio, 0.6f)){
+                array[numPossibleNucs] = {nuc, col, ratio};
+                numPossibleNucs++;
+            }
+        };
+
+        checkNuc(countsA, 'A');
+        checkNuc(countsC, 'C');
+        checkNuc(countsG, 'G');
+        checkNuc(countsT, 'T');
+
+        
+        if(numPossibleNucs == 2){
+            possibleColumns.insert(possibleColumns.end(), array.begin(), array.begin() + numPossibleNucs);
+        }
+    }
+
+    assert(possibleColumns.size() % 2 == 0);
+
+    return possibleColumns;
+}
+
+MultipleSequenceAlignment::PossibleMsaSplits inspectColumnsRegionSplit(
+    const MultipleSequenceAlignment::PossibleSplitColumn* possibleColumns,
+    int numPossibleColumns,
+    int /*firstColumn*/, 
+    int /*lastColumnExcl*/,
+    int anchorColumnsBegin_incl,
+    int numCandidates,
+    const char* candidates,
+    int decodedSequencePitchBytes,
+    const int* candidateShifts,
+    const int* candidateLengths
+){   
+
+    if(2 <= numPossibleColumns && numPossibleColumns <= 32 && numPossibleColumns % 2 == 0){
+
+        MultipleSequenceAlignment::PossibleMsaSplits result;
+
+        //calculate proper results
+        {
+            
+
+            //for each candidate check if it appears in the selected columns
+            //there can be at most 16 selected columns.the result is bit-encoded in 32 bits, 2 bits per column
+            //0b10 - candidate base matches first selected nuc in column
+            //0b11 - candidate base matches second selected nuc in column
+            //0b00 - candidate base does not match, or candidate does not occupy column
+
+            //map groups candidates with the same bit pattern
+            std::map<unsigned int, std::vector<int>> map;
+            
+            for(int l = 0; l < numCandidates; l++){
+                const int candidateRow = l;
+
+                constexpr int numPossibleColumnsPerFlag = sizeof(unsigned int) * CHAR_BIT / 2;
+
+                unsigned int flags = 0;
+
+                const int numColumnsToCheck = std::min(numPossibleColumnsPerFlag, numPossibleColumns / 2);
+                const char* const candidateString = &candidates[candidateRow * decodedSequencePitchBytes];
+
+                for(int k = 0; k < numColumnsToCheck; k++){
+                    flags <<= 2;
+
+                    const MultipleSequenceAlignment::PossibleSplitColumn psc0 = possibleColumns[2*k+0];
+                    const MultipleSequenceAlignment::PossibleSplitColumn psc1 = possibleColumns[2*k+1];
+                    assert(psc0.column == psc1.column);
+
+                    const int candidateColumnsBegin_incl = candidateShifts[candidateRow] + anchorColumnsBegin_incl;
+                    const int candidateColumnsEnd_excl = candidateLengths[candidateRow] + candidateColumnsBegin_incl;
+                    
+                    //column range check for row
+                    if(candidateColumnsBegin_incl <= psc0.column && psc0.column < candidateColumnsEnd_excl){
+                        const int positionInCandidate = psc0.column - candidateColumnsBegin_incl;
+
+                        if(candidateString[positionInCandidate] == psc0.letter){
+                            flags = flags | 0b10;
+                        }else if(candidateString[positionInCandidate] == psc1.letter){
+                            flags = flags | 0b11;
+                        }else{
+                            flags = flags | 0b00;
+                        } 
+
+                    }else{
+                        flags = flags | 0b00;
+                    } 
+
+                }
+
+                map[flags].emplace_back(l);
+            }
+
+            std::vector<std::pair<unsigned int, std::vector<int>>> flatmap(map.begin(), map.end());
+
+            std::map<unsigned int, std::vector<int>> finalMap;
+
+            const int flatmapsize = flatmap.size();
+            for(int i = 0; i < flatmapsize; i++){
+                //try to merge flatmap[i] with flatmap[k], i < k, if possible
+                const unsigned int flagsToSearch = flatmap[i].first;
+                unsigned int mask = 0;
+                for(int s = 0; s < 16; s++){
+                    if(flagsToSearch >> (2*s+1) & 1){
+                        mask = mask | (0x03 << (2*s));
+                    }
+                }
+
+                //std::cerr << "i = " << i << ", flags = " << std::bitset<32>(flagsToSearch) << ", mask = " << std::bitset<32>(mask) << "\n";
+
+                bool merged = false;
+                for(int k = i+1; k < flatmapsize; k++){
+                    //if both columns are identical not including wildcard columns
+                    if((mask & flatmap[k].first) == flagsToSearch){
+                        //std::cerr << "k = " << k << ", flags = " << std::bitset<32>(flatmap[k].first) << " equal" << "\n";
+                        flatmap[k].second.insert(
+                            flatmap[k].second.end(),
+                            flatmap[i].second.begin(),
+                            flatmap[i].second.end()
+                        );
+
+                        std::sort(flatmap[k].second.begin(), flatmap[k].second.end());
+
+                        flatmap[k].second.erase(
+                            std::unique(flatmap[k].second.begin(), flatmap[k].second.end()),
+                            flatmap[k].second.end()
+                        );
+
+                        merged = true;
+                    }else{
+                        //std::cerr << "k = " << k << ", flags = " << std::bitset<32>(flatmap[k].first) << " not equal" << "\n";
+                    }
+                }
+
+                if(!merged){
+                    finalMap[flatmap[i].first] = std::move(flatmap[i].second);
+                }
+            }
+
+            for(auto& pair : finalMap){
+
+                std::vector<int> listOfCandidates = std::move(pair.second);
+                std::vector<MultipleSequenceAlignment::PossibleSplitColumn> columnInfo;
+
+                const unsigned int flag = pair.first;
+                const int num = numPossibleColumns / 2;
+                for(int i = 0; i < num; i++){
+                    const unsigned int cur = (flag >> (num - i - 1) * 2) & 0b11;
+                    const bool match = (cur & 0b10) == 0b10;
+                    if(match){
+                        const int which = cur & 1;
+                        columnInfo.emplace_back(possibleColumns[2*i + which]);
+                    }
+                }
+
+                result.splits.emplace_back(std::move(columnInfo), std::move(listOfCandidates));                
+            }
+        }
+
+#if 0
+        //calculate sorted and debug prints
+        {
+
+            std::map<unsigned int, std::vector<int>> debugprintmap;
+            std::vector<int> sortedindices(numCandidates);
+            std::iota(sortedindices.begin(), sortedindices.end(), 0);
+
+            auto get_shift_of_row = [&](int k){
+                return candidateShifts[k];
+            };
+
+            std::sort(sortedindices.begin(), sortedindices.end(),
+                    [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
+
+            for(int l = 0; l < numCandidates; l++){
+                const int candidateRow = sortedindices[l];
+
+                constexpr std::size_t numPossibleColumnsPerFlag = sizeof(unsigned int) * CHAR_BIT / 2;
+
+                unsigned int flags = 0;
+
+                const int numColumnsToCheck = std::min(numPossibleColumnsPerFlag, possibleColumns.size() / 2);
+                const char* const candidateString = &candidates[candidateRow * decodedSequencePitchBytes];
+
+                for(int k = 0; k < numColumnsToCheck; k++){
+                    flags <<= 2;
+
+                    const PossibleSplitColumn psc0 = possibleColumns[2*k+0];
+                    const PossibleSplitColumn psc1 = possibleColumns[2*k+1];
+                    assert(psc0.column == psc1.column);
+
+                    const int candidateColumnsBegin_incl = candidateShifts[candidateRow] + anchorColumnsBegin_incl;
+                    const int candidateColumnsEnd_excl = candidateLengths[candidateRow] + candidateColumnsBegin_incl;
+                    
+                    //column range check for row
+                    if(candidateColumnsBegin_incl <= psc0.column && psc0.column < candidateColumnsEnd_excl){
+                        const int positionInCandidate = psc0.column - candidateColumnsBegin_incl;
+
+                        if(candidateString[positionInCandidate] == psc0.letter){
+                            flags = flags | 0b10;
+                        }else if(candidateString[positionInCandidate] == psc1.letter){
+                            flags = flags | 0b11;
+                        }else{
+                            flags = flags | 0b00;
+                        } 
+
+                    }else{
+                        flags = flags | 0b00;
+                    } 
+
+                }
+
+                debugprintmap[flags].emplace_back(l);
+            }
+
+            std::vector<std::pair<unsigned int, std::vector<int>>> flatmap(debugprintmap.begin(), debugprintmap.end());
+
+            std::map<unsigned int, std::vector<int>> finalMap;
+
+            const int flatmapsize = flatmap.size();
+            for(int i = 0; i < flatmapsize; i++){
+                //try to merge flatmap[i] with flatmap[k], i < k, if possible
+                const unsigned int flagsToSearch = flatmap[i].first;
+                unsigned int mask = 0;
+                for(int s = 0; s < 16; s++){
+                    if(flagsToSearch >> (2*s+1) & 1){
+                        mask = mask | (0x03 << (2*s));
+                    }
+                }
+
+                //std::cerr << "i = " << i << ", flags = " << std::bitset<32>(flagsToSearch) << ", mask = " << std::bitset<32>(mask) << "\n";
+
+                bool merged = false;
+                for(int k = i+1; k < flatmapsize; k++){
+                    //if both columns are identical not including wildcard columns
+                    if((mask & flatmap[k].first) == flagsToSearch){
+                        //std::cerr << "k = " << k << ", flags = " << std::bitset<32>(flatmap[k].first) << " equal" << "\n";
+                        flatmap[k].second.insert(
+                            flatmap[k].second.end(),
+                            flatmap[i].second.begin(),
+                            flatmap[i].second.end()
+                        );
+
+                        std::sort(flatmap[k].second.begin(), flatmap[k].second.end());
+
+                        flatmap[k].second.erase(
+                            std::unique(flatmap[k].second.begin(), flatmap[k].second.end()),
+                            flatmap[k].second.end()
+                        );
+
+                        merged = true;
+                    }else{
+                        //std::cerr << "k = " << k << ", flags = " << std::bitset<32>(flatmap[k].first) << " not equal" << "\n";
+                    }
+                }
+
+                if(!merged){
+                    finalMap[flatmap[i].first] = std::move(flatmap[i].second);
+                }
+            }
+
+            auto printMap = [&](const auto& map){
+                for(const auto& pair : map){
+                    const unsigned int flag = pair.first;
+                    //convert flag to position and nuc
+                    const int num = numPossibleColumns / 2;
+
+                    std::cerr << "flag " << flag << " : ";
+                    for(int i = 0; i < num; i++){
+                        const unsigned int cur = (flag >> (num - i - 1) * 2) & 0b11;
+                        const bool match = (cur & 0b10) == 0b10;
+                        const int column = possibleColumns[2*i].column;
+                        char nuc = '-';
+                        if(match){
+                            int which = cur & 1;
+                            nuc = possibleColumns[2*i + which].letter;
+                        }
+                        std::cerr << "(" << nuc << ", " << column << ") ";
+                    }
+                    std::cerr << ": ";
+
+                    for(int c : pair.second){
+                        std::cerr << c << " ";
+                    }
+                    std::cerr << "\n";
+                }
+            };
+
+            if(numPossibleColumns > 0){
+                std::cerr << numPossibleColumns << "\n";
+                for(const auto& p : possibleColumns){
+                    std::cerr << "{" << p.letter << ", " << p.column << ", " << p.ratio << "} ";
+                }
+                std::cerr << "\n";
+                
+                printMap(debugprintmap);
+
+                std::cerr << "final map: \n";
+
+                printMap(finalMap);
+                std::cerr << "\n";
+
+                // print(std::cerr);
+                // std::cerr << "\n";
+            }
+        }
+#endif    
+        return result;
+    }else{
+        // single split with all candidates
+        std::vector<int> listOfCandidates(numCandidates);
+        std::iota(listOfCandidates.begin(), listOfCandidates.end(), 0);
+
+        MultipleSequenceAlignment::PossibleMsaSplits result;
+
+        std::vector<MultipleSequenceAlignment::PossibleSplitColumn> columnInfo;
 
 
-
+        result.splits.emplace_back(std::move(columnInfo), std::move(listOfCandidates));
+        
+        return result;
+    }
+}
 
 
 }

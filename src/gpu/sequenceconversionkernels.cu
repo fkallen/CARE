@@ -1,8 +1,8 @@
 #include <gpu/kernels.hpp>
-
+#include <gpu/cudaerrorcheck.cuh>
 #include <hpc_helpers.cuh>
 #include <config.hpp>
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 
 #include <cassert>
 #include <cooperative_groups.h>
@@ -28,19 +28,8 @@ void checkSequenceConversionKernel(const unsigned int* const __restrict__ normal
         Trafo2Bit trafo2Bit,
         Trafo2BitHilo trafo2BitHilo){
 
-    constexpr char A_enc = 0x00;
-    constexpr char C_enc = 0x01;
-    constexpr char G_enc = 0x02;
-    constexpr char T_enc = 0x03;
-
-    auto to_nuc = [](char c){
-        switch(c){
-        case A_enc: return 'A';
-        case C_enc: return 'C';
-        case G_enc: return 'G';
-        case T_enc: return 'T';
-        default: assert(false); return 'F';
-        }
+    auto to_nuc = [](std::uint8_t enc){
+        return SequenceHelpers::decodeBase(enc);
     };
 
     //use one block per sequence
@@ -50,9 +39,9 @@ void checkSequenceConversionKernel(const unsigned int* const __restrict__ normal
         const unsigned int* const hiloSeq = hiloData + first2BitHilo(index);    
         
         for(int p = threadIdx.x; p < sequenceLength; p += blockDim.x){
-            char encnormal = getEncodedNuc2Bit(normalSeq, sequenceLength, p, trafo2Bit);
+            std::uint8_t encnormal = SequenceHelpers::getEncodedNuc2Bit(normalSeq, sequenceLength, p, trafo2Bit);
             char basenormal = to_nuc(encnormal);
-            char enchilo = getEncodedNuc2BitHiLo(hiloSeq, sequenceLength, p, trafo2BitHilo);
+            std::uint8_t enchilo = SequenceHelpers::getEncodedNuc2BitHiLo(hiloSeq, sequenceLength, p, trafo2BitHilo);
             char basehilo = to_nuc(enchilo);
             if(basenormal != basehilo){
                 printf("error seq %d position %d, normal %c hilo %c\n", index, p, basenormal, basehilo);
@@ -89,7 +78,7 @@ void callCheckSequenceConversionKernelNN(const unsigned int* normalData,
         first2BitHilo,
         trafo2Bit,
         trafo2BitHilo
-    ); CUERR;
+    ); CUDACHECKASYNC;
 }
 
 void callCheckSequenceConversionKernelNT(const unsigned int* normalData,
@@ -119,7 +108,7 @@ void callCheckSequenceConversionKernelNT(const unsigned int* normalData,
         first2BitHilo,
         trafo2Bit,
         trafo2BitHilo
-    ); CUERR;
+    ); CUDACHECKASYNC;
 }
 
 void callCheckSequenceConversionKernelTT(const unsigned int* normalData,
@@ -149,7 +138,7 @@ void callCheckSequenceConversionKernelTT(const unsigned int* normalData,
         first2BitHilo,
         trafo2Bit,
         trafo2BitHilo
-    ); CUERR;
+    ); CUDACHECKASYNC;
 }
 
  
@@ -170,15 +159,6 @@ void convert2BitTo2BitHiloKernelNN(
     auto inputTrafo = [&](auto i){return i;};
     auto outputTrafo = [&](auto i){return i;};
 
-    auto extractEvenBits = [](unsigned int x){
-        x = x & 0x55555555;
-        x = (x | (x >> 1)) & 0x33333333;
-        x = (x | (x >> 2)) & 0x0F0F0F0F;
-        x = (x | (x >> 4)) & 0x00FF00FF;
-        x = (x | (x >> 8)) & 0x0000FFFF;
-        return x;
-    };
-
     auto convert = [&](auto group,
                         unsigned int* out,
                         const unsigned int* in,
@@ -186,8 +166,8 @@ void convert2BitTo2BitHiloKernelNN(
                         auto inindextrafo,
                         auto outindextrafo){
 
-        const int inInts = getEncodedNumInts2Bit(length);
-        const int outInts = getEncodedNumInts2BitHiLo(length);
+        const int inInts = SequenceHelpers::getEncodedNumInts2Bit(length);
+        const int outInts = SequenceHelpers::getEncodedNumInts2BitHiLo(length);
 
         unsigned int* const outHi = out;
         unsigned int* const outLo = out + outindextrafo(outInts/2);
@@ -197,8 +177,8 @@ void convert2BitTo2BitHiloKernelNN(
             const int inindex1 = inindextrafo(i*2);
 
             const unsigned int data1 = in[inindex1];
-            const unsigned int even161 = extractEvenBits(data1);
-            const unsigned int odd161 = extractEvenBits(data1 >> 1);
+            const unsigned int even161 = SequenceHelpers::extractEvenBits(data1);
+            const unsigned int odd161 = SequenceHelpers::extractEvenBits(data1 >> 1);
 
             unsigned int resultHi = odd161 << 16;
             unsigned int resultLo = even161 << 16;
@@ -207,8 +187,8 @@ void convert2BitTo2BitHiloKernelNN(
                 const int inindex2 = inindextrafo(i*2 + 1);
 
                 const unsigned int data2 = in[inindex2];
-                const unsigned int even162 = extractEvenBits(data2);
-                const unsigned int odd162 = extractEvenBits(data2 >> 1);
+                const unsigned int even162 = SequenceHelpers::extractEvenBits(data2);
+                const unsigned int odd162 = SequenceHelpers::extractEvenBits(data2 >> 1);
 
                 resultHi = resultHi | odd162;
                 resultLo = resultLo | even162;
@@ -255,15 +235,6 @@ void convert2BitTo2BitHiloKernelNT(
     auto inputTrafo = [&](auto i){return i;};
     auto outputTrafo = [&](auto i){return i * numSequences;};
 
-    auto extractEvenBits = [](unsigned int x){
-        x = x & 0x55555555;
-        x = (x | (x >> 1)) & 0x33333333;
-        x = (x | (x >> 2)) & 0x0F0F0F0F;
-        x = (x | (x >> 4)) & 0x00FF00FF;
-        x = (x | (x >> 8)) & 0x0000FFFF;
-        return x;
-    };
-
     auto convert = [&](auto group,
                         unsigned int* out,
                         const unsigned int* in,
@@ -271,8 +242,8 @@ void convert2BitTo2BitHiloKernelNT(
                         auto inindextrafo,
                         auto outindextrafo){
 
-        const int inInts = getEncodedNumInts2Bit(length);
-        const int outInts = getEncodedNumInts2BitHiLo(length);
+        const int inInts = SequenceHelpers::getEncodedNumInts2Bit(length);
+        const int outInts = SequenceHelpers::getEncodedNumInts2BitHiLo(length);
 
         unsigned int* const outHi = out;
         unsigned int* const outLo = out + outindextrafo(outInts/2);
@@ -282,8 +253,8 @@ void convert2BitTo2BitHiloKernelNT(
             const int inindex1 = inindextrafo(i*2);
 
             const unsigned int data1 = in[inindex1];
-            const unsigned int even161 = extractEvenBits(data1);
-            const unsigned int odd161 = extractEvenBits(data1 >> 1);
+            const unsigned int even161 = SequenceHelpers::extractEvenBits(data1);
+            const unsigned int odd161 = SequenceHelpers::extractEvenBits(data1 >> 1);
 
             unsigned int resultHi = odd161 << 16;
             unsigned int resultLo = even161 << 16;
@@ -292,8 +263,8 @@ void convert2BitTo2BitHiloKernelNT(
                 const int inindex2 = inindextrafo(i*2 + 1);
 
                 const unsigned int data2 = in[inindex2];
-                const unsigned int even162 = extractEvenBits(data2);
-                const unsigned int odd162 = extractEvenBits(data2 >> 1);
+                const unsigned int even162 = SequenceHelpers::extractEvenBits(data2);
+                const unsigned int odd162 = SequenceHelpers::extractEvenBits(data2 >> 1);
 
                 resultHi = resultHi | odd162;
                 resultLo = resultLo | even162;
@@ -342,15 +313,6 @@ void convert2BitTo2BitHiloKernelTT(
     auto inputTrafo = [&](auto i){return i * numSequences;};
     auto outputTrafo = [&](auto i){return i * numSequences;};
 
-    auto extractEvenBits = [](unsigned int x){
-        x = x & 0x55555555;
-        x = (x | (x >> 1)) & 0x33333333;
-        x = (x | (x >> 2)) & 0x0F0F0F0F;
-        x = (x | (x >> 4)) & 0x00FF00FF;
-        x = (x | (x >> 8)) & 0x0000FFFF;
-        return x;
-    };
-
     auto convert = [&](auto group,
                         unsigned int* out,
                         const unsigned int* in,
@@ -358,8 +320,8 @@ void convert2BitTo2BitHiloKernelTT(
                         auto inindextrafo,
                         auto outindextrafo){
 
-        const int inInts = getEncodedNumInts2Bit(length);
-        const int outInts = getEncodedNumInts2BitHiLo(length);
+        const int inInts = SequenceHelpers::getEncodedNumInts2Bit(length);
+        const int outInts = SequenceHelpers::getEncodedNumInts2BitHiLo(length);
 
         unsigned int* const outHi = out;
         unsigned int* const outLo = out + outindextrafo(outInts/2);
@@ -369,8 +331,8 @@ void convert2BitTo2BitHiloKernelTT(
             const int inindex1 = inindextrafo(i*2);
 
             const unsigned int data1 = in[inindex1];
-            const unsigned int even161 = extractEvenBits(data1);
-            const unsigned int odd161 = extractEvenBits(data1 >> 1);
+            const unsigned int even161 = SequenceHelpers::extractEvenBits(data1);
+            const unsigned int odd161 = SequenceHelpers::extractEvenBits(data1 >> 1);
 
             unsigned int resultHi = odd161 << 16;
             unsigned int resultLo = even161 << 16;
@@ -379,8 +341,8 @@ void convert2BitTo2BitHiloKernelTT(
                 const int inindex2 = inindextrafo(i*2 + 1);
 
                 const unsigned int data2 = in[inindex2];
-                const unsigned int even162 = extractEvenBits(data2);
-                const unsigned int odd162 = extractEvenBits(data2 >> 1);
+                const unsigned int even162 = SequenceHelpers::extractEvenBits(data2);
+                const unsigned int odd162 = SequenceHelpers::extractEvenBits(data2 >> 1);
 
                 resultHi = resultHi | odd162;
                 resultLo = resultLo | even162;
@@ -422,61 +384,31 @@ void callConversionKernel2BitTo2BitHiLoNN(
         size_t outputpitchInInts,
         const int* d_sequenceLengths,
         const int* d_numSequences,
-        int maxNumSequences,
-        cudaStream_t stream,
-        KernelLaunchHandle& handle){
+        int /*maxNumSequences*/,
+        cudaStream_t stream){
 
     
     constexpr int groupsize = 8;        
     constexpr int blocksize = 128;
     constexpr size_t smem = 0;
     
-    int max_blocks_per_device = 1;
+    int deviceId = 0;
+    int numSMs = 0;
+    int maxBlocksPerSM = 0;
+    CUDACHECK(cudaGetDevice(&deviceId));
+    CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &maxBlocksPerSM,
+        convert2BitTo2BitHiloKernelNN<groupsize>,
+        blocksize, 
+        smem
+    ));
 
-    KernelLaunchConfig kernelLaunchConfig;
-    kernelLaunchConfig.threads_per_block = blocksize;
-    kernelLaunchConfig.smem = smem;
-
-    auto iter = handle.kernelPropertiesMap.find(KernelId::Conversion2BitTo2BitHiLoNN);
-    if(iter == handle.kernelPropertiesMap.end()) {
-
-        std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-        #define getProp(blocksize) { \
-                KernelLaunchConfig kernelLaunchConfig; \
-                kernelLaunchConfig.threads_per_block = (blocksize); \
-                kernelLaunchConfig.smem = 0; \
-                KernelProperties kernelProperties; \
-                cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                    convert2BitTo2BitHiloKernelNN<groupsize>, \
-                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
-                mymap[kernelLaunchConfig] = kernelProperties; \
-        }
-        //getProp(1);
-        getProp(32);
-        getProp(64);
-        getProp(96);
-        getProp(128);
-        getProp(160);
-        getProp(192);
-        getProp(224);
-        getProp(256);
-
-        const auto& kernelProperties = mymap[kernelLaunchConfig];
-        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-        handle.kernelPropertiesMap[KernelId::Conversion2BitTo2BitHiLoNN] = std::move(mymap);
-
-        #undef getProp
-    }else{
-        std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-        const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-    }
+    const int maxBlocks = maxBlocksPerSM * numSMs;
 
     dim3 block(blocksize,1,1);
-    //dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumSequences * groupsize, blocksize)), 1, 1);
-    dim3 grid(max_blocks_per_device, 1, 1);
+    //dim3 grid(std::min(maxBlocks, SDIV(maxNumSequences * groupsize, blocksize)), 1, 1);
+    dim3 grid(maxBlocks, 1, 1);
 
     convert2BitTo2BitHiloKernelNN<groupsize><<<grid, block, 0, stream>>>(
         d_inputdata,
@@ -484,7 +416,7 @@ void callConversionKernel2BitTo2BitHiLoNN(
         d_outputdata,
         outputpitchInInts,
         d_sequenceLengths,
-        d_numSequences); CUERR;
+        d_numSequences); CUDACHECKASYNC;
 
 #ifdef DO_CHECK_CONVERSIONS        
 
@@ -507,59 +439,29 @@ void callConversionKernel2BitTo2BitHiLoNT(
         size_t outputpitchInInts,
         const int* d_sequenceLengths,
         const int* d_numSequences,
-        int maxNumSequences,
-        cudaStream_t stream,
-        KernelLaunchHandle& handle){
-
-    int max_blocks_per_device = 1;
+        int /*maxNumSequences*/,
+        cudaStream_t stream){
 
     constexpr int blocksize = 128;
     constexpr size_t smem = 0;
 
-    KernelLaunchConfig kernelLaunchConfig;
-    kernelLaunchConfig.threads_per_block = blocksize;
-    kernelLaunchConfig.smem = smem;
+    int deviceId = 0;
+    int numSMs = 0;
+    int maxBlocksPerSM = 0;
+    CUDACHECK(cudaGetDevice(&deviceId));
+    CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &maxBlocksPerSM,
+        convert2BitTo2BitHiloKernelNT,
+        blocksize, 
+        smem
+    ));
 
-    auto iter = handle.kernelPropertiesMap.find(KernelId::Conversion2BitTo2BitHiLoNT);
-    if(iter == handle.kernelPropertiesMap.end()) {
-
-        std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-        #define getProp(blocksize) { \
-                KernelLaunchConfig kernelLaunchConfig; \
-                kernelLaunchConfig.threads_per_block = (blocksize); \
-                kernelLaunchConfig.smem = 0; \
-                KernelProperties kernelProperties; \
-                cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                    convert2BitTo2BitHiloKernelNT, \
-                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
-                mymap[kernelLaunchConfig] = kernelProperties; \
-        }
-        getProp(1);
-        getProp(32);
-        getProp(64);
-        getProp(96);
-        getProp(128);
-        getProp(160);
-        getProp(192);
-        getProp(224);
-        getProp(256);
-
-        const auto& kernelProperties = mymap[kernelLaunchConfig];
-        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-        handle.kernelPropertiesMap[KernelId::Conversion2BitTo2BitHiLoNT] = std::move(mymap);
-
-        #undef getProp
-    }else{
-        std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-        const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-    }
+    const int maxBlocks = maxBlocksPerSM * numSMs;
 
     dim3 block(blocksize,1,1);
-    //dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumSequences, blocksize)), 1, 1);
-    dim3 grid(max_blocks_per_device, 1, 1);
+    //dim3 grid(std::min(maxBlocks, SDIV(maxNumSequences, blocksize)), 1, 1);
+    dim3 grid(maxBlocks, 1, 1);
 
     convert2BitTo2BitHiloKernelNT<<<grid, block, 0, stream>>>(
         d_inputdata,
@@ -567,7 +469,7 @@ void callConversionKernel2BitTo2BitHiLoNT(
         d_outputdata,
         outputpitchInInts,
         d_sequenceLengths,
-        d_numSequences); CUERR;
+        d_numSequences); CUDACHECKASYNC;
 
 #if 0    
 
@@ -590,59 +492,29 @@ void callConversionKernel2BitTo2BitHiLoTT(
         size_t outputpitchInInts,
         const int* d_sequenceLengths,
         const int* d_numSequences,
-        int maxNumSequences,
-        cudaStream_t stream,
-        KernelLaunchHandle& handle){
-
-    int max_blocks_per_device = 1;
+        int /*maxNumSequences*/,
+        cudaStream_t stream){
 
     constexpr int blocksize = 128;
     constexpr size_t smem = 0;
 
-    KernelLaunchConfig kernelLaunchConfig;
-    kernelLaunchConfig.threads_per_block = blocksize;
-    kernelLaunchConfig.smem = smem;
+    int deviceId = 0;
+    int numSMs = 0;
+    int maxBlocksPerSM = 0;
+    CUDACHECK(cudaGetDevice(&deviceId));
+    CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &maxBlocksPerSM,
+        convert2BitTo2BitHiloKernelTT,
+        blocksize, 
+        smem
+    ));
 
-    auto iter = handle.kernelPropertiesMap.find(KernelId::Conversion2BitTo2BitHiLoTT);
-    if(iter == handle.kernelPropertiesMap.end()) {
-
-        std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-        #define getProp(blocksize) { \
-                KernelLaunchConfig kernelLaunchConfig; \
-                kernelLaunchConfig.threads_per_block = (blocksize); \
-                kernelLaunchConfig.smem = 0; \
-                KernelProperties kernelProperties; \
-                cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                    convert2BitTo2BitHiloKernelTT, \
-                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
-                mymap[kernelLaunchConfig] = kernelProperties; \
-        }
-        getProp(1);
-        getProp(32);
-        getProp(64);
-        getProp(96);
-        getProp(128);
-        getProp(160);
-        getProp(192);
-        getProp(224);
-        getProp(256);
-
-        const auto& kernelProperties = mymap[kernelLaunchConfig];
-        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-        handle.kernelPropertiesMap[KernelId::Conversion2BitTo2BitHiLoTT] = std::move(mymap);
-
-        #undef getProp
-    }else{
-        std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-        const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-    }
+    const int maxBlocks = maxBlocksPerSM * numSMs;
 
     dim3 block(blocksize,1,1);
-    //dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumSequences, blocksize)), 1, 1);
-    dim3 grid(max_blocks_per_device, 1, 1);
+    //dim3 grid(std::min(maxBlocks, SDIV(maxNumSequences, blocksize)), 1, 1);
+    dim3 grid(maxBlocks, 1, 1);
 
     convert2BitTo2BitHiloKernelTT<<<grid, block, 0, stream>>>(
         d_inputdata,
@@ -650,7 +522,7 @@ void callConversionKernel2BitTo2BitHiLoTT(
         d_outputdata,
         outputpitchInInts,
         d_sequenceLengths,
-        d_numSequences); CUERR;
+        d_numSequences); CUDACHECKASYNC;
 
 #if 0            
 

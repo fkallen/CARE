@@ -3,6 +3,8 @@
 
 #include <unistd.h>
 #include <sys/resource.h>
+#include <sys/time.h>
+#include <sys/resource.h>
 
 #include <string>
 #include <cstdint>
@@ -10,7 +12,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
-
+#include <iostream>
 
     struct MemoryUsage{
         std::size_t host = 0;
@@ -56,7 +58,7 @@
             file.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
         }
         return 0;
-    };
+    }
 
     __inline__ 
     std::size_t getCurrentRSS_linux(){
@@ -84,7 +86,33 @@
         //return getAvailableMemoryInKB_linux();
 
         return std::min(getAvailableMemoryInKB_linux(), (getRSSLimit_linux() - getCurrentRSS_linux()) / 1024);
-    };
+    }
+
+    __inline__ 
+    std::size_t getMaxRSSUsageInKB(){
+        struct rusage usage;
+
+        int ret = getrusage(RUSAGE_SELF, &usage);
+        if(ret != 0){
+            std::perror("Could not get max RSS size!");
+            return 0;
+        }
+
+        return usage.ru_maxrss;
+    }
+
+    __inline__
+    void compareMaxRssToLimit(std::size_t memoryLimitBytes, const std::string& errorMessage){
+        std::size_t maxRssKB = getMaxRSSUsageInKB();
+        std::size_t maxRssBytes = maxRssKB * 1024;
+
+        if(maxRssBytes > memoryLimitBytes){
+            std::cerr << errorMessage << ": maxRssBytes = " << maxRssBytes << ", memoryLimitBytes = " << memoryLimitBytes << "\n";
+        }
+        else{
+            std::cerr << "memorylimit ok. maxRssBytes = " << maxRssBytes << ", memoryLimitBytes = " << memoryLimitBytes << "\n";
+        }
+    }
 
 
 

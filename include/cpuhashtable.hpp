@@ -1,35 +1,296 @@
-#ifndef CARE_CPUHASHTABLE_CUH
-#define CARE_CPUHASHTABLE_CUH 
+#ifndef CARE_CPUHASHTABLE_HPP
+#define CARE_CPUHASHTABLE_HPP 
 
 #include <config.hpp>
 #include <memorymanagement.hpp>
+#include <threadpool.hpp>
+#include <hostdevicefunctions.cuh>
 
+#include <map>
 #include <vector>
 #include <cassert>
 #include <cstdint>
 #include <fstream>
-#include <array>
 #include <type_traits>
 #include <limits>
-#include <algorithm>
 #include <iostream>
+#include <functional>
 
-#include <thrust/system/omp/execution_policy.h>
-#include <thrust/iterator/constant_iterator.h>
-#include <thrust/inner_product.h>
-#include <thrust/sequence.h>
-#include <thrust/copy.h>
-#include <thrust/sort.h>
-
-#ifdef __NVCC__
-#include <thrust/device_vector.h>
 #include <hpc_helpers.cuh>
-#endif
+
 
 namespace care{
 
     template<class Key, class Value>
-    class NaiveCpuSingleValueHashTable{
+    class AoSCpuSingleValueHashTable{
+        static_assert(std::is_integral<Key>::value, "Key must be integral!");
+
+    public:
+        //computes the new hashtable size from the current hashtable size on automatic rehash
+        using RehashPolicy = std::function<std::size_t(std::size_t)>; 
+        class QueryResult{
+        public:
+            QueryResult() = default;
+            QueryResult(const QueryResult&) = default;
+            QueryResult(QueryResult&&) = default;
+            QueryResult& operator=(const QueryResult&) = default;
+            QueryResult& operator=(QueryResult&&) = default;
+
+            QueryResult(bool b, Value v) : keyFound(b), val(std::move(v)){}
+
+            bool valid() const{
+                return keyFound;
+            }
+            const Value& value() const{
+                return val;
+            }
+            Value& value(){
+                return val;
+            }
+        private:
+            bool keyFound;
+            Value val;
+        };
+
+        AoSCpuSingleValueHashTable(const AoSCpuSingleValueHashTable&) = default;
+        AoSCpuSingleValueHashTable(AoSCpuSingleValueHashTable&&) = default;
+        AoSCpuSingleValueHashTable& operator=(const AoSCpuSingleValueHashTable&) = default;
+        AoSCpuSingleValueHashTable& operator=(AoSCpuSingleValueHashTable&&) = default;
+
+        AoSCpuSingleValueHashTable(std::size_t size = 1, float load = 0.8, RehashPolicy pol = [](const std::size_t x){ return x * 2; })
+            : load(load), size(size), capacity(size/load), rehashPolicy(pol)
+        {
+            storage.resize(capacity, emptySlot);
+        }
+
+
+        bool operator==(const AoSCpuSingleValueHashTable& rhs) const{
+            return emptySlot == rhs.emptySlot 
+                && feq(load, rhs.load)
+                && numKeys == rhs.numKeys
+                && maxProbes == rhs.maxProbes
+                && size == rhs.size 
+                && capacity == rhs.capacity
+                && storage == rhs.storage;
+        }
+
+        bool operator!=(const AoSCpuSingleValueHashTable& rhs) const{
+            return !(operator==(rhs));
+        }
+
+        void rehash(std::size_t newsize){
+            newsize = std::max(newsize, std::size_t(1));
+
+            std::cerr << "rehash(" << newsize << ")\n";
+            AoSCpuSingleValueHashTable newtable(newsize, load);
+
+            forEachKeyValuePair([&](const auto& key, const auto& value){
+                newtable.insert(key, value);
+            });
+
+            std::swap(newtable, *this);
+        }
+
+        //if key already exists, current value is overwritten by passed value
+        void insert(const Key& key, const Value& value){
+            using hasher = hashers::MurmurHash<std::uint64_t>;
+
+            if(numKeys >= size){
+                rehash(rehashPolicy(size));
+            }
+
+            const std::uint64_t key64 = std::uint64_t(key);
+            std::size_t probes = 0;
+            std::size_t pos = hasher::hash(key64) % capacity;
+            while(storage[pos] != emptySlot && storage[pos].first != key){
+                pos++;
+                //wrap-around
+                if(pos == capacity){
+                    pos = 0;
+                }
+                probes++;
+            }
+            if(storage[pos].first == key){
+                storage[pos].second = value;
+            }else{
+                //found empty slot
+                numKeys++;
+                storage[pos].first = key;
+                storage[pos].second = value;
+                maxProbes = std::max(maxProbes, probes);
+            }
+        }
+
+        template<class Func>
+        void insertOrUpdate(const Key& key, const Value& insertValue, Func&& updateFunc){
+            using hasher = hashers::MurmurHash<std::uint64_t>;
+
+            if(numKeys >= size){
+                rehash(rehashPolicy(size));
+            }
+
+            const std::uint64_t key64 = std::uint64_t(key);
+            std::size_t probes = 0;
+            std::size_t pos = hasher::hash(key64) % capacity;
+            while(storage[pos] != emptySlot && storage[pos].first != key){
+                pos++;
+                //wrap-around
+                if(pos == capacity){
+                    pos = 0;
+                }
+                probes++;
+            }
+            if(storage[pos].first == key){
+                updateFunc(storage[pos].second);
+            }else{
+                //found empty slot
+                numKeys++;
+                storage[pos].first = key;
+                storage[pos].second = insertValue;
+                maxProbes = std::max(maxProbes, probes);
+            }
+        }
+
+        QueryResult query(const Key& key) const{
+            using hasher = hashers::MurmurHash<std::uint64_t>;
+            
+            const std::uint64_t key64 = std::uint64_t(key);
+            std::size_t probes = 0;
+            std::size_t pos = hasher::hash(key64) % capacity;
+            while(storage[pos].first != key){
+                if(storage[pos] == emptySlot){
+                    return {false, Value()};
+                }
+                pos++;
+                //wrap-around
+                if(pos == capacity){
+                    pos = 0;
+                }
+                probes++;
+                if(maxProbes < probes){
+                    return {false, Value()};
+                }
+            }
+            return {true, storage[pos].second};
+        }
+
+        Value* queryPointer(const Key& key){
+            using hasher = hashers::MurmurHash<std::uint64_t>;
+            
+            const std::uint64_t key64 = std::uint64_t(key);
+            std::size_t probes = 0;
+            std::size_t pos = hasher::hash(key64) % capacity;
+            while(storage[pos].first != key){
+                if(storage[pos] == emptySlot){
+                    return nullptr;
+                }
+                pos++;
+                //wrap-around
+                if(pos == capacity){
+                    pos = 0;
+                }
+                probes++;
+                if(maxProbes < probes){
+                    return nullptr;
+                }
+            }
+            return &storage[pos].second;
+        }
+
+        //Func(key, value)
+        template<class Func>
+        void forEachKeyValuePair(Func&& func){
+            for(std::size_t i = 0; i < capacity; i++){
+                if(storage[i] != emptySlot){
+                    func(storage[i].first, storage[i].second);
+                }
+            }
+        }
+
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage result;
+            result.host = sizeof(Data) * capacity;
+
+            return result;
+        }
+
+        void writeToStream(std::ostream& os) const{
+            os.write(reinterpret_cast<const char*>(&load), sizeof(float));
+            os.write(reinterpret_cast<const char*>(&numKeys), sizeof(std::size_t));
+            os.write(reinterpret_cast<const char*>(&maxProbes), sizeof(std::size_t));
+            os.write(reinterpret_cast<const char*>(&size), sizeof(std::size_t));
+            os.write(reinterpret_cast<const char*>(&capacity), sizeof(std::size_t));
+
+            const std::size_t elements = storage.size();
+            const std::size_t bytes = sizeof(Data) * elements;
+            os.write(reinterpret_cast<const char*>(&elements), sizeof(std::size_t));
+            os.write(reinterpret_cast<const char*>(storage.data()), bytes);
+        }
+
+        void loadFromStream(std::ifstream& is){
+            destroy();
+
+            is.read(reinterpret_cast<char*>(&load), sizeof(float));
+            is.read(reinterpret_cast<char*>(&numKeys), sizeof(std::size_t));
+            is.read(reinterpret_cast<char*>(&maxProbes), sizeof(std::size_t));
+            is.read(reinterpret_cast<char*>(&size), sizeof(std::size_t));
+            is.read(reinterpret_cast<char*>(&capacity), sizeof(std::size_t));
+
+            std::size_t elements;
+            is.read(reinterpret_cast<char*>(&elements), sizeof(std::size_t));
+            storage.resize(elements);
+            const std::size_t bytes = sizeof(Data) * elements;
+            is.read(reinterpret_cast<char*>(storage.data()), bytes);
+        }
+
+        void destroy(){
+            std::vector<Data> tmp;
+            std::swap(storage, tmp);
+
+            numKeys = 0;
+            maxProbes = 0;
+            size = 0;
+            capacity = 0;
+        }
+
+        std::size_t getCapacity() const{
+            return capacity;
+        }
+
+        std::map<int, int> getCountDistribution() const{
+            std::map<int, int> map;
+
+            for(std::size_t i = 0; i < capacity; i++){
+                if(storage[i] != emptySlot){
+                    map[storage[i].second.second]++;
+                }
+            }
+            return map;
+        }
+
+        std::size_t getNumKeys() const noexcept{
+            return numKeys;
+        }
+
+    private:
+
+        using Data = std::pair<Key,Value>;
+
+        Data emptySlot 
+            = std::pair<Key,Value>{std::numeric_limits<Key>::max(), std::numeric_limits<Value>::max()};
+
+        float load{};
+        std::size_t numKeys{};
+        std::size_t maxProbes{};
+        std::size_t size{};
+        std::size_t capacity{};
+        RehashPolicy rehashPolicy{};
+        std::vector<Data> storage{};        
+    };
+
+
+    template<class Key, class Value>
+    class SoACpuSingleValueHashTable{
         static_assert(std::is_integral<Key>::value, "Key must be integral!");
 
     public:
@@ -57,39 +318,44 @@ namespace care{
             Value val;
         };
 
-        NaiveCpuSingleValueHashTable() = default;
-        NaiveCpuSingleValueHashTable(const NaiveCpuSingleValueHashTable&) = default;
-        NaiveCpuSingleValueHashTable(NaiveCpuSingleValueHashTable&&) = default;
-        NaiveCpuSingleValueHashTable& operator=(const NaiveCpuSingleValueHashTable&) = default;
-        NaiveCpuSingleValueHashTable& operator=(NaiveCpuSingleValueHashTable&&) = default;
+        SoACpuSingleValueHashTable() = default;
+        SoACpuSingleValueHashTable(const SoACpuSingleValueHashTable&) = default;
+        SoACpuSingleValueHashTable(SoACpuSingleValueHashTable&&) = default;
+        SoACpuSingleValueHashTable& operator=(const SoACpuSingleValueHashTable&) = default;
+        SoACpuSingleValueHashTable& operator=(SoACpuSingleValueHashTable&&) = default;
 
-        NaiveCpuSingleValueHashTable(std::size_t size, float load)
-            : load(load), size(size), capacity(size/load)
-        {
-            storage.resize(capacity, emptySlot);
+        SoACpuSingleValueHashTable(std::size_t size, float load)
+            : load(load), size(size), capacity(size/load), 
+              keys(capacity, emptyKey), values(capacity){
         }
 
-        NaiveCpuSingleValueHashTable(std::size_t size) 
-            : NaiveCpuSingleValueHashTable(size, 0.8f){            
+        SoACpuSingleValueHashTable(std::size_t size) 
+            : SoACpuSingleValueHashTable(size, 0.8f){            
         }
 
-        bool operator==(const NaiveCpuSingleValueHashTable& rhs) const{
-            return emptySlot == rhs.emptySlot 
-                && load == rhs.load
+        bool operator==(const SoACpuSingleValueHashTable& rhs) const{
+            return emptyKey == rhs.emptyKey 
+                && feq(load, rhs.load)
                 && maxProbes == rhs.maxProbes
                 && size == rhs.size 
                 && capacity == rhs.capacity
-                && storage == rhs.storage;
+                && keys == rhs.keys
+                && values = rhs.values;
         }
 
-        bool operator!=(const NaiveCpuSingleValueHashTable& rhs) const{
+        bool operator!=(const SoACpuSingleValueHashTable& rhs) const{
             return !(operator==(rhs));
         }
 
         void insert(const Key& key, const Value& value){
+            if(key == emptyKey){
+                std::cerr << "1\n";
+            }
+            using hasher = hashers::MurmurHash<std::uint64_t>;
+
             std::size_t probes = 0;
-            std::size_t pos = hashfunc(key) % capacity;
-            while(storage[pos] != emptySlot){
+            std::size_t pos = hasher::hash(key) % capacity;
+            while(keys[pos] != emptyKey){
                 pos++;
                 //wrap-around
                 if(pos == capacity){
@@ -97,17 +363,19 @@ namespace care{
                 }
                 probes++;
             }
-            storage[pos].first = key;
-            storage[pos].second = value;
+            keys[pos] = key;
+            values[pos] = value;
 
             maxProbes = std::max(maxProbes, probes);
         }
 
         QueryResult query(const Key& key) const{
+            using hasher = hashers::MurmurHash<std::uint64_t>;
+            
             std::size_t probes = 0;
-            std::size_t pos = hashfunc(key) % capacity;
-            while(storage[pos].first != key){
-                if(storage[pos] == emptySlot){
+            std::size_t pos = hasher::hash(key) % capacity;
+            while(keys[pos] != key){
+                if(keys[pos] == emptyKey){
                     return {false, Value{}};
                 }
                 pos++;
@@ -120,12 +388,13 @@ namespace care{
                     return {false, Value{}};
                 }
             }
-            return {true, storage[pos].second};
+            return {true, values[pos]};
         }
 
         MemoryUsage getMemoryInfo() const{
             MemoryUsage result;
-            result.host = sizeof(Data) * capacity;
+            result.host = sizeof(Key) * capacity;
+            result.host += sizeof(Value) * capacity;
 
             return result;
         }
@@ -136,10 +405,12 @@ namespace care{
             os.write(reinterpret_cast<const char*>(&size), sizeof(std::size_t));
             os.write(reinterpret_cast<const char*>(&capacity), sizeof(std::size_t));
 
-            const std::size_t elements = storage.size();
-            const std::size_t bytes = sizeof(Data) * elements;
+            const std::size_t elements = keys.size();
+            const std::size_t keysbytes = sizeof(Key) * elements;
+            const std::size_t valuesbytes = sizeof(Value) * elements;
             os.write(reinterpret_cast<const char*>(&elements), sizeof(std::size_t));
-            os.write(reinterpret_cast<const char*>(storage.data()), bytes);
+            os.write(reinterpret_cast<const char*>(keys.data()), keysbytes);
+            os.write(reinterpret_cast<const char*>(values.data()), valuesbytes);
         }
 
         void loadFromStream(std::ifstream& is){
@@ -152,14 +423,21 @@ namespace care{
 
             std::size_t elements;
             is.read(reinterpret_cast<char*>(&elements), sizeof(std::size_t));
-            storage.resize(elements);
-            const std::size_t bytes = sizeof(Data) * elements;
-            is.read(reinterpret_cast<char*>(storage.data()), bytes);
+            keys.resize(elements);
+            const std::size_t keysbytes = sizeof(Key) * elements;
+            is.read(reinterpret_cast<char*>(keys.data()), keysbytes);
+
+            values.resize(elements);
+            const std::size_t valuesbytes = sizeof(Value) * elements;
+            is.read(reinterpret_cast<char*>(values.data()), valuesbytes);
         }
 
         void destroy(){
-            std::vector<Data> tmp;
-            std::swap(storage, tmp);
+            std::vector<Key> ktmp;
+            std::swap(keys, ktmp);
+
+            std::vector<Value> vtmp;
+            std::swap(values, vtmp);
 
             maxProbes = 0;
             size = 0;
@@ -167,699 +445,16 @@ namespace care{
         }
 
     private:
-        std::uint64_t hashfunc(std::uint64_t x) const{
-            //murmur64
-            x ^= x >> 33;
-            x *= 0xff51afd7ed558ccd;
-            x ^= x >> 33;
-            x *= 0xc4ceb9fe1a85ec53;
-            x ^= x >> 33;
-            return x;
-        }
 
-        using Data = std::pair<Key,Value>;
-
-        Data emptySlot 
-            = std::pair<Key,Value>{std::numeric_limits<Key>::max(), std::numeric_limits<Value>::max()};
+        Key emptyKey = std::numeric_limits<Key>::max();
 
         float load{};
         std::size_t maxProbes{};
         std::size_t size{};
         std::size_t capacity{};
-        std::vector<Data> storage{};        
+        std::vector<Key> keys{};
+        std::vector<Value> values{};
     };
-
-
-
-
-
-namespace cpuhashtabledetail{
-
-        struct AllocCounter{
-            std::size_t maxbytes = 0;
-            std::size_t bytes = 0;
-
-            template<class T>
-            void alloc(std::size_t elements){
-                bytes += sizeof(T) * elements;
-                maxbytes = std::max(maxbytes, bytes);
-            }
-
-            template<class T>
-            void dealloc(std::size_t elements){
-                auto size = sizeof(T) * elements;
-                assert(size <= bytes);
-                bytes -= size;
-            }
-        };
-
-        struct TransformResult{
-            std::uint64_t numberOfUniqueKeys = 0;
-            std::uint64_t numberOfRemovedKeys = 0;
-            std::uint64_t numberOfRemovedValues = 0;
-        };
-
-        struct TransformRemoveKeysResult{
-            std::uint64_t numberOfRemovedKeys = 0;
-            std::uint64_t numberOfRemovedValues = 0;
-        };
-
-
-        template<class Key_t, class Value_t, class Index_t>
-        std::uint64_t transformCPUCompactKeys(std::vector<Key_t>& keys,
-                                            std::vector<Value_t>& values,
-                                            std::vector<Index_t>& countsPrefixSum){
-
-            auto deallocVector = [](auto& vec){
-                using T = typename std::remove_reference<decltype(vec)>::type;
-                T tmp{};
-                vec.swap(tmp);
-            };
-
-            assert(keys.size() == values.size());
-            assert(std::numeric_limits<Index_t>::max() >= keys.size());
-
-            const std::size_t size = keys.size();
-            auto policy = thrust::omp::par;
-
-            std::vector<Index_t> indices(size);
-            auto* indices_begin = indices.data();
-            auto* indices_end = indices.data() + indices.size();
-
-            //TIMERSTARTCPU(iota);
-            thrust::sequence(policy, indices_begin, indices_end, Index_t(0));
-            //TIMERSTOPCPU(iota);
-
-            //TIMERSTARTCPU(sortindices);
-            //sort indices by key. if keys are equal, sort by value
-            thrust::sort(policy,
-                        indices_begin,
-                        indices_end,
-                        [&] (const auto &lhs, const auto &rhs) {
-                            if(keys[lhs] == keys[rhs]){
-                                return values[lhs] < values[rhs];
-                            }
-                            return keys[lhs] < keys[rhs];
-                        });
-            //TIMERSTOPCPU(sortindices);
-
-
-            //TIMERSTARTCPU(sortvalues);
-            std::vector<Value_t> sortedValues(size);
-            thrust::copy(policy,
-                        thrust::make_permutation_iterator(values.begin(), indices_begin),
-                        thrust::make_permutation_iterator(values.begin(), indices_end),
-                        sortedValues.begin());
-
-            //TIMERSTOPCPU(sortvalues);
-
-            std::swap(sortedValues, values);
-
-            deallocVector(sortedValues);
-
-            //TIMERSTARTCPU(sortkeys);
-            std::vector<Key_t> sortedKeys(size);
-            thrust::copy(policy,
-                        thrust::make_permutation_iterator(keys.begin(), indices_begin),
-                        thrust::make_permutation_iterator(keys.begin(), indices_end),
-                        sortedKeys.begin());
-
-            //TIMERSTOPCPU(sortkeys);
-
-            std::swap(sortedKeys, keys);
-
-            deallocVector(sortedKeys);
-            deallocVector(indices);
-
-            const Index_t nUniqueKeys = thrust::inner_product(policy,
-                                                keys.begin(),
-                                                keys.end() - 1,
-                                                keys.begin() + 1,
-                                                Index_t(1),
-                                                thrust::plus<Key_t>(),
-                                                thrust::not_equal_to<Key_t>());
-
-            //std::cout << "unique keys " << nUniqueKeys << ". ";
-
-            std::vector<Key_t> histogram_keys(nUniqueKeys);
-            std::vector<Index_t> histogram_counts(nUniqueKeys);
-
-            auto* keys_begin = keys.data();
-            auto* keys_end = keys.data() + keys.size();
-            auto* histogram_keys_begin = histogram_keys.data();
-            auto* histogram_counts_begin = histogram_counts.data();
-
-            //make key - frequency histogram
-            auto histogramEndIterators = thrust::reduce_by_key(policy,
-                                    keys_begin,
-                                    keys_end,
-                                    thrust::constant_iterator<Index_t>(1),
-                                    histogram_keys_begin,
-                                    histogram_counts_begin);
-
-            assert(histogramEndIterators.first == histogram_keys.data() + nUniqueKeys);
-            assert(histogramEndIterators.second == histogram_counts.data() + nUniqueKeys);
-
-            countsPrefixSum.resize(nUniqueKeys+1, Index_t(0));
-
-            thrust::inclusive_scan(policy,
-                                    histogram_counts_begin,
-                                    histogramEndIterators.second,
-                                    countsPrefixSum.data() + 1);
-
-            keys.swap(histogram_keys);
-
-            return nUniqueKeys;
-        }
-
-        template<class Key_t, class Value_t, class Index_t>
-        TransformRemoveKeysResult transformCPURemoveKeysWithToManyValues(std::vector<Key_t>& keys, 
-                                                            std::vector<Value_t>& values, 
-                                                            std::vector<Index_t>& countsPrefixSum,
-                                                            int maxValuesPerKey_){
-            auto deallocVector = [](auto& vec){
-                using T = typename std::remove_reference<decltype(vec)>::type;
-                T tmp{};
-                vec.swap(tmp);
-            };
-
-            TransformRemoveKeysResult result;
-
-            auto policy = thrust::omp::par;
-
-            const Index_t maxValuesPerKey = maxValuesPerKey_;
-
-            std::size_t oldSizeKeys = keys.size();
-            std::size_t oldSizeValues = values.size();
-
-            std::vector<Index_t> counts(countsPrefixSum.size()-1);
-            {
-                auto psPtr = thrust::raw_pointer_cast(countsPrefixSum.data());
-                auto countsPtr = thrust::raw_pointer_cast(counts.data());
-            
-                thrust::adjacent_difference(policy,
-                                            psPtr+1,
-                                            psPtr + countsPrefixSum.size(),
-                                            countsPtr);
-
-            }
-            
-            //handle keys
-            int numKeysToRemove = 0;
-            {
-                std::vector<char> removeflags(countsPrefixSum.size()-1);
-
-                thrust::transform(policy,
-                                    counts.begin(),
-                                    counts.end(),
-                                    removeflags.begin(),
-                                    [=](auto i){
-                                        return i > maxValuesPerKey ? 1 : 0;
-                                    });
-
-                numKeysToRemove = thrust::count_if(policy,
-                                                    removeflags.begin(),
-                                                    removeflags.end(),
-                                                    [] (auto flag){
-                                                        return flag == 1;
-                                                    });         
-            }
-
-            result.numberOfRemovedKeys = numKeysToRemove;
-
-            //std::cerr << "Can remove values of " << numKeysToRemove << " high frequency keys. "; 
-
-            //handle values
-            int numValuesToRemove = 0;
-            {
-                std::vector<char> removeflags(values.size(), false);
-
-                thrust::for_each(policy,
-                                thrust::counting_iterator<Index_t>(0),
-                                thrust::counting_iterator<Index_t>(0) + oldSizeKeys,
-                                [&](int index){
-                                    if(counts[index] > maxValuesPerKey){
-                                        auto begin = countsPrefixSum[index];
-                                        auto end = countsPrefixSum[index+1];
-                                        for(Index_t k = begin; k < end; k++){
-                                            removeflags[k] = true;
-                                        }
-                                    }
-                                });          
-
-                numValuesToRemove = thrust::count_if(policy,
-                                                        removeflags.begin(),
-                                                        removeflags.end(),
-                                                        [](auto flag){
-                                                            return flag == 1;
-                                                        });
-
-                std::vector<Value_t> values_tmp(oldSizeValues - numValuesToRemove);
-
-                thrust::copy_if(values.begin(),
-                                values.end(),
-                                removeflags.begin(),
-                                values_tmp.begin(),
-                                [](auto flag){
-                                    return flag == 0;
-                                });
-
-                values.swap(values_tmp);
-            }
-
-            result.numberOfRemovedValues = numValuesToRemove;
-
-            //std::cerr << "Removed corresponding values: " << numValuesToRemove << ". "; 
-
-            //handle counts prefix sum
-            {
-                thrust::for_each(policy,
-                                thrust::counting_iterator<Index_t>(0),
-                                thrust::counting_iterator<Index_t>(0) + counts.size(),
-                                [&] (auto i){
-                                    if(counts[i] > maxValuesPerKey){
-                                        counts[i] = 0;
-                                    }
-                                });
-                                
-                deallocVector(countsPrefixSum);
-
-                countsPrefixSum.resize(keys.size() + 1);
-                countsPrefixSum[0] = 0;
-
-                thrust::inclusive_scan(policy,
-                                        counts.begin(),
-                                        counts.end(),
-                                        countsPrefixSum.begin() + 1);              
-            }
-
-            return result;
-        }
-
-        template<class Key_t, class Value_t, class Index_t>
-        TransformResult cpu_transformation(std::vector<Key_t>& keys,
-                                std::vector<Value_t>& values,
-                                std::vector<Index_t>& countsPrefixSum,
-                                int maxValuesPerKey){
-
-            std::uint64_t uniqueKeys = transformCPUCompactKeys(
-                keys, 
-                values, 
-                countsPrefixSum
-            );
-
-            TransformRemoveKeysResult removeKeysResult = transformCPURemoveKeysWithToManyValues(
-                keys, 
-                values, 
-                countsPrefixSum, 
-                maxValuesPerKey
-            );
-
-            TransformResult result;
-            result.numberOfUniqueKeys = uniqueKeys;
-            result.numberOfRemovedKeys = removeKeysResult.numberOfRemovedKeys;
-            result.numberOfRemovedValues = removeKeysResult.numberOfRemovedValues;
-
-            return result;
-        };
-
-
-    #ifdef __NVCC__
-
-        template<bool allowFallback>
-        struct TransformGPUCompactKeys{
-            template<class T>
-            using ThrustAlloc = helpers::ThrustFallbackDeviceAllocator<T, allowFallback>;
-
-            template<class Key_t, class Value_t, class Index_t>
-            static std::size_t estimateRequiredGpuMem(
-                                std::vector<Key_t>& keys, 
-                                std::vector<Value_t>& values, 
-                                std::vector<Index_t>& countsPrefixSum){
-                
-                return estimateRequiredGpuMem<Key_t, Value_t, Index_t>(values.size());
-            }
-
-            template<class Key_t, class Value_t, class Index_t>
-            static std::size_t estimateRequiredGpuMem(Index_t numEntries){
-
-                std::size_t mem = 0;
-                mem += sizeof(Key_t) * numEntries; //d_keys
-                mem += sizeof(Value_t) * numEntries; //d_values
-                mem += sizeof(Index_t) * numEntries; //d_indices
-                mem += std::max(sizeof(Index_t), sizeof(Value_t)) * numEntries; //d_indices_tmp for sorting d_indices or d_values_tmp for sorted values
-
-                return mem;
-            }
-
-            template<class Key_t, class Value_t, class Index_t>
-            static std::uint64_t execute(std::vector<Key_t>& keys, 
-                                std::vector<Value_t>& values, 
-                                std::vector<Index_t>& countsPrefixSum,
-                                const std::vector<int>& /*deviceIds*/){
-
-                auto deallocVector = [](auto& vec){
-                    using T = typename std::remove_reference<decltype(vec)>::type;
-                    T tmp{};
-                    vec.swap(tmp);
-                };
-
-                std::size_t size = values.size();
-
-                ThrustAlloc<char> allocator;
-                auto allocatorPolicy = thrust::cuda::par(allocator);
-
-                thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_keys(size);
-                thrust::device_vector<Value_t, ThrustAlloc<Value_t>> d_values(size);
-                thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_indices(size);
-
-                thrust::copy(keys.begin(), keys.end(), d_keys.begin());
-                thrust::copy(values.begin(), values.end(), d_values.begin());
-                thrust::sequence(allocatorPolicy, d_indices.begin(), d_indices.end(), Index_t(0));
-
-                thrust::device_ptr<Key_t> d_keys_ptr = d_keys.data();
-                thrust::device_ptr<Value_t> d_values_ptr = d_values.data();
-
-                //sort indices
-                thrust::sort(allocatorPolicy,
-                            d_indices.begin(),
-                            d_indices.end(),
-                            [=] __device__ (const auto &lhs, const auto &rhs) {
-                                if(d_keys_ptr[lhs] == d_keys_ptr[rhs]){
-                                    return d_values_ptr[lhs] < d_values_ptr[rhs];
-                                }
-                                return d_keys_ptr[lhs] < d_keys_ptr[rhs];
-                            });
-
-                //sort values by order defined by indices and copy sorted values to host.
-                thrust::device_vector<Value_t, ThrustAlloc<Value_t>> d_values_tmp(size);
-
-                thrust::copy(thrust::make_permutation_iterator(d_values.begin(), d_indices.begin()),
-                            thrust::make_permutation_iterator(d_values.begin(), d_indices.end()),
-                            d_values_tmp.begin());
-
-                thrust::copy(d_values_tmp.begin(),
-                            d_values_tmp.end(),
-                            values.begin());
-
-                deallocVector(d_values_tmp);
-                deallocVector(d_values);
-
-                //sort keys by order defined by indices
-                thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_keys_tmp(size);
-
-                thrust::copy(thrust::make_permutation_iterator(d_keys.begin(), d_indices.begin()),
-                            thrust::make_permutation_iterator(d_keys.begin(), d_indices.end()),
-                            d_keys_tmp.begin());
-
-                std::swap(d_keys, d_keys_tmp);
-
-                deallocVector(d_keys_tmp);
-                deallocVector(d_indices);
-
-                const Index_t nUniqueKeys = thrust::inner_product(allocatorPolicy,
-                    d_keys.begin(),
-                    d_keys.end() - 1,
-                    d_keys.begin() + 1,
-                    Index_t(1),
-                    thrust::plus<Key_t>(),
-                    thrust::not_equal_to<Key_t>());
-
-                //std::cerr << "unique keys " << nUniqueKeys << ". ";
-
-                //histogram storage
-                thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_histogram_keys(nUniqueKeys);
-                thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_histogram_counts(nUniqueKeys);
-                thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_histogram_counts_prefixsum(nUniqueKeys+1, Index_t(0));
-
-                //make key multiplicity histogram
-                auto histogramEndIterators = thrust::reduce_by_key(allocatorPolicy,
-                    d_keys.begin(),
-                    d_keys.end(),
-                    thrust::constant_iterator<Index_t>(1),
-                    d_histogram_keys.begin(),
-                    d_histogram_counts.begin());
-
-                assert(histogramEndIterators.first == d_histogram_keys.end());
-                assert(histogramEndIterators.second == d_histogram_counts.end());
-
-                thrust::inclusive_scan(allocatorPolicy,
-                    d_histogram_counts.begin(),
-                    histogramEndIterators.second,
-                    d_histogram_counts_prefixsum.begin() + 1);
-
-                countsPrefixSum.resize(nUniqueKeys+1);
-                thrust::copy(d_histogram_counts_prefixsum.begin(),
-                            d_histogram_counts_prefixsum.end(),
-                            countsPrefixSum.begin());
-
-                deallocVector(keys);
-
-                keys.resize(nUniqueKeys);
-
-                thrust::copy(d_histogram_keys.begin(),
-                            d_histogram_keys.end(),
-                            keys.begin());
-
-                return nUniqueKeys;
-            }
-        };
-
-
-        template<bool allowFallback>
-        struct TransformGPURemoveKeysWithToManyValues{
-            template<class T>
-            using ThrustAlloc = helpers::ThrustFallbackDeviceAllocator<T, allowFallback>;
-
-            template<class Key_t, class Value_t, class Index_t>
-            static TransformRemoveKeysResult execute(std::vector<Key_t>& keys, 
-                                std::vector<Value_t>& values, 
-                                std::vector<Index_t>& countsPrefixSum,
-                                int maxValuesPerKey_,
-                                const std::vector<int>& /*deviceIds*/){
-
-                auto deallocVector = [](auto& vec){
-                    using T = typename std::remove_reference<decltype(vec)>::type;
-                    T tmp{};
-                    vec.swap(tmp);
-                };
-
-                TransformRemoveKeysResult result;
-
-                const Index_t maxValuesPerKey = maxValuesPerKey_;
-
-                ThrustAlloc<char> allocator;
-                auto allocatorPolicy = thrust::cuda::par(allocator);
-
-                const std::size_t oldSizeKeys = keys.size();
-                const std::size_t oldSizeValues = values.size();
-
-                thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_countsPrefixSum(countsPrefixSum.size());
-
-                thrust::copy(countsPrefixSum.begin(), countsPrefixSum.end(), d_countsPrefixSum.begin());
-
-                thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_counts(countsPrefixSum.size()-1);
-                //make counts array from prefixsum
-                thrust::adjacent_difference(allocatorPolicy,
-                                            d_countsPrefixSum.begin()+1,
-                                            d_countsPrefixSum.end(),
-                                            d_counts.begin());
-                
-                //handle keys
-                int numKeysToRemove = 0;
-                {
-                    thrust::device_vector<bool, ThrustAlloc<bool>> d_removeflags(countsPrefixSum.size()-1);
-
-                    thrust::transform(allocatorPolicy,
-                                        d_counts.begin(),
-                                        d_counts.end(),
-                                        d_removeflags.begin(),
-                                        [=] __device__ (auto i){
-                                            return i > maxValuesPerKey;
-                                        });
-
-                    numKeysToRemove = thrust::count_if(allocatorPolicy,
-                                                            d_removeflags.begin(),
-                                                            d_removeflags.end(),
-                                                            [] __device__ (auto flag){
-                                                                return flag;
-                                                            });
-                }
-
-                result.numberOfRemovedKeys = numKeysToRemove;
-                
-                //std::cerr << "Can remove values of " << numKeysToRemove << " high frequency keys. "; 
-
-                //handle values
-                int numValuesToRemove = 0;
-                {
-                    thrust::device_vector<bool, ThrustAlloc<bool>> d_removeflags(values.size(), false);
-
-                    auto countsPtr = d_counts.data();
-                    auto countPrefixSumPtr = d_countsPrefixSum.data();
-                    auto flagsPtr = d_removeflags.data();
-
-                    //if counts[i] > maxValuesPerKey, set removeflag for all corresponding values of this key                
-                    thrust::for_each(allocatorPolicy,
-                        thrust::counting_iterator<Index_t>(0),
-                        thrust::counting_iterator<Index_t>(0) + oldSizeKeys,
-                        [=] __device__ (int index){
-                            if(countsPtr[index] > maxValuesPerKey){
-                                auto begin = countPrefixSumPtr[index];
-                                auto end = countPrefixSumPtr[index+1];
-                                for(Index_t k = begin; k < end; k++){
-                                    flagsPtr[k] = true;
-                                }
-                            }
-                        });
-
-                    //copy values to device
-                    thrust::device_vector<Value_t, ThrustAlloc<Value_t>> d_values(values.size());
-                    thrust::copy(values.begin(), values.end(), d_values.begin());                
-
-                    //determine number of set remove flags
-                    numValuesToRemove = thrust::count_if(allocatorPolicy,
-                                                            d_removeflags.begin(),
-                                                            d_removeflags.end(),
-                                                            [] __device__ (auto flag){
-                                                                return flag;
-                                                            });
-
-                    //select the remaining values, then copy them back to host
-                    thrust::device_vector<Value_t, ThrustAlloc<Value_t>> d_values_tmp(oldSizeValues - numValuesToRemove);
-
-                    thrust::copy_if(d_values.begin(),
-                                    d_values.end(),
-                                    d_removeflags.begin(),
-                                    d_values_tmp.begin(),
-                                    [] __device__ (auto flag){
-                                        return !flag;
-                                    });
-
-                    deallocVector(values);
-                    values.resize(d_values_tmp.size());
-
-                    thrust::copy(d_values_tmp.begin(), d_values_tmp.end(), values.begin());
-                }
-
-                result.numberOfRemovedValues = numValuesToRemove;
-
-                // std::cerr << "Removed corresponding values: " << numValuesToRemove << ". "; 
-
-                //handle counts prefix sum
-                {
-                    auto countsPtr = d_counts.data();
-
-                    //set counts of removed keys to 0
-                    thrust::for_each(allocatorPolicy,
-                                    thrust::counting_iterator<Index_t>(0),
-                                    thrust::counting_iterator<Index_t>(0) + d_counts.size(),
-                                    [=] __device__ (auto i){
-                                        if(countsPtr[i] > maxValuesPerKey){
-                                            countsPtr[i] = 0;
-                                        }
-                                    });
-
-                    //make new prefix_sum
-                    auto psend = thrust::inclusive_scan(allocatorPolicy,
-                                            d_counts.begin(),
-                                            d_counts.end(),
-                                            d_countsPrefixSum.begin());
-
-                    assert(keys.size() == thrust::distance(d_countsPrefixSum.begin(), psend));
-                    
-                    deallocVector(countsPrefixSum);
-                    countsPrefixSum.resize(keys.size() + 1);
-                    countsPrefixSum[0] = 0;
-                    thrust::copy(d_countsPrefixSum.begin(), psend, countsPrefixSum.begin() + 1);                
-                }
-
-                return result;
-            }
-        };
-
-        template<bool allowFallback>
-        struct GPUTransformation{
-            template<class T>
-            using ThrustAlloc = helpers::ThrustFallbackDeviceAllocator<T, allowFallback>;
-
-            template<class Key_t, class Value_t, class Index_t>
-            static std::pair<bool, TransformResult> execute(std::vector<Key_t>& keys, 
-                                std::vector<Value_t>& values, 
-                                std::vector<Index_t>& countsPrefixSum, 
-                                const std::vector<int>& deviceIds,
-                                int maxValuesPerKey){
-
-                assert(keys.size() == values.size());
-                assert(std::numeric_limits<Index_t>::max() >= keys.size());
-                assert(deviceIds.size() > 0);
-
-                std::pair<bool, TransformResult> result;
-
-                if(keys.empty()){
-                    std::cerr << "Want to transform empty map!\n";
-                    assert(false);
-                    //return true;
-                }
-
-                int oldDeviceId;
-                cudaError_t setupStatus = cudaGetDevice(&oldDeviceId);
-                if(setupStatus != cudaSuccess) //we cannot recover from this.
-                    throw std::runtime_error("Could not query current device id!");
-
-                setupStatus = cudaSetDevice(deviceIds.front()); //TODO choose appropriate id from deviceIds
-                if(setupStatus != cudaSuccess) //we cannot recover from this.
-                    throw std::runtime_error("Could not set device id!");
-
-                bool& success = result.first;
-                TransformResult& transformresult = result.second;
-
-                success = false;
-
-                try{           
-                    transformresult.numberOfUniqueKeys = TransformGPUCompactKeys<allowFallback>
-                            ::execute(keys, values, countsPrefixSum, deviceIds);
-
-                    auto removeresult = TransformGPURemoveKeysWithToManyValues<allowFallback>
-                            ::execute(keys, values, countsPrefixSum, maxValuesPerKey, deviceIds);  
-
-                    transformresult.numberOfRemovedKeys = removeresult.numberOfRemovedKeys;
-                    transformresult.numberOfRemovedValues = removeresult.numberOfRemovedValues;
-
-                    success = true;
-
-                }catch(const thrust::system_error& ex){
-                    std::cerr << ex.what() << '\n';
-                    cudaGetLastError();
-                    success = false;
-                }catch(const std::exception& ex){
-                    std::cerr << ex.what() << '\n';
-                    cudaGetLastError();
-                    success = false;
-                }catch(...){
-                    cudaGetLastError();
-                    success = false;
-                }
-
-                setupStatus = cudaSetDevice(oldDeviceId);
-                if(setupStatus != cudaSuccess) //we cannot recover from this.
-                    throw std::runtime_error("Could not revert device id!");
-
-                return result;
-            }
-
-        };
-    #endif
-}
-
-
-
-
-
-
-
-
-
 
 
 
@@ -883,20 +478,11 @@ namespace cpuhashtabledetail{
         CpuReadOnlyMultiValueHashTable& operator=(CpuReadOnlyMultiValueHashTable&&) = default;
 
         CpuReadOnlyMultiValueHashTable(
-            std::vector<Key> keys, 
-            std::vector<Value> vals, 
-            int maxValuesPerKey,
-            const std::vector<int>& gpuIds
-        ){
-            init(std::move(keys), std::move(vals), maxValuesPerKey, gpuIds);
-        }
-
-        CpuReadOnlyMultiValueHashTable(
-            std::vector<Key> keys, 
-            std::vector<Value> vals, 
-            int maxValuesPerKey
-        ){
-            init(std::move(keys), std::move(vals), maxValuesPerKey);
+            std::uint64_t maxNumValues_,
+            float loadfactor_
+        ) : loadfactor(loadfactor_), buildMaxNumValues{maxNumValues_}{
+            buildkeys.reserve(buildMaxNumValues);
+            buildvalues.reserve(buildMaxNumValues);
         }
 
         bool operator==(const CpuReadOnlyMultiValueHashTable& rhs) const{
@@ -910,89 +496,83 @@ namespace cpuhashtabledetail{
         void init(
             std::vector<Key> keys, 
             std::vector<Value> vals, 
-            int maxValuesPerKey
+            int maxValuesPerKey,
+            ThreadPool* threadPool,
+            bool valuesOfSameKeyMustBeSorted = true
         ){
-            init(std::move(keys), std::move(vals), maxValuesPerKey, {});
+            init(std::move(keys), std::move(vals), maxValuesPerKey, threadPool, {}, valuesOfSameKeyMustBeSorted);
         }
 
+        template<class GroupByKeyOp>
         void init(
+            GroupByKeyOp groupByKey,
             std::vector<Key> keys, 
-            std::vector<Value> vals, 
-            int maxValuesPerKey,
-            const std::vector<int>& gpuIds
+            std::vector<Value> vals,
+            ThreadPool* threadPool
         ){
             assert(keys.size() == vals.size());
+
+            //std::cerr << "init valuesOfSameKeyMustBeSorted = " << valuesOfSameKeyMustBeSorted << "\n";
+
+            if(isInit) return;
 
             std::vector<read_number> countsPrefixSum;
             values = std::move(vals);
 
-            if(keys.size() == 0) return;
+            groupByKey(keys, values, countsPrefixSum);
 
-            #ifdef __NVCC__            
-            if(gpuIds.size() == 0){
-            #endif
-                cpuhashtabledetail::cpu_transformation(
-                    keys, 
-                    values, 
-                    countsPrefixSum, 
-                    maxValuesPerKey
-                );
-            #ifdef __NVCC__
-            }else{
-                
-                auto pair = cpuhashtabledetail::GPUTransformation<false>::execute(
-                    keys, 
-                    values, 
-                    countsPrefixSum, 
-                    gpuIds, 
-                    maxValuesPerKey
-                );
-
-                bool success = pair.first;
-
-                if(!success){
-                    std::cerr << "Fallback to managed memory transformation.\n";
-
-                    pair = cpuhashtabledetail::GPUTransformation<true>::execute(
-                        keys, 
-                        values, 
-                        countsPrefixSum, 
-                        gpuIds, 
-                        maxValuesPerKey
-                    );
-
-                    success = pair.first;
-                }
-
-                if(!success){
-                    std::cerr << "\nFallback to cpu transformation.\n";
-                    
-                    cpuhashtabledetail::cpu_transformation(
-                        keys, 
-                        values, 
-                        countsPrefixSum, 
-                        maxValuesPerKey
-                    );
+            std::size_t nonEmtpyKeysCount = 0;
+            for(std::size_t i = 0; i < keys.size(); i++){
+                const auto count = countsPrefixSum[i+1] - countsPrefixSum[i];
+                if(count > 0){
+                    nonEmtpyKeysCount++;
                 }
             }
-            #endif
 
-            lookup = NaiveCpuSingleValueHashTable<Key, ValueIndex>(keys.size(), 0.8f);
+            //lookup = std::move(AoSCpuSingleValueHashTable<Key, ValueIndex>(keys.size(), loadfactor));
+            lookup = std::move(AoSCpuSingleValueHashTable<Key, ValueIndex>(nonEmtpyKeysCount, loadfactor));
 
-            for(std::size_t i = 0; i < keys.size(); i++){
-                // if(i < 10){
-                //     std::cerr << keys[i] << " " << countsPrefixSum[i] << " " << (countsPrefixSum[i+1] - countsPrefixSum[i]) << "\n";
-                // }
-                
-                lookup.insert(
-                    keys[i], 
-                    ValueIndex{countsPrefixSum[i], countsPrefixSum[i+1] - countsPrefixSum[i]}
-                );
-                
+            auto buildKeyLookup = [me=this, keys = std::move(keys), countsPrefixSum = std::move(countsPrefixSum)](){
+                for(std::size_t i = 0; i < keys.size(); i++){
+                    const auto count = countsPrefixSum[i+1] - countsPrefixSum[i];
+                    if(count > 0){
+                        me->lookup.insert(
+                            keys[i], 
+                            ValueIndex{countsPrefixSum[i], count}
+                        );
+                    }
+                }
+                me->isInit = true;
+            };
+
+            if(threadPool != nullptr){
+                threadPool->enqueue(std::move(buildKeyLookup));
+            }else{
+                buildKeyLookup();
             }
         }
 
+        void insert(const Key* keys, const Value* values, int N){
+            assert(keys != nullptr);
+            assert(values != nullptr);
+            assert(buildMaxNumValues >= buildkeys.size() + N);
+
+            buildkeys.insert(buildkeys.end(), keys, keys + N);
+            buildvalues.insert(buildvalues.end(), values, values + N);
+        }
+
+        template<class GroupByKeyOp>
+        void finalize(GroupByKeyOp groupByKey, ThreadPool* threadPool){
+            init(groupByKey, std::move(buildkeys), std::move(buildvalues), threadPool);            
+        }
+
+        bool isInitialized() const noexcept{
+            return isInit;
+        }
+
         QueryResult query(const Key& key) const{
+            assert(isInit);
+
             auto lookupQueryResult = lookup.query(key);
 
             if(lookupQueryResult.valid()){
@@ -1014,6 +594,7 @@ namespace cpuhashtabledetail{
         }
 
         void query(const Key* keys, std::size_t numKeys, QueryResult* resultsOutput) const{
+            assert(isInit);
             for(std::size_t i = 0; i < numKeys; i++){
                 resultsOutput[i] = query(keys[i]);
             }
@@ -1023,13 +604,25 @@ namespace cpuhashtabledetail{
             MemoryUsage result;
             result.host = sizeof(Value) * values.capacity();
             result.host += lookup.getMemoryInfo().host;
+            result.host += sizeof(Key) * buildkeys.capacity();
+            result.host += sizeof(Value) * buildvalues.capacity();
 
             result.device = lookup.getMemoryInfo().device;
+
+            //std::cerr << lookup.getMemoryInfo().host << " " << result.host << " bytes\n";
+
+            // std::cerr << "readonlytable. keys capacity: " << lookup.getCapacity() << ", values.size() " << values.size() << "\n";
+
+            // auto map = lookup.getCountDistribution();
+            // for(auto pair : map){
+            //     std::cerr << pair.first << ": " << pair.second << "\n";
+            // }
 
             return result;
         }
 
         void writeToStream(std::ostream& os) const{
+            assert(isInit);
 
             const std::size_t elements = values.size();
             const std::size_t bytes = sizeof(Value) * elements;
@@ -1049,6 +642,7 @@ namespace cpuhashtabledetail{
             is.read(reinterpret_cast<char*>(values.data()), bytes);
 
             lookup.loadFromStream(is);
+            isInit = true;
         }
 
         void destroy(){
@@ -1056,6 +650,7 @@ namespace cpuhashtabledetail{
             std::swap(values, tmp);
 
             lookup.destroy();
+            isInit = false;
         }
 
         static std::size_t estimateGpuMemoryRequiredForInit(std::size_t numElements){
@@ -1072,15 +667,305 @@ namespace cpuhashtabledetail{
     private:
 
         using ValueIndex = std::pair<read_number, BucketSize>;
-
+        bool isInit = false;
+        float loadfactor = 0.8f;
+        std::uint64_t buildMaxNumValues = 0;
+        std::vector<Key> buildkeys;
+        std::vector<Value> buildvalues;
         // values with the same key are stored in contiguous memory locations
         // a single-value hashmap maps keys to the range of the corresponding values
         std::vector<Value> values; 
-        NaiveCpuSingleValueHashTable<Key, ValueIndex> lookup;
+        AoSCpuSingleValueHashTable<Key, ValueIndex> lookup;
     };
 
 
 
+
+    template<class Key, class Value>
+    class DoublePassMultiValueHashTable{
+        static_assert(std::is_integral<Key>::value, "Key must be integral!");
+    public:
+
+        struct QueryResult{
+            int numValues;
+            const Value* valuesBegin;
+        };
+
+        DoublePassMultiValueHashTable() = default;
+        DoublePassMultiValueHashTable(const DoublePassMultiValueHashTable&) = default;
+        DoublePassMultiValueHashTable(DoublePassMultiValueHashTable&&) = default;
+        DoublePassMultiValueHashTable& operator=(const DoublePassMultiValueHashTable&) = default;
+        DoublePassMultiValueHashTable& operator=(DoublePassMultiValueHashTable&&) = default;
+
+        //dummy value cannot be inserted into hash table
+        static constexpr Value dummyValue(){
+            return std::numeric_limits<Value>::max();
+        }
+
+        DoublePassMultiValueHashTable(
+            std::size_t estimatedNumKeys,
+            float loadfactor_
+        ) : loadfactor(loadfactor_), lookup(estimatedNumKeys, loadfactor){
+        }
+
+        bool operator==(const DoublePassMultiValueHashTable& rhs) const{
+            return false;
+        }
+
+        bool operator!=(const DoublePassMultiValueHashTable& rhs) const{
+            return !(operator==(rhs));
+        }
+
+        void firstPassInsert(const Key* keys, const Value* values, std::size_t N){
+            auto increment = [](MetaData& meta){
+                std::size_t currentCount = meta.firstPassCount();
+                meta.firstPassCount(currentCount + 1);
+            };
+
+            MetaData count1Meta; 
+            count1Meta.firstPassCount(1);
+
+            for(std::size_t i = 0; i < N; i++){
+                if(values[i] != dummyValue()){
+                    lookup.insertOrUpdate(keys[i], count1Meta, increment);
+                }
+            }
+        }
+
+        void firstPassDone(std::size_t minValuesPerKey = 1, std::size_t maxValuesPerKey = std::numeric_limits<std::size_t>::max()){
+            helpers::CpuTimer timer1("firstPassDone");
+
+            maxValuesPerKey = std::min(maxValuesPerKey, (1ul << MetaData::numvaluesBits()) - 1);
+
+            std::size_t numKeysWithOkValues = 0;
+            std::size_t numValuesOfKeysWithOkValues = 0;
+
+            lookup.forEachKeyValuePair(
+                [&](const auto& /*key*/, auto& meta){
+                    if(minValuesPerKey <= meta.firstPassCount() && meta.firstPassCount() <= maxValuesPerKey){
+                        numKeysWithOkValues++;
+                        numValuesOfKeysWithOkValues += meta.firstPassCount();
+                    }else{
+                        meta.firstPassCount(0);
+                    }
+                }
+            );
+
+            std::cerr << "unique keys: " << lookup.getNumKeys() << "\n";
+            std::cerr << "numKeysWithOkValues: " << numKeysWithOkValues << "\n";
+            std::cerr << "numValuesOfKeysWithOkValues: " << numValuesOfKeysWithOkValues << "\n";
+
+            //try to create a new lookup which does not contain keys with not ok values
+            try{
+                helpers::CpuTimer timer2("shrink lookup");
+
+                AoSCpuSingleValueHashTable<Key, MetaData> newLookup(lookup.getNumKeys(), loadfactor);
+
+                lookup.forEachKeyValuePair(
+                    [&](const auto& key, const auto& meta){                    
+                        if(minValuesPerKey <= meta.firstPassCount() && meta.firstPassCount() <= maxValuesPerKey){
+                            newLookup.insert(key, meta);
+                        }
+                    }
+                );
+
+                std::swap(lookup, newLookup);
+                timer2.print();
+            }catch(...){
+                std::cerr << "Could not reduce memory usage of table\n";
+            }
+
+            valuestorage.resize(numValuesOfKeysWithOkValues, dummyValue());
+
+            std::size_t position = 0;
+
+            lookup.forEachKeyValuePair(
+                [&](const auto& /*key*/, auto& meta){
+                    std::size_t count = meta.firstPassCount();
+                    meta.offset(position);
+                    meta.numValues(count);
+                    meta.tmpData(0);
+                    position += count;
+                }
+            );
+
+            timer1.print();
+        }
+
+        void secondPassInsert(const Key* keys, const Value* values, std::size_t N){
+            for(std::size_t i = 0; i < N; i++){
+                if(values[i] != dummyValue()){
+                    MetaData* const meta = lookup.queryPointer(keys[i]);
+                    if(meta != nullptr){
+
+                        Value* const myValueRangeBegin = valuestorage.data() + meta->offset();
+                        const std::size_t pos = meta->tmpData();
+                        const std::size_t numValues = meta->numValues();
+                        if(pos < numValues){
+                            myValueRangeBegin[pos] = values[i];
+                            meta->tmpData(pos+1);
+                        }
+                    }
+                }
+            }
+        }
+
+        void secondPassDone(){
+            isInit = true;
+        }
+
+        QueryResult query(const Key& key) const{
+            assert(isInit);
+
+            auto lookupQueryResult = lookup.query(key);
+
+            if(lookupQueryResult.valid()){
+                QueryResult result;
+
+                result.numValues = lookupQueryResult.value().numValues();
+                const std::size_t valuepos = lookupQueryResult.value().offset();
+                result.valuesBegin = &valuestorage[valuepos];
+
+                return result;
+            }else{
+                QueryResult result;
+
+                result.numValues = 0;
+                result.valuesBegin = nullptr;
+
+                return result;
+            }
+        }
+
+        void query(const Key* keys, std::size_t numKeys, QueryResult* resultsOutput) const{
+            assert(isInit);
+            for(std::size_t i = 0; i < numKeys; i++){
+                resultsOutput[i] = query(keys[i]);
+            }
+        }
+
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage result;
+
+            result.host += valuestorage.capacity() * sizeof(Value);
+            result += lookup.getMemoryInfo();            
+
+            return result;
+        }
+
+        void writeToStream(std::ostream& os) const{
+            os.write(reinterpret_cast<const char*>(&isInit), sizeof(bool));
+            os.write(reinterpret_cast<const char*>(&loadfactor), sizeof(float));
+
+            const std::size_t elements = valuestorage.size();
+            const std::size_t bytes = sizeof(Value) * elements;
+            os.write(reinterpret_cast<const char*>(&elements), sizeof(std::size_t));
+            os.write(reinterpret_cast<const char*>(valuestorage.data()), bytes);
+
+            lookup.writeToStream(os);
+        }
+
+        void loadFromStream(std::ifstream& is){
+            destroy();
+
+            is.read(reinterpret_cast<char*>(&isInit), sizeof(bool));
+            is.read(reinterpret_cast<char*>(&loadfactor), sizeof(float));
+
+            std::size_t elements;
+            is.read(reinterpret_cast<char*>(&elements), sizeof(std::size_t));
+            valuestorage.resize(elements);
+            const std::size_t bytes = sizeof(Value) * elements;
+            is.read(reinterpret_cast<char*>(valuestorage.data()), bytes);
+
+            lookup.loadFromStream(is);
+        }
+
+        void destroy(){
+            std::vector<Value> tmp;
+            std::swap(valuestorage, tmp);
+
+            lookup.destroy();
+            isInit = false;
+        }
+
+
+    private:
+
+        struct MetaData{
+            static constexpr std::size_t offsetBits(){
+                return 48;
+            }
+            static constexpr std::size_t numvaluesBits(){
+                return 8;
+            }
+
+            static constexpr std::size_t numTmpBits(){
+                return 8;
+            }
+
+            static_assert(numvaluesBits() == numTmpBits());
+
+            // offset into value array, num values
+            using Data = packed_types::PackedTriple<offsetBits(),numvaluesBits(),numTmpBits()>;
+
+            static constexpr std::size_t maxFirstPassCount(){
+                return (1ull << offsetBits()) - 1;
+            }
+
+            std::size_t firstPassCount() const noexcept{
+                return data.first();
+            }
+
+            void firstPassCount(std::size_t newcount) noexcept{
+                const std::size_t actualnewcount = std::min(maxFirstPassCount(), newcount);
+                data.first(actualnewcount);
+            }
+
+            std::size_t numValues() const noexcept{
+                return data.second();
+            }
+
+            void numValues(std::size_t value) noexcept{
+                data.second(value);
+            }
+
+            std::size_t tmpData() const noexcept{
+                return data.third();
+            }
+
+            void tmpData(std::size_t value) noexcept{
+                data.third(value);
+            }
+
+            std::size_t offset() const noexcept{
+                return data.first();
+            }
+
+            void offset(std::size_t value) noexcept{
+                data.first(value);
+            }
+
+            bool operator==(const MetaData& rhs) const noexcept{
+                return data == rhs.data;
+            }
+
+            bool operator!=(const MetaData& rhs) const noexcept{
+                return !operator==(rhs);
+            }
+
+            Data data;
+        };
+
+        using ValueIndex = std::pair<read_number, BucketSize>;
+        bool isInit = false;
+        float loadfactor = 0.8f;
+        // values with the same key are stored in contiguous memory locations
+        // a single-value hashmap maps keys to the range of the corresponding values
+        std::vector<Value> valuestorage; 
+        AoSCpuSingleValueHashTable<Key, MetaData> lookup;
+    };
+
+
 }
 
-#endif // CARE_GPUHASHTABLE_CUH
+#endif // CARE_CPUHASHTABLE_HPP

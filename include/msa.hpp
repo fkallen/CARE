@@ -2,10 +2,11 @@
 #define CARE_CPU_MSA_HPP
 
 #include <config.hpp>
+#include <hostdevicefunctions.cuh>
 
 #include <util.hpp>
 #include <qualityscoreweights.hpp>
-#include <bestalignment.hpp>
+#include <alignmentorientation.hpp>
 #include <string>
 #include <cassert>
 #include <vector>
@@ -65,13 +66,13 @@ public:
 
     struct InputData{
         bool useQualityScores;
-        int subjectLength;
+        int anchorLength;
         int nCandidates;
         size_t candidatesPitch;
         size_t candidateQualitiesPitch;
-        const char* subject;
+        const char* anchor;
         const char* candidates;
-        const char* subjectQualities;
+        const char* anchorQualities;
         const char* candidateQualities;
         const int* candidateLengths;
         const int* candidateShifts;
@@ -79,9 +80,19 @@ public:
     };
 
     struct PossibleSplitColumn{
-        char letter = 'F';
-        int column = -1;
-        float ratio = 0.0f;
+        char letter;
+        int column;
+        float ratio;
+
+        bool operator==(const PossibleSplitColumn& rhs) const{
+            return letter == rhs.letter
+                && column == rhs.column
+                && feq(ratio, rhs.ratio);
+        }
+
+        bool operator!=(const PossibleSplitColumn& rhs) const{
+            return (!operator==(rhs));
+        }
     };
 
     struct MsaSplit{
@@ -91,10 +102,27 @@ public:
             
         std::vector<PossibleSplitColumn> columnInfo;
         std::vector<int> listOfCandidates;
+
+        bool operator==(const MsaSplit& rhs) const{
+            return columnInfo == rhs.columnInfo
+                && listOfCandidates == rhs.listOfCandidates;
+        }
+
+        bool operator!=(const MsaSplit& rhs) const{
+            return (!operator==(rhs));
+        }
     };
 
     struct PossibleMsaSplits{
         std::vector<MsaSplit> splits;
+
+        bool operator==(const PossibleMsaSplits& rhs) const{
+            return splits == rhs.splits;
+        }
+
+        bool operator!=(const PossibleMsaSplits& rhs) const{
+            return (!operator==(rhs));
+        }
     };
 
     std::vector<char> consensus;
@@ -117,8 +145,8 @@ public:
     int nColumns{};
     int addedSequences{};
 
-    int subjectColumnsBegin_incl{};
-    int subjectColumnsEnd_excl{};
+    int anchorColumnsBegin_incl{};
+    int anchorColumnsEnd_excl{};
 
 
     InputData inputData{};
@@ -139,7 +167,7 @@ public:
 
     void findConsensus();
 
-    void findOrigWeightAndCoverage(const char* subject);
+    void findOrigWeightAndCoverage(const char* anchor);
 
     void addSequence(bool useQualityScores, const char* sequence, const char* quality, int length, int shift, float defaultWeightFactor);
 
@@ -163,7 +191,7 @@ public:
         float m_coverage
     ) const;
 
-    CorrectionResult getCorrectedSubject(
+    CorrectionResult getCorrectedAnchor(
         MSAProperties msaProperties,
         float estimatedErrorrate,
         float estimatedCoverage,
@@ -183,6 +211,30 @@ public:
         int dataset_coverage
     ) const;
 };
+
+
+std::vector<MultipleSequenceAlignment::PossibleSplitColumn> computePossibleSplitColumns(
+    int firstColumn, 
+    int lastColumnExcl,
+    const int* countsA,
+    const int* countsC,
+    const int* countsG,
+    const int* countsT,
+    const int* coverages
+);
+
+MultipleSequenceAlignment::PossibleMsaSplits inspectColumnsRegionSplit(
+    const MultipleSequenceAlignment::PossibleSplitColumn* possibleColumns,
+    int numPossibleColumns,
+    int firstColumn, 
+    int lastColumnExcl,
+    int anchorColumnsBegin_incl,
+    int numCandidates,
+    const char* candidates,
+    int decodedSequencePitchBytes,
+    const int* candidateShifts,
+    const int* candidateLengths
+);
 
 
 

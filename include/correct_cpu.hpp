@@ -2,28 +2,25 @@
 #define CARE_CORRECT_CPU_HPP
 
 #include <config.hpp>
-#include <correctionresultprocessing.hpp>
-#include <memoryfile.hpp>
-#include <minhasher.hpp>
+
+#include <serializedobjectstorage.hpp>
 #include <options.hpp>
 #include <readlibraryio.hpp>
-#include <readstorage.hpp>
-
+#include <cpureadstorage.hpp>
+#include <cpuminhasher.hpp>
 
 namespace care{
 namespace cpu{
 
-    MemoryFileFixedSize<EncodedTempCorrectedSequence>
-	correct_cpu(
-		const GoodAlignmentProperties& goodAlignmentProperties,
-		const CorrectionOptions& correctionOptions,
-		const RuntimeOptions& runtimeOptions,
-		const FileOptions& fileOptions,
-		const MemoryOptions& memoryOptions,
-		const SequenceFileProperties& sequenceFileProperties,
-		Minhasher& minhasher,
-		cpu::ContiguousReadStorage& readStorage
+
+
+	SerializedObjectStorage correct_cpu(
+		const ProgramOptions& programOptions,
+		CpuMinhasher& minhasher,
+		CpuReadStorage& readStorage
 	);
+
+	
 
 
 }

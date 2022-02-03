@@ -1,8 +1,7 @@
 #include <readlibraryio.hpp>
 
 #include <config.hpp>
-#include <threadsafe_buffer.hpp>
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 #include <util.hpp>
 
 #include <iterator>
@@ -204,6 +203,7 @@ void GZipWriter::writeImpl(const std::string& data){
         case FileFormat::FASTAGZ:
         case FileFormat::FASTQGZ:
             return std::make_unique<GZipWriter>(filename, fileFormat);
+        case FileFormat::NONE:
     	default:
     		throw std::runtime_error("makeSequenceWriter: invalid format.");
     	}
@@ -239,7 +239,7 @@ void GZipWriter::writeImpl(const std::string& data){
 
         forEachReadInFile(
             filename, 
-            [&](auto readNumber, const auto& read){
+            [&](auto /*readNumber*/, const auto& read){
                 int len = read.sequence.length();
                 if(len > prop.maxSequenceLength)
                     prop.maxSequenceLength = len;
@@ -265,7 +265,7 @@ void GZipWriter::writeImpl(const std::string& data){
         std::uint64_t count = 0;
         forEachReadInFile(
             filename, 
-            [&](auto readNumber, auto read){
+            [&](auto /*readNumber*/, auto /*read*/){
                 count++;
             }
         );
