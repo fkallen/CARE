@@ -56,6 +56,19 @@ If the input files are unpaired, the setting `--pairmode SE` must be used, which
 If the input files are paired instead, either `--pairmode SE` or `--pairmode PE` may be used.
 Output files will be uncompressed. The order of reads will be preserved. Read headers and quality scores (if fastq) remain unchanged.
 
+A more advanced usage could look like the following command. It enables progress counter `-p` and uses quality scores `-q` which are stored in a lossy compressed 2-bit format `--qualityScoreBits 2`. The program should use 16 threads `-t 16` with a memory limit of 22 gigabyte `-m 22G`. Sequences which contain other letters than A,C,G,T, e.g. N, will be skipped `--excludeAmbiguous`. `-k` and `-h` specify the parameters of the hashing, namely the k-mer size and the number of hash tables. With `--candidateCorrection`, additional sequence corrections may be computed per read which are then used to either accept or reject the primary correction. This can improve correction quality (reduces FP, but also TP) at the expense of greater memory usage to store the additional corrections.
+
+```
+./care-cpu -i reads.fastq -d . -o correctedreads.fastq -c 30 --pairmode PE -p -q --qualityScoreBits 2 --excludeAmbiguous -m 22G -t 16 -k 20 -h 32 --candidateCorrection
+```
+
+The equivalent execution of the GPU version using two GPUs would be:
+
+```
+./care-gpu -i reads.fastq -d . -o correctedreads.fastq -c 30 --pairmode PE -p -q --qualityScoreBits 2 --excludeAmbiguous -m 22G -t 16 -k 20 -h 32 --candidateCorrection -g 0,1
+```
+Note the additional mandatory parameter `-g` which accepts a comma-separated list of integers to indicate which GPUs can be used. The integers must be between 0 and N-1, where N is the number of available GPUs in the system.
+
 
 # Specifying input files
 ## Single-end library
