@@ -69,7 +69,7 @@ void listAvailableGpus(std::ostream& os){
 			cudaDeviceProp prop;
 			status = cudaGetDeviceProperties(&prop, deviceId);
 			if(status == cudaSuccess){
-				os << prop.name << ", CUDA " << prop.major << "." << prop.minor << "\n";
+				os << prop.name << ", compute capability " << prop.major << "." << prop.minor << "\n";
 			}else{
 				os << "Error: Could not retrieve device properties for device ID " << deviceId << "\n";
 			}
