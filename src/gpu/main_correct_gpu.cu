@@ -57,10 +57,33 @@ std::string tostring(const bool& b){
 	return b ? "true" : "false";
 }
 
+
+void listAvailableGpus(std::ostream& os){
+	int numGpus = 0;
+    cudaError_t status = cudaGetDeviceCount(&numGpus);
+	if(status == cudaSuccess){
+		os << "Found " << numGpus << " CUDA-capable GPUs in your system\n";
+		for(int deviceId = 0; deviceId < numGpus; deviceId++){
+			os << "Device ID " << deviceId << ": ";
+
+			cudaDeviceProp prop;
+			status = cudaGetDeviceProperties(&prop, deviceId);
+			if(status == cudaSuccess){
+				os << prop.name << ", compute capability " << prop.major << "." << prop.minor << "\n";
+			}else{
+				os << "Error: Could not retrieve device properties for device ID " << deviceId << "\n";
+			}
+		}
+	}else{
+		os << "Error: Could not determine number of GPUs\n";
+	}
+}
+
 int main(int argc, char** argv){
 
 	bool help = false;
 	bool showVersion = false;
+	bool printAvailableGpus = false;
 
 	cxxopts::Options commandLineOptions(argv[0], "CARE: Context-Aware Read Error Correction for Illumina reads");
 
@@ -74,7 +97,8 @@ int main(int argc, char** argv){
 
 	commandLineOptions.add_options("Additional")
 		("help", "Show this help message", cxxopts::value<bool>(help))
-		("version", "Print version", cxxopts::value<bool>(showVersion));
+		("version", "Print version", cxxopts::value<bool>(showVersion))
+		("listGpus", "Print a list of available GPUs in the system and their corresponding device ID", cxxopts::value<bool>(printAvailableGpus));
 
 	auto parseresults = commandLineOptions.parse(argc, argv);
 
@@ -85,6 +109,11 @@ int main(int argc, char** argv){
 
 	if(help) {
 		std::cout << commandLineOptions.help({"", "Mandatory", "Additional"}) << std::endl;
+		std::exit(0);
+	}
+
+	if(printAvailableGpus){
+		listAvailableGpus(std::cout);
 		std::exit(0);
 	}
 
