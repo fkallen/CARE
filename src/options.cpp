@@ -54,6 +54,10 @@ namespace care{
     ProgramOptions::ProgramOptions(const cxxopts::ParseResult& pr){
         ProgramOptions& result = *this;
 
+        if(pr.count("correctionQualityLabels")){
+            result.outputCorrectionQualityLabels = pr["correctionQualityLabels"].as<bool>();
+        }
+
         if(pr.count("minalignmentoverlap")){
             result.min_overlap = pr["minalignmentoverlap"].as<int>();
         }
@@ -630,6 +634,7 @@ namespace care{
 
     void ProgramOptions::printAdditionalOptionsCorrect(std::ostream& stream) const{
         stream << "Correct candidate reads: " << correctCandidates << "\n";
+        stream << "Output correction quality labels: " << outputCorrectionQualityLabels << "\n";
 	    stream << "Max shift for candidate correction: " << new_columns_to_correct << "\n";
         stream << "Correction type (anchor): " << int(correctionType) 
 		    << " (" << to_string(correctionType) << ")\n";
@@ -817,6 +822,9 @@ namespace care{
 
     void addAdditionalOptionsCorrect(cxxopts::Options& commandLineOptions){
         commandLineOptions.add_options("Additional")
+            ("correctionQualityLabels", "If set, correction quality label will be appended to output read headers. "
+                "Default: " + tostring(ProgramOptions{}.outputCorrectionQualityLabels),
+            cxxopts::value<bool>()->implicit_value("true"))
             ("candidateCorrection", "If set, candidate reads will be corrected,too. "
                 "Default: " + tostring(ProgramOptions{}.correctCandidates),
             cxxopts::value<bool>()->implicit_value("true"))

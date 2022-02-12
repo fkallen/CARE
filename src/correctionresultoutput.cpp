@@ -34,7 +34,8 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
     const std::vector<std::string>& outputfiles,
     Combiner combineResultsWithRead, /* combineResultsWithRead(std::vector<ResultType>& in, ReadWithId& in_out) */
     ReadIdComparator origIdResultIdLessThan,
-    ProgressFunction addProgress
+    ProgressFunction addProgress,
+    bool outputCorrectionQualityLabels
 ){
     assert(outputfiles.size() == 1 || originalReadFiles.size() == outputfiles.size());
 
@@ -348,7 +349,20 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
                         }
                     }
 
-                    combineResultsWithRead(buffer, readWithId);  
+                    const auto combineStatus = combineResultsWithRead(buffer, readWithId); 
+                    if(outputCorrectionQualityLabels){
+                        if(combineStatus.corrected){
+                            if(combineStatus.lqCorrectionOnlyAnchor){
+                                readWithId.read.header += " care:q=1"; 
+                            }else if(combineStatus.lqCorrectionWithCandidates){
+                                readWithId.read.header += " care:q=2";  
+                            }else if(combineStatus.hqCorrection){
+                                readWithId.read.header += " care:q=3";  
+                            }
+                        }else{
+                            readWithId.read.header += " care:q=0";
+                        }
+                    }
 
                     ++first1;
                 }
@@ -912,7 +926,8 @@ void constructOutputFileFromCorrectionResults(
     SerializedObjectStorage& partialResults, 
     FileFormat outputFormat,
     const std::vector<std::string>& outputfiles,
-    bool showProgress
+    bool showProgress,
+    const ProgramOptions& programOptions
 ){
 
     std::less<read_number> origIdResultIdLessThan{};
@@ -934,7 +949,8 @@ void constructOutputFileFromCorrectionResults(
         outputfiles,
         combineMultipleCorrectionResults1_rawtcs2,
         origIdResultIdLessThan,
-        addProgress
+        addProgress,
+        programOptions.outputCorrectionQualityLabels
     );
 
     if(showProgress){

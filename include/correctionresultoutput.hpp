@@ -5,6 +5,7 @@
 
 #include <readlibraryio.hpp>
 #include <serializedobjectstorage.hpp>
+#include <options.hpp>
 
 #include <string>
 #include <vector>
@@ -16,7 +17,8 @@ namespace care{
         SerializedObjectStorage& partialResults, 
         FileFormat outputFormat,
         const std::vector<std::string>& outputfiles,
-        bool showProgress
+        bool showProgress,
+        const ProgramOptions& programOptions
     );
 
 

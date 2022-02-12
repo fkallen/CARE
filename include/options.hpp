@@ -43,6 +43,7 @@ namespace care
         bool autodetectKmerlength = false;
         bool mustUseAllHashfunctions = false;
         bool singlehash = false;
+        bool outputCorrectionQualityLabels = false;
         float estimatedCoverage = 1.0f;
         float estimatedErrorrate = 0.06f; //this is not the error rate of the dataset
         float m_coverage = 0.6f;
