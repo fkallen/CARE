@@ -334,7 +334,7 @@ public:
             writtenQualityBytes += sizeof(std::size_t); //numdataelements
 
             stream.write(reinterpret_cast<const char*>(shrinkedEncodedQualities.data()), numelements * sizeof(unsigned int));            
-            writtenQualityBytes += numelements * sizeof(char); //dataelements
+            writtenQualityBytes += numelements * sizeof(unsigned int); //dataelements
 
             assert(numelements == getNumberOfReads() * pitch);
         }else{
