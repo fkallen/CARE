@@ -822,6 +822,48 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
                                                             return isEqualSequence(tmpresults[0], tcs);
                                                         });
 
+                // int numEqual = 0;
+                // int numUnequal = 0;
+                // std::for_each(
+                //     tmpresults.begin()+1,
+                //     tmpresults.end(),
+                //     [&](const auto& tcs){
+                //         if(isEqualSequence(tmpresults[0], tcs)){
+                //             numEqual++;
+                //         }else{
+                //             numUnequal++;
+                //         }
+                //     }
+                // );
+
+                // const bool sameCorrections = float(numEqual) / (float(numUnequal + numEqual)) >= 0.6f;
+
+                // std::sort(tmpresults.begin() + 1, tmpresults.end(),
+                //     [](const auto& l, const auto& r){
+                //         if(l.useEdits != r.useEdits){
+                //             return !l.useEdits;
+                //         }else{
+                //             if(l.useEdits){
+                //                 if(l.edits.size() != r.edits.size()){
+                //                     return l.edits.size() < r.edits.size();
+                //                 }else{
+                //                     for(std::size_t i = 0; i < l.edits.size(); i++){
+                //                         const auto& ledit = l.edits[i];
+                //                         const auto& redit = r.edits[i];
+                //                         if(ledit.pos() != redit.pos()){
+                //                             return ledit.pos() < redit.pos();
+                //                         }else{
+                //                             return ledit.base() < redit.base();
+                //                         }
+                //                     }
+                //                 }
+                //             }else{
+                //                 return l.sequence < r.sequence;
+                //             }
+                //         }
+                //     }
+                // );
+
                 //assert(sameCorrections == sameCorrections2);                
 
                 if(sameCorrections && sizelimitok){

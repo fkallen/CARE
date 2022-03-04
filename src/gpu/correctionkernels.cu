@@ -350,15 +350,15 @@ namespace gpu{
 
         const int loopEnd = *numCandidatesToBeCorrected;
 
-        GpuClf localForest;
-        localForest.numTrees = gpuForest.numTrees;
-        localForest.data = sharedForestNodes;
+        GpuClf localForest = gpuForest;
+        // localForest.numTrees = gpuForest.numTrees;
+        // localForest.data = sharedForestNodes;
 
-        for(int i = threadIdx.x; i < localForest.numTrees; i += BLOCKSIZE){
-            localForest.data[i] = gpuForest.data[i];
-        }
+        // for(int i = threadIdx.x; i < localForest.numTrees; i += BLOCKSIZE){
+        //     localForest.data[i] = gpuForest.data[i];
+        // }
         
-        __syncthreads();
+        // __syncthreads();
 
         for(int id = groupId; id < loopEnd; id += numGroups){
 
