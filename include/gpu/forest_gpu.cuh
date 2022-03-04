@@ -44,11 +44,14 @@ struct GpuForest {
         } lhs, rhs;
     };
 
-    struct SoATree{
-        uint8_t* att;
-        uint8_t* flag;
+    struct NodePayload{
+        uint8_t att;
+        uint8_t flag;
+        double split;
+    };
 
-        double* split;
+    struct SoATree{
+        NodePayload* payload;
 
         IndexOrProb* lhs;
         IndexOrProb* rhs;
@@ -64,12 +67,12 @@ struct GpuForest {
         template<class Iter>
         HOSTDEVICEQUALIFIER
         float decideSoATree(Iter features, const SoATree& soatree, size_t nodeIndex = 0) const {
-            if (*(features + soatree.att[nodeIndex]) <= soatree.split[nodeIndex]) {
-                if (soatree.flag[nodeIndex] / 2)
+            if (*(features + soatree.payload[nodeIndex].att) <= soatree.payload[nodeIndex].split) {
+                if (soatree.payload[nodeIndex].flag / 2)
                     return soatree.lhs[nodeIndex].prob;
                 return decideSoATree(features, soatree, soatree.lhs[nodeIndex].idx);
             } else {
-                if (soatree.flag[nodeIndex] % 2)
+                if (soatree.payload[nodeIndex].flag % 2)
                     return soatree.rhs[nodeIndex].prob;
                 return decideSoATree(features, soatree, soatree.rhs[nodeIndex].idx);
             }
@@ -193,6 +196,7 @@ public:
             std::vector<double> splits(numNodes);
             std::vector<IndexOrProb> lhss(numNodes);
             std::vector<IndexOrProb> rhss(numNodes);
+            std::vector<NodePayload> payloads(numNodes);
 
             for(int n = 0; n < numNodes; n++){
                 Node node = nodes[n];
@@ -201,19 +205,25 @@ public:
                 splits[n] = node.split;
                 lhss[n].idx = node.lhs.idx;
                 rhss[n].idx = node.rhs.idx;
+
+                payloads[n].att = node.att;
+                payloads[n].flag = node.flag;
+                payloads[n].split = node.split;
             }
 
-            CUDACHECK(cudaMalloc(&soaWithDevicePointers[t].att, sizeof(uint8_t) * numNodes));
-            CUDACHECK(cudaMalloc(&soaWithDevicePointers[t].flag, sizeof(uint8_t) * numNodes));
-            CUDACHECK(cudaMalloc(&soaWithDevicePointers[t].split, sizeof(double) * numNodes));
+            // CUDACHECK(cudaMalloc(&soaWithDevicePointers[t].att, sizeof(uint8_t) * numNodes));
+            // CUDACHECK(cudaMalloc(&soaWithDevicePointers[t].flag, sizeof(uint8_t) * numNodes));
+            // CUDACHECK(cudaMalloc(&soaWithDevicePointers[t].split, sizeof(double) * numNodes));
             CUDACHECK(cudaMalloc(&soaWithDevicePointers[t].lhs, sizeof(IndexOrProb) * numNodes));
             CUDACHECK(cudaMalloc(&soaWithDevicePointers[t].rhs, sizeof(IndexOrProb) * numNodes));
+            CUDACHECK(cudaMalloc(&soaWithDevicePointers[t].payload, sizeof(NodePayload) * numNodes));
 
-            CUDACHECK(cudaMemcpy(soaWithDevicePointers[t].att, atts.data(), sizeof(uint8_t) * numNodes, H2D));
-            CUDACHECK(cudaMemcpy(soaWithDevicePointers[t].flag, flags.data(), sizeof(uint8_t) * numNodes, H2D));
-            CUDACHECK(cudaMemcpy(soaWithDevicePointers[t].split, splits.data(), sizeof(double) * numNodes, H2D));
+            // CUDACHECK(cudaMemcpy(soaWithDevicePointers[t].att, atts.data(), sizeof(uint8_t) * numNodes, H2D));
+            // CUDACHECK(cudaMemcpy(soaWithDevicePointers[t].flag, flags.data(), sizeof(uint8_t) * numNodes, H2D));
+            // CUDACHECK(cudaMemcpy(soaWithDevicePointers[t].split, splits.data(), sizeof(double) * numNodes, H2D));
             CUDACHECK(cudaMemcpy(soaWithDevicePointers[t].lhs, lhss.data(), sizeof(IndexOrProb) * numNodes, H2D));
             CUDACHECK(cudaMemcpy(soaWithDevicePointers[t].rhs, rhss.data(), sizeof(IndexOrProb) * numNodes, H2D));
+            CUDACHECK(cudaMemcpy(soaWithDevicePointers[t].payload, payloads.data(), sizeof(NodePayload) * numNodes, H2D));
         }
 
         CUDACHECK(cudaMalloc(&d_data, sizeof(Node*) * numTrees));
@@ -275,9 +285,10 @@ public:
         CUDACHECK(cudaFree(d_data));
 
         for(int t = 0; t < numTrees; t++){
-            CUDACHECK(cudaFree(soaWithDevicePointers[t].att));
-            CUDACHECK(cudaFree(soaWithDevicePointers[t].flag));
-            CUDACHECK(cudaFree(soaWithDevicePointers[t].split));
+            // CUDACHECK(cudaFree(soaWithDevicePointers[t].att));
+            // CUDACHECK(cudaFree(soaWithDevicePointers[t].flag));
+            // CUDACHECK(cudaFree(soaWithDevicePointers[t].split));
+            CUDACHECK(cudaFree(soaWithDevicePointers[t].payload));
             CUDACHECK(cudaFree(soaWithDevicePointers[t].lhs));
             CUDACHECK(cudaFree(soaWithDevicePointers[t].rhs));
         }
