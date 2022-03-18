@@ -98,8 +98,12 @@ struct GpuForest {
             float prob = 0.f;
             for(int t = 0; t < numTrees; t++){
                 prob += decideTree(features, data[t]);
+                if(prob / numTrees >= thresh){
+                    return true;
+                }
             }
-            return prob / numTrees >= thresh;
+            //return prob / numTrees >= thresh;
+            return false;
         }
 
         //use group to parallelize over trees. one thread per tree
@@ -107,7 +111,24 @@ struct GpuForest {
         template<class Group, class Iter, class GroupReduceFloatSum>
         DEVICEQUALIFIER
         float decide(Group& g, Iter features, float thresh, GroupReduceFloatSum reduce) const{
-            #if 0
+            #if 1
+
+            #if 1
+            const int limit = SDIV(numTrees, g.size()) * g.size();
+            float accumulatedProb = 0.f;
+
+            for(int t = g.thread_rank(); t < limit; t += g.size()){
+                float currentProb = 0.0;
+                if(t < numTrees){
+                    currentProb += decideTree(features, data[t]);
+                }
+                accumulatedProb += reduce(currentProb);
+                if(accumulatedProb / numTrees >= thresh){
+                    return true;
+                }
+            }
+            return false;
+            #else
 
             float prob = 0.f;
             for(int t = g.thread_rank(); t < numTrees; t += g.size()){
@@ -115,15 +136,24 @@ struct GpuForest {
             }
             prob = reduce(prob);
             return prob / numTrees >= thresh;
+            #endif
 
             #else
 
-            float prob = 0.f;
-            for(int t = g.thread_rank(); t < numTrees; t += g.size()){
-                prob += decideSoATree(features, trees[t]);
+            const int limit = SDIV(numTrees, g.size()) * g.size();
+            float accumulatedProb = 0.f;
+
+            for(int t = g.thread_rank(); t < limit; t += g.size()){
+                float currentProb = 0.0;
+                if(t < numTrees){
+                    currentProb += decideSoATree(features, data[t]);
+                }
+                accumulatedProb += reduce(currentProb);
+                if(accumulatedProb / numTrees >= thresh){
+                    return true;
+                }
             }
-            prob = reduce(prob);
-            return prob / numTrees >= thresh;
+            return false;
 
             #endif
         }
