@@ -503,9 +503,13 @@ namespace gpu{
 
                     tgroup.sync();
 
-                    //only thread 0 has valid result
+                    auto sumreduce = [&](auto val){
+                        using T = decltype(val);
+                        return cg::reduce(tgroup, val, cg::plus<T>{});
+                    };
+
                     //localForest gpuForest
-                    const bool useConsensus = localForest.decide(tgroup, &sharedFeatures[groupIdInBlock][0], forestThreshold, groupReduceFloatSum);
+                    const bool useConsensus = localForest.decide(tgroup, &sharedFeatures[groupIdInBlock][0], forestThreshold, sumreduce);
 
                     if(tgroup.thread_rank() == 0){
                         if(!useConsensus){
