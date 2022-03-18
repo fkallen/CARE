@@ -146,7 +146,7 @@ struct GpuForest {
             for(int t = g.thread_rank(); t < limit; t += g.size()){
                 float currentProb = 0.0;
                 if(t < numTrees){
-                    currentProb += decideSoATree(features, data[t]);
+                    currentProb += decideSoATree(features, trees[t]);
                 }
                 accumulatedProb += reduce(currentProb);
                 if(accumulatedProb / numTrees >= thresh){
