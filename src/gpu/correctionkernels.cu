@@ -5,7 +5,7 @@
 #include <gpu/gpumsa.cuh>
 #include <gpu/cudaerrorcheck.cuh>
 #include <alignmentorientation.hpp>
-
+#include <util_iterator.hpp>
 #include <sequencehelpers.hpp>
 #include <correctedsequence.hpp>
 
@@ -19,8 +19,14 @@
 #include <cub/cub.cuh>
 
 #include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
 
 #include <thrust/functional.h>
+
+#include <rmm/device_uvector.hpp>
+#include <rmm/device_scalar.hpp>
+#include <rmm/mr/device/device_memory_resource.hpp>
+
 
 namespace cg = cooperative_groups;
 
@@ -385,6 +391,15 @@ namespace gpu{
                 queryColumnsEnd_excl
             );
 
+            // if(id == 1 && tgroup.thread_rank() == 0){
+            //     printf("is reverse complement? %d\n", (bestAlignmentFlags[candidateIndex] == AlignmentOrientation::ReverseComplement));
+            //     printf("msa consensus beginning at %d\n", queryColumnsBegin_incl);
+            //     for(int i =0; i < candidate_length; i +=1) {
+            //         printf("%c", SequenceHelpers::decodeBase(msa.consensus[queryColumnsBegin_incl + i]));
+            //     }
+            //     printf("\n");
+            // }
+
             for(int i = tgroup.thread_rank(); i < candidate_length; i += tgroup.size()) {
                 shared_correctedCandidate[i] = SequenceHelpers::decodeBase(msa.consensus[queryColumnsBegin_incl + i]);
             }
@@ -395,6 +410,39 @@ namespace gpu{
 
             const unsigned int* const encUncorrectedCandidate = candidateSequencesData 
                         + std::size_t(candidateIndex) * encodedSequencePitchInInts;
+
+            
+            // if(id == 1 && tgroup.thread_rank() == 0){
+            //     printf("shared_correctedCandidate\n");
+            //     for(int i =0; i < candidate_length; i +=1) {
+            //         printf("%c", shared_correctedCandidate[i]);
+            //     }
+            //     printf("\n");
+
+            //     printf("orig\n");
+            //     for(int i =0; i < candidate_length; i +=1) {
+            //         std::uint8_t origEncodedBase = 0;
+
+            //         if(bestAlignmentFlag == AlignmentOrientation::ReverseComplement){
+            //             origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
+            //                 encUncorrectedCandidate,
+            //                 candidate_length,
+            //                 candidate_length - i - 1
+            //             );
+            //             origEncodedBase = SequenceHelpers::complementBase2Bit(origEncodedBase);
+            //         }else{
+            //             origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
+            //                 encUncorrectedCandidate,
+            //                 candidate_length,
+            //                 i
+            //             );
+            //         }
+
+            //         const char origBase = SequenceHelpers::decodeBase(origEncodedBase);
+            //         printf("%c", origBase);
+            //     }
+            //     printf("\n");
+            // }
 
             for(int i = 0; i < candidate_length; i += 1){
                 std::uint8_t origEncodedBase = 0;
@@ -416,11 +464,26 @@ namespace gpu{
 
                 const char origBase = SequenceHelpers::decodeBase(origEncodedBase);
                 const char consensusBase = shared_correctedCandidate[i];
-                if(origBase != consensusBase){
 
+                // if(id == 1){
+                //     if(tgroup.thread_rank() == 0){
+                //         for(int k = 0; k < candidate_length; k++){
+                //             if(i == k){
+                //                 printf("orig cons position %d, %c %c\n", i, origBase, consensusBase);
+                //             }
+                //             tgroup.sync();
+                //         }
+                //     }
+                // }
+                
+                if(origBase != consensusBase){
                     const int msaPos = queryColumnsBegin_incl + i;
 
                     if(tgroup.thread_rank() == 0){
+                        // if(id == 1){
+                        //     printf("orig cons mismatch position %d, %c %c\n", i, origBase, consensusBase);
+                        // }
+
                         ExtractCandidateInputData& extractorInput = sharedExtractInput[groupIdInBlock];
 
                         extractorInput.origBase = origBase;
@@ -454,7 +517,99 @@ namespace gpu{
                 }
             }            
 
-            tgroup.sync();
+            //the forward strand will be returned -> make reverse complement again
+            if(bestAlignmentFlag == AlignmentOrientation::ReverseComplement) {
+                SequenceHelpers::reverseComplementDecodedSequence(tgroup, shared_correctedCandidate, candidate_length);
+            }else{
+                //orientation ok
+            }
+
+            char* const my_corrected_candidate = correctedCandidates + destinationIndex * decodedSequencePitchInBytes;
+            
+            //copy corrected sequence from smem to global output
+            const int fullInts1 = candidate_length / sizeof(int);
+
+            for(int i = tgroup.thread_rank(); i < fullInts1; i += tgroup.size()) {
+                ((int*)my_corrected_candidate)[i] = ((int*)shared_correctedCandidate)[i];
+            }
+
+            for(int i = tgroup.thread_rank(); i < candidate_length - fullInts1 * sizeof(int); i += tgroup.size()) {
+                my_corrected_candidate[fullInts1 * sizeof(int) + i] 
+                    = shared_correctedCandidate[fullInts1 * sizeof(int) + i];
+            }
+
+            tgroup.sync(); //sync before handling next candidate                        
+        }
+    }
+
+
+    /*
+        Pass 1 (this kernel): Set corrected candidate to msa consensus
+        Pass 2: Use RF to change some positions of corrected candidates
+    */
+
+    template<int BLOCKSIZE, int groupsize>
+    __global__
+    void msaCorrectCandidatesWithForestKernel_multiphase_initCorrectedCandidatesKernel(
+        char* __restrict__ correctedCandidates,
+        GPUMultiMSA multiMSA,
+        const int* __restrict__ shifts,
+        const AlignmentOrientation* __restrict__ bestAlignmentFlags,
+        const unsigned int* __restrict__ candidateSequencesData,
+        const int* __restrict__ candidateSequencesLengths,
+        const bool* __restrict__ d_candidateContainsN,
+        const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
+        const int* __restrict__ numCandidatesToBeCorrected,
+        const int* __restrict__ anchorIndicesOfCandidates,         
+        int encodedSequencePitchInInts,
+        size_t decodedSequencePitchInBytes,
+        size_t dynamicsmemSequencePitchInInts
+    ){
+
+        static_assert(BLOCKSIZE % groupsize == 0, "BLOCKSIZE % groupsize != 0");
+        //constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
+        static_assert(groupsize == 32);
+
+        auto tgroup = cg::tiled_partition<groupsize>(cg::this_thread_block());
+        const int numGroups = (gridDim.x * blockDim.x) / groupsize;
+        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+        const int groupIdInBlock = threadIdx.x / groupsize;
+
+        extern __shared__ int dynamicsmem[]; // for sequences
+
+        char* const shared_correctedCandidate = (char*)(&dynamicsmem[0] + dynamicsmemSequencePitchInInts * groupIdInBlock);
+
+        const int loopEnd = *numCandidatesToBeCorrected;
+
+        for(int id = groupId; id < loopEnd; id += numGroups){
+
+            const int candidateIndex = candidateIndicesOfCandidatesToBeCorrected[id];
+            const int anchorIndex = anchorIndicesOfCandidates[candidateIndex];
+            const int destinationIndex = id;
+
+            const GpuSingleMSA msa = multiMSA.getSingleMSA(anchorIndex);
+
+            const int candidate_length = candidateSequencesLengths[candidateIndex];
+            const int shift = shifts[candidateIndex];
+            const int anchorColumnsBegin_incl = msa.columnProperties->anchorColumnsBegin_incl;
+            const int queryColumnsBegin_incl = anchorColumnsBegin_incl + shift;
+
+            // if(id == 1 && tgroup.thread_rank() == 0){
+            //     printf("msa consensus beginning at %d\n", queryColumnsBegin_incl);
+            //     for(int i =0; i < candidate_length; i +=1) {
+            //         printf("%c", SequenceHelpers::decodeBase(msa.consensus[queryColumnsBegin_incl + i]));
+            //     }
+            //     printf("\n");
+            // }
+
+
+            for(int i = tgroup.thread_rank(); i < candidate_length; i += tgroup.size()) {
+                shared_correctedCandidate[i] = SequenceHelpers::decodeBase(msa.consensus[queryColumnsBegin_incl + i]);
+            }
+
+            tgroup.sync(); 
+
+            const AlignmentOrientation bestAlignmentFlag = bestAlignmentFlags[candidateIndex];
 
             //the forward strand will be returned -> make reverse complement again
             if(bestAlignmentFlag == AlignmentOrientation::ReverseComplement) {
@@ -480,6 +635,760 @@ namespace gpu{
             tgroup.sync(); //sync before handling next candidate                        
         }
     }
+
+    template<int BLOCKSIZE, int groupsize>
+    __global__
+    void msaCorrectCandidatesWithForestKernel_multiphase_countMismatchesKernel(
+        const char* __restrict__ correctedCandidates,
+        const AlignmentOrientation* __restrict__ bestAlignmentFlags,
+        const unsigned int* __restrict__ candidateSequencesData,
+        const int* __restrict__ candidateSequencesLengths,
+        const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
+        const int* __restrict__ numCandidatesToBeCorrected,
+        const int* __restrict__ anchorIndicesOfCandidates,         
+        int encodedSequencePitchInInts,
+        size_t decodedSequencePitchInBytes,
+        int* __restrict__ numMismatches
+    ){        
+        static_assert(BLOCKSIZE % groupsize == 0, "BLOCKSIZE % groupsize != 0");
+        constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
+        static_assert(groupsize == 32);
+
+        auto tgroup = cg::tiled_partition<groupsize>(cg::this_thread_block());
+        const int numGroups = (gridDim.x * blockDim.x) / groupsize;
+        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+        const int groupIdInBlock = threadIdx.x / groupsize;
+
+        using BlockReduce = cub::BlockReduce<int, BLOCKSIZE>;
+        __shared__ typename BlockReduce::TempStorage temp_reduce;
+
+       
+        const int loopEnd = *numCandidatesToBeCorrected;
+
+        int myNumMismatches = 0;
+
+        for(int id = groupId; id < loopEnd; id += numGroups){
+
+            const int candidateIndex = candidateIndicesOfCandidatesToBeCorrected[id];
+            const int anchorIndex = anchorIndicesOfCandidates[candidateIndex];
+            const int destinationIndex = id;
+
+            const int candidate_length = candidateSequencesLengths[candidateIndex];
+            const AlignmentOrientation bestAlignmentFlag = bestAlignmentFlags[candidateIndex];
+
+            const unsigned int* const encUncorrectedCandidate = candidateSequencesData 
+                        + std::size_t(candidateIndex) * encodedSequencePitchInInts;
+            const char* const decCorrectedCandidate = correctedCandidates + destinationIndex * decodedSequencePitchInBytes;
+
+            const int loopEnd = SDIV(candidate_length, tgroup.size()) * tgroup.size();
+
+            for(int i = tgroup.thread_rank(); i < loopEnd; i += tgroup.size()){
+                if(i < candidate_length){
+                    std::uint8_t origEncodedBase = 0;
+                    char consensusBase = 'F';
+
+                    if(bestAlignmentFlag == AlignmentOrientation::ReverseComplement){
+                        origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
+                            encUncorrectedCandidate,
+                            candidate_length,
+                            candidate_length - i - 1
+                        );
+                        origEncodedBase = SequenceHelpers::complementBase2Bit(origEncodedBase);
+                        consensusBase = SequenceHelpers::complementBaseDecoded(decCorrectedCandidate[candidate_length - i - 1]);
+                    }else{
+                        origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
+                            encUncorrectedCandidate,
+                            candidate_length,
+                            i
+                        );
+                        consensusBase = decCorrectedCandidate[i];
+                    }
+
+                    const char origBase = SequenceHelpers::decodeBase(origEncodedBase);
+
+                    if(origBase != consensusBase){
+                        myNumMismatches++;
+                    }
+                }
+            }
+        }
+
+        int blockNumMismatches = BlockReduce(temp_reduce).Sum(myNumMismatches); 
+        __syncthreads();
+
+        if(threadIdx.x == 0){
+            atomicAdd(numMismatches, blockNumMismatches);
+        }
+    }
+
+    struct MismatchPositionsRaw{
+        int maxPositions;
+        char* origBase;
+        char* consensusBase;
+        int* position;
+        int* anchorIndex;
+        int* candidateIndex;
+        int* destinationIndex;
+        int* numPositions;
+    };
+
+    struct MismatchPositions{
+        int maxPositions;
+        rmm::device_uvector<char> origBase;
+        rmm::device_uvector<char> consensusBase;
+        rmm::device_uvector<int> position;
+        rmm::device_uvector<int> anchorIndex;
+        rmm::device_uvector<int> candidateIndex;
+        rmm::device_uvector<int> destinationIndex;
+        rmm::device_scalar<int> numPositions;
+
+        MismatchPositions(int maxPositions, cudaStream_t stream, rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource())
+        : maxPositions(maxPositions),
+            origBase(maxPositions, stream, mr),
+            consensusBase(maxPositions, stream, mr),
+            position(maxPositions, stream, mr),
+            anchorIndex(maxPositions, stream, mr),
+            candidateIndex(maxPositions, stream, mr),
+            destinationIndex(maxPositions, stream, mr),
+            numPositions(0, stream, mr)
+        {}
+
+        operator MismatchPositionsRaw(){
+            return MismatchPositionsRaw{
+                maxPositions, 
+                origBase.data(), 
+                consensusBase.data(),
+                position.data(),
+                anchorIndex.data(),
+                candidateIndex.data(),
+                destinationIndex.data(),
+                numPositions.data(),
+            };
+        }
+    };
+
+    template<int BLOCKSIZE, int groupsize>
+    __global__
+    void msaCorrectCandidatesWithForestKernel_multiphase_findMismatchesKernel(
+        const char* __restrict__ correctedCandidates,
+        const AlignmentOrientation* __restrict__ bestAlignmentFlags,
+        const unsigned int* __restrict__ candidateSequencesData,
+        const int* __restrict__ candidateSequencesLengths,
+        const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
+        const int* __restrict__ numCandidatesToBeCorrected,
+        const int* __restrict__ anchorIndicesOfCandidates,         
+        int encodedSequencePitchInInts,
+        size_t decodedSequencePitchInBytes,
+        MismatchPositionsRaw mismatchPositions
+    ){
+       
+        static_assert(BLOCKSIZE % groupsize == 0, "BLOCKSIZE % groupsize != 0");
+        constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
+        static_assert(groupsize == 32);
+
+        auto tgroup = cg::tiled_partition<groupsize>(cg::this_thread_block());
+        const int numGroups = (gridDim.x * blockDim.x) / groupsize;
+        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+        const int groupIdInBlock = threadIdx.x / groupsize;
+
+        constexpr int maxNumMismatchLocations = groupsize;
+
+        __shared__ char smem_mismatchLocations_origBase[groupsPerBlock][maxNumMismatchLocations];
+        __shared__ char smem_mismatchLocations_consensusBase[groupsPerBlock][maxNumMismatchLocations];
+        __shared__ int smem_mismatchLocations_anchorIndex[groupsPerBlock][maxNumMismatchLocations];
+        __shared__ int smem_mismatchLocations_candidateIndex[groupsPerBlock][maxNumMismatchLocations];
+        __shared__ int smem_mismatchLocations_destinationIndex[groupsPerBlock][maxNumMismatchLocations];
+        __shared__ int smem_mismatchLocations_position[groupsPerBlock][maxNumMismatchLocations];
+        __shared__ int smem_numMismatchLocations[groupsPerBlock];
+
+        if(tgroup.thread_rank() == 0){
+            smem_numMismatchLocations[groupIdInBlock] = 0;
+        }
+        tgroup.sync();
+      
+        const int loopEnd = *numCandidatesToBeCorrected;
+
+        for(int id = groupId; id < loopEnd; id += numGroups){
+
+            const int candidateIndex = candidateIndicesOfCandidatesToBeCorrected[id];
+            const int anchorIndex = anchorIndicesOfCandidates[candidateIndex];
+            const int destinationIndex = id;
+
+            const int candidate_length = candidateSequencesLengths[candidateIndex];
+            const AlignmentOrientation bestAlignmentFlag = bestAlignmentFlags[candidateIndex];
+
+            const unsigned int* const encUncorrectedCandidate = candidateSequencesData 
+                        + std::size_t(candidateIndex) * encodedSequencePitchInInts;
+            const char* const decCorrectedCandidate = correctedCandidates + destinationIndex * decodedSequencePitchInBytes;
+
+            const int loopEnd = SDIV(candidate_length, tgroup.size()) * tgroup.size();
+
+            for(int i = tgroup.thread_rank(); i < loopEnd; i += tgroup.size()){
+
+                if(i < candidate_length){
+                    std::uint8_t origEncodedBase = 0;
+                    char consensusBase = 'F';
+
+                    if(bestAlignmentFlag == AlignmentOrientation::ReverseComplement){
+                        origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
+                            encUncorrectedCandidate,
+                            candidate_length,
+                            candidate_length - i - 1
+                        );
+                        origEncodedBase = SequenceHelpers::complementBase2Bit(origEncodedBase);
+                        consensusBase = SequenceHelpers::complementBaseDecoded(decCorrectedCandidate[candidate_length - i - 1]);
+                    }else{
+                        origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
+                            encUncorrectedCandidate,
+                            candidate_length,
+                            i
+                        );
+                        consensusBase = decCorrectedCandidate[i];
+                    }
+
+                    const char origBase = SequenceHelpers::decodeBase(origEncodedBase);
+
+                    if(origBase != consensusBase){
+                        auto selectedgroup = cg::coalesced_threads();
+
+                        const int smemarraypos = selectedgroup.thread_rank();
+
+                        smem_mismatchLocations_anchorIndex[groupIdInBlock][smemarraypos] = anchorIndex;
+                        smem_mismatchLocations_candidateIndex[groupIdInBlock][smemarraypos] = candidateIndex;
+                        smem_mismatchLocations_destinationIndex[groupIdInBlock][smemarraypos] = destinationIndex;
+                        smem_mismatchLocations_position[groupIdInBlock][smemarraypos] = i;
+                        smem_mismatchLocations_origBase[groupIdInBlock][smemarraypos] = origBase;
+                        smem_mismatchLocations_consensusBase[groupIdInBlock][smemarraypos] = consensusBase;
+
+                        if(selectedgroup.thread_rank() == 0){
+                            smem_numMismatchLocations[groupIdInBlock] = selectedgroup.size();
+                        }
+                    }
+                }
+                tgroup.sync();
+
+                if(smem_numMismatchLocations[groupIdInBlock] > 0){
+                    int globalIndex;
+
+                    // elect the first active thread to perform atomic add
+                    if (tgroup.thread_rank() == 0) {
+                        globalIndex = atomicAdd(mismatchPositions.numPositions, smem_numMismatchLocations[groupIdInBlock]);
+                    }
+
+                    globalIndex = tgroup.shfl(globalIndex, 0);
+                    for(int k = tgroup.thread_rank(); k < smem_numMismatchLocations[groupIdInBlock]; k += tgroup.size()){
+                        mismatchPositions.origBase[globalIndex + k] = smem_mismatchLocations_origBase[groupIdInBlock][k];
+                        mismatchPositions.consensusBase[globalIndex + k] = smem_mismatchLocations_consensusBase[groupIdInBlock][k];
+                        mismatchPositions.position[globalIndex + k] = smem_mismatchLocations_position[groupIdInBlock][k];
+                        mismatchPositions.anchorIndex[globalIndex + k] = smem_mismatchLocations_anchorIndex[groupIdInBlock][k];
+                        mismatchPositions.candidateIndex[globalIndex + k] = smem_mismatchLocations_candidateIndex[groupIdInBlock][k];
+                        mismatchPositions.destinationIndex[globalIndex + k] = smem_mismatchLocations_destinationIndex[groupIdInBlock][k];
+                    }
+
+                    tgroup.sync();
+                    smem_numMismatchLocations[groupIdInBlock] = 0;
+                    tgroup.sync();
+                }
+
+            }
+        }
+
+    }
+
+
+    template<int BLOCKSIZE, int groupsize>
+    __global__
+    void msaCorrectCandidatesWithForestKernel_multiphase_msapropsKernel(
+        GPUMultiMSA multiMSA,
+        const int* __restrict__ shifts,
+        const int* __restrict__ candidateSequencesLengths,       
+        MismatchPositionsRaw mismatchPositions,
+        GpuMSAProperties* __restrict__ msaPropertiesPerPosition
+    ){
+
+        /*
+            Use groupsize threads per candidate to perform correction
+        */
+        static_assert(BLOCKSIZE % groupsize == 0, "BLOCKSIZE % groupsize != 0");
+        constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
+        static_assert(groupsize == 32);
+
+        auto thread = cg::this_thread();
+        auto tgroup = cg::tiled_partition<groupsize>(cg::this_thread_block());
+        const int numGroups = (gridDim.x * blockDim.x) / groupsize;
+        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+
+        const int numPositions = *mismatchPositions.numPositions;
+
+        for(int p = groupId; p < numPositions; p += numGroups){
+            const int anchorIndex = mismatchPositions.anchorIndex[p];
+            const int candidateIndex = mismatchPositions.candidateIndex[p];
+            const int candidate_length = candidateSequencesLengths[candidateIndex];
+            const int shift = shifts[candidateIndex];
+            const GpuSingleMSA msa = multiMSA.getSingleMSA(anchorIndex);
+            const int anchorColumnsBegin_incl = msa.columnProperties->anchorColumnsBegin_incl;
+            const int queryColumnsBegin_incl = anchorColumnsBegin_incl + shift;
+            const int queryColumnsEnd_excl = anchorColumnsBegin_incl + shift + candidate_length;
+
+            auto minreduce = [&](auto val){
+                using T = decltype(val);
+                return cg::reduce(tgroup, val, cg::less<T>{});
+            };
+
+            auto maxreduce = [&](auto val){
+                using T = decltype(val);
+                return cg::reduce(tgroup, val, cg::greater<T>{});
+            };
+
+            auto sumreduce = [&](auto val){
+                using T = decltype(val);
+                return cg::reduce(tgroup, val, cg::plus<T>{});
+            };
+
+            GpuMSAProperties msaProperties = msa.getMSAProperties(
+                tgroup, sumreduce, minreduce, minreduce, maxreduce,
+                queryColumnsBegin_incl,
+                queryColumnsEnd_excl
+            );
+
+            if(tgroup.thread_rank() == 0){
+                msaPropertiesPerPosition[p] = msaProperties;
+            }
+        }        
+    }
+
+
+    template<class CandidateExtractor>
+    __global__
+    void msaCorrectCandidatesWithForestKernel_multiphase_extractKernel(
+        float* __restrict__ featuresTransposed,
+        GPUMultiMSA multiMSA,
+        float estimatedCoverage,
+        const int* __restrict__ shifts,
+        const int* __restrict__ candidateSequencesLengths,
+        MismatchPositionsRaw mismatchPositions,
+        const GpuMSAProperties* __restrict__ msaPropertiesPerPosition
+    ){
+
+        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+        const int stride = blockDim.x * gridDim.x;
+
+        const int numPositions = *mismatchPositions.numPositions;
+
+        for(int p = tid; p < numPositions; p += stride){
+            const int anchorIndex = mismatchPositions.anchorIndex[p];
+            const int candidateIndex = mismatchPositions.candidateIndex[p];
+            const int candidate_length = candidateSequencesLengths[candidateIndex];
+            const int shift = shifts[candidateIndex];
+            const GpuSingleMSA msa = multiMSA.getSingleMSA(anchorIndex);
+            const int anchorColumnsBegin_incl = msa.columnProperties->anchorColumnsBegin_incl;
+            const int anchorColumnsEnd_excl = anchorColumnsBegin_incl + candidate_length;
+            const int queryColumnsBegin_incl = anchorColumnsBegin_incl + shift;
+            const int queryColumnsEnd_excl = anchorColumnsBegin_incl + shift + candidate_length;
+
+            const int msaPos = queryColumnsBegin_incl + mismatchPositions.position[p];
+            ExtractCandidateInputData extractorInput;
+
+            extractorInput.origBase = mismatchPositions.origBase[p];
+            extractorInput.consensusBase = mismatchPositions.consensusBase[p];
+            extractorInput.estimatedCoverage = estimatedCoverage;
+            extractorInput.msaPos = msaPos;
+            extractorInput.anchorColumnsBegin_incl = anchorColumnsBegin_incl;
+            extractorInput.anchorColumnsEnd_excl = anchorColumnsEnd_excl;
+            extractorInput.queryColumnsBegin_incl = queryColumnsBegin_incl;
+            extractorInput.queryColumnsEnd_excl = queryColumnsEnd_excl;
+            extractorInput.msaProperties = msaPropertiesPerPosition[p];
+            extractorInput.msa = msa;
+
+            StridedIterator myFeaturesBegin{featuresTransposed + p, numPositions};
+
+            CandidateExtractor extractFeatures{};
+            extractFeatures(myFeaturesBegin, extractorInput);
+        }       
+    }
+
+    template<int BLOCKSIZE, int groupsize, class GpuClf>
+    __global__
+    void msaCorrectCandidatesWithForestKernel_multiphase_correctKernelGroup(
+        char* __restrict__ correctedCandidates,
+        GPUMultiMSA multiMSA,
+        GpuClf gpuForest,
+        float forestThreshold,
+        const AlignmentOrientation* __restrict__ bestAlignmentFlags,
+        const int* __restrict__ candidateSequencesLengths,     
+        size_t decodedSequencePitchInBytes,
+        MismatchPositionsRaw mismatchPositions,
+        const float* __restrict__ featuresTransposed,
+        bool useGlobalInsteadOfSmem,
+        int numFeatures
+    ){
+
+        /*
+            Use groupsize threads per candidate to perform correction
+        */
+        static_assert(BLOCKSIZE % groupsize == 0, "BLOCKSIZE % groupsize != 0");
+        constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
+        static_assert(groupsize == 32);
+
+        auto thread = cg::this_thread();
+        auto tgroup = cg::tiled_partition<groupsize>(cg::this_thread_block());
+        const int numGroups = (gridDim.x * blockDim.x) / groupsize;
+        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+        const int groupIdInBlock = threadIdx.x / groupsize;
+
+        extern __shared__ float smemFeatures[];
+
+        float* myGroupFeatures = &smemFeatures[0] + groupIdInBlock * numFeatures;
+
+        auto sumreduce = [&](auto val){
+            using T = decltype(val);
+            return cg::reduce(tgroup, val, cg::plus<T>{});
+        };
+
+        const int numPositions = *mismatchPositions.numPositions;
+
+        for(int p = groupId; p < numPositions; p += numGroups){
+            const int candidateIndex = mismatchPositions.candidateIndex[p];
+            const int destinationIndex = mismatchPositions.destinationIndex[p];
+            const int position = mismatchPositions.position[p];
+            const int origBase = mismatchPositions.origBase[p];
+            const int candidate_length = candidateSequencesLengths[candidateIndex];
+            const AlignmentOrientation bestAlignmentFlag = bestAlignmentFlags[candidateIndex];
+
+            bool useConsensus = false;
+            StridedIterator myFeaturesBegin{featuresTransposed + p, numPositions};
+
+            if(useGlobalInsteadOfSmem){
+                useConsensus = gpuForest.decide(tgroup, myFeaturesBegin, forestThreshold, sumreduce);
+            }else{
+                //noncoalesced access
+                for(int f = tgroup.thread_rank(); f < numFeatures; f += tgroup.size()){
+                    myGroupFeatures[f] = *(myFeaturesBegin + f);
+                }
+                tgroup.sync();
+                useConsensus = gpuForest.decide(tgroup, myGroupFeatures, forestThreshold, sumreduce);
+            }
+
+            if(!useConsensus){
+                if(tgroup.thread_rank() == 0){
+                    char* const myOutput = correctedCandidates + destinationIndex * decodedSequencePitchInBytes;
+                    const int outputPos = (bestAlignmentFlag == AlignmentOrientation::Forward ? position : candidate_length - 1 - position);
+                    const char outputBase = (bestAlignmentFlag == AlignmentOrientation::Forward ? origBase : SequenceHelpers::complementBaseDecoded(origBase));
+                    myOutput[outputPos] = outputBase;
+                }
+            }
+        }        
+    }
+
+    template<int BLOCKSIZE, class GpuClf>
+    __global__
+    void msaCorrectCandidatesWithForestKernel_multiphase_correctKernelThread(
+        char* __restrict__ correctedCandidates,
+        GPUMultiMSA multiMSA,
+        GpuClf gpuForest,
+        float forestThreshold,
+        const AlignmentOrientation* __restrict__ bestAlignmentFlags,
+        const int* __restrict__ candidateSequencesLengths,     
+        size_t decodedSequencePitchInBytes,
+        MismatchPositionsRaw mismatchPositions,
+        const float* __restrict__ featuresTransposed,
+        bool useGlobalInsteadOfSmem,
+        int numFeatures
+    ){
+
+        auto tgroup = cg::this_thread();
+        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+        const int stride = blockDim.x * gridDim.x;
+
+        extern __shared__ float smemFeatures[];
+
+        StridedIterator mySmemFeaturesTransposed(&smemFeatures[0] + threadIdx.x, BLOCKSIZE);
+
+        auto sumreduce = [&](auto val){
+            using T = decltype(val);
+            return cg::reduce(tgroup, val, cg::plus<T>{});
+        };
+
+        const int numPositions = *mismatchPositions.numPositions;
+
+        for(int p = tid; p < numPositions; p += stride){
+            const int candidateIndex = mismatchPositions.candidateIndex[p];
+            const int destinationIndex = mismatchPositions.destinationIndex[p];
+            const int position = mismatchPositions.position[p];
+            const int origBase = mismatchPositions.origBase[p];
+            const int candidate_length = candidateSequencesLengths[candidateIndex];
+            const AlignmentOrientation bestAlignmentFlag = bestAlignmentFlags[candidateIndex];
+
+            bool useConsensus = false;
+            StridedIterator myFeaturesBegin{featuresTransposed + p, numPositions};
+
+            if(useGlobalInsteadOfSmem){
+                useConsensus = gpuForest.decide(tgroup, myFeaturesBegin, forestThreshold, sumreduce);
+            }else{
+                for(int f = 0; f < numFeatures; f += 1){
+                    *(mySmemFeaturesTransposed + f) = *(myFeaturesBegin + f);
+                }
+                useConsensus = gpuForest.decide(tgroup, mySmemFeaturesTransposed, forestThreshold, sumreduce);
+            }
+
+            if(!useConsensus){
+                char* const myOutput = correctedCandidates + destinationIndex * decodedSequencePitchInBytes;
+                const int outputPos = (bestAlignmentFlag == AlignmentOrientation::Forward ? position : candidate_length - 1 - position);
+                const char outputBase = (bestAlignmentFlag == AlignmentOrientation::Forward ? origBase : SequenceHelpers::complementBaseDecoded(origBase));
+                myOutput[outputPos] = outputBase;
+            }
+        }   
+
+        
+    }
+
+
+
+    /*
+        Pass 1: Set corrected candidate to msa consensus
+        Pass 2 (this kernel): Use RF to change some positions of corrected candidates
+    */
+    template<int BLOCKSIZE, int groupsize, class CandidateExtractor, class GpuClf>
+    __global__
+    void msaCorrectCandidatesWithForestKernel_multiphase_comparemsapropsextractcorrectKernel(
+        char* __restrict__ correctedCandidates,
+        GPUMultiMSA multiMSA,
+        GpuClf gpuForest,
+        float forestThreshold,
+        float estimatedCoverage,
+        const int* __restrict__ shifts,
+        const AlignmentOrientation* __restrict__ bestAlignmentFlags,
+        const unsigned int* __restrict__ candidateSequencesData,
+        const int* __restrict__ candidateSequencesLengths,
+        const bool* __restrict__ d_candidateContainsN,
+        const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
+        const int* __restrict__ numCandidatesToBeCorrected,
+        const int* __restrict__ anchorIndicesOfCandidates,         
+        int encodedSequencePitchInInts,
+        size_t decodedSequencePitchInBytes
+    ){
+
+        /*
+            Use groupsize threads per candidate to perform correction
+        */
+        static_assert(BLOCKSIZE % groupsize == 0, "BLOCKSIZE % groupsize != 0");
+        constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
+        static_assert(groupsize == 32);
+
+        auto thread = cg::this_thread();
+        auto tgroup = cg::tiled_partition<groupsize>(cg::this_thread_block());
+        const int numGroups = (gridDim.x * blockDim.x) / groupsize;
+        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+        const int groupIdInBlock = threadIdx.x / groupsize;
+
+        struct WorkPos{
+            char origBase;
+            char consensusBase;
+            int anchorIndex;
+            int candidateIndex;
+            int destinationIndex;
+            int position;            
+        };
+
+        constexpr int maxNumMismatchLocations = 128;
+
+        //__shared__ WorkPos mismatchLocations[groupsPerBlock][maxNumMismatchLocations];
+        __shared__ char mismatchLocations_origBase[groupsPerBlock][maxNumMismatchLocations];
+        __shared__ char mismatchLocations_consensusBase[groupsPerBlock][maxNumMismatchLocations];
+        __shared__ int mismatchLocations_anchorIndex[groupsPerBlock][maxNumMismatchLocations];
+        __shared__ int mismatchLocations_candidateIndex[groupsPerBlock][maxNumMismatchLocations];
+        __shared__ int mismatchLocations_destinationIndex[groupsPerBlock][maxNumMismatchLocations];
+        __shared__ int mismatchLocations_position[groupsPerBlock][maxNumMismatchLocations];
+        __shared__ int numMismatchLocations[groupsPerBlock];
+
+        auto processMismatchLocations = [&](){
+            const int numLocations = std::min(numMismatchLocations[groupIdInBlock], maxNumMismatchLocations);
+
+            for(int l = tgroup.thread_rank(); l < numLocations; l += tgroup.size()){
+                #if 0
+                const WorkPos workPos = mismatchLocations[groupIdInBlock][l];
+
+                const int candidateIndex = workPos.candidateIndex;
+                const int anchorIndex = workPos.anchorIndex;
+                const int destinationIndex = workPos.destinationIndex;
+                const char origBase = workPos.origBase;
+                const char consensusBase = workPos.consensusBase;
+                const int position = workPos.position;
+                #else
+                const int candidateIndex = mismatchLocations_candidateIndex[groupIdInBlock][l];
+                const int anchorIndex = mismatchLocations_anchorIndex[groupIdInBlock][l];
+                const int destinationIndex = mismatchLocations_destinationIndex[groupIdInBlock][l];
+                const char origBase = mismatchLocations_origBase[groupIdInBlock][l];
+                const char consensusBase = mismatchLocations_consensusBase[groupIdInBlock][l];
+                const int position = mismatchLocations_position[groupIdInBlock][l];
+                #endif
+
+                const int candidate_length = candidateSequencesLengths[candidateIndex];
+                const AlignmentOrientation bestAlignmentFlag = bestAlignmentFlags[candidateIndex];
+
+                const GpuSingleMSA msa = multiMSA.getSingleMSA(anchorIndex);
+
+                const int shift = shifts[candidateIndex];
+                const int anchorColumnsBegin_incl = msa.columnProperties->anchorColumnsBegin_incl;
+                const int anchorColumnsEnd_excl = msa.columnProperties->anchorColumnsEnd_excl;
+                const int queryColumnsBegin_incl = anchorColumnsBegin_incl + shift;
+                const int queryColumnsEnd_excl = anchorColumnsBegin_incl + shift + candidate_length;
+
+                auto i_f = thrust::identity<float>{};
+                auto i_i = thrust::identity<int>{};
+
+                GpuMSAProperties msaProperties = msa.getMSAProperties(
+                    thread, i_f, i_f, i_i, i_i,
+                    queryColumnsBegin_incl,
+                    queryColumnsEnd_excl
+                );
+
+                const int msaPos = queryColumnsBegin_incl + position;
+                ExtractCandidateInputData extractorInput;
+
+                extractorInput.origBase = origBase;
+                extractorInput.consensusBase = consensusBase;
+                extractorInput.estimatedCoverage = estimatedCoverage;
+                extractorInput.msaPos = msaPos;
+                extractorInput.anchorColumnsBegin_incl = anchorColumnsBegin_incl;
+                extractorInput.anchorColumnsEnd_excl = anchorColumnsEnd_excl;
+                extractorInput.queryColumnsBegin_incl = queryColumnsBegin_incl;
+                extractorInput.queryColumnsEnd_excl = queryColumnsEnd_excl;
+                extractorInput.msaProperties = msaProperties;
+                extractorInput.msa = msa;
+
+                float features[CandidateExtractor::numFeatures()];
+                CandidateExtractor extractFeatures{};
+                extractFeatures(&features[0], extractorInput);
+
+                const bool useConsensus = gpuForest.decide(&features[0], forestThreshold);
+
+                if(!useConsensus){
+                    char* const myOutput = correctedCandidates + destinationIndex * decodedSequencePitchInBytes;
+                    const int outputPos = (bestAlignmentFlag == AlignmentOrientation::Forward ? position : candidate_length - 1 - position);
+                    const char outputBase = (bestAlignmentFlag == AlignmentOrientation::Forward ? origBase : SequenceHelpers::complementBaseDecoded(origBase));
+                    myOutput[outputPos] = outputBase;
+                }
+            }
+        };
+
+        if(tgroup.thread_rank() == 0){
+            numMismatchLocations[groupIdInBlock] = 0;
+        }
+        tgroup.sync();
+       
+        const int loopEnd = *numCandidatesToBeCorrected;
+
+        const GpuClf localForest = gpuForest;
+
+        int id = groupId;
+        int startposition = 0;
+
+        while(id < loopEnd){
+
+            const int candidateIndex = candidateIndicesOfCandidatesToBeCorrected[id];
+            const int anchorIndex = anchorIndicesOfCandidates[candidateIndex];
+            const int destinationIndex = id;
+
+            const int candidate_length = candidateSequencesLengths[candidateIndex];
+            const AlignmentOrientation bestAlignmentFlag = bestAlignmentFlags[candidateIndex];
+
+            const unsigned int* const encUncorrectedCandidate = candidateSequencesData 
+                        + std::size_t(candidateIndex) * encodedSequencePitchInInts;
+            char* decCorrectedCandidate = correctedCandidates + destinationIndex * decodedSequencePitchInBytes;
+
+            bool exceededCapacity = false;
+
+            const int loopEnd = SDIV(candidate_length, tgroup.size()) * tgroup.size();
+            for(int i = tgroup.thread_rank(); i < loopEnd; i += tgroup.size()){
+                if(i < candidate_length){
+                    std::uint8_t origEncodedBase = 0;
+                    char consensusBase = 'F';
+
+                    if(bestAlignmentFlag == AlignmentOrientation::ReverseComplement){
+                        origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
+                            encUncorrectedCandidate,
+                            candidate_length,
+                            candidate_length - i - 1
+                        );
+                        origEncodedBase = SequenceHelpers::complementBase2Bit(origEncodedBase);
+                        consensusBase = SequenceHelpers::complementBaseDecoded(decCorrectedCandidate[candidate_length - i - 1]);
+                    }else{
+                        origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
+                            encUncorrectedCandidate,
+                            candidate_length,
+                            i
+                        );
+                        consensusBase = decCorrectedCandidate[i];
+                    }
+
+                    const char origBase = SequenceHelpers::decodeBase(origEncodedBase);
+                    //const char consensusBase = decCorrectedCandidate[i];
+
+                    // if(id == 1){
+                    //     for(int k = 0; k < candidate_length; k++){
+                    //         if(i == k){
+                    //             printf("orig cons position %d, %c %c\n", i, origBase, consensusBase);
+                    //         }
+                    //         tgroup.sync();
+                    //     }
+                    // }
+
+                    if(origBase != consensusBase){
+                        // if(id == 1){
+                        //     printf("orig cons mismatch position %d, %c %c\n", i, origBase, consensusBase);
+                        // }
+
+                        // WorkPos workPos;
+                        // workPos.anchorIndex = anchorIndex;
+                        // workPos.candidateIndex = candidateIndex;
+                        // workPos.destinationIndex = destinationIndex;
+                        // workPos.position = i;
+                        // workPos.origBase = origBase;
+                        // workPos.consensusBase = consensusBase;
+
+                        int smemarraypos = atomicAdd(numMismatchLocations + groupIdInBlock, 1);
+                        if(smemarraypos < maxNumMismatchLocations){
+                            //printf("%d %d %d\n", blockIdx.x, groupId, smemarraypos);
+                            //mismatchLocations[groupIdInBlock][smemarraypos] = workPos;
+                            mismatchLocations_anchorIndex[groupIdInBlock][smemarraypos] = anchorIndex;
+                            mismatchLocations_candidateIndex[groupIdInBlock][smemarraypos] = candidateIndex;
+                            mismatchLocations_destinationIndex[groupIdInBlock][smemarraypos] = destinationIndex;
+                            mismatchLocations_position[groupIdInBlock][smemarraypos] = i;
+                            mismatchLocations_origBase[groupIdInBlock][smemarraypos] = origBase;
+                            mismatchLocations_consensusBase[groupIdInBlock][smemarraypos] = consensusBase;
+                        }
+                    }
+                }
+                tgroup.sync();
+
+                if(numMismatchLocations[groupIdInBlock] > maxNumMismatchLocations){
+                    exceededCapacity = true;
+                    break;
+                }
+            }
+            
+            //if work positions are full, or if last iteration, classify all work positions using RF
+            if((numMismatchLocations[groupIdInBlock] >= maxNumMismatchLocations) || (id + numGroups >= loopEnd)){
+                processMismatchLocations();
+                tgroup.sync();
+
+                if(tgroup.thread_rank() == 0){
+                    numMismatchLocations[groupIdInBlock] = 0;
+                }
+                tgroup.sync();
+            }
+
+            //if array capacity was exceeded, at least one nucleotide of the current id loop iteration could not be processed
+            //in that case, the loop variable is not incremented to repeat this id.
+            if(!exceededCapacity){
+                id += numGroups;
+            }
+        }
+        
+    }
+
+
 
 
 
@@ -1346,7 +2255,7 @@ namespace gpu{
         );
     }
 
-    void callMsaCorrectCandidatesWithForestKernel(
+    void callMsaCorrectCandidatesWithForestKernelMultiPhase(
         char* d_correctedCandidates,
         EncodedCorrectionEdit* d_editsPerCorrectedCandidate,
         int* d_numEditsPerCorrectedCandidate,
@@ -1372,10 +2281,365 @@ namespace gpu{
         cudaStream_t stream,
         const read_number* candidateReadIds
     ){
+        constexpr int blocksize = 128;
+        constexpr int groupsize = 32;
+        constexpr int numGroupsPerBlock = blocksize / groupsize;
+
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
+
+        int deviceId = 0;
+        int numSMs = 0;
+
+        CUDACHECK(cudaGetDevice(&deviceId));
+        CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+
+        int numCandidatesToProcess = 0;
+        CUDACHECK(cudaMemcpyAsync(&numCandidatesToProcess, d_numCandidatesToBeCorrected, sizeof(int), D2H, stream));
+        CUDACHECK(cudaStreamSynchronize(stream));
+
+
+        
+        int maxBlocksPerSMPass1 = 0;
+        const std::size_t dynamicsmemPitchInInts = SDIV(maximum_sequence_length, sizeof(int));
+        const std::size_t smemPass1 = numGroupsPerBlock * (sizeof(int) * dynamicsmemPitchInInts);
+
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSMPass1,
+            msaCorrectCandidatesWithForestKernel_multiphase_initCorrectedCandidatesKernel<blocksize, groupsize>,
+            blocksize, 
+            smemPass1
+        ));
+
+        dim3 block1 = blocksize;
+        dim3 grid1 = maxBlocksPerSMPass1 * numSMs;
+
+        helpers::GpuTimer timerinitCorrectedCandidatesKernel(stream, "initCorrectedCandidatesKernel");
+
+        msaCorrectCandidatesWithForestKernel_multiphase_initCorrectedCandidatesKernel<blocksize, groupsize>
+        <<<grid1, block1, smemPass1, stream>>>(
+            d_correctedCandidates,
+            multiMSA,
+            d_shifts,
+            d_bestAlignmentFlags,
+            d_candidateSequencesData,
+            d_candidateSequencesLengths,
+            d_candidateContainsN,
+            d_candidateIndicesOfCandidatesToBeCorrected,
+            d_numCandidatesToBeCorrected,
+            d_anchorIndicesOfCandidates,         
+            encodedSequencePitchInInts,
+            decodedSequencePitchInBytes,
+            dynamicsmemPitchInInts
+        );
+        CUDACHECKASYNC;
+        //timerinitCorrectedCandidatesKernel.print();
+
+
+        int maxBlocksPerSMCountMismatches = 0;
+        const std::size_t smemCountMismatches = 0;
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSMCountMismatches,
+            msaCorrectCandidatesWithForestKernel_multiphase_countMismatchesKernel<blocksize, groupsize>,
+            blocksize, 
+            smemCountMismatches
+        ));
+
+        dim3 blockCountMismatches = blocksize;
+        dim3 gridCountMismatches = std::min(maxBlocksPerSMCountMismatches * numSMs, SDIV(numCandidatesToProcess, (blocksize / groupsize)));
+
+        rmm::device_scalar<int> d_numMismatches(0, stream, mr);
+
+        helpers::GpuTimer timercountMismatchesKernel(stream, "countMismatchesKernel");
+
+        msaCorrectCandidatesWithForestKernel_multiphase_countMismatchesKernel<blocksize, groupsize>
+            <<<gridCountMismatches, blockCountMismatches, smemCountMismatches, stream>>>(
+            d_correctedCandidates,
+            d_bestAlignmentFlags,
+            d_candidateSequencesData,
+            d_candidateSequencesLengths,
+            d_candidateIndicesOfCandidatesToBeCorrected,
+            d_numCandidatesToBeCorrected,
+            d_anchorIndicesOfCandidates,         
+            encodedSequencePitchInInts,
+            decodedSequencePitchInBytes,
+            d_numMismatches.data()
+        );
+        CUDACHECKASYNC;
+        //timercountMismatchesKernel.print();
+
+        const int numMismatches = d_numMismatches.value(stream);
+        //std::cerr << numMismatches << "\n";
+
+        const std::size_t smemFindMismatches = 0;
+        int maxBlocksPerSMFindMismatches = 0;
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSMFindMismatches,
+            msaCorrectCandidatesWithForestKernel_multiphase_findMismatchesKernel<blocksize, groupsize>,
+            blocksize, 
+            smemFindMismatches
+        ));
+
+        dim3 blockFindMismatches = blocksize;
+        dim3 gridFindMismatches = std::min(maxBlocksPerSMFindMismatches * numSMs, SDIV(numCandidatesToProcess, (blocksize / groupsize)));
+
+        MismatchPositions mismatchPositions(numMismatches, stream, mr);
+
+        helpers::GpuTimer timerfindMismatchesKernel(stream, "findMismatchesKernel");
+
+        msaCorrectCandidatesWithForestKernel_multiphase_findMismatchesKernel<blocksize, groupsize>
+            <<<gridFindMismatches, blockFindMismatches, smemFindMismatches, stream>>>(
+            d_correctedCandidates,
+            d_bestAlignmentFlags,
+            d_candidateSequencesData,
+            d_candidateSequencesLengths,
+            d_candidateIndicesOfCandidatesToBeCorrected,
+            d_numCandidatesToBeCorrected,
+            d_anchorIndicesOfCandidates,         
+            encodedSequencePitchInInts,
+            decodedSequencePitchInBytes,
+            mismatchPositions
+        );
+        CUDACHECKASYNC;
+        //timerfindMismatchesKernel.print();
+
+
+        const std::size_t smemMsaProps = 0;
+        int maxBlocksPerSMMsaProps = 0;
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSMMsaProps,
+            msaCorrectCandidatesWithForestKernel_multiphase_msapropsKernel<blocksize, groupsize>,
+            blocksize, 
+            smemMsaProps
+        ));
+
+        dim3 blockMsaProps = blocksize;
+        dim3 gridMsaProps = std::min(maxBlocksPerSMMsaProps * numSMs, SDIV(numMismatches, (blocksize / groupsize)));
+
+        rmm::device_uvector<GpuMSAProperties> d_msaPropertiesPerPosition(numMismatches, stream, mr);
+
+        //CUDACHECK(cudaStreamSynchronize(stream));
+        helpers::GpuTimer timermsaprops(stream, "msapropsKernel");
+
+        msaCorrectCandidatesWithForestKernel_multiphase_msapropsKernel<blocksize, groupsize>
+            <<<gridMsaProps, blockMsaProps, smemMsaProps, stream>>>(
+            multiMSA,
+            d_shifts,
+            d_candidateSequencesLengths,       
+            mismatchPositions,
+            d_msaPropertiesPerPosition.data()
+        );
+        CUDACHECKASYNC;
+        //timermsaprops.print();
+
+
+
+        const std::size_t smemExtract = 0;
+        int maxBlocksPerSMExtract = 0;
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSMExtract,
+            msaCorrectCandidatesWithForestKernel_multiphase_extractKernel<cands_extractor>,
+            blocksize, 
+            smemExtract
+        ));
+
+        dim3 blockExtract = blocksize;
+        dim3 gridExtract = std::min(maxBlocksPerSMExtract * numSMs, SDIV(numMismatches, blocksize));
+
+        rmm::device_uvector<float> d_featuresTransposed(numMismatches * cands_extractor::numFeatures(), stream, mr);
+
+        helpers::GpuTimer timerextract(stream, "extractKernel");
+
+        msaCorrectCandidatesWithForestKernel_multiphase_extractKernel<cands_extractor>
+            <<<gridExtract, blockExtract, smemExtract, stream>>>(
+            d_featuresTransposed.data(),
+            multiMSA,
+            estimatedCoverage,
+            d_shifts,
+            d_candidateSequencesLengths,  
+            mismatchPositions,
+            d_msaPropertiesPerPosition.data()
+        );
+        CUDACHECKASYNC;
+        //timerextract.print();
+
+        #if 0
+        constexpr int maxSmemCorrect = 32 * 1024;
+        const std::size_t blockFeaturesBytesCorrectGroup = sizeof(float) * cands_extractor::numFeatures() * (blocksize / groupsize);
+        bool useGlobalInsteadOfSmemCorrectGroup = blockFeaturesBytesCorrectGroup > maxSmemCorrect;
+        const std::size_t smemCorrectGroup = useGlobalInsteadOfSmemCorrectGroup ? 0 : blockFeaturesBytesCorrectGroup;
+
+        int maxBlocksPerSMCorrectGroup = 0;
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSMCorrectGroup,
+            msaCorrectCandidatesWithForestKernel_multiphase_correctKernelGroup<blocksize, groupsize, GpuForest::Clf>,
+            blocksize, 
+            smemCorrectGroup
+        ));
+
+        dim3 blockCorrectGroup = blocksize;
+        dim3 gridCorrectGroup = std::min(maxBlocksPerSMCorrectGroup * numSMs, SDIV(numMismatches, (blocksize / groupsize)));
+
+        helpers::GpuTimer timercorrectGroup(stream, "correctKernelGroup");
+        msaCorrectCandidatesWithForestKernel_multiphase_correctKernelGroup<blocksize, groupsize, GpuForest::Clf>
+            <<<gridCorrectGroup, blockCorrectGroup, smemCorrectGroup, stream>>>(
+            d_correctedCandidates,
+            multiMSA,
+            gpuForest,
+            forestThreshold,
+            d_bestAlignmentFlags,
+            d_candidateSequencesLengths,     
+            decodedSequencePitchInBytes,
+            mismatchPositions,
+            d_featuresTransposed.data(),
+            useGlobalInsteadOfSmemCorrectGroup,
+            cands_extractor::numFeatures()
+        );
+        CUDACHECKASYNC;
+        //timercorrectGroup.print();
+
+        #else
+
+        constexpr int maxSmemCorrect = 32 * 1024;
+
+        const std::size_t blockFeaturesBytesCorrectThread = sizeof(float) * cands_extractor::numFeatures() * blocksize;
+        bool useGlobalInsteadOfSmemCorrectThread = blockFeaturesBytesCorrectThread > maxSmemCorrect;
+        const std::size_t smemCorrectThread = useGlobalInsteadOfSmemCorrectThread ? 0 : blockFeaturesBytesCorrectThread;
+        assert(!useGlobalInsteadOfSmemCorrectThread);
+
+        int maxBlocksPerSMCorrectThread = 0;
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSMCorrectThread,
+            msaCorrectCandidatesWithForestKernel_multiphase_correctKernelThread<blocksize, GpuForest::Clf>,
+            blocksize, 
+            smemCorrectThread
+        ));
+
+        dim3 blockCorrectThread = blocksize;
+        dim3 gridCorrectThread = std::min(maxBlocksPerSMCorrectThread * numSMs, SDIV(numMismatches, blocksize));
+
+        helpers::GpuTimer timercorrectThread(stream, "correctKernelThread");
+        msaCorrectCandidatesWithForestKernel_multiphase_correctKernelThread<blocksize, GpuForest::Clf>
+            <<<gridCorrectThread, blockCorrectThread, smemCorrectThread, stream>>>(
+            d_correctedCandidates,
+            multiMSA,
+            gpuForest,
+            forestThreshold,
+            d_bestAlignmentFlags,
+            d_candidateSequencesLengths,     
+            decodedSequencePitchInBytes,
+            mismatchPositions,
+            d_featuresTransposed.data(),
+            useGlobalInsteadOfSmemCorrectThread,
+            cands_extractor::numFeatures()
+        );
+        CUDACHECKASYNC;
+        //timercorrectThread.print();
+
+        #endif
+
+        // const std::size_t smemPass2 = 0;
+        // int maxBlocksPerSMPass2 = 0;
+        // CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        //     &maxBlocksPerSMPass2,
+        //     msaCorrectCandidatesWithForestKernel_multiphase_comparemsapropsextractcorrectKernel<blocksize, groupsize, cands_extractor, GpuForest::Clf>,
+        //     blocksize, 
+        //     smemPass2
+        // ));
+
+        // dim3 block2 = blocksize;
+        // dim3 grid2 = maxBlocksPerSMPass2 * numSMs;
+
+        // helpers::GpuTimer timercomparemsapropsextractcorrectKernel(stream, "comparemsapropsextractcorrectKernel");
+
+        // msaCorrectCandidatesWithForestKernel_multiphase_comparemsapropsextractcorrectKernel<blocksize, groupsize, cands_extractor, GpuForest::Clf>
+        // <<<grid2, block2, smemPass2, stream>>>(
+        //     d_correctedCandidates,
+        //     multiMSA,
+        //     gpuForest,
+        //     forestThreshold,
+        //     estimatedCoverage,
+        //     d_shifts,
+        //     d_bestAlignmentFlags,
+        //     d_candidateSequencesData,
+        //     d_candidateSequencesLengths,
+        //     d_candidateContainsN,
+        //     d_candidateIndicesOfCandidatesToBeCorrected,
+        //     d_numCandidatesToBeCorrected,
+        //     d_anchorIndicesOfCandidates,         
+        //     encodedSequencePitchInInts,
+        //     decodedSequencePitchInBytes
+        // );
+        // CUDACHECKASYNC;
+        //timercomparemsapropsextractcorrectKernel.print();
+    }
+
+    void callMsaCorrectCandidatesWithForestKernel(
+        char* d_correctedCandidates,
+        EncodedCorrectionEdit* d_editsPerCorrectedCandidate,
+        int* d_numEditsPerCorrectedCandidate,
+        GPUMultiMSA multiMSA,
+        GpuForest::Clf gpuForest,
+        float forestThreshold,
+        float estimatedCoverage,
+        const int* d_shifts,
+        const AlignmentOrientation* d_bestAlignmentFlags,
+        const unsigned int* d_candidateSequencesData,
+        const int* d_candidateSequencesLengths,
+        const bool* d_candidateContainsN,
+        const int* d_candidateIndicesOfCandidatesToBeCorrected,
+        const int* d_numCandidatesToBeCorrected,
+        const int* d_anchorIndicesOfCandidates,
+        const int numCandidates,
+        int doNotUseEditsValue,
+        int numEditsThreshold,            
+        int encodedSequencePitchInInts,
+        size_t decodedSequencePitchInBytes,
+        size_t editsPitchInBytes,
+        int maximum_sequence_length,
+        cudaStream_t stream,
+        const read_number* candidateReadIds
+    ){
 
         constexpr int blocksize = 128;
         constexpr int groupsize = 32;
+        constexpr int numGroupsPerBlock = blocksize / groupsize;
 
+        //CUDACHECK(cudaStreamSynchronize(stream));
+
+        //rmm::device_uvector<char> tmpaaa(decodedSequencePitchInBytes * 250000, stream);
+
+        #if 1
+        {
+            callMsaCorrectCandidatesWithForestKernelMultiPhase(
+                d_correctedCandidates,
+                d_editsPerCorrectedCandidate,
+                d_numEditsPerCorrectedCandidate,
+                multiMSA,
+                gpuForest,
+                forestThreshold,
+                estimatedCoverage,
+                d_shifts,
+                d_bestAlignmentFlags,
+                d_candidateSequencesData,
+                d_candidateSequencesLengths,
+                d_candidateContainsN,
+                d_candidateIndicesOfCandidatesToBeCorrected,
+                d_numCandidatesToBeCorrected,
+                d_anchorIndicesOfCandidates,
+                numCandidates,
+                doNotUseEditsValue,
+                numEditsThreshold,            
+                encodedSequencePitchInInts,
+                decodedSequencePitchInBytes,
+                editsPitchInBytes,
+                maximum_sequence_length,
+                stream,
+                candidateReadIds
+            );
+        }
+
+        #else
+        {
         const std::size_t dynamicsmemPitchInInts = SDIV(maximum_sequence_length, sizeof(int));
         const std::size_t treePointersPitchInInts = SDIV(sizeof(void*) * gpuForest.numTrees, sizeof(int));
 
@@ -1406,6 +2670,8 @@ namespace gpu{
         dim3 block = blocksize;
         dim3 grid = maxBlocks;
 
+        //helpers::GpuTimer timer(stream, "combined");
+
         msaCorrectCandidatesWithForestKernel<blocksize, groupsize, cands_extractor><<<grid, block, smem, stream>>>(
             d_correctedCandidates,
             d_editsPerCorrectedCandidate,
@@ -1430,6 +2696,46 @@ namespace gpu{
             dynamicsmemPitchInInts,
             candidateReadIds
         );
+        CUDACHECKASYNC;
+
+        //timer.print();
+        }
+        #endif
+
+
+        // helpers::lambda_kernel<<<1, 1, 0, stream>>>(
+        //     [
+        //         d_correctedCandidates,
+        //         tmpaaa = tmpaaa.data(),
+        //         decodedSequencePitchInBytes,
+        //         d_numCandidatesToBeCorrected
+        //     ] __device__ (){
+        //         for(int c = blockIdx.x; c < *d_numCandidatesToBeCorrected; c += gridDim.x){
+        //             const char* ptrold = d_correctedCandidates + c * decodedSequencePitchInBytes;
+        //             const char* ptrnew = tmpaaa + c * decodedSequencePitchInBytes;
+        //             // if(c == 1){
+        //             //     printf("old: ");
+        //             //     for(int i = threadIdx.x; i < 100; i += blockDim.x){
+        //             //         printf("%c", ptrold[i]);
+        //             //     }
+        //             //     printf("\n");
+        //             //     printf("new: ");
+        //             //     for(int i = threadIdx.x; i < 100; i += blockDim.x){
+        //             //         printf("%c", ptrnew[i]);
+        //             //     }
+        //             //     printf("\n");
+        //             //     __syncthreads();
+        //             //     assert(false);
+        //             // }
+        //             for(int i = threadIdx.x; i < 100; i += blockDim.x){
+        //                 if(ptrold[i] != ptrnew[i]){
+        //                     printf("%d %d %c %c\n", c, i, ptrold[i], ptrnew[i]);
+        //                     assert(false);
+        //                 }
+        //             }
+        //         }
+        //     }
+        // );
     }
 
     void callFlagCandidatesToBeCorrectedKernel_async(
@@ -1662,7 +2968,6 @@ namespace gpu{
         int maximum_sequence_length,
         cudaStream_t stream
     ){
-
         constexpr int blocksize = 128;
         constexpr int groupsize = 32;
 
