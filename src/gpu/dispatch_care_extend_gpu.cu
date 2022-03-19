@@ -170,6 +170,12 @@ namespace care{
 
         buildReadStorageTimer.print();
 
+        //trim pools
+        for(size_t i = 0; i < rmmCudaAsyncResources.size(); i++){
+            cub::SwitchDevice sd(programOptions.deviceIds[i]);
+            cudaMemPoolTrimTo(rmmCudaAsyncResources[i]->pool_handle(), 0);
+        }
+
         std::cout << "Determined the following read properties:\n";
         std::cout << "----------------------------------------\n";
         std::cout << "Total number of reads: " << cpuReadStorage->getNumberOfReads() << "\n";
@@ -232,6 +238,12 @@ namespace care{
         gpu::GpuMinhasher* gpuMinhasher = minhasherAndType.first.get();
 
         buildMinhasherTimer.print();
+
+        //trim pools
+        for(size_t i = 0; i < rmmCudaAsyncResources.size(); i++){
+            cub::SwitchDevice sd(programOptions.deviceIds[i]);
+            cudaMemPoolTrimTo(rmmCudaAsyncResources[i]->pool_handle(), 0);
+        }
 
         std::cout << "Using minhasher type: " << to_string(minhasherAndType.second) << "\n";
         std::cout << "GpuMinhasher can use " << gpuMinhasher->getNumberOfMaps() << " maps\n";
@@ -359,6 +371,12 @@ namespace care{
                 gpuMinhasher = nullptr;
                 gpuReadStorage.destroy();
                 cpuReadStorage.reset(); 
+
+                //trim pools
+                for(size_t i = 0; i < rmmCudaAsyncResources.size(); i++){
+                    cub::SwitchDevice sd(programOptions.deviceIds[i]);
+                    cudaMemPoolTrimTo(rmmCudaAsyncResources[i]->pool_handle(), 0);
+                }
             }
         );
 
