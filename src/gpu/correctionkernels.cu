@@ -123,7 +123,7 @@ namespace gpu{
         }
     }
 
-
+    #if 0
     template<int BLOCKSIZE, class AnchorExtractor, class GpuClf>
     __global__
     void msaCorrectAnchorsWithForestKernel(
@@ -301,6 +301,196 @@ namespace gpu{
             }            
         }
     }
+
+    #else
+
+        template<int BLOCKSIZE, class AnchorExtractor, class GpuClf>
+    __global__
+    void msaCorrectAnchorsWithForestKernel(
+        char* __restrict__ correctedAnchors,
+        bool* __restrict__ anchorIsCorrected,
+        AnchorHighQualityFlag* __restrict__ isHighQualityAnchor,
+        GPUMultiMSA multiMSA,
+        GpuClf gpuForest,
+        float forestThreshold,
+        const unsigned int* __restrict__ anchorSequencesData,
+        const int* __restrict__ d_indices_per_anchor,
+        const int numAnchors,
+        int encodedSequencePitchInInts,
+        size_t decodedSequencePitchInBytes,
+        float estimatedErrorrate,
+        float estimatedCoverage,
+        float avg_support_threshold,
+        float min_support_threshold,
+        float min_coverage_threshold
+    ){
+
+        constexpr int numWarps = BLOCKSIZE / 32;
+
+        auto tgroup = cg::this_thread_block();
+        auto warp = cg::tiled_partition<32>(tgroup);
+
+        const int numGroups = gridDim.x;
+        const int groupId = blockIdx.x;
+        const int groupIdInBlock = 0;
+  
+        __shared__ float sharedFeatures[AnchorExtractor::numFeatures()];
+
+        extern __shared__ int externalsmem[];
+        
+        char* const sharedCorrectedAnchor = (char*)&externalsmem[0];
+
+        auto blockreduce = [&](auto val, auto op, auto neutral){
+            using T = decltype(val);
+            __shared__ T temp_reduce[numWarps+1];
+
+            tgroup.sync();
+            const auto warpreduced = cg::reduce(warp, val, op);
+            if(warp.thread_rank() == 0){
+                temp_reduce[warp.meta_group_rank()] = warpreduced;
+            }
+            tgroup.sync();
+            if(warp.meta_group_rank() == 0){
+                auto warpval = neutral;
+                if(warp.thread_rank() < numWarps){
+                    warpval = temp_reduce[warp.thread_rank()];
+                }
+                const auto blockreduced = cg::reduce(warp, warpval, op);
+                if(warp.thread_rank() == 0){
+                    temp_reduce[numWarps] = blockreduced;
+                }
+            }
+            tgroup.sync();
+            return temp_reduce[numWarps];
+        };
+
+        auto blockreducesum = [&](auto val){
+            using T = decltype(val);
+            return blockreduce(val, cg::plus<T>{}, T(0));
+        };
+
+        auto blockreducemin = [&](auto val){
+            using T = decltype(val);
+            return blockreduce(val, cg::less<T>{}, std::numeric_limits<T>::max());
+        };
+
+        auto blockreducemax = [&](auto val){
+            using T = decltype(val);
+            return blockreduce(val, cg::greater<T>{}, std::numeric_limits<T>::min());
+        };
+
+        for(unsigned anchorIndex = blockIdx.x; anchorIndex < numAnchors; anchorIndex += gridDim.x){
+            const int myNumIndices = d_indices_per_anchor[anchorIndex];
+            if(myNumIndices > 0){
+
+                const GpuSingleMSA msa = multiMSA.getSingleMSA(anchorIndex);                
+
+                const int anchorColumnsBegin_incl = msa.columnProperties->anchorColumnsBegin_incl;
+                const int anchorColumnsEnd_excl = msa.columnProperties->anchorColumnsEnd_excl;
+
+                GpuMSAProperties msaProperties = msa.getMSAProperties(
+                    tgroup, 
+                    blockreducesum,
+                    blockreducemin,
+                    blockreducemin,
+                    blockreducemax,
+                    anchorColumnsBegin_incl,
+                    anchorColumnsEnd_excl
+                );
+
+                AnchorCorrectionQuality correctionQuality(avg_support_threshold, min_support_threshold, min_coverage_threshold, estimatedErrorrate);
+
+                const bool canBeCorrectedBySimpleConsensus = correctionQuality.canBeCorrectedBySimpleConsensus(msaProperties.avg_support, msaProperties.min_support, msaProperties.min_coverage);
+                const bool isHQCorrection = correctionQuality.isHQCorrection(msaProperties.avg_support, msaProperties.min_support, msaProperties.min_coverage);
+
+                if(tgroup.thread_rank() == 0){
+                    anchorIsCorrected[anchorIndex] = true;
+                    isHighQualityAnchor[anchorIndex].hq(isHQCorrection);
+                }
+
+                const int anchorLength = anchorColumnsEnd_excl - anchorColumnsBegin_incl;
+                const unsigned int* const anchor = anchorSequencesData + std::size_t(anchorIndex) * encodedSequencePitchInInts;
+                char* const globalCorrectedAnchor = correctedAnchors + anchorIndex * decodedSequencePitchInBytes;
+
+                if(isHQCorrection){
+
+                    //set corrected anchor to consensus
+                    for(int i = tgroup.thread_rank(); i < anchorLength; i += tgroup.size()){
+                        const std::uint8_t nuc = msa.consensus[anchorColumnsBegin_incl + i];
+                        assert(nuc < 4);
+                        globalCorrectedAnchor[i] = SequenceHelpers::decodeBase(nuc);
+                    }
+
+                }else{
+
+                    //set corrected anchor to consensus
+                    for(int i = tgroup.thread_rank(); i < anchorLength; i += tgroup.size()){
+                        const std::uint8_t nuc = msa.consensus[anchorColumnsBegin_incl + i];
+                        assert(nuc < 4);
+                        sharedCorrectedAnchor[i] = SequenceHelpers::decodeBase(nuc);
+                    }
+                    
+                    tgroup.sync();                                   
+                    
+                    //maybe revert some positions to original base
+                    for (int i = 0; i < anchorLength; i += 1){
+                        const int msaPos = anchorColumnsBegin_incl + i;
+                        const std::uint8_t origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(anchor, anchorLength, i);
+                        const std::uint8_t consensusEncodedBase = msa.consensus[msaPos];
+
+                        if (origEncodedBase != consensusEncodedBase){                            
+                            
+                            ExtractAnchorInputData extractorInput;;
+
+                            extractorInput.origBase = SequenceHelpers::decodeBase(origEncodedBase);
+                            extractorInput.consensusBase = SequenceHelpers::decodeBase(consensusEncodedBase);
+                            extractorInput.estimatedCoverage = estimatedCoverage;
+                            extractorInput.msaPos = msaPos;
+                            extractorInput.anchorColumnsBegin_incl = anchorColumnsBegin_incl;
+                            extractorInput.anchorColumnsEnd_excl = anchorColumnsEnd_excl;
+                            extractorInput.msaProperties = msaProperties;
+                            extractorInput.msa = msa;
+
+                            AnchorExtractor extractFeatures{};
+                            extractFeatures(&sharedFeatures[0], extractorInput);
+
+                            const bool useConsensus = gpuForest.decide(tgroup, &sharedFeatures[0], forestThreshold, blockreducesum);
+                            if(tgroup.thread_rank() == 0){
+                                if(!useConsensus){
+                                    sharedCorrectedAnchor[i] = extractorInput.origBase;
+                                }
+                            }
+                        }
+                    }
+
+                    tgroup.sync();
+
+                    //copy shared correction to gmem
+                    const int fullInts1 = anchorLength / sizeof(int);
+
+                    for(int i = tgroup.thread_rank(); i < fullInts1; i += tgroup.size()) {
+                        ((int*)globalCorrectedAnchor)[i] = ((int*)sharedCorrectedAnchor)[i];
+                    }
+
+                    for(int i = tgroup.thread_rank(); i < anchorLength - fullInts1 * sizeof(int); i += tgroup.size()) {
+                        globalCorrectedAnchor[fullInts1 * sizeof(int) + i] 
+                            = sharedCorrectedAnchor[fullInts1 * sizeof(int) + i];
+                    } 
+
+                }
+                
+                tgroup.sync();
+
+            }else{
+                if(tgroup.thread_rank() == 0){
+                    isHighQualityAnchor[anchorIndex].hq(false);
+                    anchorIsCorrected[anchorIndex] = false;
+                }
+            }            
+        }
+    }
+
+    #endif
 
     template<int BLOCKSIZE, int groupsize, class AnchorExtractor, class GpuClf>
     __global__
