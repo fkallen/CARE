@@ -50,6 +50,8 @@ SOURCES_CORRECT_GPU = \
     src/readlibraryio.cpp \
     src/threadpool.cpp \
     src/gpu/alignmentkernels.cu \
+	src/gpu/anchorcorrectionkernels.cu \
+	src/gpu/candidatecorrectionkernels.cu \
     src/gpu/correct_gpu.cu \
     src/gpu/correctionkernels.cu \
     src/gpu/dispatch_care_correct_gpu.cu \
@@ -240,6 +242,12 @@ $(DIR)/threadpool.o : src/threadpool.cpp
 	$(COMPILE)
 
 $(DIR)/alignmentkernels.o : src/gpu/alignmentkernels.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/anchorcorrectionkernels.o : src/gpu/anchorcorrectionkernels.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/candidatecorrectionkernels.o : src/gpu/candidatecorrectionkernels.cu
 	$(CUDA_COMPILE)
 
 $(DIR)/correct_gpu.o : src/gpu/correct_gpu.cu
