@@ -330,9 +330,9 @@ namespace gpu{
         auto tgroup = cg::this_thread_block();
         auto warp = cg::tiled_partition<32>(tgroup);
 
-        const int numGroups = gridDim.x;
-        const int groupId = blockIdx.x;
-        const int groupIdInBlock = 0;
+        //const int numGroups = gridDim.x;
+        //const int groupId = blockIdx.x;
+        //const int groupIdInBlock = 0;
   
         __shared__ float sharedFeatures[AnchorExtractor::numFeatures()];
 
@@ -683,14 +683,14 @@ namespace gpu{
     ){
 
         static_assert(BLOCKSIZE % groupsize == 0, "BLOCKSIZE % groupsize != 0");
-        constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
+        //constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
         static_assert(groupsize == 32);
 
         auto thread = cg::this_thread();
         auto tgroup = cg::tiled_partition<groupsize>(cg::this_thread_block());
         const int numGroups = (gridDim.x * blockDim.x) / groupsize;
         const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
-        const int groupIdInBlock = threadIdx.x / groupsize;
+        //const int groupIdInBlock = threadIdx.x / groupsize;
 
         auto minreduce = [&](auto val){
             using T = decltype(val);
@@ -1027,7 +1027,7 @@ namespace gpu{
     ){
 
         static_assert(BLOCKSIZE % groupsize == 0, "BLOCKSIZE % groupsize != 0");
-        constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
+        //constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
         //static_assert(groupsize == 32);
 
         auto thread = cg::this_thread();
@@ -1631,19 +1631,19 @@ namespace gpu{
         const int* __restrict__ candidateSequencesLengths,
         const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
         const int* __restrict__ numCandidatesToBeCorrected,
-        const int* __restrict__ anchorIndicesOfCandidates,         
+        const int* __restrict__ /*anchorIndicesOfCandidates*/,
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
         int* __restrict__ numMismatches
     ){        
         static_assert(BLOCKSIZE % groupsize == 0, "BLOCKSIZE % groupsize != 0");
-        constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
+        //constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
         static_assert(groupsize == 32);
 
         auto tgroup = cg::tiled_partition<groupsize>(cg::this_thread_block());
         const int numGroups = (gridDim.x * blockDim.x) / groupsize;
         const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
-        const int groupIdInBlock = threadIdx.x / groupsize;
+        //const int groupIdInBlock = threadIdx.x / groupsize;
 
         using BlockReduce = cub::BlockReduce<int, BLOCKSIZE>;
         __shared__ typename BlockReduce::TempStorage temp_reduce;
@@ -1656,7 +1656,7 @@ namespace gpu{
         for(int id = groupId; id < loopEnd; id += numGroups){
 
             const int candidateIndex = candidateIndicesOfCandidatesToBeCorrected[id];
-            const int anchorIndex = anchorIndicesOfCandidates[candidateIndex];
+            //const int anchorIndex = anchorIndicesOfCandidates[candidateIndex];
             const int destinationIndex = id;
 
             const int candidate_length = candidateSequencesLengths[candidateIndex];
@@ -1896,7 +1896,7 @@ namespace gpu{
             Use groupsize threads per candidate to perform correction
         */
         static_assert(BLOCKSIZE % groupsize == 0, "BLOCKSIZE % groupsize != 0");
-        constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
+        //constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
         static_assert(groupsize == 32);
 
         auto thread = cg::this_thread();
@@ -3191,7 +3191,7 @@ namespace gpu{
         const int numAnchors,
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
-        int maximumSequenceLength,
+        int /*maximumSequenceLength*/,
         float estimatedErrorrate,
         float estimatedCoverage,
         float avg_support_threshold,
@@ -3301,7 +3301,7 @@ namespace gpu{
 
 
         constexpr int blocksizeextract = 128;
-        constexpr std::size_t maxSmemextract = 32 * 1024;
+        //constexpr std::size_t maxSmemextract = 32 * 1024;
         std::size_t featuresizeextract = numMismatches * anchor_extractor::numFeatures() * sizeof(float);
 
         int maxBlocksPerSMextract = 0;
@@ -3706,8 +3706,6 @@ namespace gpu{
 
     void callMsaCorrectCandidatesWithForestKernelMultiPhase(
         char* d_correctedCandidates,
-        EncodedCorrectionEdit* d_editsPerCorrectedCandidate,
-        int* d_numEditsPerCorrectedCandidate,
         GPUMultiMSA multiMSA,
         GpuForest::Clf gpuForest,
         float forestThreshold,
@@ -3720,15 +3718,11 @@ namespace gpu{
         const int* d_candidateIndicesOfCandidatesToBeCorrected,
         const int* d_numCandidatesToBeCorrected,
         const int* d_anchorIndicesOfCandidates,
-        const int /*numCandidates*/,
-        int doNotUseEditsValue,
-        int numEditsThreshold,            
+        const int /*numCandidates*/,          
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
-        size_t editsPitchInBytes,
         int maximum_sequence_length,
-        cudaStream_t stream,
-        const read_number* candidateReadIds
+        cudaStream_t stream
     ){
         constexpr int blocksize = 128;
         constexpr int groupsize = 32;
@@ -4049,10 +4043,6 @@ namespace gpu{
         const read_number* candidateReadIds
     ){
 
-        constexpr int blocksize = 128;
-        constexpr int groupsize = 32;
-        constexpr int numGroupsPerBlock = blocksize / groupsize;
-
         //CUDACHECK(cudaStreamSynchronize(stream));
 
         //rmm::device_uvector<char> tmpaaa(decodedSequencePitchInBytes * 250000, stream);
@@ -4061,8 +4051,6 @@ namespace gpu{
         {
             callMsaCorrectCandidatesWithForestKernelMultiPhase(
                 d_correctedCandidates,
-                d_editsPerCorrectedCandidate,
-                d_numEditsPerCorrectedCandidate,
                 multiMSA,
                 gpuForest,
                 forestThreshold,
@@ -4075,20 +4063,19 @@ namespace gpu{
                 d_candidateIndicesOfCandidatesToBeCorrected,
                 d_numCandidatesToBeCorrected,
                 d_anchorIndicesOfCandidates,
-                numCandidates,
-                doNotUseEditsValue,
-                numEditsThreshold,            
+                numCandidates,       
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
-                editsPitchInBytes,
                 maximum_sequence_length,
-                stream,
-                candidateReadIds
+                stream
             );
         }
 
         #else
         {
+        constexpr int blocksize = 128;
+        constexpr int groupsize = 32;
+        constexpr int numGroupsPerBlock = blocksize / groupsize;
         const std::size_t dynamicsmemPitchInInts = SDIV(maximum_sequence_length, sizeof(int));
         const std::size_t treePointersPitchInInts = SDIV(sizeof(void*) * gpuForest.numTrees, sizeof(int));
 
