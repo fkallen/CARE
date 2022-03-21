@@ -1279,8 +1279,6 @@ namespace gpu{
     __global__
     void msaCorrectCandidatesWithForestKernel(
         char* __restrict__ correctedCandidates,
-        EncodedCorrectionEdit* __restrict__ d_editsPerCorrectedCandidate,
-        int* __restrict__ d_numEditsPerCorrectedCandidate,
         GPUMultiMSA multiMSA,
         GpuClf gpuForest,
         float forestThreshold,
@@ -1289,17 +1287,12 @@ namespace gpu{
         const AlignmentOrientation* __restrict__ bestAlignmentFlags,
         const unsigned int* __restrict__ candidateSequencesData,
         const int* __restrict__ candidateSequencesLengths,
-        const bool* __restrict__ d_candidateContainsN,
         const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
         const int* __restrict__ numCandidatesToBeCorrected,
-        const int* __restrict__ anchorIndicesOfCandidates,
-        int doNotUseEditsValue,
-        int numEditsThreshold,            
+        const int* __restrict__ anchorIndicesOfCandidates,         
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
-        size_t editsPitchInBytes,
-        size_t dynamicsmemSequencePitchInInts,
-        const read_number* candidateReadIds
+        size_t dynamicsmemSequencePitchInInts
     ){
 
         /*
@@ -1330,23 +1323,11 @@ namespace gpu{
             return result;
         };
 
-        const std::size_t treePointersPitchInInts = SDIV(sizeof(void*) * gpuForest.numTrees, sizeof(int));
-
-        const typename GpuClf::NodeType** sharedForestNodes = (const typename GpuClf::NodeType**)dynamicsmem;
-
-        char* const shared_correctedCandidate = (char*)(dynamicsmem + treePointersPitchInInts + dynamicsmemSequencePitchInInts * groupIdInBlock);
+        char* const shared_correctedCandidate = (char*)(dynamicsmem + dynamicsmemSequencePitchInInts * groupIdInBlock);
 
         const int loopEnd = *numCandidatesToBeCorrected;
 
         GpuClf localForest = gpuForest;
-        // localForest.numTrees = gpuForest.numTrees;
-        // localForest.data = sharedForestNodes;
-
-        // for(int i = threadIdx.x; i < localForest.numTrees; i += BLOCKSIZE){
-        //     localForest.data[i] = gpuForest.data[i];
-        // }
-        
-        // __syncthreads();
 
         for(int id = groupId; id < loopEnd; id += numGroups){
 
@@ -1543,7 +1524,6 @@ namespace gpu{
         const AlignmentOrientation* __restrict__ bestAlignmentFlags,
         const unsigned int* __restrict__ candidateSequencesData,
         const int* __restrict__ candidateSequencesLengths,
-        const bool* __restrict__ d_candidateContainsN,
         const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
         const int* __restrict__ numCandidatesToBeCorrected,
         const int* __restrict__ anchorIndicesOfCandidates,         
@@ -2146,7 +2126,6 @@ namespace gpu{
         const AlignmentOrientation* __restrict__ bestAlignmentFlags,
         const unsigned int* __restrict__ candidateSequencesData,
         const int* __restrict__ candidateSequencesLengths,
-        const bool* __restrict__ d_candidateContainsN,
         const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
         const int* __restrict__ numCandidatesToBeCorrected,
         const int* __restrict__ anchorIndicesOfCandidates,         
@@ -3714,7 +3693,6 @@ namespace gpu{
         const AlignmentOrientation* d_bestAlignmentFlags,
         const unsigned int* d_candidateSequencesData,
         const int* d_candidateSequencesLengths,
-        const bool* d_candidateContainsN,
         const int* d_candidateIndicesOfCandidatesToBeCorrected,
         const int* d_numCandidatesToBeCorrected,
         const int* d_anchorIndicesOfCandidates,
@@ -3766,7 +3744,6 @@ namespace gpu{
             d_bestAlignmentFlags,
             d_candidateSequencesData,
             d_candidateSequencesLengths,
-            d_candidateContainsN,
             d_candidateIndicesOfCandidatesToBeCorrected,
             d_numCandidatesToBeCorrected,
             d_anchorIndicesOfCandidates,         
@@ -4005,7 +3982,6 @@ namespace gpu{
         //     d_bestAlignmentFlags,
         //     d_candidateSequencesData,
         //     d_candidateSequencesLengths,
-        //     d_candidateContainsN,
         //     d_candidateIndicesOfCandidatesToBeCorrected,
         //     d_numCandidatesToBeCorrected,
         //     d_anchorIndicesOfCandidates,         
@@ -4016,10 +3992,8 @@ namespace gpu{
         //timercomparemsapropsextractcorrectKernel.print();
     }
 
-    void callMsaCorrectCandidatesWithForestKernel(
+    void callMsaCorrectCandidatesWithForestKernelSinglePhaseOld(
         char* d_correctedCandidates,
-        EncodedCorrectionEdit* d_editsPerCorrectedCandidate,
-        int* d_numEditsPerCorrectedCandidate,
         GPUMultiMSA multiMSA,
         GpuForest::Clf gpuForest,
         float forestThreshold,
@@ -4028,61 +4002,23 @@ namespace gpu{
         const AlignmentOrientation* d_bestAlignmentFlags,
         const unsigned int* d_candidateSequencesData,
         const int* d_candidateSequencesLengths,
-        const bool* d_candidateContainsN,
         const int* d_candidateIndicesOfCandidatesToBeCorrected,
         const int* d_numCandidatesToBeCorrected,
         const int* d_anchorIndicesOfCandidates,
-        const int numCandidates,
-        int doNotUseEditsValue,
-        int numEditsThreshold,            
+        const int /*numCandidates*/,
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
-        size_t editsPitchInBytes,
         int maximum_sequence_length,
-        cudaStream_t stream,
-        const read_number* candidateReadIds
+        cudaStream_t stream
     ){
-
-        //CUDACHECK(cudaStreamSynchronize(stream));
-
-        //rmm::device_uvector<char> tmpaaa(decodedSequencePitchInBytes * 250000, stream);
-
-        #if 1
-        {
-            callMsaCorrectCandidatesWithForestKernelMultiPhase(
-                d_correctedCandidates,
-                multiMSA,
-                gpuForest,
-                forestThreshold,
-                estimatedCoverage,
-                d_shifts,
-                d_bestAlignmentFlags,
-                d_candidateSequencesData,
-                d_candidateSequencesLengths,
-                d_candidateContainsN,
-                d_candidateIndicesOfCandidatesToBeCorrected,
-                d_numCandidatesToBeCorrected,
-                d_anchorIndicesOfCandidates,
-                numCandidates,       
-                encodedSequencePitchInInts,
-                decodedSequencePitchInBytes,
-                maximum_sequence_length,
-                stream
-            );
-        }
-
-        #else
-        {
         constexpr int blocksize = 128;
         constexpr int groupsize = 32;
-        constexpr int numGroupsPerBlock = blocksize / groupsize;
+
         const std::size_t dynamicsmemPitchInInts = SDIV(maximum_sequence_length, sizeof(int));
-        const std::size_t treePointersPitchInInts = SDIV(sizeof(void*) * gpuForest.numTrees, sizeof(int));
 
         auto calculateSmemUsage = [&](int blockDim){
             const int numGroupsPerBlock = blockDim / groupsize;
-            std::size_t smem = numGroupsPerBlock * (sizeof(int) * dynamicsmemPitchInInts)
-                + treePointersPitchInInts * sizeof(int); 
+            std::size_t smem = numGroupsPerBlock * (sizeof(int) * dynamicsmemPitchInInts);
 
             return smem;
         };
@@ -4106,12 +4042,8 @@ namespace gpu{
         dim3 block = blocksize;
         dim3 grid = maxBlocks;
 
-        //helpers::GpuTimer timer(stream, "combined");
-
         msaCorrectCandidatesWithForestKernel<blocksize, groupsize, cands_extractor><<<grid, block, smem, stream>>>(
             d_correctedCandidates,
-            d_editsPerCorrectedCandidate,
-            d_numEditsPerCorrectedCandidate,
             multiMSA,
             gpuForest,
             forestThreshold,
@@ -4120,58 +4052,81 @@ namespace gpu{
             d_bestAlignmentFlags,
             d_candidateSequencesData,
             d_candidateSequencesLengths,
-            d_candidateContainsN,
             d_candidateIndicesOfCandidatesToBeCorrected,
             d_numCandidatesToBeCorrected,
-            d_anchorIndicesOfCandidates,            
-            doNotUseEditsValue,
-            numEditsThreshold,            
+            d_anchorIndicesOfCandidates, 
             encodedSequencePitchInInts,
             decodedSequencePitchInBytes,
-            editsPitchInBytes,
-            dynamicsmemPitchInInts,
-            candidateReadIds
+            dynamicsmemPitchInInts
         );
         CUDACHECKASYNC;
+    }
 
-        //timer.print();
-        }
+
+    void callMsaCorrectCandidatesWithForestKernel(
+        char* d_correctedCandidates,
+        GPUMultiMSA multiMSA,
+        GpuForest::Clf gpuForest,
+        float forestThreshold,
+        float estimatedCoverage,
+        const int* d_shifts,
+        const AlignmentOrientation* d_bestAlignmentFlags,
+        const unsigned int* d_candidateSequencesData,
+        const int* d_candidateSequencesLengths,
+        const int* d_candidateIndicesOfCandidatesToBeCorrected,
+        const int* d_numCandidatesToBeCorrected,
+        const int* d_anchorIndicesOfCandidates,
+        const int numCandidates,      
+        int encodedSequencePitchInInts,
+        size_t decodedSequencePitchInBytes,
+        int maximum_sequence_length,
+        cudaStream_t stream
+    ){
+        #if 1
+
+        callMsaCorrectCandidatesWithForestKernelMultiPhase(
+            d_correctedCandidates,
+            multiMSA,
+            gpuForest,
+            forestThreshold,
+            estimatedCoverage,
+            d_shifts,
+            d_bestAlignmentFlags,
+            d_candidateSequencesData,
+            d_candidateSequencesLengths,
+            d_candidateIndicesOfCandidatesToBeCorrected,
+            d_numCandidatesToBeCorrected,
+            d_anchorIndicesOfCandidates,
+            numCandidates,       
+            encodedSequencePitchInInts,
+            decodedSequencePitchInBytes,
+            maximum_sequence_length,
+            stream
+        );
+
+        #else
+
+        callMsaCorrectCandidatesWithForestKernelSinglePhaseOld(
+            d_correctedCandidates,
+            multiMSA,
+            gpuForest,
+            forestThreshold,
+            estimatedCoverage,
+            d_shifts,
+            d_bestAlignmentFlags,
+            d_candidateSequencesData,
+            d_candidateSequencesLengths,
+            d_candidateIndicesOfCandidatesToBeCorrected,
+            d_numCandidatesToBeCorrected,
+            d_anchorIndicesOfCandidates,
+            numCandidates,       
+            encodedSequencePitchInInts,
+            decodedSequencePitchInBytes,
+            maximum_sequence_length,
+            stream
+        );
+
         #endif
-
-
-        // helpers::lambda_kernel<<<1, 1, 0, stream>>>(
-        //     [
-        //         d_correctedCandidates,
-        //         tmpaaa = tmpaaa.data(),
-        //         decodedSequencePitchInBytes,
-        //         d_numCandidatesToBeCorrected
-        //     ] __device__ (){
-        //         for(int c = blockIdx.x; c < *d_numCandidatesToBeCorrected; c += gridDim.x){
-        //             const char* ptrold = d_correctedCandidates + c * decodedSequencePitchInBytes;
-        //             const char* ptrnew = tmpaaa + c * decodedSequencePitchInBytes;
-        //             // if(c == 1){
-        //             //     printf("old: ");
-        //             //     for(int i = threadIdx.x; i < 100; i += blockDim.x){
-        //             //         printf("%c", ptrold[i]);
-        //             //     }
-        //             //     printf("\n");
-        //             //     printf("new: ");
-        //             //     for(int i = threadIdx.x; i < 100; i += blockDim.x){
-        //             //         printf("%c", ptrnew[i]);
-        //             //     }
-        //             //     printf("\n");
-        //             //     __syncthreads();
-        //             //     assert(false);
-        //             // }
-        //             for(int i = threadIdx.x; i < 100; i += blockDim.x){
-        //                 if(ptrold[i] != ptrnew[i]){
-        //                     printf("%d %d %c %c\n", c, i, ptrold[i], ptrnew[i]);
-        //                     assert(false);
-        //                 }
-        //             }
-        //         }
-        //     }
-        // );
     }
 
     void callFlagCandidatesToBeCorrectedKernel_async(
