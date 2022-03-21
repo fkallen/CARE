@@ -400,8 +400,6 @@ void callMsaCorrectAnchorsWithForestKernel(
 
 void callMsaCorrectCandidatesWithForestKernel(
     char* d_correctedCandidates,
-    EncodedCorrectionEdit* d_editsPerCorrectedCandidate,
-    int* d_numEditsPerCorrectedCandidate,
     GPUMultiMSA multiMSA,
     GpuForest::Clf gpuForest,
     float forestThreshold,
@@ -410,19 +408,14 @@ void callMsaCorrectCandidatesWithForestKernel(
     const AlignmentOrientation* d_bestAlignmentFlags,
     const unsigned int* d_candidateSequencesData,
     const int* d_candidateSequencesLengths,
-    const bool* d_candidateContainsN,
     const int* d_candidateIndicesOfCandidatesToBeCorrected,
     const int* d_numCandidatesToBeCorrected,
     const int* d_anchorIndicesOfCandidates,
-    const int numCandidates,
-    int doNotUseEditsValue,
-    int numEditsThreshold,            
+    const int numCandidates,        
     int encodedSequencePitchInInts,
     size_t decodedSequencePitchInBytes,
-    size_t editsPitchInBytes,
     int maximum_sequence_length,
-    cudaStream_t stream,
-    const read_number* candidateReadIds
+    cudaStream_t stream
 );
 
 void callConstructSequenceCorrectionResultsKernel(

@@ -3074,9 +3074,7 @@ namespace gpu{
             );
 
             callMsaCorrectCandidatesWithForestKernel(
-                d_corrected_candidates.data(),
-                d_editsPerCorrectedCandidate.data(),
-                d_numEditsPerCorrectedCandidate.data(),              
+                d_corrected_candidates.data(),            
                 managedgpumsa->multiMSAView(),
                 *gpuForestCandidate,
                 programOptions->thresholdCands,
@@ -3085,19 +3083,14 @@ namespace gpu{
                 d_alignment_best_alignment_flags.data(),
                 d_candidate_sequences_data.data(),
                 d_candidate_sequences_lengths.data(),
-                d_candidateContainsN.data(),
                 d_indices_of_corrected_candidates.data(),
                 d_num_total_corrected_candidates.data(),
                 d_anchorIndicesOfCandidates.data(),
                 currentNumCandidates, //*h_num_total_corrected_candidates,
-                getDoNotUseEditsValue(),
-                maxNumEditsPerSequence,
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
-                editsPitchInBytes,
                 gpuReadStorage->getSequenceLengthUpperBound(),
-                stream,
-                d_candidate_read_ids.data()
+                stream
             );  
 
             helpers::call_fill_kernel_async(d_numEditsPerCorrectedCandidate.data(), currentNumCandidates, 0, stream);
