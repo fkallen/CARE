@@ -191,14 +191,14 @@ public:
         return thresh_;
     }
 
-    float prob(const features_t& features) const {
+    float prob_full(const features_t& features) const {
         float sum = 0.f;
         for (const Tree& tree: forest_)
             sum += prob(features, tree);
         return sum/forest_.size();
     }
 
-    float prob_debug(const features_t& features) const {
+    float prob_full_debug(const features_t& features) const {
         float sum = 0.f;
         std::cerr << "# ";
         for (const Tree& tree: forest_) {
@@ -210,8 +210,19 @@ public:
         return sum/forest_.size();
     }
 
-    bool decide(const features_t& features) const {
+    bool decide_full(const features_t& features) const {
         return prob(features) >= thresh_;
+    }
+
+    bool decide(const features_t& features) const {
+        float sum = 0.f;
+        for (const Tree& tree: forest_){
+            sum += prob(features, tree);
+            if(sum / forest_.size() >= thresh_){
+                return true;
+            }
+        }
+        return false;
     }
 };
 
