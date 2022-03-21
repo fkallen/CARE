@@ -158,7 +158,7 @@ public:
             tree.reserve(read_one<uint32_t>(is)); // reserve space for nodes
             populate(is, tree);
 
-            sortNodesViaBFS(tree);
+            //sortNodesViaBFS(tree);
         }
 
         //sortNodesViaBFS(forest_[0]);
