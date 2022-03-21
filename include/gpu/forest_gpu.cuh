@@ -44,39 +44,11 @@ struct GpuForest {
         } lhs, rhs;
     };
 
-    struct NodePayload{
-        uint8_t att;
-        uint8_t flag;
-        double split;
-    };
-
-    struct SoATree{
-        NodePayload* payload;
-
-        IndexOrProb* lhs;
-        IndexOrProb* rhs;
-    };
-
     struct Clf{
         using NodeType = Node;
 
         int numTrees;
         const Node** data;
-        const SoATree* trees;
-
-        template<class Iter>
-        HOSTDEVICEQUALIFIER
-        float decideSoATree(Iter features, const SoATree& soatree, size_t nodeIndex = 0) const {
-            if (*(features + soatree.payload[nodeIndex].att) <= soatree.payload[nodeIndex].split) {
-                if (soatree.payload[nodeIndex].flag / 2)
-                    return soatree.lhs[nodeIndex].prob;
-                return decideSoATree(features, soatree, soatree.lhs[nodeIndex].idx);
-            } else {
-                if (soatree.payload[nodeIndex].flag % 2)
-                    return soatree.rhs[nodeIndex].prob;
-                return decideSoATree(features, soatree, soatree.rhs[nodeIndex].idx);
-            }
-        }
 
         template<class Iter>
         HOSTDEVICEQUALIFIER
@@ -102,7 +74,6 @@ struct GpuForest {
                     return true;
                 }
             }
-            //return prob / numTrees >= thresh;
             return false;
         }
 
@@ -111,8 +82,6 @@ struct GpuForest {
         template<class Group, class Iter, class GroupReduceFloatSum>
         DEVICEQUALIFIER
         float decide(Group& g, Iter features, float thresh, GroupReduceFloatSum reduce) const{
-            #if 1
-
             #if 1
             const int limit = SDIV(numTrees, g.size()) * g.size();
             float accumulatedProb = 0.f;
@@ -137,25 +106,6 @@ struct GpuForest {
             prob = reduce(prob);
             return prob / numTrees >= thresh;
             #endif
-
-            #else
-
-            const int limit = SDIV(numTrees, g.size()) * g.size();
-            float accumulatedProb = 0.f;
-
-            for(int t = g.thread_rank(); t < limit; t += g.size()){
-                float currentProb = 0.0;
-                if(t < numTrees){
-                    currentProb += decideSoATree(features, trees[t]);
-                }
-                accumulatedProb += reduce(currentProb);
-                if(accumulatedProb / numTrees >= thresh){
-                    return true;
-                }
-            }
-            return false;
-
-            #endif
         }
         
     };
@@ -165,9 +115,6 @@ public:
     int numTrees{};
     Node** d_data{};
     std::vector<std::size_t> numNodesPerTree{};
-
-    SoATree* d_trees;
-    std::vector<SoATree> soaWithDevicePointers;
 
     MemoryUsage getMemoryInfo() const noexcept{
         MemoryUsage result{};
@@ -191,7 +138,6 @@ public:
         numTrees = clf.forest_.size();
 
         std::vector<Node*> devicePointers(numTrees);
-        soaWithDevicePointers.resize(numTrees);
 
         for(int t = 0; t < numTrees; t++){
             const int numNodes = clf.forest_[t].size();
@@ -220,40 +166,6 @@ public:
                 sizeof(Node) * numNodes,
                 H2D
             ));
-
-            std::vector<uint8_t> atts(numNodes);
-            std::vector<uint8_t> flags(numNodes);
-            std::vector<double> splits(numNodes);
-            std::vector<IndexOrProb> lhss(numNodes);
-            std::vector<IndexOrProb> rhss(numNodes);
-            std::vector<NodePayload> payloads(numNodes);
-
-            for(int n = 0; n < numNodes; n++){
-                Node node = nodes[n];
-                atts[n] = node.att;
-                flags[n] = node.flag;
-                splits[n] = node.split;
-                lhss[n].idx = node.lhs.idx;
-                rhss[n].idx = node.rhs.idx;
-
-                payloads[n].att = node.att;
-                payloads[n].flag = node.flag;
-                payloads[n].split = node.split;
-            }
-
-            // CUDACHECK(cudaMalloc(&soaWithDevicePointers[t].att, sizeof(uint8_t) * numNodes));
-            // CUDACHECK(cudaMalloc(&soaWithDevicePointers[t].flag, sizeof(uint8_t) * numNodes));
-            // CUDACHECK(cudaMalloc(&soaWithDevicePointers[t].split, sizeof(double) * numNodes));
-            CUDACHECK(cudaMalloc(&soaWithDevicePointers[t].lhs, sizeof(IndexOrProb) * numNodes));
-            CUDACHECK(cudaMalloc(&soaWithDevicePointers[t].rhs, sizeof(IndexOrProb) * numNodes));
-            CUDACHECK(cudaMalloc(&soaWithDevicePointers[t].payload, sizeof(NodePayload) * numNodes));
-
-            // CUDACHECK(cudaMemcpy(soaWithDevicePointers[t].att, atts.data(), sizeof(uint8_t) * numNodes, H2D));
-            // CUDACHECK(cudaMemcpy(soaWithDevicePointers[t].flag, flags.data(), sizeof(uint8_t) * numNodes, H2D));
-            // CUDACHECK(cudaMemcpy(soaWithDevicePointers[t].split, splits.data(), sizeof(double) * numNodes, H2D));
-            CUDACHECK(cudaMemcpy(soaWithDevicePointers[t].lhs, lhss.data(), sizeof(IndexOrProb) * numNodes, H2D));
-            CUDACHECK(cudaMemcpy(soaWithDevicePointers[t].rhs, rhss.data(), sizeof(IndexOrProb) * numNodes, H2D));
-            CUDACHECK(cudaMemcpy(soaWithDevicePointers[t].payload, payloads.data(), sizeof(NodePayload) * numNodes, H2D));
         }
 
         CUDACHECK(cudaMalloc(&d_data, sizeof(Node*) * numTrees));
@@ -264,15 +176,6 @@ public:
             sizeof(Node*) * numTrees,
             H2D
         ));
-
-        CUDACHECK(cudaMalloc(&d_trees, sizeof(SoATree) * numTrees));
-
-        CUDACHECK(cudaMemcpy(
-            d_trees,
-            soaWithDevicePointers.data(),
-            sizeof(SoATree) * numTrees,
-            H2D
-        ));
     }
 
     GpuForest(GpuForest&& rhs){
@@ -280,8 +183,6 @@ public:
         numTrees = std::exchange(rhs.numTrees, 0);
         d_data = std::exchange(rhs.d_data, nullptr);
         numNodesPerTree = std::exchange(rhs.numNodesPerTree, std::vector<uint64_t>{});
-        d_trees = std::exchange(rhs.d_trees, nullptr);
-        soaWithDevicePointers = std::exchange(rhs.soaWithDevicePointers, std::vector<SoATree>{});
     }
 
     GpuForest(const GpuForest& rhs) = delete;
@@ -291,8 +192,6 @@ public:
         numTrees = std::exchange(rhs.numTrees, 0);
         d_data = std::exchange(rhs.d_data, nullptr);
         numNodesPerTree = std::exchange(rhs.numNodesPerTree, std::vector<uint64_t>{});
-        d_trees = std::exchange(rhs.d_trees, nullptr);
-        soaWithDevicePointers = std::exchange(rhs.soaWithDevicePointers, std::vector<SoATree>{});
         return *this;
     }
 
@@ -313,16 +212,6 @@ public:
             CUDACHECK(cudaFree(devicePointers[t]));
         }
         CUDACHECK(cudaFree(d_data));
-
-        for(int t = 0; t < numTrees; t++){
-            // CUDACHECK(cudaFree(soaWithDevicePointers[t].att));
-            // CUDACHECK(cudaFree(soaWithDevicePointers[t].flag));
-            // CUDACHECK(cudaFree(soaWithDevicePointers[t].split));
-            CUDACHECK(cudaFree(soaWithDevicePointers[t].payload));
-            CUDACHECK(cudaFree(soaWithDevicePointers[t].lhs));
-            CUDACHECK(cudaFree(soaWithDevicePointers[t].rhs));
-        }
-        CUDACHECK(cudaFree(d_trees));
     }
 
     operator Clf() const{
@@ -330,7 +219,7 @@ public:
     }
 
     Clf getClf() const{
-        return Clf{numTrees, (const Node**)d_data, (const SoATree*)d_trees};
+        return Clf{numTrees, (const Node**)d_data};
     }
 
 };
