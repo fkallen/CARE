@@ -173,7 +173,8 @@ namespace care{
         //trim pools
         for(size_t i = 0; i < rmmCudaAsyncResources.size(); i++){
             cub::SwitchDevice sd(programOptions.deviceIds[i]);
-            cudaMemPoolTrimTo(rmmCudaAsyncResources[i]->pool_handle(), 0);
+            CUDACHECK(cudaDeviceSynchronize());
+            CUDACHECK(cudaMemPoolTrimTo(rmmCudaAsyncResources[i]->pool_handle(), 0));
         }
 
         std::cout << "Determined the following read properties:\n";
@@ -242,7 +243,8 @@ namespace care{
         //trim pools
         for(size_t i = 0; i < rmmCudaAsyncResources.size(); i++){
             cub::SwitchDevice sd(programOptions.deviceIds[i]);
-            cudaMemPoolTrimTo(rmmCudaAsyncResources[i]->pool_handle(), 0);
+            CUDACHECK(cudaDeviceSynchronize());
+            CUDACHECK(cudaMemPoolTrimTo(rmmCudaAsyncResources[i]->pool_handle(), 0));
         }
 
         std::cout << "Using minhasher type: " << to_string(minhasherAndType.second) << "\n";
@@ -375,7 +377,8 @@ namespace care{
                 //trim pools
                 for(size_t i = 0; i < rmmCudaAsyncResources.size(); i++){
                     cub::SwitchDevice sd(programOptions.deviceIds[i]);
-                    cudaMemPoolTrimTo(rmmCudaAsyncResources[i]->pool_handle(), 0);
+                    CUDACHECK(cudaDeviceSynchronize());
+                    CUDACHECK(cudaMemPoolTrimTo(rmmCudaAsyncResources[i]->pool_handle(), 0));
                 }
             }
         );
