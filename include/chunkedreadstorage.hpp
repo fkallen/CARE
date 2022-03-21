@@ -11,6 +11,7 @@
 #include <cpureadstorage.hpp>
 #include <memorymanagement.hpp>
 #include <qualityscorecompression.hpp>
+#include <sharedmutex.hpp>
 
 #include <unordered_set>
 #include <vector>
