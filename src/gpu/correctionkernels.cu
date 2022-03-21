@@ -3720,24 +3720,24 @@ namespace gpu{
 
 
         
-        int maxBlocksPerSMPass1 = 0;
+        int maxBlocksPerSMinit = 0;
         const std::size_t dynamicsmemPitchInInts = SDIV(maximum_sequence_length, sizeof(int));
-        const std::size_t smemPass1 = numGroupsPerBlock * (sizeof(int) * dynamicsmemPitchInInts);
+        const std::size_t smeminit = numGroupsPerBlock * (sizeof(int) * dynamicsmemPitchInInts);
 
         CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-            &maxBlocksPerSMPass1,
+            &maxBlocksPerSMinit,
             msaCorrectCandidatesWithForestKernel_multiphase_initCorrectedCandidatesKernel<blocksize, groupsize>,
             blocksize, 
-            smemPass1
+            smeminit
         ));
 
         dim3 block1 = blocksize;
-        dim3 grid1 = maxBlocksPerSMPass1 * numSMs;
+        dim3 grid1 = maxBlocksPerSMinit * numSMs;
 
-        helpers::GpuTimer timerinitCorrectedCandidatesKernel(stream, "initCorrectedCandidatesKernel");
+        //helpers::GpuTimer timerinitCorrectedCandidatesKernel(stream, "initCorrectedCandidatesKernel");
 
         msaCorrectCandidatesWithForestKernel_multiphase_initCorrectedCandidatesKernel<blocksize, groupsize>
-        <<<grid1, block1, smemPass1, stream>>>(
+        <<<grid1, block1, smeminit, stream>>>(
             d_correctedCandidates,
             multiMSA,
             d_shifts,
@@ -3769,7 +3769,7 @@ namespace gpu{
 
         rmm::device_scalar<int> d_numMismatches(0, stream, mr);
 
-        helpers::GpuTimer timercountMismatchesKernel(stream, "countMismatchesKernel");
+        //helpers::GpuTimer timercountMismatchesKernel(stream, "countMismatchesKernel");
 
         msaCorrectCandidatesWithForestKernel_multiphase_countMismatchesKernel<blocksize, groupsize>
             <<<gridCountMismatches, blockCountMismatches, smemCountMismatches, stream>>>(
@@ -3804,7 +3804,7 @@ namespace gpu{
 
         MismatchPositions mismatchPositions(numMismatches, stream, mr);
 
-        helpers::GpuTimer timerfindMismatchesKernel(stream, "findMismatchesKernel");
+        //helpers::GpuTimer timerfindMismatchesKernel(stream, "findMismatchesKernel");
 
         msaCorrectCandidatesWithForestKernel_multiphase_findMismatchesKernel<blocksize, groupsize>
             <<<gridFindMismatches, blockFindMismatches, smemFindMismatches, stream>>>(
@@ -3838,7 +3838,7 @@ namespace gpu{
         rmm::device_uvector<GpuMSAProperties> d_msaPropertiesPerPosition(numMismatches, stream, mr);
 
         //CUDACHECK(cudaStreamSynchronize(stream));
-        helpers::GpuTimer timermsaprops(stream, "msapropsKernel");
+        //helpers::GpuTimer timermsaprops(stream, "msapropsKernel");
 
         msaCorrectCandidatesWithForestKernel_multiphase_msapropsKernel<blocksize, groupsize>
             <<<gridMsaProps, blockMsaProps, smemMsaProps, stream>>>(
@@ -3867,7 +3867,7 @@ namespace gpu{
 
         rmm::device_uvector<float> d_featuresTransposed(numMismatches * cands_extractor::numFeatures(), stream, mr);
 
-        helpers::GpuTimer timerextract(stream, "extractKernel");
+        //helpers::GpuTimer timerextract(stream, "extractKernel");
 
         msaCorrectCandidatesWithForestKernel_multiphase_extractKernel<cands_extractor>
             <<<gridExtract, blockExtract, smemExtract, stream>>>(
@@ -3899,7 +3899,7 @@ namespace gpu{
         dim3 blockCorrectGroup = blocksize;
         dim3 gridCorrectGroup = std::min(maxBlocksPerSMCorrectGroup * numSMs, SDIV(numMismatches, (blocksize / groupsize)));
 
-        helpers::GpuTimer timercorrectGroup(stream, "correctKernelGroup");
+        //helpers::GpuTimer timercorrectGroup(stream, "correctKernelGroup");
         msaCorrectCandidatesWithForestKernel_multiphase_correctKernelGroup<blocksize, groupsize, GpuForest::Clf>
             <<<gridCorrectGroup, blockCorrectGroup, smemCorrectGroup, stream>>>(
             d_correctedCandidates,
@@ -3937,7 +3937,7 @@ namespace gpu{
         dim3 blockCorrectThread = blocksize;
         dim3 gridCorrectThread = std::min(maxBlocksPerSMCorrectThread * numSMs, SDIV(numMismatches, blocksize));
 
-        helpers::GpuTimer timercorrectThread(stream, "correctKernelThread");
+        //helpers::GpuTimer timercorrectThread(stream, "correctKernelThread");
         msaCorrectCandidatesWithForestKernel_multiphase_correctKernelThread<blocksize, GpuForest::Clf>
             <<<gridCorrectThread, blockCorrectThread, smemCorrectThread, stream>>>(
             d_correctedCandidates,
