@@ -468,6 +468,14 @@ namespace care{
 
         std::cout << "Construction of output file(s) finished." << std::endl;
 
+        // for(size_t i = 0; i < rmmCudaAsyncResources.size(); i++){
+        //     cub::SwitchDevice sd(programOptions.deviceIds[i]);
+        //     CUDACHECK(cudaDeviceSynchronize());
+        //     CUDACHECK(cudaMemPoolTrimTo(rmmCudaAsyncResources[i]->pool_handle(), 0));
+        // }
+
+        // CUDACHECK(cudaDeviceReset());
+
     }
 
 
