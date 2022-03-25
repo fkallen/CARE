@@ -526,7 +526,7 @@ public:
                     gpuErrorCorrector.correct(*inputPtr, *rawOutputPtr, stream);
                     nvtx::pop_range();
 
-                    gpuErrorCorrector.releaseMemory(stream);
+                    gpuErrorCorrector.releaseCandidateMemory(stream);
 
                     dataInFlight.push(std::make_pair(inputPtr, rawOutputPtr));
 
@@ -584,7 +584,7 @@ public:
                     gpuErrorCorrector.correct(*inputPtr, *rawOutputPtr, stream);
                     nvtx::pop_range();
 
-                    gpuErrorCorrector.releaseMemory(stream);
+                    gpuErrorCorrector.releaseCandidateMemory(stream);
 
                     dataInFlight.push(std::make_pair(inputPtr, rawOutputPtr));
                     //std::cerr << "Submitted (" << inputPtr << ", " << rawOutputPtr << ")\n";
@@ -801,7 +801,7 @@ public:
                     gpuErrorCorrector.correct(input, rawOutput, stream);
                     nvtx::pop_range();
 
-                    gpuErrorCorrector.releaseMemory(stream);
+                    gpuErrorCorrector.releaseCandidateMemory(stream);
 
                     CUDACHECK(rawOutput.event.synchronize());
 
@@ -1206,7 +1206,7 @@ public:
             gpuErrorCorrector.correct(*inputPtr, *rawOutputPtr, stream);
             nvtx::pop_range();
 
-            gpuErrorCorrector.releaseMemory(stream);
+            gpuErrorCorrector.releaseCandidateMemory(stream);
 
             CUDACHECK(inputPtr->event.synchronize());
             freeInputs.push(inputPtr);
@@ -1325,7 +1325,7 @@ public:
                     gpuErrorCorrector.correct(*inputPtr, *rawOutputPtr, stream);
                     nvtx::pop_range();
 
-                    gpuErrorCorrector.releaseMemory(stream);
+                    gpuErrorCorrector.releaseCandidateMemory(stream);
 
                     dataInFlight.emplace(inputPtr, rawOutputPtr);
 
@@ -1367,7 +1367,7 @@ public:
                 gpuErrorCorrector.correct(*inputPtr, *rawOutputPtr, stream);
                 nvtx::pop_range();
 
-                gpuErrorCorrector.releaseMemory(stream);
+                gpuErrorCorrector.releaseCandidateMemory(stream);
 
                 dataInFlight.emplace(inputPtr, rawOutputPtr);
 

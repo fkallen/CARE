@@ -121,15 +121,12 @@ namespace gpu{
         rmm::device_uvector<int> d_numCandidates;
         rmm::device_uvector<read_number> d_anchorReadIds;
         rmm::device_uvector<unsigned int> d_anchor_sequences_data;
-        //rmm::device_uvector<char> d_anchor_qualities;
         rmm::device_uvector<int> d_anchor_sequences_lengths;
         rmm::device_uvector<read_number> d_candidate_read_ids;
         rmm::device_uvector<unsigned int> d_candidate_sequences_data;
-        //rmm::device_uvector<char> d_candidate_qualities;
         rmm::device_uvector<int> d_candidate_sequences_lengths;
         rmm::device_uvector<int> d_candidates_per_anchor;
-        rmm::device_uvector<int> d_candidates_per_anchor_prefixsum;  
-        rmm::device_uvector<int> d_candidatesBeginOffsets;
+        rmm::device_uvector<int> d_candidates_per_anchor_prefixsum;
 
         GpuErrorCorrectorInput()
         : mr(rmm::mr::get_current_device_resource()),
@@ -144,8 +141,7 @@ namespace gpu{
             //d_candidate_qualities(0, cudaStreamPerThread, mr),
             d_candidate_sequences_lengths(0, cudaStreamPerThread, mr),
             d_candidates_per_anchor(0, cudaStreamPerThread, mr),
-            d_candidates_per_anchor_prefixsum(0, cudaStreamPerThread, mr),
-            d_candidatesBeginOffsets(0, cudaStreamPerThread, mr)
+            d_candidates_per_anchor_prefixsum(0, cudaStreamPerThread, mr)
         {
             CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
         }
@@ -169,15 +165,12 @@ namespace gpu{
             handleDevice(d_numCandidates);
             handleDevice(d_anchorReadIds);
             handleDevice(d_anchor_sequences_data);
-            //handleDevice(d_anchor_qualities);
             handleDevice(d_anchor_sequences_lengths);
             handleDevice(d_candidate_read_ids);
             handleDevice(d_candidate_sequences_data);
-            //handleDevice(d_candidate_qualities);
             handleDevice(d_candidate_sequences_lengths);
             handleDevice(d_candidates_per_anchor);
             handleDevice(d_candidates_per_anchor_prefixsum);
-            handleDevice(d_candidatesBeginOffsets);
 
             return info;
         }  
@@ -378,7 +371,6 @@ namespace gpu{
             ecinput.d_anchor_sequences_lengths.resize(numAnchors, stream);
             ecinput.d_candidates_per_anchor.resize(numAnchors, stream);
             ecinput.d_candidates_per_anchor_prefixsum.resize(numAnchors + 1, stream);
-            ecinput.d_candidatesBeginOffsets.resize(numAnchors, stream);
         }
         
         void getAnchorReads(GpuErrorCorrectorInput& ecinput, bool /*useQualityScores*/, cudaStream_t stream){
@@ -1071,8 +1063,7 @@ namespace gpu{
             d_anchor_sequences_lengths{0, cudaStreamPerThread, mr},
             d_candidate_read_ids{0, cudaStreamPerThread, mr},
             d_candidates_per_anchor{0, cudaStreamPerThread, mr},
-            d_candidates_per_anchor_prefixsum{0, cudaStreamPerThread, mr}, 
-            d_candidatesBeginOffsets{0, cudaStreamPerThread, mr}
+            d_candidates_per_anchor_prefixsum{0, cudaStreamPerThread, mr}
         {
             if(programOptions->correctionType != CorrectionType::Classic){
                 assert(gpuForestAnchor != nullptr);
@@ -1307,7 +1298,6 @@ namespace gpu{
             handleDevice(d_anchorContainsN);
             handleDevice(d_candidateContainsN);
             handleDevice(d_candidate_sequences_lengths);
-            handleDevice(d_anchor_sequences_lengths);
             handleDevice(d_candidate_sequences_data);
             //handleDevice(d_transposedCandidateSequencesData);
             handleDevice(d_anchor_qualities);
@@ -1346,7 +1336,6 @@ namespace gpu{
             handleDevice(d_candidate_read_ids);
             handleDevice(d_candidates_per_anchor);
             handleDevice(d_candidates_per_anchor_prefixsum);
-            handleDevice(d_candidatesBeginOffsets);
 
             return info;
         } 
@@ -1359,7 +1348,6 @@ namespace gpu{
             handleDevice(d_anchorContainsN);
             handleDevice(d_candidateContainsN);
             handleDevice(d_candidate_sequences_lengths);
-            handleDevice(d_anchor_sequences_lengths);
             handleDevice(d_candidate_sequences_data);
             handleDevice(d_anchor_qualities);
             handleDevice(d_candidate_qualities);
@@ -1397,7 +1385,30 @@ namespace gpu{
             handleDevice(d_candidate_read_ids);
             handleDevice(d_candidates_per_anchor);
             handleDevice(d_candidates_per_anchor_prefixsum);
-            handleDevice(d_candidatesBeginOffsets);
+        } 
+
+        void releaseCandidateMemory(cudaStream_t stream){
+            auto handleDevice = [&](auto& d){
+                ::destroy(d, stream);
+            };
+
+            handleDevice(d_candidateContainsN);
+            handleDevice(d_candidate_sequences_lengths);
+            handleDevice(d_candidate_sequences_data);
+            handleDevice(d_candidate_qualities);
+            handleDevice(d_anchorIndicesOfCandidates);
+            handleDevice(d_alignment_overlaps);
+            handleDevice(d_alignment_shifts);
+            handleDevice(d_alignment_nOps);
+            handleDevice(d_alignment_best_alignment_flags);
+            handleDevice(d_indices);
+            handleDevice(d_corrected_candidates);
+            handleDevice(d_editsPerCorrectedCandidate);
+            handleDevice(d_numEditsPerCorrectedCandidate);
+            handleDevice(d_indices_of_corrected_candidates);
+            handleDevice(d_candidate_read_ids);
+            handleDevice(d_candidates_per_anchor);
+            handleDevice(d_candidates_per_anchor_prefixsum);
         } 
 
         
@@ -1435,7 +1446,6 @@ namespace gpu{
             zero(d_anchor_sequences_lengths);
             zero(d_candidates_per_anchor);
             zero(d_candidates_per_anchor_prefixsum);
-            zero(d_candidatesBeginOffsets);
             zero(d_anchorIndicesOfCandidates);
             zero(d_candidateContainsN);
             zero(d_candidate_read_ids);
@@ -1496,7 +1506,6 @@ namespace gpu{
             d_candidates_per_anchor.resize(maxAnchors, stream);
             h_candidates_per_anchor_prefixsum.resize(maxAnchors + 1);
             d_candidates_per_anchor_prefixsum.resize(maxAnchors + 1, stream);
-            d_candidatesBeginOffsets.resize(maxAnchors, stream);
             d_totalNumEdits.resize(1, stream);
         }
  
@@ -3353,7 +3362,6 @@ namespace gpu{
         rmm::device_uvector<read_number> d_candidate_read_ids;
         rmm::device_uvector<int> d_candidates_per_anchor;
         rmm::device_uvector<int> d_candidates_per_anchor_prefixsum; 
-        rmm::device_uvector<int> d_candidatesBeginOffsets;
 
         PinnedBuffer<int> h_candidates_per_anchor_prefixsum; 
         PinnedBuffer<int> h_indices;
