@@ -8,7 +8,6 @@
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/kernels.hpp>
 #include <gpu/gpucorrectorkernels.cuh>
-#include <gpu/cudagraphhelpers.cuh>
 #include <gpu/gpureadstorage.cuh>
 #include <gpu/asyncresult.cuh>
 #include <gpu/cudaerrorcheck.cuh>
@@ -981,9 +980,6 @@ namespace gpu{
     };
 
     class GpuErrorCorrector{
-        static constexpr bool useGraph() noexcept{
-            return false;
-        }
 
     public:
 
@@ -1238,14 +1234,7 @@ namespace gpu{
             // getCandidateSequenceData(stream); 
             // nvtx::pop_range();
 
-
-            // if(useGraph()){
-            //     //std::cerr << "Launching graph for output " << currentOutput << "\n";
-            //     graphMap[currentOutput].execute(stream);
-            //     //CUDACHECK(cudaStreamSynchronize(stream));
-            // }else{
-                execute(stream);
-            //}
+            execute(stream);
 
             managedgpumsa = nullptr;
 
@@ -1519,13 +1508,6 @@ namespace gpu{
                 //round up numCandidates to next multiple of stepsize
                 maxCandidates = SDIV(numCandidates, stepsizeForMaxCandidates) * stepsizeForMaxCandidates;
                 //maxCandidatesDidChange = true;
-
-                if(useGraph()){
-                    //reallocation will occure. invalidate all graphs and recapture them.
-                    for(auto& pair : graphMap){
-                        pair.second.valid = false;
-                    }
-                }
             }
 
             //std::size_t numEditsCandidates = SDIV(editsPitchInBytes * maxCandidates, sizeof(EncodedCorrectionEdit));
@@ -1600,20 +1582,6 @@ namespace gpu{
             // if(maxCandidatesDidChange){
             //     std::cerr << "maxCandidates changed to " << maxCandidates << "\n";
             // }
-
-            if(useGraph()){
-                if(!graphMap[currentOutput].valid){
-                    if(outputBuffersReallocated){
-                        std::cerr << "outputBuffersReallocated " << currentOutput << "\n";
-                    }
-                    //std::cerr << "Capture graph for output " << currentOutput << "\n";
-                    graphMap[currentOutput].capture(
-                        [&](cudaStream_t capstream){
-                            execute(capstream);
-                        }
-                    );
-                }
-            }
         }
 
         void flagPairedCandidates(cudaStream_t stream){
@@ -3369,9 +3337,6 @@ namespace gpu{
         PinnedBuffer<bool> h_flagsCandidates;
 
         std::unique_ptr<ManagedGPUMultiMSA> managedgpumsa;
-
-        
-        std::map<GpuErrorCorrectorRawOutput*, CudaGraph> graphMap;
     };
 
 
