@@ -107,13 +107,7 @@ namespace cudauniquekernels{
             const int sizeOfRange = segmentEnd - segmentBegin;
 
             if(sizeOfRange > elemsPerThread * blocksize){
-                //range too large to sort / to make unique. simply copy it to output
-                for(int i = threadIdx.x; i < sizeOfRange; i += blocksize){
-                    output[segmentBegin + i] = input[segmentBegin + i];
-                }
-                if(threadIdx.x == 0){
-                    unique_lengths[segmentId] = sizeOfRange;
-                }
+                //range too large to sort / to make unique. skip
                 continue;
             }
 
@@ -396,14 +390,28 @@ struct GpuSegmentedUnique{
                 stream
             );
         }else{
-            //at least one segment cannot be processed in registers
-            //process all large segements with slower global memory algorithm.
-            //Then process the remaining segments with fast register algorithm
 
-            //select segments larger than limit
+            //regsort must be called before gmemsort to get correct results!
+            
+            makeUniqueRangeWithRegSort(
+                d_unique_items,
+                d_unique_lengths, 
+                d_items,
+                numSegments,
+                d_begin_offsets, 
+                d_end_offsets, 
+                sizeOfLargestSegment,
+                begin_bit,
+                end_bit,
+                stream
+            );
+            
+            //at least one segment cannot be processed in registers
+
             int* const d_end_offsets_tmp = static_cast<int*>(temp_allocations[0]);
             void* const d_gmemsorttmp = static_cast<void*>(temp_allocations[1]);
 
+            //Set d_end_offsets_tmp[i] to d_begin_offsets[i] for small segments such thath gmemsort will skip those segments
             cudauniquekernels::setSmallSegmentSizesToZeroKernel<<<SDIV(numSegments, 128), 128, 0, stream>>>(
                 d_end_offsets_tmp,
                 numSegments,
@@ -422,19 +430,6 @@ struct GpuSegmentedUnique{
                 numSegments,
                 d_begin_offsets, 
                 d_end_offsets_tmp, 
-                begin_bit,
-                end_bit,
-                stream
-            );
-
-            makeUniqueRangeWithRegSort(
-                d_unique_items,
-                d_unique_lengths, 
-                d_items,
-                numSegments,
-                d_begin_offsets, 
-                d_end_offsets, 
-                sizeOfLargestSegment,
                 begin_bit,
                 end_bit,
                 stream
