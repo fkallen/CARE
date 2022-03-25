@@ -63,62 +63,6 @@ private:
     }
 };
 
-class MyRMMCudaAsyncResource : public rmm::mr::device_memory_resource {
-public:
-
-    MyRMMCudaAsyncResource(      
-        cudaMemPool_t pool
-    ) : cuda_pool_handle_(pool){
-
-    }
-
-    [[nodiscard]] cudaMemPool_t pool_handle() const noexcept { return cuda_pool_handle_; }
-
-    ~MyRMMCudaAsyncResource() override{
-
-    }
-
-    MyRMMCudaAsyncResource(MyRMMCudaAsyncResource const&) = delete;
-    MyRMMCudaAsyncResource(MyRMMCudaAsyncResource&&)      = delete;
-    MyRMMCudaAsyncResource& operator=(MyRMMCudaAsyncResource const&) = delete;
-    MyRMMCudaAsyncResource& operator=(MyRMMCudaAsyncResource&&) = delete;
-
-    [[nodiscard]] bool supports_streams() const noexcept override { return true; }
-
-    [[nodiscard]] bool supports_get_mem_info() const noexcept override { return false; }
-
-private:
-    cudaMemPool_t cuda_pool_handle_;
-
-    void* do_allocate(std::size_t bytes, rmm::cuda_stream_view stream) override{
-        void* ptr = nullptr;
-
-        if (bytes > 0) {
-            CUDACHECK(cudaMallocFromPoolAsync(&ptr, bytes, pool_handle(), stream.value()));
-        }
-
-        return ptr;
-    }
-
-
-    void do_deallocate(void* ptr, std::size_t, rmm::cuda_stream_view stream) override{
-        if (ptr != nullptr) {
-            CUDACHECK(cudaFreeAsync(ptr, stream.value()));
-        }
-    }
-
-    [[nodiscard]] bool do_is_equal(rmm::mr::device_memory_resource const& other) const noexcept override{
-        return dynamic_cast<MyRMMCudaAsyncResource const*>(&other) != nullptr;
-    }
-
-    [[nodiscard]] std::pair<std::size_t, std::size_t> do_get_mem_info(rmm::cuda_stream_view) const override{
-        return std::make_pair(0, 0);
-    }
-};
-
-
-
-
 
 template<class T>
 void resizeUninitialized(rmm::device_uvector<T>& vec, size_t newsize, rmm::cuda_stream_view stream){
