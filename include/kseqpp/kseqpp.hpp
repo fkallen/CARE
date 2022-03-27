@@ -29,7 +29,8 @@ namespace kseqpp{
 #ifdef KSEQPP_ASYNC_READER
     using CompressedReader_t = AsyncGzReader;
 #else 
-    using CompressedReader_t = GzReader;
+    //using CompressedReader_t = GzReader;
+    using CompressedReader_t = ZlibReader;
 #endif   
 
 /*
