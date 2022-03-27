@@ -1414,316 +1414,321 @@ namespace gpu{
         const int numMismatches = d_numMismatches.value(stream);
         //std::cerr << "numMismatches: " << numMismatches  << "\n";
 
-        constexpr int blocksizegather = 128;
-        constexpr int groupsizegather = 32;
+        if(numMismatches == 0){
+            return;
+        }else{
 
-        const std::size_t smemgather = 0;        
-        int maxBlocksPerSMgather = 0;
+            constexpr int blocksizegather = 128;
+            constexpr int groupsizegather = 32;
 
-        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-            &maxBlocksPerSMgather,
-            msaCorrectAnchorsWithForestKernel_multiphase_initkernel<blocksizegather, groupsizegather>,
-            blocksizegather, 
-            smemgather
-        ));
+            const std::size_t smemgather = 0;        
+            int maxBlocksPerSMgather = 0;
 
-        d_numMismatches.set_value_to_zero_async(stream);
-        rmm::device_uvector<int> d_mismatchAnchorIndices(numMismatches, stream, mr);
-        rmm::device_uvector<int> d_mismatchPositionsInAnchors(numMismatches, stream, mr);
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &maxBlocksPerSMgather,
+                msaCorrectAnchorsWithForestKernel_multiphase_initkernel<blocksizegather, groupsizegather>,
+                blocksizegather, 
+                smemgather
+            ));
 
-        dim3 blockgather(blocksizegather);
-        dim3 gridgather(std::min(SDIV(numAnchors, blocksizegather / groupsizegather), maxBlocksPerSMgather * numSMs));
+            d_numMismatches.set_value_to_zero_async(stream);
+            rmm::device_uvector<int> d_mismatchAnchorIndices(numMismatches, stream, mr);
+            rmm::device_uvector<int> d_mismatchPositionsInAnchors(numMismatches, stream, mr);
 
-        //helpers::GpuTimer timergather(stream, "gatherkernel");        
+            dim3 blockgather(blocksizegather);
+            dim3 gridgather(std::min(SDIV(numAnchors, blocksizegather / groupsizegather), maxBlocksPerSMgather * numSMs));
 
-        msaCorrectAnchorsWithForestKernel_multiphase_gathermismatcheskernel<blocksizegather, groupsizegather>
-        <<<gridgather, blockgather, smemgather, stream>>>(
-            d_isHighQualityAnchor,
-            multiMSA,
-            d_anchorSequencesData,
-            numAnchors,
-            encodedSequencePitchInInts,
-            decodedSequencePitchInBytes,
-            estimatedErrorrate,
-            estimatedCoverage,
-            avg_support_threshold,
-            min_support_threshold,
-            min_coverage_threshold,
-            d_numMismatches.data(),
-            d_mismatchAnchorIndices.data(),
-            d_mismatchPositionsInAnchors.data()
-        );
-        CUDACHECKASYNC;
-        //timergather.print();
+            //helpers::GpuTimer timergather(stream, "gatherkernel");        
 
-
-
-        constexpr int blocksizeextract = 128;
-        //constexpr std::size_t maxSmemextract = 32 * 1024;
-        std::size_t featuresizeextract = numMismatches * anchor_extractor::numFeatures() * sizeof(float);
-
-        int maxBlocksPerSMextract = 0;
-        std::size_t smemextract = 0;
-
-        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-            &maxBlocksPerSMextract,
-            msaCorrectAnchorsWithForestKernel_multiphase_extractkernel<blocksizeextract, anchor_extractor>,
-            blocksizeextract, 
-            smemextract
-        ));
-
-        rmm::device_buffer gmemFeaturesTransposedExtract(featuresizeextract, stream, mr);
-
-        dim3 blockextract(blocksizeextract);
-        dim3 gridextract(std::min(SDIV(numMismatches, blocksizeextract), maxBlocksPerSMextract * numSMs));
-
-        //helpers::GpuTimer timerextract(stream, "extractkernel");
-
-        msaCorrectAnchorsWithForestKernel_multiphase_extractkernel<blocksizeextract, anchor_extractor>
-        <<<gridextract, blockextract, smemextract, stream>>>(
-            multiMSA,
-            d_anchorSequencesData,
-            encodedSequencePitchInInts,
-            decodedSequencePitchInBytes,
-            estimatedErrorrate,
-            estimatedCoverage,
-            avg_support_threshold,
-            min_support_threshold,
-            min_coverage_threshold,
-            reinterpret_cast<float*>(gmemFeaturesTransposedExtract.data()),
-            numMismatches,
-            d_mismatchAnchorIndices.data(),
-            d_mismatchPositionsInAnchors.data(),
-            d_msaProperties.data()
-        );
-        CUDACHECKASYNC;
-        //timerextract.print();
+            msaCorrectAnchorsWithForestKernel_multiphase_gathermismatcheskernel<blocksizegather, groupsizegather>
+            <<<gridgather, blockgather, smemgather, stream>>>(
+                d_isHighQualityAnchor,
+                multiMSA,
+                d_anchorSequencesData,
+                numAnchors,
+                encodedSequencePitchInInts,
+                decodedSequencePitchInBytes,
+                estimatedErrorrate,
+                estimatedCoverage,
+                avg_support_threshold,
+                min_support_threshold,
+                min_coverage_threshold,
+                d_numMismatches.data(),
+                d_mismatchAnchorIndices.data(),
+                d_mismatchPositionsInAnchors.data()
+            );
+            CUDACHECKASYNC;
+            //timergather.print();
 
 
-        // constexpr int blocksizecorrect = 128;
-        // constexpr int maxSmemCorrect = 32 * 1024;
-        // std::size_t smemcorrect = blocksizecorrect * anchor_extractor::numFeatures() * sizeof(float);
-        // if(maxSmemCorrect < smemcorrect){
-        //     smemcorrect = 0;
-        // }
-        // int maxBlocksPerSMcorrect = 0;
 
-        // CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-        //     &maxBlocksPerSMcorrect,
-        //     msaCorrectAnchorsWithForestKernel_multiphase_correctkernel_thread<blocksizecorrect, GpuForest::Clf>,
-        //     blocksizecorrect, 
-        //     smemcorrect
-        // ));
+            constexpr int blocksizeextract = 128;
+            //constexpr std::size_t maxSmemextract = 32 * 1024;
+            std::size_t featuresizeextract = numMismatches * anchor_extractor::numFeatures() * sizeof(float);
 
-        // dim3 blockcorrect(blocksizecorrect);
-        // dim3 gridcorrect(std::min(SDIV(numMismatches, blocksizecorrect), maxBlocksPerSMcorrect * numSMs));
+            int maxBlocksPerSMextract = 0;
+            std::size_t smemextract = 0;
 
-        // //helpers::GpuTimer timercorrectthread(stream, "correctkernel");
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &maxBlocksPerSMextract,
+                msaCorrectAnchorsWithForestKernel_multiphase_extractkernel<blocksizeextract, anchor_extractor>,
+                blocksizeextract, 
+                smemextract
+            ));
 
-        // msaCorrectAnchorsWithForestKernel_multiphase_correctkernel_thread<blocksizecorrect, GpuForest::Clf>
-        // <<<gridcorrect, blockcorrect, smemcorrect, stream>>>(
-        //     d_correctedAnchors,
-        //     multiMSA,
-        //     gpuForest,
-        //     forestThreshold,
-        //     d_anchorSequencesData,
-        //     encodedSequencePitchInInts,
-        //     decodedSequencePitchInBytes,
-        //     estimatedErrorrate,
-        //     estimatedCoverage,
-        //     avg_support_threshold,
-        //     min_support_threshold,
-        //     min_coverage_threshold,
-        //     anchor_extractor::numFeatures(),
-        //     smemcorrect == 0,
-        //     reinterpret_cast<float*>(gmemFeaturesTransposedExtract.data()),
-        //     numMismatches,
-        //     d_mismatchAnchorIndices.data(),
-        //     d_mismatchPositionsInAnchors.data()
-        // );
-        // CUDACHECKASYNC;
-        //timercorrectthread.print();
+            rmm::device_buffer gmemFeaturesTransposedExtract(featuresizeextract, stream, mr);
 
-        #if 1
-        constexpr int blocksizecorrectgroup = 128;
-        constexpr int groupsizecorrectgroup = 32;
-        constexpr int maxSmemCorrectgroup = 32 * 1024;
-        std::size_t smemcorrectgroup = blocksizecorrectgroup * anchor_extractor::numFeatures() * sizeof(float);
-        if(maxSmemCorrectgroup < smemcorrectgroup){
-            smemcorrectgroup = 0;
+            dim3 blockextract(blocksizeextract);
+            dim3 gridextract(std::min(SDIV(numMismatches, blocksizeextract), maxBlocksPerSMextract * numSMs));
+
+            //helpers::GpuTimer timerextract(stream, "extractkernel");
+
+            msaCorrectAnchorsWithForestKernel_multiphase_extractkernel<blocksizeextract, anchor_extractor>
+            <<<gridextract, blockextract, smemextract, stream>>>(
+                multiMSA,
+                d_anchorSequencesData,
+                encodedSequencePitchInInts,
+                decodedSequencePitchInBytes,
+                estimatedErrorrate,
+                estimatedCoverage,
+                avg_support_threshold,
+                min_support_threshold,
+                min_coverage_threshold,
+                reinterpret_cast<float*>(gmemFeaturesTransposedExtract.data()),
+                numMismatches,
+                d_mismatchAnchorIndices.data(),
+                d_mismatchPositionsInAnchors.data(),
+                d_msaProperties.data()
+            );
+            CUDACHECKASYNC;
+            //timerextract.print();
+
+
+            // constexpr int blocksizecorrect = 128;
+            // constexpr int maxSmemCorrect = 32 * 1024;
+            // std::size_t smemcorrect = blocksizecorrect * anchor_extractor::numFeatures() * sizeof(float);
+            // if(maxSmemCorrect < smemcorrect){
+            //     smemcorrect = 0;
+            // }
+            // int maxBlocksPerSMcorrect = 0;
+
+            // CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            //     &maxBlocksPerSMcorrect,
+            //     msaCorrectAnchorsWithForestKernel_multiphase_correctkernel_thread<blocksizecorrect, GpuForest::Clf>,
+            //     blocksizecorrect, 
+            //     smemcorrect
+            // ));
+
+            // dim3 blockcorrect(blocksizecorrect);
+            // dim3 gridcorrect(std::min(SDIV(numMismatches, blocksizecorrect), maxBlocksPerSMcorrect * numSMs));
+
+            // //helpers::GpuTimer timercorrectthread(stream, "correctkernel");
+
+            // msaCorrectAnchorsWithForestKernel_multiphase_correctkernel_thread<blocksizecorrect, GpuForest::Clf>
+            // <<<gridcorrect, blockcorrect, smemcorrect, stream>>>(
+            //     d_correctedAnchors,
+            //     multiMSA,
+            //     gpuForest,
+            //     forestThreshold,
+            //     d_anchorSequencesData,
+            //     encodedSequencePitchInInts,
+            //     decodedSequencePitchInBytes,
+            //     estimatedErrorrate,
+            //     estimatedCoverage,
+            //     avg_support_threshold,
+            //     min_support_threshold,
+            //     min_coverage_threshold,
+            //     anchor_extractor::numFeatures(),
+            //     smemcorrect == 0,
+            //     reinterpret_cast<float*>(gmemFeaturesTransposedExtract.data()),
+            //     numMismatches,
+            //     d_mismatchAnchorIndices.data(),
+            //     d_mismatchPositionsInAnchors.data()
+            // );
+            // CUDACHECKASYNC;
+            //timercorrectthread.print();
+
+            #if 1
+            constexpr int blocksizecorrectgroup = 128;
+            constexpr int groupsizecorrectgroup = 32;
+            constexpr int maxSmemCorrectgroup = 32 * 1024;
+            std::size_t smemcorrectgroup = blocksizecorrectgroup * anchor_extractor::numFeatures() * sizeof(float);
+            if(maxSmemCorrectgroup < smemcorrectgroup){
+                smemcorrectgroup = 0;
+            }
+            int maxBlocksPerSMcorrectgroup = 0;
+
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &maxBlocksPerSMcorrectgroup,
+                msaCorrectAnchorsWithForestKernel_multiphase_correctkernel_group<blocksizecorrectgroup, groupsizecorrectgroup, GpuForest::Clf>,
+                blocksizecorrectgroup, 
+                smemcorrectgroup
+            ));
+
+            dim3 blockcorrectgroup(blocksizecorrectgroup);
+            dim3 gridcorrectgroup(std::min(SDIV(numMismatches, blocksizecorrectgroup / groupsizecorrectgroup), maxBlocksPerSMcorrectgroup * numSMs));
+
+            //helpers::GpuTimer timercorrectgroup(stream, "correctgroupkernel");
+
+            msaCorrectAnchorsWithForestKernel_multiphase_correctkernel_group<blocksizecorrectgroup, groupsizecorrectgroup, GpuForest::Clf>
+            <<<gridcorrectgroup, blockcorrectgroup, smemcorrectgroup, stream>>>(
+                d_correctedAnchors,
+                multiMSA,
+                gpuForest,
+                forestThreshold,
+                d_anchorSequencesData,
+                encodedSequencePitchInInts,
+                decodedSequencePitchInBytes,
+                estimatedErrorrate,
+                estimatedCoverage,
+                avg_support_threshold,
+                min_support_threshold,
+                min_coverage_threshold,
+                anchor_extractor::numFeatures(),
+                smemcorrectgroup == 0,
+                reinterpret_cast<float*>(gmemFeaturesTransposedExtract.data()),
+                numMismatches,
+                d_mismatchAnchorIndices.data(),
+                d_mismatchPositionsInAnchors.data()
+            );
+            CUDACHECKASYNC;
+            //timercorrectgroup.print();
+            #endif
+
+            #if 0
+            constexpr int blocksizecorrectblock = 128;
+            constexpr int maxSmemCorrectblock = 32 * 1024;
+            std::size_t smemcorrectblock = anchor_extractor::numFeatures() * sizeof(float);
+            if(maxSmemCorrectblock < smemcorrectblock){
+                smemcorrectblock = 0;
+            }
+            int maxBlocksPerSMcorrectblock = 0;
+
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &maxBlocksPerSMcorrectblock,
+                msaCorrectAnchorsWithForestKernel_multiphase_correctkernel_block<blocksizecorrectblock, GpuForest::Clf>,
+                blocksizecorrectblock, 
+                smemcorrectblock
+            ));
+
+            dim3 blockcorrectblock(blocksizecorrectblock);
+            dim3 gridcorrectblock(std::min(numMismatches, maxBlocksPerSMcorrectblock * numSMs));
+
+            //helpers::GpuTimer timercorrectblock(stream, "correctblockkernel");
+
+            msaCorrectAnchorsWithForestKernel_multiphase_correctkernel_block<blocksizecorrectblock, GpuForest::Clf>
+            <<<gridcorrectblock, blockcorrectblock, smemcorrectblock, stream>>>(
+                d_correctedAnchors,
+                multiMSA,
+                gpuForest,
+                forestThreshold,
+                d_anchorSequencesData,
+                encodedSequencePitchInInts,
+                decodedSequencePitchInBytes,
+                estimatedErrorrate,
+                estimatedCoverage,
+                avg_support_threshold,
+                min_support_threshold,
+                min_coverage_threshold,
+                anchor_extractor::numFeatures(),
+                smemcorrectblock == 0,
+                reinterpret_cast<float*>(gmemFeaturesTransposedExtract.data()),
+                numMismatches,
+                d_mismatchAnchorIndices.data(),
+                d_mismatchPositionsInAnchors.data()
+            );
+            CUDACHECKASYNC;
+            //timercorrectblock.print();
+            #endif
+
+
+
+
+            // constexpr int blocksizeextractcorrect = 128;
+            // constexpr std::size_t maxSmemextractcorrect = 32 * 1024;
+            // std::size_t featuresizeextractcorrect = blocksizeextractcorrect * anchor_extractor::numFeatures() * sizeof(float);
+
+            // std::size_t smemextractcorrect = featuresizeextractcorrect > maxSmemextractcorrect ? 0 : featuresizeextractcorrect;
+            // bool useGmemFeatures = featuresizeextractcorrect > maxSmemextractcorrect;
+
+            // int maxBlocksPerSMextractcorrect = 0;
+
+            // CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            //     &maxBlocksPerSMextractcorrect,
+            //     msaCorrectAnchorsWithForestKernel_multiphase_extractcorrectkernel<blocksizeextractcorrect, anchor_extractor, GpuForest::Clf>,
+            //     blocksizeextractcorrect, 
+            //     smemextractcorrect
+            // ));
+
+            // rmm::device_buffer gmemFeaturesTransposed(useGmemFeatures ? featuresizeextractcorrect : 0, stream, mr);
+
+            // //helpers::GpuTimer timerextractcorrect(stream, "extractcorrectkernel");
+
+            // dim3 blockextractcorrect(blocksizeextractcorrect);
+            // dim3 gridextractcorrect(std::min(SDIV(numMismatches, blocksizeextractcorrect), maxBlocksPerSMextractcorrect * numSMs));
+
+            // msaCorrectAnchorsWithForestKernel_multiphase_extractcorrectkernel<blocksizeextractcorrect, anchor_extractor, GpuForest::Clf>
+            // <<<gridextractcorrect, blockextractcorrect, smemextractcorrect, stream>>>(
+            //     d_correctedAnchors,
+            //     multiMSA,
+            //     gpuForest,
+            //     forestThreshold,
+            //     d_anchorSequencesData,
+            //     encodedSequencePitchInInts,
+            //     decodedSequencePitchInBytes,
+            //     estimatedErrorrate,
+            //     estimatedCoverage,
+            //     avg_support_threshold,
+            //     min_support_threshold,
+            //     min_coverage_threshold,
+            //     useGmemFeatures,
+            //     reinterpret_cast<float*>(gmemFeaturesTransposed.data()),
+            //     numMismatches,
+            //     d_mismatchAnchorIndices.data(),
+            //     d_mismatchPositionsInAnchors.data(),
+            //     d_msaProperties.data()
+            // );
+            // CUDACHECKASYNC
+            // //timerextractcorrect.print();
+
+            // constexpr int blocksizefull = 128;
+            // constexpr int groupsizefull = 32;
+            // constexpr int groupsPerBlockfull = blocksizefull / groupsizefull;
+
+            // const std::size_t smemfull = SDIV(sizeof(char) * decodedSequencePitchInBytes * groupsPerBlockfull, sizeof(int)) * sizeof(int);
+
+            // int maxBlocksPerSMfull = 0;
+
+            // CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            //     &maxBlocksPerSMfull,
+            //     msaCorrectAnchorsWithForestKernel2<blocksizefull, groupsizefull, anchor_extractor, GpuForest::Clf>,
+            //     blocksizefull, 
+            //     smemfull
+            // ));
+
+            // dim3 blockfull(blocksizefull);
+            // dim3 gridfull(std::min(numAnchors, maxBlocksPerSMfull * numSMs));
+
+            // msaCorrectAnchorsWithForestKernel2<blocksizefull, groupsizefull, anchor_extractor><<<gridfull, blockfull, smemfull, stream>>>(
+            //     d_correctedAnchors,
+            //     d_anchorIsCorrected,
+            //     d_isHighQualityAnchor,
+            //     multiMSA,
+            //     gpuForest,
+            //     forestThreshold,
+            //     d_anchorSequencesData,
+            //     d_indices_per_anchor,
+            //     numAnchors,
+            //     encodedSequencePitchInInts,
+            //     decodedSequencePitchInBytes,
+            //     estimatedErrorrate,
+            //     estimatedCoverage,
+            //     avg_support_threshold,
+            //     min_support_threshold,
+            //     min_coverage_threshold
+            // );
+            // CUDACHECKASYNC;
         }
-        int maxBlocksPerSMcorrectgroup = 0;
-
-        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-            &maxBlocksPerSMcorrectgroup,
-            msaCorrectAnchorsWithForestKernel_multiphase_correctkernel_group<blocksizecorrectgroup, groupsizecorrectgroup, GpuForest::Clf>,
-            blocksizecorrectgroup, 
-            smemcorrectgroup
-        ));
-
-        dim3 blockcorrectgroup(blocksizecorrectgroup);
-        dim3 gridcorrectgroup(std::min(SDIV(numMismatches, blocksizecorrectgroup / groupsizecorrectgroup), maxBlocksPerSMcorrectgroup * numSMs));
-
-        //helpers::GpuTimer timercorrectgroup(stream, "correctgroupkernel");
-
-        msaCorrectAnchorsWithForestKernel_multiphase_correctkernel_group<blocksizecorrectgroup, groupsizecorrectgroup, GpuForest::Clf>
-        <<<gridcorrectgroup, blockcorrectgroup, smemcorrectgroup, stream>>>(
-            d_correctedAnchors,
-            multiMSA,
-            gpuForest,
-            forestThreshold,
-            d_anchorSequencesData,
-            encodedSequencePitchInInts,
-            decodedSequencePitchInBytes,
-            estimatedErrorrate,
-            estimatedCoverage,
-            avg_support_threshold,
-            min_support_threshold,
-            min_coverage_threshold,
-            anchor_extractor::numFeatures(),
-            smemcorrectgroup == 0,
-            reinterpret_cast<float*>(gmemFeaturesTransposedExtract.data()),
-            numMismatches,
-            d_mismatchAnchorIndices.data(),
-            d_mismatchPositionsInAnchors.data()
-        );
-        CUDACHECKASYNC;
-        //timercorrectgroup.print();
-        #endif
-
-        #if 0
-        constexpr int blocksizecorrectblock = 128;
-        constexpr int maxSmemCorrectblock = 32 * 1024;
-        std::size_t smemcorrectblock = anchor_extractor::numFeatures() * sizeof(float);
-        if(maxSmemCorrectblock < smemcorrectblock){
-            smemcorrectblock = 0;
-        }
-        int maxBlocksPerSMcorrectblock = 0;
-
-        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-            &maxBlocksPerSMcorrectblock,
-            msaCorrectAnchorsWithForestKernel_multiphase_correctkernel_block<blocksizecorrectblock, GpuForest::Clf>,
-            blocksizecorrectblock, 
-            smemcorrectblock
-        ));
-
-        dim3 blockcorrectblock(blocksizecorrectblock);
-        dim3 gridcorrectblock(std::min(numMismatches, maxBlocksPerSMcorrectblock * numSMs));
-
-        //helpers::GpuTimer timercorrectblock(stream, "correctblockkernel");
-
-        msaCorrectAnchorsWithForestKernel_multiphase_correctkernel_block<blocksizecorrectblock, GpuForest::Clf>
-        <<<gridcorrectblock, blockcorrectblock, smemcorrectblock, stream>>>(
-            d_correctedAnchors,
-            multiMSA,
-            gpuForest,
-            forestThreshold,
-            d_anchorSequencesData,
-            encodedSequencePitchInInts,
-            decodedSequencePitchInBytes,
-            estimatedErrorrate,
-            estimatedCoverage,
-            avg_support_threshold,
-            min_support_threshold,
-            min_coverage_threshold,
-            anchor_extractor::numFeatures(),
-            smemcorrectblock == 0,
-            reinterpret_cast<float*>(gmemFeaturesTransposedExtract.data()),
-            numMismatches,
-            d_mismatchAnchorIndices.data(),
-            d_mismatchPositionsInAnchors.data()
-        );
-        CUDACHECKASYNC;
-        //timercorrectblock.print();
-        #endif
-
-
-
-
-        // constexpr int blocksizeextractcorrect = 128;
-        // constexpr std::size_t maxSmemextractcorrect = 32 * 1024;
-        // std::size_t featuresizeextractcorrect = blocksizeextractcorrect * anchor_extractor::numFeatures() * sizeof(float);
-
-        // std::size_t smemextractcorrect = featuresizeextractcorrect > maxSmemextractcorrect ? 0 : featuresizeextractcorrect;
-        // bool useGmemFeatures = featuresizeextractcorrect > maxSmemextractcorrect;
-
-        // int maxBlocksPerSMextractcorrect = 0;
-
-        // CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-        //     &maxBlocksPerSMextractcorrect,
-        //     msaCorrectAnchorsWithForestKernel_multiphase_extractcorrectkernel<blocksizeextractcorrect, anchor_extractor, GpuForest::Clf>,
-        //     blocksizeextractcorrect, 
-        //     smemextractcorrect
-        // ));
-
-        // rmm::device_buffer gmemFeaturesTransposed(useGmemFeatures ? featuresizeextractcorrect : 0, stream, mr);
-
-        // //helpers::GpuTimer timerextractcorrect(stream, "extractcorrectkernel");
-
-        // dim3 blockextractcorrect(blocksizeextractcorrect);
-        // dim3 gridextractcorrect(std::min(SDIV(numMismatches, blocksizeextractcorrect), maxBlocksPerSMextractcorrect * numSMs));
-
-        // msaCorrectAnchorsWithForestKernel_multiphase_extractcorrectkernel<blocksizeextractcorrect, anchor_extractor, GpuForest::Clf>
-        // <<<gridextractcorrect, blockextractcorrect, smemextractcorrect, stream>>>(
-        //     d_correctedAnchors,
-        //     multiMSA,
-        //     gpuForest,
-        //     forestThreshold,
-        //     d_anchorSequencesData,
-        //     encodedSequencePitchInInts,
-        //     decodedSequencePitchInBytes,
-        //     estimatedErrorrate,
-        //     estimatedCoverage,
-        //     avg_support_threshold,
-        //     min_support_threshold,
-        //     min_coverage_threshold,
-        //     useGmemFeatures,
-        //     reinterpret_cast<float*>(gmemFeaturesTransposed.data()),
-        //     numMismatches,
-        //     d_mismatchAnchorIndices.data(),
-        //     d_mismatchPositionsInAnchors.data(),
-        //     d_msaProperties.data()
-        // );
-        // CUDACHECKASYNC
-        // //timerextractcorrect.print();
-
-        // constexpr int blocksizefull = 128;
-        // constexpr int groupsizefull = 32;
-        // constexpr int groupsPerBlockfull = blocksizefull / groupsizefull;
-
-        // const std::size_t smemfull = SDIV(sizeof(char) * decodedSequencePitchInBytes * groupsPerBlockfull, sizeof(int)) * sizeof(int);
-
-        // int maxBlocksPerSMfull = 0;
-
-        // CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-        //     &maxBlocksPerSMfull,
-        //     msaCorrectAnchorsWithForestKernel2<blocksizefull, groupsizefull, anchor_extractor, GpuForest::Clf>,
-        //     blocksizefull, 
-        //     smemfull
-        // ));
-
-        // dim3 blockfull(blocksizefull);
-        // dim3 gridfull(std::min(numAnchors, maxBlocksPerSMfull * numSMs));
-
-        // msaCorrectAnchorsWithForestKernel2<blocksizefull, groupsizefull, anchor_extractor><<<gridfull, blockfull, smemfull, stream>>>(
-        //     d_correctedAnchors,
-        //     d_anchorIsCorrected,
-        //     d_isHighQualityAnchor,
-        //     multiMSA,
-        //     gpuForest,
-        //     forestThreshold,
-        //     d_anchorSequencesData,
-        //     d_indices_per_anchor,
-        //     numAnchors,
-        //     encodedSequencePitchInInts,
-        //     decodedSequencePitchInBytes,
-        //     estimatedErrorrate,
-        //     estimatedCoverage,
-        //     avg_support_threshold,
-        //     min_support_threshold,
-        //     min_coverage_threshold
-        // );
-        // CUDACHECKASYNC;
     }
 
     void callMsaCorrectAnchorsWithForestKernel(
