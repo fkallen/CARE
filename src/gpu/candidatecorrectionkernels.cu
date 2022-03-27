@@ -1694,6 +1694,8 @@ namespace gpu{
         CUDACHECK(cudaMemcpyAsync(&numCandidatesToProcess, d_numCandidatesToBeCorrected, sizeof(int), D2H, stream));
         CUDACHECK(cudaStreamSynchronize(stream));
 
+        if(numCandidatesToProcess == 0) return;
+
 
         
         int maxBlocksPerSMinit = 0;
