@@ -26,31 +26,54 @@
 namespace care{
 
 
-template<class ResultType, class Combiner, class ReadIdComparator, class ProgressFunction>
+template<class ResultType, class Combiner, class ProgressFunction>
 void mergeSerializedResultsWithOriginalReads_multithreaded(
     const std::vector<std::string>& originalReadFiles,
     SerializedObjectStorage& partialResults, 
     FileFormat outputFormat,
     const std::vector<std::string>& outputfiles,
     Combiner combineResultsWithRead, /* combineResultsWithRead(std::vector<ResultType>& in, ReadWithId& in_out) */
-    ReadIdComparator origIdResultIdLessThan,
     ProgressFunction addProgress,
-    bool outputCorrectionQualityLabels
+    bool outputCorrectionQualityLabels,
+    SequencePairType pairType
 ){
     assert(outputfiles.size() == 1 || originalReadFiles.size() == outputfiles.size());
 
     if(partialResults.getNumElements() == 0){
         if(outputfiles.size() == 1){
-            std::ofstream outstream(outputfiles[0], std::ios::binary);
-            if(!bool(outstream)){
-                throw std::runtime_error("Cannot open output file " + outputfiles[0]);
-            }
 
-            for(const auto& ifname : originalReadFiles){
-                std::ifstream instream(ifname, std::ios::binary);
-                if(bool(instream) && instream.rdbuf()->in_avail() > 0){
-                    outstream << instream.rdbuf();
+            if(pairType == SequencePairType::SingleEnd){
+                std::ofstream outstream(outputfiles[0], std::ios::binary);
+                if(!bool(outstream)){
+                    throw std::runtime_error("Cannot open output file " + outputfiles[0]);
                 }
+                for(const auto& ifname : originalReadFiles){
+                    std::ifstream instream(ifname, std::ios::binary);
+                    if(bool(instream) && instream.rdbuf()->in_avail() > 0){
+                        outstream << instream.rdbuf();
+                    }
+                }
+            }else{
+                assert(pairType == SequencePairType::PairedEnd);
+                assert(originalReadFiles.size() == 2);
+
+                //no gz output
+                auto format = outputFormat;
+
+                if(format == FileFormat::FASTQGZ)
+                    format = FileFormat::FASTQ;
+                if(format == FileFormat::FASTAGZ)
+                    format = FileFormat::FASTA;
+
+                auto filewriter = makeSequenceWriter(outputfiles[0], format);
+
+                //merged output
+
+                forEachReadInPairedFiles(originalReadFiles[0], originalReadFiles[1], 
+                    [&](auto /*readnumber*/, const auto& read){
+                        filewriter->writeRead(read);
+                    }
+                );
             }
         }else{
             const int numFiles = outputfiles.size();
@@ -119,9 +142,9 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
                         std::cerr << "Error, results not sorted. itemnumber = " << itemnumber << ", previousId = " << previousId << ", currentId = " << batch->items[batchsize].readId << "\n";
                         assert(false);
                     }
+                    previousId = batch->items[batchsize].readId;
                     batchsize++;
                     itemnumber++;
-                    previousId = batch->items[batchsize].readId;
                 }
 
                 // aend = std::chrono::system_clock::now();
@@ -158,52 +181,104 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
     std::atomic<bool> noMoreInputreadBatches{false};
 
     constexpr int inputreader_maxbatchsize = 200000;
+    static_assert(inputreader_maxbatchsize % 2 == 0);
 
     for(auto& batch : readBatches){
         freeReadBatches.push(&batch);
     }
 
-    auto inputReaderFuture = std::async(std::launch::async,
-        [&](){
+    auto pairedEndReaderFunc = [&](){
+        PairedInputReader pairedInputReader(originalReadFiles);
 
-            MultiInputReader multiInputReader(originalReadFiles);
+        // TIMERSTARTCPU(inputparsing);
 
-            // TIMERSTARTCPU(inputparsing);
+        // std::chrono::time_point<std::chrono::system_clock> abegin, aend;
+        // std::chrono::duration<double> adelta{0};
 
-            // std::chrono::time_point<std::chrono::system_clock> abegin, aend;
-            // std::chrono::duration<double> adelta{0};
+        while(pairedInputReader.next() >= 0){
 
-            while(multiInputReader.next() >= 0){
+            ReadBatch* batch = freeReadBatches.pop();
 
-                ReadBatch* batch = freeReadBatches.pop();
+            // abegin = std::chrono::system_clock::now();
 
-                // abegin = std::chrono::system_clock::now();
+            batch->items.resize(inputreader_maxbatchsize);
 
-                batch->items.resize(inputreader_maxbatchsize);
+            std::swap(batch->items[0], pairedInputReader.getCurrent1()); //process element from outer loop next() call
+            std::swap(batch->items[1], pairedInputReader.getCurrent2()); //process element from outer loop next() call
+            int batchsize = 2;
 
-                std::swap(batch->items[0], multiInputReader.getCurrent()); //process element from outer loop next() call
-                int batchsize = 1;
-
-                while(batchsize < inputreader_maxbatchsize && multiInputReader.next() >= 0){
-                    std::swap(batch->items[batchsize], multiInputReader.getCurrent());
-                    
-                    batchsize++;
-                }
-
-                // aend = std::chrono::system_clock::now();
-                // adelta += aend - abegin;
-
-                batch->processedItems = 0;
-                batch->validItems = batchsize;
-
-                unprocessedInputreadBatches.push(batch);                
+            while(batchsize < inputreader_maxbatchsize && pairedInputReader.next() >= 0){
+                std::swap(batch->items[batchsize], pairedInputReader.getCurrent1());                
+                batchsize++;
+                std::swap(batch->items[batchsize], pairedInputReader.getCurrent2());        
+                batchsize++;
             }
 
-            unprocessedInputreadBatches.push(nullptr);
+            // aend = std::chrono::system_clock::now();
+            // adelta += aend - abegin;
 
-            // std::cout << "# elapsed time ("<< "inputparsing without queues" <<"): " << adelta.count()  << " s" << std::endl;
+            batch->processedItems = 0;
+            batch->validItems = batchsize;
 
-            // TIMERSTOPCPU(inputparsing);
+            unprocessedInputreadBatches.push(batch);                
+        }
+
+        unprocessedInputreadBatches.push(nullptr);
+
+        // std::cout << "# elapsed time ("<< "inputparsing without queues" <<"): " << adelta.count()  << " s" << std::endl;
+
+        // TIMERSTOPCPU(inputparsing);
+    };
+
+    auto singleEndReaderFunc = [&](){
+        MultiInputReader multiInputReader(originalReadFiles);
+
+        // TIMERSTARTCPU(inputparsing);
+
+        // std::chrono::time_point<std::chrono::system_clock> abegin, aend;
+        // std::chrono::duration<double> adelta{0};
+
+        while(multiInputReader.next() >= 0){
+
+            ReadBatch* batch = freeReadBatches.pop();
+
+            // abegin = std::chrono::system_clock::now();
+
+            batch->items.resize(inputreader_maxbatchsize);
+
+            std::swap(batch->items[0], multiInputReader.getCurrent()); //process element from outer loop next() call
+            int batchsize = 1;
+
+            while(batchsize < inputreader_maxbatchsize && multiInputReader.next() >= 0){
+                std::swap(batch->items[batchsize], multiInputReader.getCurrent());
+                
+                batchsize++;
+            }
+
+            // aend = std::chrono::system_clock::now();
+            // adelta += aend - abegin;
+
+            batch->processedItems = 0;
+            batch->validItems = batchsize;
+
+            unprocessedInputreadBatches.push(batch);                
+        }
+
+        unprocessedInputreadBatches.push(nullptr);
+
+        // std::cout << "# elapsed time ("<< "inputparsing without queues" <<"): " << adelta.count()  << " s" << std::endl;
+
+        // TIMERSTOPCPU(inputparsing);
+    };
+
+    auto inputReaderFuture = std::async(std::launch::async,
+        [&](){
+            if(pairType == SequencePairType::SingleEnd){
+                singleEndReaderFunc();
+            }else{
+                assert(pairType == SequencePairType::PairedEnd);
+                pairedEndReaderFunc();
+            }
         }
     );
 
@@ -330,8 +405,7 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
                     ReadWithId& readWithId = *first1;
                     
                     buffer.clear();
-                    while(first2 != last2 && !(origIdResultIdLessThan(first1->globalReadId, first2->readId))){
-                    //while(first2 != last2 && !(first1->globalReadId < first2->readId)){
+                    while(first2 != last2 && (first1->globalReadId == first2->readId)){
                         buffer.push_back(*first2);
                         ++first2;
                         tcsBatch->processedItems++;
@@ -687,6 +761,15 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
         return result;
     }
 
+    const bool sameId = std::all_of(
+        tmpresults.begin(),
+        tmpresults.end(),
+        [&](const auto& tcs){
+            return tcs.readId == readWithId.globalReadId;
+        }
+    );
+    assert(sameId);
+
     constexpr bool outputHQ = true;
     constexpr bool outputLQWithCandidates = true;
     constexpr bool outputLQOnlyAnchor = true;
@@ -972,8 +1055,6 @@ void constructOutputFileFromCorrectionResults(
     const ProgramOptions& programOptions
 ){
 
-    std::less<read_number> origIdResultIdLessThan{};
-
     auto addProgress = [total = 0ull, showProgress](auto i) mutable {
         if(showProgress){
             total += i;
@@ -990,9 +1071,9 @@ void constructOutputFileFromCorrectionResults(
         outputFormat,
         outputfiles,
         combineMultipleCorrectionResults1_rawtcs2,
-        origIdResultIdLessThan,
         addProgress,
-        programOptions.outputCorrectionQualityLabels
+        programOptions.outputCorrectionQualityLabels,
+        programOptions.pairType
     );
 
     if(showProgress){
