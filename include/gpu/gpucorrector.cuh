@@ -37,9 +37,12 @@
 #include <thrust/iterator/zip_iterator.h>
 #include <thrust/iterator/constant_iterator.h>
 #include <thrust/binary_search.h>
+#include <thrust/copy.h>
+#include <thrust/iterator/transform_output_iterator.h>
 
 #include <rmm/mr/device/per_device_resource.hpp>
 #include <rmm/mr/device/cuda_async_memory_resource.hpp>
+#include <rmm/exec_policy.hpp>
 #include <gpu/rmm_utilities.cuh>
 
 
@@ -1797,25 +1800,9 @@ namespace gpu{
 
             // }
 
-            #if 0
-            nvtx::push_range("buildMultipleSequenceAlignment", 6);
-            buildMultipleSequenceAlignment(stream);
-            nvtx::pop_range();
-
-            if(useMsaRefinement()){
-
-                nvtx::push_range("refineMultipleSequenceAlignment", 7);
-                refineMultipleSequenceAlignment(stream);
-                nvtx::pop_range();
-
-            }
-            #else 
-
             nvtx::push_range("buildMultipleSequenceAlignment", 6);
             buildAndRefineMultipleSequenceAlignment(stream);
             nvtx::pop_range();
-
-            #endif
 
             nvtx::push_range("correctanchors", 8);
             correctAnchors(stream);
@@ -2164,201 +2151,6 @@ namespace gpu{
             ); 
         }
 
-        //void getCandidateSequenceData(cudaStream_t stream){
-
-            // gpuReadStorage->gatherSequenceLengths(
-            //     readstorageHandle,
-            //     d_candidate_sequences_lengths.data(),
-            //     d_candidate_read_ids.data(),
-            //     currentNumCandidates,            
-            //     stream
-            // );
-
-            // gpuReadStorage->gatherSequences(
-            //     readstorageHandle,
-            //     d_candidate_sequences_data.data(),
-            //     encodedSequencePitchInInts,
-            //     makeAsyncConstBufferWrapper(currentInput->h_candidate_read_ids.data()),
-            //     d_candidate_read_ids.data(),
-            //     currentNumCandidates,
-            //     stream,
-            //     mr
-            // );
-
-            // helpers::call_transpose_kernel(
-            //     d_transposedCandidateSequencesData.data(), 
-            //     d_candidate_sequences_data.data(), 
-            //     currentNumCandidates, 
-            //     encodedSequencePitchInInts, 
-            //     encodedSequencePitchInInts, 
-            //     stream
-            // );
-        //}
-
-//         void getQualities(cudaStream_t stream){
-
-//             if(programOptions->useQualityScores) {
-
-// //#define COMPACT_GATHER
-
-// #ifndef COMPACT_GATHER
-
-//                 gpuReadStorage->gatherQualities(
-//                     readstorageHandle,
-//                     d_anchor_qualities.data(),
-//                     qualityPitchInBytes,
-//                     makeAsyncConstBufferWrapper(currentInput->h_anchorReadIds.data()),
-//                     d_anchorReadIds.data(),
-//                     maxAnchors,
-//                     stream,
-//                     mr
-//                 );
-
-//                 gpuReadStorage->gatherQualities(
-//                     readstorageHandle,
-//                     d_candidate_qualities.data(),
-//                     qualityPitchInBytes,
-//                     makeAsyncConstBufferWrapper(currentInput->h_candidate_read_ids.data()),
-//                     d_candidate_read_ids.data(),
-//                     currentNumCandidates,
-//                     stream,
-//                     mr
-//                 );
-
-// #else 
-
-//                 CubCallWrapper(mr).cubExclusiveSum(
-//                     d_indices_per_anchor.data(),
-//                     d_indices_per_anchor_prefixsum.data(),
-//                     maxAnchors,
-//                     stream
-//                 );
-                
-//                 //from the list of remaining candidates per anchor, compact the corresponding candidate read ids
-//                 helpers::lambda_kernel<<<maxAnchors, 128, 0, stream>>>(
-//                     [
-//                         h_indicesForGather = h_indicesForGather.data(),
-//                         d_indicesForGather = d_indicesForGather.data(),
-//                         d_indices = d_indices.data(),
-//                         d_indices_per_anchor = d_indices_per_anchor.data(),
-//                         d_indices_per_anchor_prefixsum = d_indices_per_anchor_prefixsum.data(),
-//                         d_num_indices = d_num_indices.data(),
-//                         d_candidates_per_anchor_prefixsum = d_candidates_per_anchor_prefixsum.data(),
-//                         d_candidate_read_ids = d_candidate_read_ids.data(),
-//                         currentNumAnchors = currentNumAnchors
-//                     ] __device__ (){
-
-//                         for(int anchor = blockIdx.x; anchor < currentNumAnchors; anchor += gridDim.x){
-
-//                             const int globalCandidateOffset = d_candidates_per_anchor_prefixsum[anchor];
-//                             const int* const myIndices = d_indices + globalCandidateOffset;
-//                             const int numIndices = d_indices_per_anchor[anchor];
-//                             const int offset = d_indices_per_anchor_prefixsum[anchor];
-
-//                             for(int i = threadIdx.x; i < numIndices; i += blockDim.x){
-//                                 const int inputpos = myIndices[i];
-//                                 d_indicesForGather[offset + i] = d_candidate_read_ids[globalCandidateOffset + inputpos];
-//                                 h_indicesForGather[offset + i] = d_candidate_read_ids[globalCandidateOffset + inputpos];
-//                             }
-//                         }                   
-//                     }
-//                 ); CUDACHECKASYNC;
-
-//                 CUDACHECK(cudaEventRecord(events[1], stream));
-
-//                 gpuReadStorage->gatherQualities(
-//                     readstorageHandle,
-//                     d_anchor_qualities,
-//                     qualityPitchInBytes,
-//                     currentInput->h_anchorReadIds,
-//                     d_anchorReadIds,
-//                     maxAnchors,
-//                     stream
-//                 );
-
-//                 //CUDACHECK(cudaStreamSynchronize(stream)); //wait for h_indicesForGather and h_numRemainingCandidatesAfterAlignment
-//                 CUDACHECK(cudaEventSynchronize(events[1]));
-//                 const int hNumIndices = *h_numRemainingCandidatesAfterAlignment;
-
-//                 nvtx::push_range("get compact qscores " + std::to_string(hNumIndices) + " " + std::to_string(currentNumCandidates), 6);
-//                 gpuReadStorage->gatherQualities(
-//                     readstorageHandle,
-//                     d_candidate_qualities_compact,
-//                     qualityPitchInBytes,
-//                     h_indicesForGather.data(),
-//                     d_indicesForGather.data(),
-//                     currentNumCandidates,
-//                     stream
-//                 );
-//                 nvtx::pop_range();
-
-//                 //scatter compact quality scores to correct positions
-//                 helpers::lambda_kernel<<<maxAnchors, 256, 0, stream>>>(
-//                     [
-//                         d_candidate_qualities_compact = d_candidate_qualities_compact.data(),
-//                         d_candidate_qualities = d_candidate_qualities.data(),
-//                         d_candidate_sequences_lengths = d_candidate_sequences_lengths.data(),
-//                         qualityPitchInBytes = qualityPitchInBytes,
-//                         d_indices = d_indices.data(),
-//                         d_indices_per_anchor = d_indices_per_anchor.data(),
-//                         d_indices_per_anchor_prefixsum = d_indices_per_anchor_prefixsum.data(),
-//                         d_num_indices = d_num_indices.data(),
-//                         d_candidates_per_anchor_prefixsum = d_candidates_per_anchor_prefixsum.data(),
-//                         currentNumAnchors = currentNumAnchors
-//                     ] __device__ (){
-//                         constexpr int groupsize = 32;
-//                         auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
-
-//                         const int groupId = threadIdx.x / groupsize;
-//                         const int numgroups = blockDim.x / groupsize;
-
-//                         assert(qualityPitchInBytes % sizeof(int) == 0);
-
-//                         for(int anchor = blockIdx.x; anchor < currentNumAnchors; anchor += gridDim.x){
-
-//                             const int globalCandidateOffset = d_candidates_per_anchor_prefixsum[anchor];
-//                             const int* const myIndices = d_indices + globalCandidateOffset;
-//                             const int numIndices = d_indices_per_anchor[anchor];
-//                             const int offset = d_indices_per_anchor_prefixsum[anchor];
-
-//                             for(int c = groupId; c < numIndices; c += numgroups){
-//                                 const int outputpos = globalCandidateOffset + myIndices[c];
-//                                 const int inputpos = offset + c;
-//                                 const int length = d_candidate_sequences_lengths[outputpos];
-
-//                                 const int iters = SDIV(length, sizeof(int));
-
-//                                 const int* const input = (const int*)(d_candidate_qualities_compact + size_t(inputpos) * qualityPitchInBytes);
-//                                 int* const output = (int*)(d_candidate_qualities + size_t(outputpos) * qualityPitchInBytes);
-
-//                                 for(int k = group.thread_rank(); k < iters; k += group.size()){
-//                                     output[k] = input[k];
-//                                 }
-//                             }
-//                         }
-//                     }
-//                 ); CUDACHECKASYNC;
-
-//                 // CUDACHECK(cudaStreamSynchronize(stream)); //wait for candidateQualitiesGatherHandle
-
-//                 // // std::cerr << "gather candidate qual\n";
-//                 // gpuReadStorage->gatherQualitiesToGpuBufferAsync(
-//                 //     threadPool,
-//                 //     candidateQualitiesGatherHandle,
-//                 //     d_candidate_qualities,
-//                 //     qualityPitchInBytes,
-//                 //     currentInput->h_candidate_read_ids.data(),
-//                 //     d_candidate_read_ids.data(),
-//                 //     currentNumCandidates,
-//                 //     deviceId,
-//                 //     stream
-//                 // );
-// #undef COMPACT_GATHER                
-// #endif                
-
-//             }
-//         }
-
         void getCandidateAlignments(cudaStream_t stream){
 
 
@@ -2619,6 +2411,7 @@ namespace gpu{
         void buildAndRefineMultipleSequenceAlignment(cudaStream_t stream){
 
             if(programOptions->useQualityScores){
+                #if 1
 
                 gpuReadStorage->gatherQualities(
                     readstorageHandle,
@@ -2641,6 +2434,173 @@ namespace gpu{
                     stream,
                     mr
                 );
+
+                #else 
+
+                rmm::device_uvector<int> d_prefixsum(maxAnchors + 1, stream);
+
+                CubCallWrapper(mr).cubExclusiveSum(
+                    d_indices_per_anchor.data(),
+                    d_prefixsum.data(),
+                    maxAnchors,
+                    stream
+                );
+
+                auto zippedValid = thrust::make_zip_iterator(thrust::make_tuple(
+                    h_indicesForGather.data(),
+                    d_indicesForGather.data()
+                ));
+
+                auto duplicateInput = [] __host__ __device__ (read_number id){
+                    return thrust::make_tuple(id, id);
+                };
+                auto duplicatedIds = thrust::make_transform_iterator(
+                    d_candidate_read_ids.data(),
+                    duplicateInput
+                );
+                auto copyifend = thrust::copy_if(
+                    rmm::exec_policy(stream, mr),
+                    duplicatedIds,
+                    duplicatedIds + currentNumCandidates,
+                    d_alignment_best_alignment_flags.data(),
+                    zippedValid,
+                    [] __host__ __device__ (const AlignmentOrientation& o){
+                        return o != AlignmentOrientation::None;
+                    }
+                );
+
+                const int hNumIndices = thrust::distance(zippedValid, copyifend);
+
+                gpuReadStorage->gatherQualities(
+                    readstorageHandle,
+                    d_anchor_qualities.data(),
+                    qualityPitchInBytes,
+                    makeAsyncConstBufferWrapper(currentInput->h_anchorReadIds.data()),
+                    d_anchorReadIds.data(),
+                    currentNumAnchors,
+                    stream,
+                    mr
+                );               
+
+                rmm::device_uvector<char> d_candidate_qualities_compact(hNumIndices * qualityPitchInBytes, stream);
+
+                nvtx::push_range("get compact qscores " + std::to_string(hNumIndices) + " " + std::to_string(currentNumCandidates), 6);
+                gpuReadStorage->gatherQualities(
+                    readstorageHandle,
+                    d_candidate_qualities_compact.data(),
+                    qualityPitchInBytes,
+                    makeAsyncConstBufferWrapper(h_indicesForGather.data(), events[1]),
+                    d_indicesForGather.data(),
+                    hNumIndices,
+                    stream,
+                    mr
+                );
+                nvtx::pop_range();
+
+
+                #if 0
+                helpers::lambda_kernel<<<SDIV(hNumIndices, 256 / 8), 256, 0, stream>>>(
+                    [
+                        d_candidate_qualities_compact = d_candidate_qualities_compact.data(),
+                        d_candidate_qualities = d_candidate_qualities.data(),
+                        d_candidate_sequences_lengths = d_candidate_sequences_lengths.data(),
+                        qualityPitchInBytes = qualityPitchInBytes,
+                        d_indices = d_indices.data(),
+                        d_indices_per_anchor = d_indices_per_anchor.data(),
+                        d_indices_per_anchor_prefixsum = d_prefixsum.data(),
+                        d_num_indices = d_num_indices.data(),
+                        d_candidates_per_anchor_prefixsum = d_candidates_per_anchor_prefixsum.data(),
+                        currentNumAnchors = currentNumAnchors,
+                        hNumIndices = hNumIndices
+                    ] __device__ (){
+                        constexpr int groupsize = 8;
+                        auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+
+                        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+                        const int numGroups = (blockDim.x * gridDim.x) / groupsize;
+
+                        assert(qualityPitchInBytes % sizeof(int) == 0);
+
+                        for(int c = groupId; c < hNumIndices; c += numGroups){
+                            const int anchorIndex = thrust::distance(
+                                d_indices_per_anchor_prefixsum,
+                                thrust::lower_bound(
+                                    thrust::seq,
+                                    d_indices_per_anchor_prefixsum,
+                                    d_indices_per_anchor_prefixsum + currentNumAnchors,
+                                    c + 1
+                                )
+                            )-1;
+
+                            const int segmentOffset = d_candidates_per_anchor_prefixsum[anchorIndex];
+                            const int* const myIndices = d_indices + segmentOffset;
+                            const int localCandidatePositionInAnchor = groupId - d_indices_per_anchor_prefixsum[anchorIndex];
+                            const int outputCandidateIndex = segmentOffset + myIndices[localCandidatePositionInAnchor];
+
+                            const int candidateLength = d_candidate_sequences_lengths[outputCandidateIndex];
+                            const int iters = SDIV(candidateLength, sizeof(int));
+
+                            const int* const input = (const int*)(d_candidate_qualities_compact + size_t(c) * qualityPitchInBytes);
+                            int* const output = (int*)(d_candidate_qualities + size_t(outputCandidateIndex) * qualityPitchInBytes);
+
+                            for(int k = group.thread_rank(); k < iters; k += group.size()){
+                                output[k] = input[k];
+                            }
+                        }
+                    }
+                ); CUDACHECKASYNC;
+
+                #else
+
+                //scatter compact quality scores to correct positions
+                helpers::lambda_kernel<<<maxAnchors, 256, 0, stream>>>(
+                    [
+                        d_candidate_qualities_compact = d_candidate_qualities_compact.data(),
+                        d_candidate_qualities = d_candidate_qualities.data(),
+                        d_candidate_sequences_lengths = d_candidate_sequences_lengths.data(),
+                        qualityPitchInBytes = qualityPitchInBytes,
+                        d_indices = d_indices.data(),
+                        d_indices_per_anchor = d_indices_per_anchor.data(),
+                        d_indices_per_anchor_prefixsum = d_prefixsum.data(),
+                        d_num_indices = d_num_indices.data(),
+                        d_candidates_per_anchor_prefixsum = d_candidates_per_anchor_prefixsum.data(),
+                        currentNumAnchors = currentNumAnchors
+                    ] __device__ (){
+                        constexpr int groupsize = 32;
+                        auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+
+                        const int groupId = threadIdx.x / groupsize;
+                        const int numgroups = blockDim.x / groupsize;
+
+                        assert(qualityPitchInBytes % sizeof(int) == 0);
+
+                        for(int anchor = blockIdx.x; anchor < currentNumAnchors; anchor += gridDim.x){
+
+                            const int globalCandidateOffset = d_candidates_per_anchor_prefixsum[anchor];
+                            const int* const myIndices = d_indices + globalCandidateOffset;
+                            const int numIndices = d_indices_per_anchor[anchor];
+                            const int offset = d_indices_per_anchor_prefixsum[anchor];
+
+                            for(int c = groupId; c < numIndices; c += numgroups){
+                                const int outputpos = globalCandidateOffset + myIndices[c];
+                                const int inputpos = offset + c;
+                                const int length = d_candidate_sequences_lengths[outputpos];
+
+                                const int iters = SDIV(length, sizeof(int));
+
+                                const int* const input = (const int*)(d_candidate_qualities_compact + size_t(inputpos) * qualityPitchInBytes);
+                                int* const output = (int*)(d_candidate_qualities + size_t(outputpos) * qualityPitchInBytes);
+
+                                for(int k = group.thread_rank(); k < iters; k += group.size()){
+                                    output[k] = input[k];
+                                }
+                            }
+                        }
+                    }
+                ); CUDACHECKASYNC;
+                #endif
+
+                #endif
 
             }
 
