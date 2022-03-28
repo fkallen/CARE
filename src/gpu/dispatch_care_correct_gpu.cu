@@ -436,7 +436,8 @@ namespace care{
             partialResults, 
             formats[0],
             outputfiles,
-            programOptions.showProgress
+            programOptions.showProgress,
+            programOptions
         );
 
         step3timer.print();
