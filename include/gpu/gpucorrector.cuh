@@ -13,6 +13,7 @@
 #include <gpu/cudaerrorcheck.cuh>
 #include <gpu/cubwrappers.cuh>
 #include <gpu/gpumsamanaged.cuh>
+#include <gpu/global_cuda_stream_pool.cuh>
 
 #include <config.hpp>
 #include <util.hpp>
@@ -41,6 +42,7 @@
 #include <thrust/iterator/transform_output_iterator.h>
 #include <thrust/gather.h>
 #include <thrust/scan.h>
+#include <thrust/unique.h>
 
 #include <rmm/mr/device/per_device_resource.hpp>
 #include <rmm/mr/device/cuda_async_memory_resource.hpp>
@@ -1101,7 +1103,8 @@ namespace gpu{
                 event = std::move(CudaEvent{cudaEventDisableTiming});
             }
 
-            previousBatchFinishedEvent = CudaEvent{};
+            inputCandidateDataIsReadyEvent = CudaEvent{cudaEventDisableTiming};
+            previousBatchFinishedEvent = CudaEvent{cudaEventDisableTiming};
 
             encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(gpuReadStorage->getSequenceLengthUpperBound());
             decodedSequencePitchInBytes = SDIV(gpuReadStorage->getSequenceLengthUpperBound(), 4) * 4;
@@ -1214,6 +1217,8 @@ namespace gpu{
             ));
 
             DEBUGSTREAMSYNC(stream);
+
+            CUDACHECK(cudaEventRecord(inputCandidateDataIsReadyEvent, stream));
 
             // if(programOptions->useQualityScores){
 
@@ -2879,6 +2884,11 @@ namespace gpu{
             if(programOptions->useQualityScores){
                 #if 1
 
+                cudaStream_t qualityStream = streampool::get_current_device_pool()->get_stream();
+
+                CUDACHECK(cudaStreamWaitEvent(qualityStream,inputCandidateDataIsReadyEvent, 0));
+
+
                 gpuReadStorage->gatherQualities(
                     readstorageHandle,
                     d_anchor_qualities.data(),
@@ -2886,7 +2896,7 @@ namespace gpu{
                     makeAsyncConstBufferWrapper(currentInput->h_anchorReadIds.data()),
                     d_anchorReadIds.data(),
                     currentNumAnchors,
-                    stream,
+                    qualityStream,
                     mr
                 );
 
@@ -2897,9 +2907,12 @@ namespace gpu{
                     makeAsyncConstBufferWrapper(currentInput->h_candidate_read_ids.data()),
                     d_candidate_read_ids.data(),
                     currentNumCandidates,
-                    stream,
+                    qualityStream,
                     mr
                 );
+                
+                CUDACHECK(cudaEventRecord(events[0], qualityStream));
+                CUDACHECK(cudaStreamWaitEvent(stream, events[0], 0));
 
                 #else 
 
@@ -3666,6 +3679,7 @@ namespace gpu{
         std::array<CudaEvent, 2> events;
 
         CudaEvent previousBatchFinishedEvent;
+        CudaEvent inputCandidateDataIsReadyEvent;
 
         std::size_t msaColumnPitchInElements;
         std::size_t encodedSequencePitchInInts;
