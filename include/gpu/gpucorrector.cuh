@@ -39,6 +39,8 @@
 #include <thrust/binary_search.h>
 #include <thrust/copy.h>
 #include <thrust/iterator/transform_output_iterator.h>
+#include <thrust/gather.h>
+#include <thrust/scan.h>
 
 #include <rmm/mr/device/per_device_resource.hpp>
 #include <rmm/mr/device/cuda_async_memory_resource.hpp>
@@ -506,6 +508,27 @@ namespace gpu{
                 stream,
                 mr
             );
+
+            // helpers::lambda_kernel<<<1,1,0,stream>>>([
+            //     d_candidates_per_anchor_prefixsum = ecinput.d_candidates_per_anchor_prefixsum.data(),
+            //     d_candidates_per_anchor = ecinput.d_candidates_per_anchor.data(),
+            //     currentNumAnchors = (*ecinput.h_numAnchors.data())
+            // ] __device__ (){    
+            //     assert(d_candidates_per_anchor_prefixsum[0] == 0);
+
+            //     for(int i = 0; i < currentNumAnchors; i++){
+            //         printf("hash %d %d", d_candidates_per_anchor[i], d_candidates_per_anchor_prefixsum[i]);
+            //         if(i > 0){
+            //             printf(",%d ", (d_candidates_per_anchor[i-1] + d_candidates_per_anchor_prefixsum[i-1] == d_candidates_per_anchor_prefixsum[i]));
+            //         }
+            //         printf("\n");
+            //     }
+            //     for(int i = 0; i < currentNumAnchors; i++){
+            //         if(i > 0){
+            //             assert(d_candidates_per_anchor[i-1] + d_candidates_per_anchor_prefixsum[i-1] == d_candidates_per_anchor_prefixsum[i]);
+            //         }
+            //     }
+            // }); CUDACHECKASYNC
 
             gpucorrectorkernels::copyMinhashResultsKernel<<<640, 256, 0, stream>>>(
                 ecinput.d_numCandidates.data(),
@@ -2406,6 +2429,449 @@ namespace gpu{
 
             CUDACHECK(cudaEventRecord(events[1], stream));
 
+            //compactCandidatesByAlignmentFlag2(stream);
+        }
+
+        void compactCandidatesByAlignmentFlag(cudaStream_t stream){
+            auto policy = rmm::exec_policy_nosync(stream, mr);
+
+            rmm::device_uvector<int> d_num_indices_new(1, stream, mr);        
+            rmm::device_uvector<int> d_numCandidates_new(1, stream, mr);            
+
+            rmm::device_uvector<int> d_inputPositions(maxCandidates, stream, mr);
+            auto newNumCandidates = thrust::distance(
+                d_inputPositions.begin(),
+                thrust::copy_if(
+                    policy,
+                    thrust::make_counting_iterator(0),
+                    thrust::make_counting_iterator(0) + currentNumCandidates,
+                    d_alignment_best_alignment_flags.begin(),
+                    d_inputPositions.begin(),              
+                    []__host__ __device__ (const AlignmentOrientation& o){
+                        return o != AlignmentOrientation::None;
+                    }
+                )
+            );
+
+            CUDACHECK(cudaMemcpyAsync(
+                d_numCandidates_new.data(),
+                &newNumCandidates,
+                sizeof(int),
+                H2D,
+                stream
+            ));
+
+            CUDACHECK(cudaMemcpyAsync(
+                d_num_indices_new.data(),
+                d_numCandidates_new.data(),
+                sizeof(int),
+                D2D,
+                stream
+            ));
+
+
+            constexpr int stepsizeForMaxCandidates = 10000;
+            auto newNumCandidatesRounded = SDIV(newNumCandidates, stepsizeForMaxCandidates) * stepsizeForMaxCandidates;
+
+            rmm::device_uvector<bool> d_candidateContainsN_new(newNumCandidatesRounded, stream, mr);
+            rmm::device_uvector<int> d_candidate_sequences_lengths_new(newNumCandidatesRounded, stream, mr);
+            rmm::device_uvector<int> d_alignment_overlaps_new(newNumCandidatesRounded, stream, mr);
+            rmm::device_uvector<int> d_alignment_shifts_new(newNumCandidatesRounded, stream, mr);
+            rmm::device_uvector<int> d_alignment_nOps_new(newNumCandidatesRounded, stream, mr);
+            rmm::device_uvector<AlignmentOrientation> d_alignment_best_alignment_flags_new(newNumCandidatesRounded, stream, mr);
+            rmm::device_uvector<bool> d_isPairedCandidate_new(newNumCandidatesRounded, stream, mr);
+            rmm::device_uvector<read_number> d_candidate_read_ids_new(newNumCandidatesRounded, stream, mr);
+            rmm::device_uvector<int> d_anchorIndicesOfCandidates_new(newNumCandidatesRounded, stream, mr);
+
+            thrust::gather(
+                policy,
+                d_inputPositions.begin(),
+                d_inputPositions.begin() + newNumCandidates,
+                thrust::make_zip_iterator(thrust::make_tuple(
+                    d_candidateContainsN.begin(),
+                    d_candidate_sequences_lengths.begin(),
+                    d_alignment_overlaps.begin(),
+                    d_alignment_shifts.begin(),
+                    d_alignment_nOps.begin(),
+                    d_alignment_best_alignment_flags.begin(),
+                    d_isPairedCandidate.begin(),
+                    d_candidate_read_ids.begin(),
+                    d_anchorIndicesOfCandidates.begin()
+                )),
+                thrust::make_zip_iterator(thrust::make_tuple(
+                    d_candidateContainsN_new.begin(),
+                    d_candidate_sequences_lengths_new.begin(),
+                    d_alignment_overlaps_new.begin(),
+                    d_alignment_shifts_new.begin(),
+                    d_alignment_nOps_new.begin(),
+                    d_alignment_best_alignment_flags_new.begin(),
+                    d_isPairedCandidate_new.begin(),
+                    d_candidate_read_ids_new.begin(),
+                    d_anchorIndicesOfCandidates_new.begin()
+                ))
+            );
+
+
+            rmm::device_uvector<unsigned int> d_candidate_sequences_data_new(newNumCandidatesRounded * encodedSequencePitchInInts, stream, mr);           
+
+            helpers::lambda_kernel<<<SDIV(newNumCandidates, 128 / 8), 128, 0, stream>>>(
+                [
+                    d_inputPositions = d_inputPositions.data(),
+                    d_candidate_sequences_data_new = d_candidate_sequences_data_new.data(),
+                    d_candidate_sequences_data = d_candidate_sequences_data.data(),
+                    newNumCandidates = newNumCandidates,
+                    encodedSequencePitchInInts = encodedSequencePitchInInts
+                ] __device__ (){
+                    constexpr int groupsize = 8;
+                    auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+
+                    const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+                    const int numGroups = (blockDim.x * gridDim.x) / groupsize;
+
+                    for(int c = groupId; c < newNumCandidates; c += numGroups){
+                        const std::size_t srcindex = *(d_inputPositions + c);
+                        const std::size_t destindex = c;
+
+                        for(int k = group.thread_rank(); k < encodedSequencePitchInInts; k += group.size()){
+                            d_candidate_sequences_data_new[destindex * encodedSequencePitchInInts + k]
+                                = d_candidate_sequences_data[srcindex * encodedSequencePitchInInts + k];
+                        }
+                    }
+                }
+            ); CUDACHECKASYNC
+
+            rmm::device_uvector<int> d_candidates_per_anchor_new(currentNumAnchors, stream, mr);
+            rmm::device_uvector<int> d_candidates_per_anchor_prefixsum_new(currentNumAnchors+1, stream, mr);
+            rmm::device_uvector<int> d_indices_per_anchor_new(currentNumAnchors, stream, mr);
+
+            rmm::device_uvector<int> d_tmp1(currentNumAnchors, stream, mr);
+            rmm::device_uvector<int> d_tmp2(currentNumAnchors, stream, mr);
+            auto nonEmpty = thrust::distance(d_tmp1.begin(),
+                thrust::reduce_by_key(
+                    policy,
+                    d_anchorIndicesOfCandidates_new.begin(),
+                    d_anchorIndicesOfCandidates_new.begin() + newNumCandidates,
+                    thrust::make_constant_iterator(1),
+                    d_tmp1.begin(),
+                    d_tmp2.begin()
+                ).first
+            );
+            thrust::fill(policy, d_candidates_per_anchor_new.begin(), d_candidates_per_anchor_new.end(), 0);
+            thrust::scatter(
+                policy,
+                d_tmp2.begin(),
+                d_tmp2.begin() + nonEmpty,
+                d_tmp1.begin(),
+                d_candidates_per_anchor_new.begin()
+            );
+
+            thrust::inclusive_scan(
+                policy,
+                d_candidates_per_anchor_new.begin(),
+                d_candidates_per_anchor_new.begin() + currentNumAnchors,
+                d_candidates_per_anchor_prefixsum_new.begin() + 1
+            );
+
+            CUDACHECK(cudaMemsetAsync(d_candidates_per_anchor_prefixsum_new.data(), 0, sizeof(int), stream));
+            CUDACHECK(cudaMemcpyAsync(
+                d_indices_per_anchor_new.data(),
+                d_candidates_per_anchor_new.data(),
+                sizeof(int) * currentNumAnchors,
+                D2D,
+                stream
+            ));
+
+            rmm::device_uvector<int> d_indices_new(newNumCandidatesRounded, stream, mr);
+
+            helpers::lambda_kernel<<<SDIV(currentNumAnchors, 128 / 32), 128, 0, stream>>>(
+                [
+                    d_candidates_per_anchor_new = d_candidates_per_anchor_new.data(),
+                    d_candidates_per_anchor_prefixsum_new = d_candidates_per_anchor_prefixsum_new.data(),
+                    d_indices_new = d_indices_new.data(),
+                    currentNumAnchors = currentNumAnchors,
+                    newNumCandidatesRounded = int(newNumCandidatesRounded)
+                ] __device__ (){
+                    constexpr int groupsize = 32;
+                    auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+
+                    const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+                    const int numGroups = (blockDim.x * gridDim.x) / groupsize;
+
+                    for(int a = groupId; a < currentNumAnchors; a += numGroups){
+                        const int numCands = d_candidates_per_anchor_new[a];
+                        const int offset = d_candidates_per_anchor_prefixsum_new[a];
+
+                        for(int i = group.thread_rank(); i < numCands; i += group.size()){
+                            d_indices_new[offset + i] = i;
+                        }
+                    }
+                }
+            ); CUDACHECKASYNC
+
+            #if 1
+
+            std::swap(d_num_indices, d_num_indices_new);
+            std::swap(d_numCandidates, d_numCandidates_new);
+            std::swap(d_candidateContainsN, d_candidateContainsN_new);
+            std::swap(d_candidate_sequences_lengths, d_candidate_sequences_lengths_new);
+            std::swap(d_alignment_overlaps, d_alignment_overlaps_new);
+            std::swap(d_alignment_shifts, d_alignment_shifts_new);
+            std::swap(d_alignment_nOps, d_alignment_nOps_new);
+            std::swap(d_alignment_best_alignment_flags, d_alignment_best_alignment_flags_new);
+            std::swap(d_isPairedCandidate, d_isPairedCandidate_new);
+            std::swap(d_candidate_read_ids, d_candidate_read_ids_new);
+            std::swap(d_anchorIndicesOfCandidates, d_anchorIndicesOfCandidates_new);
+            std::swap(d_candidate_sequences_data, d_candidate_sequences_data_new);
+            std::swap(d_candidates_per_anchor, d_candidates_per_anchor_new);
+            std::swap(d_candidates_per_anchor_prefixsum, d_candidates_per_anchor_prefixsum_new);
+            std::swap(d_indices_per_anchor, d_indices_per_anchor_new);
+            std::swap(d_indices, d_indices_new);
+
+            currentNumCandidates = newNumCandidates;
+            *h_num_indices = newNumCandidates;
+
+            #endif
+        }
+
+        void compactCandidatesByAlignmentFlag2(cudaStream_t stream){
+            auto policy = rmm::exec_policy_nosync(stream, mr);
+
+            rmm::device_uvector<int> d_num_indices_new(1, stream, mr);        
+            rmm::device_uvector<int> d_numCandidates_new(1, stream, mr);            
+
+            rmm::device_uvector<int> d_inputPositions(maxCandidates, stream, mr);
+            CubCallWrapper(mr).cubSelectFlagged(
+                thrust::make_counting_iterator(0),
+                thrust::make_transform_iterator(
+                    d_alignment_best_alignment_flags.begin(),            
+                    []__host__ __device__ (const AlignmentOrientation& o){
+                        return o != AlignmentOrientation::None;
+                    }
+                ),
+                d_inputPositions.begin(),
+                d_numCandidates_new.data(),
+                currentNumCandidates,
+                stream
+            );
+
+            CUDACHECK(cudaMemcpyAsync(
+                h_num_indices,
+                d_numCandidates_new.data(),
+                sizeof(int),
+                D2H,
+                stream
+            ));
+
+            CUDACHECK(cudaMemcpyAsync(
+                d_num_indices_new.data(),
+                d_numCandidates_new.data(),
+                sizeof(int),
+                D2D,
+                stream
+            ));
+
+            CUDACHECK(cudaStreamSynchronize(stream));
+            const int newNumCandidates = *h_num_indices;
+            constexpr int stepsizeForMaxCandidates = 10000;
+            auto newNumCandidatesRounded = SDIV(newNumCandidates, stepsizeForMaxCandidates) * stepsizeForMaxCandidates;
+
+            rmm::device_uvector<bool> d_candidateContainsN_new(newNumCandidatesRounded, stream, mr);
+            rmm::device_uvector<int> d_candidate_sequences_lengths_new(newNumCandidatesRounded, stream, mr);
+            rmm::device_uvector<int> d_alignment_overlaps_new(newNumCandidatesRounded, stream, mr);
+            rmm::device_uvector<int> d_alignment_shifts_new(newNumCandidatesRounded, stream, mr);
+            rmm::device_uvector<int> d_alignment_nOps_new(newNumCandidatesRounded, stream, mr);
+            rmm::device_uvector<AlignmentOrientation> d_alignment_best_alignment_flags_new(newNumCandidatesRounded, stream, mr);
+            rmm::device_uvector<bool> d_isPairedCandidate_new(newNumCandidatesRounded, stream, mr);
+            rmm::device_uvector<read_number> d_candidate_read_ids_new(newNumCandidatesRounded, stream, mr);
+            rmm::device_uvector<int> d_anchorIndicesOfCandidates_new(newNumCandidatesRounded, stream, mr);
+
+            helpers::call_compact_kernel_async(
+                thrust::make_zip_iterator(thrust::make_tuple(
+                    d_candidateContainsN_new.begin(),
+                    d_candidate_sequences_lengths_new.begin(),
+                    d_alignment_overlaps_new.begin(),
+                    d_alignment_shifts_new.begin(),
+                    d_alignment_nOps_new.begin(),
+                    d_alignment_best_alignment_flags_new.begin(),
+                    d_isPairedCandidate_new.begin(),
+                    d_candidate_read_ids_new.begin(),
+                    d_anchorIndicesOfCandidates_new.begin()
+                )),
+                thrust::make_zip_iterator(thrust::make_tuple(
+                    d_candidateContainsN.begin(),
+                    d_candidate_sequences_lengths.begin(),
+                    d_alignment_overlaps.begin(),
+                    d_alignment_shifts.begin(),
+                    d_alignment_nOps.begin(),
+                    d_alignment_best_alignment_flags.begin(),
+                    d_isPairedCandidate.begin(),
+                    d_candidate_read_ids.begin(),
+                    d_anchorIndicesOfCandidates.begin()
+                )),
+                d_inputPositions.begin(),
+                d_numCandidates_new.data(),
+                currentNumCandidates,
+                stream
+            );
+
+            rmm::device_uvector<unsigned int> d_candidate_sequences_data_new(newNumCandidatesRounded * encodedSequencePitchInInts, stream, mr);           
+
+            helpers::lambda_kernel<<<SDIV(newNumCandidates, 128 / 8), 128, 0, stream>>>(
+                [
+                    d_inputPositions = d_inputPositions.data(),
+                    d_candidate_sequences_data_new = d_candidate_sequences_data_new.data(),
+                    d_candidate_sequences_data = d_candidate_sequences_data.data(),
+                    newNumCandidates = newNumCandidates,
+                    encodedSequencePitchInInts = encodedSequencePitchInInts
+                ] __device__ (){
+                    constexpr int groupsize = 8;
+                    auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+
+                    const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+                    const int numGroups = (blockDim.x * gridDim.x) / groupsize;
+
+                    for(int c = groupId; c < newNumCandidates; c += numGroups){
+                        const std::size_t srcindex = *(d_inputPositions + c);
+                        const std::size_t destindex = c;
+
+                        for(int k = group.thread_rank(); k < encodedSequencePitchInInts; k += group.size()){
+                            d_candidate_sequences_data_new[destindex * encodedSequencePitchInInts + k]
+                                = d_candidate_sequences_data[srcindex * encodedSequencePitchInInts + k];
+                        }
+                    }
+                }
+            ); CUDACHECKASYNC
+
+            rmm::device_uvector<int> d_candidates_per_anchor_new(currentNumAnchors, stream, mr);
+            rmm::device_uvector<int> d_candidates_per_anchor_prefixsum_new(currentNumAnchors+1, stream, mr);
+            rmm::device_uvector<int> d_indices_per_anchor_new(currentNumAnchors, stream, mr);
+
+            rmm::device_uvector<int> d_tmp1(currentNumAnchors, stream, mr);
+            rmm::device_uvector<int> d_tmp2(currentNumAnchors, stream, mr);
+            rmm::device_scalar<int> d_numNonEmptySegments(stream, mr);
+
+            #if 1
+
+            CubCallWrapper(mr).cubReduceByKey(
+                d_anchorIndicesOfCandidates_new.data(),
+                d_tmp1.data(),
+                thrust::make_constant_iterator(1),
+                d_tmp2.data(),
+                d_numNonEmptySegments.data(),
+                thrust::plus<int>{},
+                newNumCandidates,
+                stream
+            );
+            #else
+            int nonEmpty = thrust::distance(d_tmp1.begin(),
+                thrust::reduce_by_key(
+                    policy,
+                    d_anchorIndicesOfCandidates_new.begin(),
+                    d_anchorIndicesOfCandidates_new.begin() + newNumCandidates,
+                    thrust::make_constant_iterator(1),
+                    d_tmp1.begin(),
+                    d_tmp2.begin()
+                ).first
+            );
+            #endif
+
+            helpers::call_fill_kernel_async(d_candidates_per_anchor_new.begin(), currentNumAnchors, 0, stream);
+
+            #if 1
+            helpers::lambda_kernel<<<SDIV(newNumCandidates, 128), 128, 0, stream>>>(
+                [
+                    outputpositions = d_tmp1.data(),
+                    input = d_tmp2.data(),
+                    output = d_candidates_per_anchor_new.data(),
+                    d_numNonEmptySegments = d_numNonEmptySegments.data()
+                ] __device__ (){
+                    for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < *d_numNonEmptySegments; i += gridDim.x * blockDim.x){
+                        output[outputpositions[i]] = input[i];
+                    }
+                }
+            ); CUDACHECKASYNC
+
+            #else
+            helpers::lambda_kernel<<<SDIV(nonEmpty, 128), 128, 0, stream>>>(
+                [
+                    outputpositions = d_tmp1.data(),
+                    input = d_tmp2.data(),
+                    output = d_candidates_per_anchor_new.data(),
+                    nonEmpty
+                ] __device__ (){
+                    for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < nonEmpty; i += gridDim.x * blockDim.x){
+                        output[outputpositions[i]] = input[i];
+                    }
+                }
+            ); CUDACHECKASYNC
+            #endif
+
+            CubCallWrapper(mr).cubInclusiveSum(
+                d_candidates_per_anchor_new.begin(),
+                d_candidates_per_anchor_prefixsum_new.begin() + 1,
+                currentNumAnchors,
+                stream
+            );
+
+            CUDACHECK(cudaMemsetAsync(d_candidates_per_anchor_prefixsum_new.data(), 0, sizeof(int), stream));
+            CUDACHECK(cudaMemcpyAsync(
+                d_indices_per_anchor_new.data(),
+                d_candidates_per_anchor_new.data(),
+                sizeof(int) * currentNumAnchors,
+                D2D,
+                stream
+            ));
+
+            rmm::device_uvector<int> d_indices_new(newNumCandidatesRounded, stream, mr);
+
+            helpers::lambda_kernel<<<SDIV(currentNumAnchors, 128 / 32), 128, 0, stream>>>(
+                [
+                    d_candidates_per_anchor_new = d_candidates_per_anchor_new.data(),
+                    d_candidates_per_anchor_prefixsum_new = d_candidates_per_anchor_prefixsum_new.data(),
+                    d_indices_new = d_indices_new.data(),
+                    currentNumAnchors = currentNumAnchors,
+                    newNumCandidatesRounded = int(newNumCandidatesRounded)
+                ] __device__ (){
+                    constexpr int groupsize = 32;
+                    auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+
+                    const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+                    const int numGroups = (blockDim.x * gridDim.x) / groupsize;
+
+                    for(int a = groupId; a < currentNumAnchors; a += numGroups){
+                        const int numCands = d_candidates_per_anchor_new[a];
+                        const int offset = d_candidates_per_anchor_prefixsum_new[a];
+
+                        for(int i = group.thread_rank(); i < numCands; i += group.size()){
+                            d_indices_new[offset + i] = i;
+                        }
+                    }
+                }
+            ); CUDACHECKASYNC
+
+            #if 1
+
+            std::swap(d_num_indices, d_num_indices_new);
+            std::swap(d_numCandidates, d_numCandidates_new);
+            std::swap(d_candidateContainsN, d_candidateContainsN_new);
+            std::swap(d_candidate_sequences_lengths, d_candidate_sequences_lengths_new);
+            std::swap(d_alignment_overlaps, d_alignment_overlaps_new);
+            std::swap(d_alignment_shifts, d_alignment_shifts_new);
+            std::swap(d_alignment_nOps, d_alignment_nOps_new);
+            std::swap(d_alignment_best_alignment_flags, d_alignment_best_alignment_flags_new);
+            std::swap(d_isPairedCandidate, d_isPairedCandidate_new);
+            std::swap(d_candidate_read_ids, d_candidate_read_ids_new);
+            std::swap(d_anchorIndicesOfCandidates, d_anchorIndicesOfCandidates_new);
+            std::swap(d_candidate_sequences_data, d_candidate_sequences_data_new);
+            std::swap(d_candidates_per_anchor, d_candidates_per_anchor_new);
+            std::swap(d_candidates_per_anchor_prefixsum, d_candidates_per_anchor_prefixsum_new);
+            std::swap(d_indices_per_anchor, d_indices_per_anchor_new);
+            std::swap(d_indices, d_indices_new);
+
+            currentNumCandidates = newNumCandidates;
+            *h_num_indices = newNumCandidates;
+
+            #endif
         }
 
         void buildAndRefineMultipleSequenceAlignment(cudaStream_t stream){
