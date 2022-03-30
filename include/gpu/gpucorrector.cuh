@@ -314,8 +314,6 @@ namespace gpu{
                 stream
             ));
 
-            DEBUGSTREAMSYNC(stream);
-
             CUDACHECK(cudaMemcpyAsync(
                 ecinput.d_anchorReadIds.data(),
                 ecinput.h_anchorReadIds.data(),
@@ -324,14 +322,10 @@ namespace gpu{
                 stream
             ));
 
-            DEBUGSTREAMSYNC(stream);
-
             if(numIds > 0){
                 nvtx::push_range("getAnchorReads", 0);
                 getAnchorReads(ecinput, useQualityScores, stream);
                 nvtx::pop_range();
-
-                DEBUGSTREAMSYNC(stream);
 
                 nvtx::push_range("getCandidateReadIdsWithMinhashing", 1);
                 getCandidateReadIdsWithMinhashing(ecinput, stream);
@@ -340,8 +334,6 @@ namespace gpu{
                 CUDACHECK(cudaStreamSynchronize(stream));
 
                 getCandidateReads(ecinput, useQualityScores, stream);
-
-                DEBUGSTREAMSYNC(stream);
             }            
 
             CUDACHECK(ecinput.event.record(stream));
@@ -359,11 +351,6 @@ namespace gpu{
 
     public: //private:
         void resizeBuffers(GpuErrorCorrectorInput& ecinput, int numAnchors, cudaStream_t stream){
-            const std::size_t maxCandidates = maxCandidatesPerRead * numAnchors;
-            // large enough to store all minhash results
-            ecinput.h_candidate_read_ids.resize(maxCandidates);
-            ecinput.d_candidate_read_ids.resize(maxCandidates, stream); 
-
             ecinput.h_numAnchors.resize(1);
             ecinput.h_numCandidates.resize(1);
             ecinput.h_anchorReadIds.resize(numAnchors);
@@ -391,8 +378,6 @@ namespace gpu{
                 mr
             );
 
-            DEBUGSTREAMSYNC(stream);
-
             gpuReadStorage->gatherSequenceLengths(
                 readstorageHandle,
                 ecinput.d_anchor_sequences_lengths.data(),
@@ -400,8 +385,6 @@ namespace gpu{
                 numAnchors,
                 stream
             );
-
-            DEBUGSTREAMSYNC(stream);
         }
 
         void getCandidateReads(GpuErrorCorrectorInput& ecinput, bool /*useQualityScores*/, cudaStream_t stream){
@@ -420,8 +403,6 @@ namespace gpu{
                 mr
             );
 
-            DEBUGSTREAMSYNC(stream);
-
             ecinput.d_candidate_sequences_lengths.resize(numCandidates, stream);
 
             gpuReadStorage->gatherSequenceLengths(
@@ -431,8 +412,6 @@ namespace gpu{
                 numCandidates,
                 stream
             );
-
-            DEBUGSTREAMSYNC(stream);
         }
 
         void getCandidateReadIdsWithMinhashing(GpuErrorCorrectorInput& ecinput, cudaStream_t stream){
@@ -475,27 +454,6 @@ namespace gpu{
                 mr
             );
 
-            // helpers::lambda_kernel<<<1,1,0,stream>>>([
-            //     d_candidates_per_anchor_prefixsum = ecinput.d_candidates_per_anchor_prefixsum.data(),
-            //     d_candidates_per_anchor = ecinput.d_candidates_per_anchor.data(),
-            //     currentNumAnchors = (*ecinput.h_numAnchors.data())
-            // ] __device__ (){    
-            //     assert(d_candidates_per_anchor_prefixsum[0] == 0);
-
-            //     for(int i = 0; i < currentNumAnchors; i++){
-            //         printf("hash %d %d", d_candidates_per_anchor[i], d_candidates_per_anchor_prefixsum[i]);
-            //         if(i > 0){
-            //             printf(",%d ", (d_candidates_per_anchor[i-1] + d_candidates_per_anchor_prefixsum[i-1] == d_candidates_per_anchor_prefixsum[i]));
-            //         }
-            //         printf("\n");
-            //     }
-            //     for(int i = 0; i < currentNumAnchors; i++){
-            //         if(i > 0){
-            //             assert(d_candidates_per_anchor[i-1] + d_candidates_per_anchor_prefixsum[i-1] == d_candidates_per_anchor_prefixsum[i]);
-            //         }
-            //     }
-            // }); CUDACHECKASYNC
-
             gpucorrectorkernels::copyMinhashResultsKernel<<<640, 256, 0, stream>>>(
                 ecinput.d_numCandidates.data(),
                 ecinput.h_numCandidates.data(),
@@ -504,32 +462,6 @@ namespace gpu{
                 ecinput.d_candidate_read_ids.data(),
                 *ecinput.h_numAnchors.data()
             ); CUDACHECKASYNC;
-
-            // helpers::lambda_kernel<<<1,1,0,stream>>>(
-            //     [
-            //         numAnchors = (*ecinput.h_numAnchors.data()),
-            //         d_candidate_read_ids = ecinput.d_candidate_read_ids.data(),
-            //         d_candidates_per_anchor = ecinput.d_candidates_per_anchor.data(),
-            //         d_candidates_per_anchor_prefixsum = ecinput.d_candidates_per_anchor_prefixsum.data(),
-            //         d_anchorReadIds = ecinput.d_anchorReadIds.data()
-            //     ] __device__ (){
-            //         for(int a = 0; a < numAnchors; a++){
-            //             if(d_anchorReadIds[a] > 12850 && d_anchorReadIds[a] < 12870){
-            //             //if(d_anchorReadIds[a] < 12870){
-            //             //if(d_anchorReadIds[a] < 100){
-            //                 printf("a = %d %u\n", a, d_anchorReadIds[a]);
-            //                 for(int c = 0; c < d_candidates_per_anchor[a]; c++){
-            //                     printf("%u ", d_candidate_read_ids[d_candidates_per_anchor_prefixsum[a] + c]);
-            //                 }
-            //                 printf("\n");
-            //             }
-            //         }
-            //     }
-            // );
-            // CUDACHECKASYNC;
-
-            // CUDACHECK(cudaStreamSynchronize(stream));
-
 
         }
     
@@ -1150,8 +1082,6 @@ namespace gpu{
                 currentInput->d_candidates_per_anchor_prefixsum.data()
             ); CUDACHECKASYNC;
 
-            DEBUGSTREAMSYNC(stream);
-
             CUDACHECK(cudaMemcpyAsync(
                 d_candidate_sequences_data.data(),
                 currentInput->d_candidate_sequences_data.data(),
@@ -1160,8 +1090,6 @@ namespace gpu{
                 stream
             ));
 
-            DEBUGSTREAMSYNC(stream);
-
             CUDACHECK(cudaMemcpyAsync(
                 d_candidate_sequences_lengths.data(),
                 currentInput->d_candidate_sequences_lengths.data(),
@@ -1169,8 +1097,6 @@ namespace gpu{
                 D2D,
                 stream
             ));
-
-            DEBUGSTREAMSYNC(stream);
 
             CUDACHECK(cudaEventRecord(inputCandidateDataIsReadyEvent, stream));
 
