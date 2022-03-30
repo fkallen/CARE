@@ -526,6 +526,8 @@ public:
                     gpuErrorCorrector.correct(*inputPtr, *rawOutputPtr, stream);
                     nvtx::pop_range();
 
+                    gpuErrorCorrector.releaseCandidateMemory(stream);
+
                     dataInFlight.push(std::make_pair(inputPtr, rawOutputPtr));
 
                     batchCompleted(anchorIds.size());
@@ -581,6 +583,8 @@ public:
                     nvtx::push_range("correct", 1);
                     gpuErrorCorrector.correct(*inputPtr, *rawOutputPtr, stream);
                     nvtx::pop_range();
+
+                    gpuErrorCorrector.releaseCandidateMemory(stream);
 
                     dataInFlight.push(std::make_pair(inputPtr, rawOutputPtr));
                     //std::cerr << "Submitted (" << inputPtr << ", " << rawOutputPtr << ")\n";
@@ -671,6 +675,15 @@ public:
         cub::SwitchDevice sd{deviceId};
 
         rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
+        cudaMemPool_t memPool;
+        CUDACHECK(cudaDeviceGetMemPool(&memPool, deviceId));
+
+        struct UsageStatistics {
+            std::uint64_t reserved;
+            std::uint64_t reservedHigh;
+            std::uint64_t used;
+            std::uint64_t usedHigh;
+        };
 
         try{
 
@@ -708,6 +721,24 @@ public:
                 programOptions
             );
 
+            // auto printUsageStatistics = [&](){
+            //     UsageStatistics statistics;
+            //     cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrReservedMemCurrent, &statistics.reserved);
+            //     cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrReservedMemHigh, &statistics.reservedHigh);
+            //     cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrUsedMemCurrent, &statistics.used);
+            //     cudaMemPoolGetAttribute(memPool, cudaMemPoolAttrUsedMemHigh, &statistics.usedHigh);
+            //     MemoryUsage memhasher = gpuAnchorHasher.getMemoryInfo();
+            //     MemoryUsage memcorrector = gpuErrorCorrector.getMemoryInfo();
+            //     std::cerr << "reserved: " << statistics.reserved << ", reservedHigh: " << statistics.reservedHigh << ", used: " << statistics.used << ", usedHigh: " << statistics.usedHigh << "\n";
+            //     std::cerr << "memcorrector: " << memcorrector.host << " - " << memcorrector.device[0] << "\n";
+
+            //     CUDACHECK(cudaStreamSynchronize(stream));
+                
+            //     cudaMemPool_t mempool;
+            //     CUDACHECK(cudaDeviceGetMemPool(&mempool, deviceId));
+            //     CUDACHECK(cudaMemPoolTrimTo(mempool, 0));
+            // };
+
             RunStatistics runStatistics;
 
             std::vector<read_number> anchorIds(programOptions.batchsize);
@@ -724,6 +755,8 @@ public:
             //int globalcounter = 0;
 
             while(continueCondition()){
+
+                //printUsageStatistics();
 
                 helpers::CpuTimer hashingTimer;
                 
@@ -767,6 +800,8 @@ public:
                     nvtx::push_range("correct", 1);
                     gpuErrorCorrector.correct(input, rawOutput, stream);
                     nvtx::pop_range();
+
+                    gpuErrorCorrector.releaseCandidateMemory(stream);
 
                     CUDACHECK(rawOutput.event.synchronize());
 
@@ -1171,6 +1206,8 @@ public:
             gpuErrorCorrector.correct(*inputPtr, *rawOutputPtr, stream);
             nvtx::pop_range();
 
+            gpuErrorCorrector.releaseCandidateMemory(stream);
+
             CUDACHECK(inputPtr->event.synchronize());
             freeInputs.push(inputPtr);
 
@@ -1288,6 +1325,8 @@ public:
                     gpuErrorCorrector.correct(*inputPtr, *rawOutputPtr, stream);
                     nvtx::pop_range();
 
+                    gpuErrorCorrector.releaseCandidateMemory(stream);
+
                     dataInFlight.emplace(inputPtr, rawOutputPtr);
 
                     // inputPtr = unprocessedInputs.popOrDefault(
@@ -1327,6 +1366,8 @@ public:
                 nvtx::push_range("correct", 0);
                 gpuErrorCorrector.correct(*inputPtr, *rawOutputPtr, stream);
                 nvtx::pop_range();
+
+                gpuErrorCorrector.releaseCandidateMemory(stream);
 
                 dataInFlight.emplace(inputPtr, rawOutputPtr);
 
@@ -1693,6 +1734,15 @@ SerializedObjectStorage correct_gpu_impl(
                 processResults,
                 batchCompleted
             );  
+
+            // pipeline.runToCompletion(
+            //     deviceId,
+            //     readIdGenerator,
+            //     programOptions,
+            //     correctionFlags,
+            //     processResults,
+            //     batchCompleted
+            // );  
         };
 
         // auto runSimpleGpuPipelineWithExtraThread = [&](int deviceId,
@@ -1793,8 +1843,8 @@ SerializedObjectStorage correct_gpu_impl(
                         threadsForDevice = 0;
                         #else
                         pipelineConfig.numOutputConstructors = 0; //always 0
-                        pipelineConfig.numCorrectors = 13;
-                        pipelineConfig.numHashers = 3;
+                        pipelineConfig.numCorrectors = 2;
+                        pipelineConfig.numHashers = 8;
                         #endif
 
                         std::cerr << "\nWill use " << pipelineConfig.numHashers << " hasher(s), "

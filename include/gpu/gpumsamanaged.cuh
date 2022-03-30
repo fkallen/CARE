@@ -6,7 +6,7 @@
 #include <gpu/kernels.hpp>
 #include <hpc_helpers.cuh>
 #include <gpu/cudaerrorcheck.cuh>
-
+#include <memorymanagement.hpp>
 #include <cub/cub.cuh>
 #include <rmm/mr/device/device_memory_resource.hpp>
 #include <rmm/device_uvector.hpp>
@@ -234,6 +234,31 @@ namespace gpu{
                 multiMSA,
                 stream
             );
+        }
+
+        MemoryUsage getMemoryInfo() const{
+            int deviceId;
+            CUDACHECK(cudaGetDevice(&deviceId));
+
+            MemoryUsage info{};
+            // auto handleHost = [&](const auto& h){
+            //     info.host += h.sizeInBytes();
+            // };
+            auto handleDevice = [&](const auto& d){
+                using ElementType = typename std::remove_reference<decltype(d)>::type::value_type;
+                info.device[deviceId] += d.size() * sizeof(ElementType);
+            };
+
+            handleDevice(d_consensusEncoded);
+            handleDevice(d_counts);
+            handleDevice(d_coverages);
+            handleDevice(d_origCoverages);
+            handleDevice(d_weights);
+            handleDevice(d_support);
+            handleDevice(d_origWeights);
+            handleDevice(d_columnProperties);
+
+            return info;
         }
 
         void destroy(cudaStream_t stream){

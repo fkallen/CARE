@@ -970,14 +970,14 @@ public: //inherited GPUReadStorage interface
 
         const int numColumnsCompressedQualitiesInts = qualitiesGpu.getNumColumns();
 
-        unsigned int* d_compressed;
+        unsigned int* d_compressed = nullptr;
         unsigned int* d_gatherdestination;
         std::size_t gatherdestinationPitchInBytes = 0;
         if(numQualityBits == 8){
             d_gatherdestination = reinterpret_cast<unsigned int*>(d_quality_data);
             gatherdestinationPitchInBytes = out_quality_pitch;
         }else{
-            CUDACHECK(cudaMallocAsync(&d_compressed, numSequences * numColumnsCompressedQualitiesInts * sizeof(unsigned int), stream));
+            d_compressed = reinterpret_cast<unsigned int*>(mr->allocate(numSequences * numColumnsCompressedQualitiesInts * sizeof(unsigned int), stream));
             d_gatherdestination = d_compressed;
             gatherdestinationPitchInBytes = numColumnsCompressedQualitiesInts * sizeof(unsigned int);
         }
@@ -1214,7 +1214,7 @@ public: //inherited GPUReadStorage interface
                 stream
             );
 
-            CUDACHECK(cudaFreeAsync(d_compressed, stream));
+            mr->deallocate(d_compressed, numSequences * numColumnsCompressedQualitiesInts * sizeof(unsigned int), stream);
         }else{
             //all good
         }

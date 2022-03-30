@@ -2,6 +2,7 @@
 #include <gpu/gpuminhasherconstruction.cuh>
 #include <gpu/fakegpuminhasher.cuh>
 #include <gpu/cudaerrorcheck.cuh>
+#include <gpu/global_cuda_stream_pool.cuh>
 
 #include <config.hpp>
 #include <options.hpp>
@@ -32,7 +33,9 @@
 
 #include <rmm/mr/device/per_device_resource.hpp>
 #include <rmm/mr/device/cuda_async_memory_resource.hpp>
+#include <rmm/mr/device/pool_memory_resource.hpp>
 #include <rmm/mr/device/logging_resource_adaptor.hpp>
+#include <rmm/cuda_stream_pool.hpp>
 #include <gpu/rmm_utilities.cuh>
 
 namespace filesys = std::experimental::filesystem;
@@ -162,6 +165,16 @@ namespace care{
         helpers::PeerAccessDebug peerAccess(programOptions.deviceIds, true);
         peerAccess.enableAllPeerAccesses();
 
+        //Set up stream pool
+        std::vector<std::unique_ptr<rmm::cuda_stream_pool>> rmmStreamPools;
+        for(auto id : programOptions.deviceIds){
+            cub::SwitchDevice sd(id);
+
+            auto pool = std::make_unique<rmm::cuda_stream_pool>(programOptions.threads);
+            streampool::set_per_device_pool(rmm::cuda_device_id(id), pool.get());
+            rmmStreamPools.push_back(std::move(pool));
+        }
+
  
         //Set up memory pool
         std::vector<std::unique_ptr<rmm::mr::cuda_async_memory_resource>> rmmCudaAsyncResources;
@@ -174,6 +187,19 @@ namespace care{
             CUDACHECK(cudaDeviceSetMemPool(id, resource->pool_handle()));
             rmmCudaAsyncResources.push_back(std::move(resource));
         }
+
+        #if 0
+        std::vector<std::unique_ptr<rmm::mr::pool_memory_resource<rmm::mr::cuda_async_memory_resource>>> rmmPoolMemoryResources;
+        for(size_t i = 0; i < programOptions.deviceIds.size(); i++){
+            const int id = programOptions.deviceIds[i];
+            cub::SwitchDevice sd(id);
+
+            auto resource = std::make_unique<rmm::mr::pool_memory_resource<rmm::mr::cuda_async_memory_resource>>(rmmCudaAsyncResources[i].get());
+            rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), resource.get());
+
+            rmmPoolMemoryResources.push_back(std::move(resource));
+        }
+        #endif
 
 
         
@@ -467,6 +493,14 @@ namespace care{
         //compareMaxRssToLimit(programOptions.memoryTotalLimit, "Error memorylimit after output construction");
 
         std::cout << "Construction of output file(s) finished." << std::endl;
+
+        // for(size_t i = 0; i < rmmCudaAsyncResources.size(); i++){
+        //     cub::SwitchDevice sd(programOptions.deviceIds[i]);
+        //     CUDACHECK(cudaDeviceSynchronize());
+        //     CUDACHECK(cudaMemPoolTrimTo(rmmCudaAsyncResources[i]->pool_handle(), 0));
+        // }
+
+        // CUDACHECK(cudaDeviceReset());
 
     }
 

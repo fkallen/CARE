@@ -6,6 +6,8 @@
 #include <rmm/device_vector.hpp>
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/mr/device/device_memory_resource.hpp>
+#include <rmm/exec_policy.hpp>
+#include <thrust/version.h>
 
 #include <gpu/cudaerrorcheck.cuh>
 
@@ -62,62 +64,6 @@ private:
         return std::make_pair(0, 0);
     }
 };
-
-class MyRMMCudaAsyncResource : public rmm::mr::device_memory_resource {
-public:
-
-    MyRMMCudaAsyncResource(      
-        cudaMemPool_t pool
-    ) : cuda_pool_handle_(pool){
-
-    }
-
-    [[nodiscard]] cudaMemPool_t pool_handle() const noexcept { return cuda_pool_handle_; }
-
-    ~MyRMMCudaAsyncResource() override{
-
-    }
-
-    MyRMMCudaAsyncResource(MyRMMCudaAsyncResource const&) = delete;
-    MyRMMCudaAsyncResource(MyRMMCudaAsyncResource&&)      = delete;
-    MyRMMCudaAsyncResource& operator=(MyRMMCudaAsyncResource const&) = delete;
-    MyRMMCudaAsyncResource& operator=(MyRMMCudaAsyncResource&&) = delete;
-
-    [[nodiscard]] bool supports_streams() const noexcept override { return true; }
-
-    [[nodiscard]] bool supports_get_mem_info() const noexcept override { return false; }
-
-private:
-    cudaMemPool_t cuda_pool_handle_;
-
-    void* do_allocate(std::size_t bytes, rmm::cuda_stream_view stream) override{
-        void* ptr = nullptr;
-
-        if (bytes > 0) {
-            CUDACHECK(cudaMallocFromPoolAsync(&ptr, bytes, pool_handle(), stream.value()));
-        }
-
-        return ptr;
-    }
-
-
-    void do_deallocate(void* ptr, std::size_t, rmm::cuda_stream_view stream) override{
-        if (ptr != nullptr) {
-            CUDACHECK(cudaFreeAsync(ptr, stream.value()));
-        }
-    }
-
-    [[nodiscard]] bool do_is_equal(rmm::mr::device_memory_resource const& other) const noexcept override{
-        return dynamic_cast<MyRMMCudaAsyncResource const*>(&other) != nullptr;
-    }
-
-    [[nodiscard]] std::pair<std::size_t, std::size_t> do_get_mem_info(rmm::cuda_stream_view) const override{
-        return std::make_pair(0, 0);
-    }
-};
-
-
-
 
 
 template<class T>
@@ -183,7 +129,37 @@ void append(rmm::device_uvector<T>& vec, const T* rangeBegin, const T* rangeEnd,
     }
 }
 
+namespace rmm{
 
+#if THRUST_VERSION >= 101600
+
+using thrust_exec_policy_nosync_t =
+  thrust::detail::execute_with_allocator<rmm::mr::thrust_allocator<char>,
+                                         thrust::cuda_cub::execute_on_stream_nosync_base>;
+/**
+ * @brief Helper class usable as a Thrust CUDA execution policy
+ * that uses RMM for temporary memory allocation on the specified stream
+ * and which allows the Thrust backend to skip stream synchronizations that
+ * are not required for correctness.
+ */
+class exec_policy_nosync : public thrust_exec_policy_nosync_t {
+ public:
+  explicit exec_policy_nosync(cuda_stream_view stream             = cuda_stream_default,
+                       rmm::mr::device_memory_resource* mr = mr::get_current_device_resource())
+    : thrust_exec_policy_nosync_t(
+        thrust::cuda::par_nosync(rmm::mr::thrust_allocator<char>(stream, mr)).on(stream.value()))
+  {
+  }
+};
+
+#else
+
+using thrust_exec_policy_nosync_t = thrust_exec_policy_t;
+using exec_policy_nosync = exec_policy;
+
+#endif
+
+}
 
 
 #endif

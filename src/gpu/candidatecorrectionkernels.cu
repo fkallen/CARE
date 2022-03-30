@@ -47,7 +47,7 @@ namespace gpu{
         const unsigned int* __restrict__ candidateSequencesData,
         const int* __restrict__ candidateSequencesLengths,
         const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
-        const int* __restrict__ numCandidatesToBeCorrected,
+        int numCandidatesToBeCorrected,
         const int* __restrict__ anchorIndicesOfCandidates,         
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
@@ -84,11 +84,9 @@ namespace gpu{
 
         char* const shared_correctedCandidate = (char*)(dynamicsmem + dynamicsmemSequencePitchInInts * groupIdInBlock);
 
-        const int loopEnd = *numCandidatesToBeCorrected;
-
         GpuClf localForest = gpuForest;
 
-        for(int id = groupId; id < loopEnd; id += numGroups){
+        for(int id = groupId; id < numCandidatesToBeCorrected; id += numGroups){
 
             const int candidateIndex = candidateIndicesOfCandidatesToBeCorrected[id];
             const int anchorIndex = anchorIndicesOfCandidates[candidateIndex];
@@ -278,7 +276,7 @@ namespace gpu{
         const unsigned int* __restrict__ candidateSequencesData,
         const int* __restrict__ candidateSequencesLengths,
         const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
-        const int* __restrict__ numCandidatesToBeCorrected,
+        int numCandidatesToBeCorrected,
         const int* __restrict__ anchorIndicesOfCandidates,         
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
@@ -298,9 +296,7 @@ namespace gpu{
 
         char* const shared_correctedCandidate = (char*)(&dynamicsmem[0] + dynamicsmemSequencePitchInInts * groupIdInBlock);
 
-        const int loopEnd = *numCandidatesToBeCorrected;
-
-        for(int id = groupId; id < loopEnd; id += numGroups){
+        for(int id = groupId; id < numCandidatesToBeCorrected; id += numGroups){
 
             const int candidateIndex = candidateIndicesOfCandidatesToBeCorrected[id];
             const int anchorIndex = anchorIndicesOfCandidates[candidateIndex];
@@ -363,8 +359,7 @@ namespace gpu{
         const unsigned int* __restrict__ candidateSequencesData,
         const int* __restrict__ candidateSequencesLengths,
         const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
-        const int* __restrict__ numCandidatesToBeCorrected,
-        const int* __restrict__ /*anchorIndicesOfCandidates*/,
+        int numCandidatesToBeCorrected,
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
         int* __restrict__ numMismatches
@@ -381,12 +376,9 @@ namespace gpu{
         using BlockReduce = cub::BlockReduce<int, BLOCKSIZE>;
         __shared__ typename BlockReduce::TempStorage temp_reduce;
 
-       
-        const int loopEnd = *numCandidatesToBeCorrected;
-
         int myNumMismatches = 0;
 
-        for(int id = groupId; id < loopEnd; id += numGroups){
+        for(int id = groupId; id < numCandidatesToBeCorrected; id += numGroups){
 
             const int candidateIndex = candidateIndicesOfCandidatesToBeCorrected[id];
             //const int anchorIndex = anchorIndicesOfCandidates[candidateIndex];
@@ -494,7 +486,7 @@ namespace gpu{
         const unsigned int* __restrict__ candidateSequencesData,
         const int* __restrict__ candidateSequencesLengths,
         const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
-        const int* __restrict__ numCandidatesToBeCorrected,
+        int numCandidatesToBeCorrected,
         const int* __restrict__ anchorIndicesOfCandidates,         
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
@@ -525,9 +517,7 @@ namespace gpu{
         }
         tgroup.sync();
       
-        const int loopEnd = *numCandidatesToBeCorrected;
-
-        for(int id = groupId; id < loopEnd; id += numGroups){
+        for(int id = groupId; id < numCandidatesToBeCorrected; id += numGroups){
 
             const int candidateIndex = candidateIndicesOfCandidatesToBeCorrected[id];
             const int anchorIndex = anchorIndicesOfCandidates[candidateIndex];
@@ -1579,8 +1569,7 @@ namespace gpu{
         const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
         const int* __restrict__ numCandidatesToBeCorrected,
         const int* __restrict__ anchorIndicesOfCandidates,
-        const int* __restrict__ d_numAnchors,
-        const int* __restrict__ d_numCandidates,         
+        int numCandidates,         
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
         size_t dynamicsmemSequencePitchInInts
@@ -1601,9 +1590,7 @@ namespace gpu{
 
         char* const shared_correctedCandidate = (char*)(dynamicsmem + dynamicsmemSequencePitchInInts * groupIdInBlock);
 
-        const int loopEnd = *numCandidatesToBeCorrected;
-
-        for(int id = groupId; id < loopEnd; id += numGroups){
+        for(int id = groupId; id < numCandidates; id += numGroups){
 
             const int candidateIndex = candidateIndicesOfCandidatesToBeCorrected[id];
             const int anchorIndex = anchorIndicesOfCandidates[candidateIndex];
@@ -1670,14 +1657,15 @@ namespace gpu{
         const unsigned int* d_candidateSequencesData,
         const int* d_candidateSequencesLengths,
         const int* d_candidateIndicesOfCandidatesToBeCorrected,
-        const int* d_numCandidatesToBeCorrected,
         const int* d_anchorIndicesOfCandidates,
-        const int /*numCandidates*/,          
+        const int numCandidatesToProcess,          
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
         int maximum_sequence_length,
         cudaStream_t stream
     ){
+        if(numCandidatesToProcess == 0) return;
+
         constexpr int blocksize = 128;
         constexpr int groupsize = 32;
         constexpr int numGroupsPerBlock = blocksize / groupsize;
@@ -1689,14 +1677,6 @@ namespace gpu{
 
         CUDACHECK(cudaGetDevice(&deviceId));
         CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
-
-        int numCandidatesToProcess = 0;
-        CUDACHECK(cudaMemcpyAsync(&numCandidatesToProcess, d_numCandidatesToBeCorrected, sizeof(int), D2H, stream));
-        CUDACHECK(cudaStreamSynchronize(stream));
-
-        if(numCandidatesToProcess == 0) return;
-
-
         
         int maxBlocksPerSMinit = 0;
         const std::size_t dynamicsmemPitchInInts = SDIV(maximum_sequence_length, sizeof(int));
@@ -1723,7 +1703,7 @@ namespace gpu{
             d_candidateSequencesData,
             d_candidateSequencesLengths,
             d_candidateIndicesOfCandidatesToBeCorrected,
-            d_numCandidatesToBeCorrected,
+            numCandidatesToProcess,
             d_anchorIndicesOfCandidates,         
             encodedSequencePitchInInts,
             decodedSequencePitchInBytes,
@@ -1756,8 +1736,7 @@ namespace gpu{
             d_candidateSequencesData,
             d_candidateSequencesLengths,
             d_candidateIndicesOfCandidatesToBeCorrected,
-            d_numCandidatesToBeCorrected,
-            d_anchorIndicesOfCandidates,         
+            numCandidatesToProcess,       
             encodedSequencePitchInInts,
             decodedSequencePitchInBytes,
             d_numMismatches.data()
@@ -1771,6 +1750,132 @@ namespace gpu{
         if(numMismatches == 0){
             return;
         }else{
+            const std::size_t smemFindMismatches = 0;
+            int maxBlocksPerSMFindMismatches = 0;
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &maxBlocksPerSMFindMismatches,
+                msaCorrectCandidatesWithForestKernel_multiphase_findMismatchesKernel<blocksize, groupsize>,
+                blocksize, 
+                smemFindMismatches
+            ));
+
+            dim3 blockFindMismatches = blocksize;
+            dim3 gridFindMismatches = std::min(maxBlocksPerSMFindMismatches * numSMs, SDIV(numCandidatesToProcess, (blocksize / groupsize)));
+
+            MismatchPositions mismatchPositions(numMismatches, stream, mr);
+
+            //helpers::GpuTimer timerfindMismatchesKernel(stream, "findMismatchesKernel");
+
+            msaCorrectCandidatesWithForestKernel_multiphase_findMismatchesKernel<blocksize, groupsize>
+                <<<gridFindMismatches, blockFindMismatches, smemFindMismatches, stream>>>(
+                d_correctedCandidates,
+                d_bestAlignmentFlags,
+                d_candidateSequencesData,
+                d_candidateSequencesLengths,
+                d_candidateIndicesOfCandidatesToBeCorrected,
+                numCandidatesToProcess,
+                d_anchorIndicesOfCandidates,         
+                encodedSequencePitchInInts,
+                decodedSequencePitchInBytes,
+                mismatchPositions
+            );
+            CUDACHECKASYNC;
+            //timerfindMismatchesKernel.print();
+
+
+            const std::size_t smemMsaProps = 0;
+            int maxBlocksPerSMMsaProps = 0;
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &maxBlocksPerSMMsaProps,
+                msaCorrectCandidatesWithForestKernel_multiphase_msapropsKernel<blocksize, groupsize>,
+                blocksize, 
+                smemMsaProps
+            ));
+
+            dim3 blockMsaProps = blocksize;
+            dim3 gridMsaProps = std::min(maxBlocksPerSMMsaProps * numSMs, SDIV(numMismatches, (blocksize / groupsize)));
+
+            rmm::device_uvector<GpuMSAProperties> d_msaPropertiesPerPosition(numMismatches, stream, mr);
+
+            //CUDACHECK(cudaStreamSynchronize(stream));
+            //helpers::GpuTimer timermsaprops(stream, "msapropsKernel");
+
+            msaCorrectCandidatesWithForestKernel_multiphase_msapropsKernel<blocksize, groupsize>
+                <<<gridMsaProps, blockMsaProps, smemMsaProps, stream>>>(
+                multiMSA,
+                d_shifts,
+                d_candidateSequencesLengths,       
+                mismatchPositions,
+                d_msaPropertiesPerPosition.data()
+            );
+            CUDACHECKASYNC;
+            //timermsaprops.print();
+
+
+
+            const std::size_t smemExtract = 0;
+            int maxBlocksPerSMExtract = 0;
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &maxBlocksPerSMExtract,
+                msaCorrectCandidatesWithForestKernel_multiphase_extractKernel<cands_extractor>,
+                blocksize, 
+                smemExtract
+            ));
+
+            dim3 blockExtract = blocksize;
+            dim3 gridExtract = std::min(maxBlocksPerSMExtract * numSMs, SDIV(numMismatches, blocksize));
+
+            rmm::device_uvector<float> d_featuresTransposed(numMismatches * cands_extractor::numFeatures(), stream, mr);
+
+            //helpers::GpuTimer timerextract(stream, "extractKernel");
+
+            msaCorrectCandidatesWithForestKernel_multiphase_extractKernel<cands_extractor>
+                <<<gridExtract, blockExtract, smemExtract, stream>>>(
+                d_featuresTransposed.data(),
+                multiMSA,
+                estimatedCoverage,
+                d_shifts,
+                d_candidateSequencesLengths,  
+                mismatchPositions,
+                d_msaPropertiesPerPosition.data()
+            );
+            CUDACHECKASYNC;
+            //timerextract.print();
+
+            #if 0
+            constexpr int maxSmemCorrect = 32 * 1024;
+            const std::size_t blockFeaturesBytesCorrectGroup = sizeof(float) * cands_extractor::numFeatures() * (blocksize / groupsize);
+            bool useGlobalInsteadOfSmemCorrectGroup = blockFeaturesBytesCorrectGroup > maxSmemCorrect;
+            const std::size_t smemCorrectGroup = useGlobalInsteadOfSmemCorrectGroup ? 0 : blockFeaturesBytesCorrectGroup;
+
+            int maxBlocksPerSMCorrectGroup = 0;
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &maxBlocksPerSMCorrectGroup,
+                msaCorrectCandidatesWithForestKernel_multiphase_correctKernelGroup<blocksize, groupsize, GpuForest::Clf>,
+                blocksize, 
+                smemCorrectGroup
+            ));
+
+            dim3 blockCorrectGroup = blocksize;
+            dim3 gridCorrectGroup = std::min(maxBlocksPerSMCorrectGroup * numSMs, SDIV(numMismatches, (blocksize / groupsize)));
+
+            //helpers::GpuTimer timercorrectGroup(stream, "correctKernelGroup");
+            msaCorrectCandidatesWithForestKernel_multiphase_correctKernelGroup<blocksize, groupsize, GpuForest::Clf>
+                <<<gridCorrectGroup, blockCorrectGroup, smemCorrectGroup, stream>>>(
+                d_correctedCandidates,
+                multiMSA,
+                gpuForest,
+                forestThreshold,
+                d_bestAlignmentFlags,
+                d_candidateSequencesLengths,     
+                decodedSequencePitchInBytes,
+                mismatchPositions,
+                d_featuresTransposed.data(),
+                useGlobalInsteadOfSmemCorrectGroup,
+                cands_extractor::numFeatures()
+            );
+            CUDACHECKASYNC;
+            //timercorrectGroup.print();
 
             const std::size_t smemFindMismatches = 0;
             int maxBlocksPerSMFindMismatches = 0;
@@ -1973,6 +2078,7 @@ namespace gpu{
             // CUDACHECKASYNC;
             //timercomparemsapropsextractcorrectKernel.print();
             }
+        }
     }
 
     void callMsaCorrectCandidatesWithForestKernelSinglePhaseOld(
@@ -1986,14 +2092,15 @@ namespace gpu{
         const unsigned int* d_candidateSequencesData,
         const int* d_candidateSequencesLengths,
         const int* d_candidateIndicesOfCandidatesToBeCorrected,
-        const int* d_numCandidatesToBeCorrected,
         const int* d_anchorIndicesOfCandidates,
-        const int /*numCandidates*/,
+        const int numCandidates,
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
         int maximum_sequence_length,
         cudaStream_t stream
     ){
+        if(numCandidates == 0) return;
+
         constexpr int blocksize = 128;
         constexpr int groupsize = 32;
 
@@ -2036,7 +2143,7 @@ namespace gpu{
             d_candidateSequencesData,
             d_candidateSequencesLengths,
             d_candidateIndicesOfCandidatesToBeCorrected,
-            d_numCandidatesToBeCorrected,
+            numCandidates,
             d_anchorIndicesOfCandidates, 
             encodedSequencePitchInInts,
             decodedSequencePitchInBytes,
@@ -2057,7 +2164,6 @@ namespace gpu{
         const unsigned int* d_candidateSequencesData,
         const int* d_candidateSequencesLengths,
         const int* d_candidateIndicesOfCandidatesToBeCorrected,
-        const int* d_numCandidatesToBeCorrected,
         const int* d_anchorIndicesOfCandidates,
         const int numCandidates,      
         int encodedSequencePitchInInts,
@@ -2078,7 +2184,6 @@ namespace gpu{
             d_candidateSequencesData,
             d_candidateSequencesLengths,
             d_candidateIndicesOfCandidatesToBeCorrected,
-            d_numCandidatesToBeCorrected,
             d_anchorIndicesOfCandidates,
             numCandidates,       
             encodedSequencePitchInInts,
@@ -2100,7 +2205,6 @@ namespace gpu{
             d_candidateSequencesData,
             d_candidateSequencesLengths,
             d_candidateIndicesOfCandidatesToBeCorrected,
-            d_numCandidatesToBeCorrected,
             d_anchorIndicesOfCandidates,
             numCandidates,       
             encodedSequencePitchInInts,
@@ -2335,8 +2439,7 @@ namespace gpu{
         const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
         const int* __restrict__ numCandidatesToBeCorrected,
         const int* __restrict__ anchorIndicesOfCandidates,
-        const int* d_numAnchors,
-        const int* d_numCandidates,
+        int numCandidates,
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
         int maximum_sequence_length,
@@ -2372,8 +2475,8 @@ namespace gpu{
         const int maxBlocks = maxBlocksPerSM * numSMs;
 
     	dim3 block(blocksize, 1, 1);
-        //dim3 grid(std::min(maxBlocks, n_candidates * numGroupsPerBlock));
-        dim3 grid(maxBlocks); 
+        dim3 grid(std::min(maxBlocks, numCandidates * (blocksize / groupsize)));
+        //dim3 grid(maxBlocks); 
 
     	msaCorrectCandidatesKernel<blocksize, groupsize><<<grid, block, smem, stream>>>(
             correctedCandidates, 
@@ -2386,8 +2489,7 @@ namespace gpu{
             candidateIndicesOfCandidatesToBeCorrected, 
             numCandidatesToBeCorrected, 
             anchorIndicesOfCandidates, 
-            d_numAnchors, 
-            d_numCandidates, 
+            numCandidates, 
             encodedSequencePitchInInts, 
             decodedSequencePitchInBytes, 
             dynamicsmemPitchInInts 
