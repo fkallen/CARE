@@ -211,7 +211,7 @@ public:
     }
 
     bool decide_full(const features_t& features) const {
-        return prob(features) >= thresh_;
+        return prob_full(features) >= thresh_;
     }
 
     bool decide(const features_t& features) const {
