@@ -140,11 +140,9 @@ namespace gpu{
             d_numCandidates(0, cudaStreamPerThread, mr),
             d_anchorReadIds(0, cudaStreamPerThread, mr),
             d_anchor_sequences_data(0, cudaStreamPerThread, mr),
-            //d_anchor_qualities(0, cudaStreamPerThread, mr),
             d_anchor_sequences_lengths(0, cudaStreamPerThread, mr),
             d_candidate_read_ids(0, cudaStreamPerThread, mr),
             d_candidate_sequences_data(0, cudaStreamPerThread, mr),
-            //d_candidate_qualities(0, cudaStreamPerThread, mr),
             d_candidate_sequences_lengths(0, cudaStreamPerThread, mr),
             d_candidates_per_anchor(0, cudaStreamPerThread, mr),
             d_candidates_per_anchor_prefixsum(0, cudaStreamPerThread, mr)
@@ -404,23 +402,6 @@ namespace gpu{
             );
 
             DEBUGSTREAMSYNC(stream);
-
-            // if(useQualityScores){
-            //     ecinput.d_anchor_qualities.resize(qualityPitchInBytes * numAnchors, stream);
-
-            //     gpuReadStorage->gatherQualities(
-            //         readstorageHandle,
-            //         ecinput.d_anchor_qualities.data(),
-            //         qualityPitchInBytes,
-            //         makeAsyncConstBufferWrapper(ecinput.h_anchorReadIds.data()),
-            //         ecinput.d_anchorReadIds.data(),
-            //         numAnchors,
-            //         stream,
-            //         mr
-            //     );
-
-            //     DEBUGSTREAMSYNC(stream);
-            // }
         }
 
         void getCandidateReads(GpuErrorCorrectorInput& ecinput, bool /*useQualityScores*/, cudaStream_t stream){
@@ -452,23 +433,6 @@ namespace gpu{
             );
 
             DEBUGSTREAMSYNC(stream);
-
-            // if(useQualityScores){
-            //     ecinput.d_candidate_qualities.resize(qualityPitchInBytes * numCandidates, stream);
-                
-            //     gpuReadStorage->gatherQualities(
-            //         readstorageHandle,
-            //         ecinput.d_candidate_qualities.data(),
-            //         qualityPitchInBytes,
-            //         makeAsyncConstBufferWrapper(ecinput.h_candidate_read_ids.data()),
-            //         ecinput.d_candidate_read_ids.data(),
-            //         numCandidates,
-            //         stream,
-            //         mr
-            //     );
-
-            //     DEBUGSTREAMSYNC(stream);
-            // }
         }
 
         void getCandidateReadIdsWithMinhashing(GpuErrorCorrectorInput& ecinput, cudaStream_t stream){
@@ -1045,14 +1009,10 @@ namespace gpu{
             gpuForestCandidate{gpuForestCandidate_},
             readstorageHandle{gpuReadStorage->makeHandle()},
             d_indicesForGather{0, cudaStreamPerThread, mr},
-            //d_candidate_qualities_compact{0, cudaStreamPerThread, mr},
             d_anchorContainsN{0, cudaStreamPerThread, mr},
             d_candidateContainsN{0, cudaStreamPerThread, mr},
             d_candidate_sequences_lengths{0, cudaStreamPerThread, mr},
             d_candidate_sequences_data{0, cudaStreamPerThread, mr},
-            //d_transposedCandidateSequencesData{0, cudaStreamPerThread, mr},
-            d_anchor_qualities{0, cudaStreamPerThread, mr},
-            d_candidate_qualities{0, cudaStreamPerThread, mr},
             d_anchorIndicesOfCandidates{0, cudaStreamPerThread, mr},
             d_alignment_overlaps{0, cudaStreamPerThread, mr},
             d_alignment_shifts{0, cudaStreamPerThread, mr},
@@ -1220,30 +1180,6 @@ namespace gpu{
 
             CUDACHECK(cudaEventRecord(inputCandidateDataIsReadyEvent, stream));
 
-            // if(programOptions->useQualityScores){
-
-            //     CUDACHECK(cudaMemcpyAsync(
-            //         d_anchor_qualities.data(),
-            //         currentInput->d_anchor_qualities.data(),
-            //         sizeof(char) * qualityPitchInBytes * currentNumAnchors,
-            //         D2D,
-            //         stream
-            //     ));
-
-            //     DEBUGSTREAMSYNC(stream);
-
-            //     CUDACHECK(cudaMemcpyAsync(
-            //         d_candidate_qualities.data(),
-            //         currentInput->d_candidate_qualities.data(),
-            //         sizeof(char) * qualityPitchInBytes * currentNumCandidates,
-            //         D2D,
-            //         stream
-            //     ));
-
-            //     DEBUGSTREAMSYNC(stream);
-
-            // }
-
             //after gpu data has been copied to local working set, the gpu data of currentInput can be reused
             CUDACHECK(currentInput->event.record(stream));
 
@@ -1319,9 +1255,6 @@ namespace gpu{
             handleDevice(d_candidateContainsN);
             handleDevice(d_candidate_sequences_lengths);
             handleDevice(d_candidate_sequences_data);
-            //handleDevice(d_transposedCandidateSequencesData);
-            handleDevice(d_anchor_qualities);
-            handleDevice(d_candidate_qualities);
             handleDevice(d_anchorIndicesOfCandidates);
             handleDevice(d_alignment_overlaps);
             handleDevice(d_alignment_shifts);
@@ -1369,8 +1302,6 @@ namespace gpu{
             handleDevice(d_candidateContainsN);
             handleDevice(d_candidate_sequences_lengths);
             handleDevice(d_candidate_sequences_data);
-            handleDevice(d_anchor_qualities);
-            handleDevice(d_candidate_qualities);
             handleDevice(d_anchorIndicesOfCandidates);
             handleDevice(d_alignment_overlaps);
             handleDevice(d_alignment_shifts);
@@ -1415,7 +1346,6 @@ namespace gpu{
             handleDevice(d_candidateContainsN);
             handleDevice(d_candidate_sequences_lengths);
             handleDevice(d_candidate_sequences_data);
-            handleDevice(d_candidate_qualities);
             handleDevice(d_anchorIndicesOfCandidates);
             handleDevice(d_alignment_overlaps);
             handleDevice(d_alignment_shifts);
@@ -1443,7 +1373,6 @@ namespace gpu{
             };
 
             zero(d_anchorContainsN);
-            zero(d_anchor_qualities);
  
             zero(d_indices_per_anchor);
             zero(d_num_indices);
@@ -1471,8 +1400,6 @@ namespace gpu{
             zero(d_candidate_read_ids);
             zero(d_candidate_sequences_lengths);
             zero(d_candidate_sequences_data);
-            //zero(d_transposedCandidateSequencesData);            
-            zero(d_candidate_qualities);
             zero(d_alignment_overlaps);
             zero(d_alignment_shifts);
             zero(d_alignment_nOps);
@@ -1497,10 +1424,6 @@ namespace gpu{
 
             //does not depend on number of candidates
             d_anchorContainsN.resize(maxAnchors, stream);
-
-            if(programOptions->useQualityScores){
-                d_anchor_qualities.resize(maxAnchors * qualityPitchInBytes, stream);
-            }
 
             d_indices_per_anchor.resize(maxAnchors, stream);
             d_num_indices.resize(1, stream);
@@ -1582,12 +1505,6 @@ namespace gpu{
 
             h_flagsCandidates.resize(maxCandidates);
             
-            if(programOptions->useQualityScores){
-                d_candidate_qualities.resize(maxCandidates * qualityPitchInBytes, stream);
-
-                //d_candidate_qualities_compact.resize(maxCandidates * qualityPitchInBytes, stream);
-            }
-
             h_indicesForGather.resize(maxCandidates);
             d_indicesForGather.resize(maxCandidates, stream);
             
@@ -2881,17 +2798,21 @@ namespace gpu{
 
         void buildAndRefineMultipleSequenceAlignment(cudaStream_t stream){
 
+            char* d_anchor_qual = nullptr;
+            char* d_cand_qual = nullptr;
+
             if(programOptions->useQualityScores){
                 #if 1
 
                 cudaStream_t qualityStream = streampool::get_current_device_pool()->get_stream();
 
-                CUDACHECK(cudaStreamWaitEvent(qualityStream,inputCandidateDataIsReadyEvent, 0));
+                CUDACHECK(cudaStreamWaitEvent(qualityStream, inputCandidateDataIsReadyEvent, 0));
 
+                d_anchor_qual = reinterpret_cast<char*>(mr->allocate(currentNumAnchors * qualityPitchInBytes, qualityStream));
 
                 gpuReadStorage->gatherQualities(
                     readstorageHandle,
-                    d_anchor_qualities.data(),
+                    d_anchor_qual,
                     qualityPitchInBytes,
                     makeAsyncConstBufferWrapper(currentInput->h_anchorReadIds.data()),
                     d_anchorReadIds.data(),
@@ -2900,9 +2821,11 @@ namespace gpu{
                     mr
                 );
 
+                d_cand_qual = reinterpret_cast<char*>(mr->allocate(currentNumCandidates * qualityPitchInBytes, qualityStream));
+
                 gpuReadStorage->gatherQualities(
                     readstorageHandle,
-                    d_candidate_qualities.data(),
+                    d_cand_qual,
                     qualityPitchInBytes,
                     makeAsyncConstBufferWrapper(currentInput->h_candidate_read_ids.data()),
                     d_candidate_read_ids.data(),
@@ -2916,7 +2839,7 @@ namespace gpu{
 
                 #else 
 
-                rmm::device_uvector<int> d_prefixsum(maxAnchors + 1, stream);
+                rmm::device_uvector<int> d_prefixsum(maxAnchors + 1, stream, mr);
 
                 CubCallWrapper(mr).cubExclusiveSum(
                     d_indices_per_anchor.data(),
@@ -2950,9 +2873,11 @@ namespace gpu{
 
                 const int hNumIndices = thrust::distance(zippedValid, copyifend);
 
+                d_anchor_qual = reinterpret_cast<char*>(mr->allocate(currentNumAnchors * qualityPitchInBytes, stream));
+
                 gpuReadStorage->gatherQualities(
                     readstorageHandle,
-                    d_anchor_qualities.data(),
+                    d_anchor_qual,
                     qualityPitchInBytes,
                     makeAsyncConstBufferWrapper(currentInput->h_anchorReadIds.data()),
                     d_anchorReadIds.data(),
@@ -2961,7 +2886,7 @@ namespace gpu{
                     mr
                 );               
 
-                rmm::device_uvector<char> d_candidate_qualities_compact(hNumIndices * qualityPitchInBytes, stream);
+                rmm::device_uvector<char> d_candidate_qualities_compact(hNumIndices * qualityPitchInBytes, stream, mr);
 
                 nvtx::push_range("get compact qscores " + std::to_string(hNumIndices) + " " + std::to_string(currentNumCandidates), 6);
                 gpuReadStorage->gatherQualities(
@@ -2976,12 +2901,14 @@ namespace gpu{
                 );
                 nvtx::pop_range();
 
+                d_cand_qual = reinterpret_cast<char*>(mr->allocate(currentNumCandidates * qualityPitchInBytes, stream));
 
                 #if 0
+                //scatter compact quality scores to correct positions
                 helpers::lambda_kernel<<<SDIV(hNumIndices, 256 / 8), 256, 0, stream>>>(
                     [
                         d_candidate_qualities_compact = d_candidate_qualities_compact.data(),
-                        d_candidate_qualities = d_candidate_qualities.data(),
+                        d_candidate_qualities = d_cand_qual,
                         d_candidate_sequences_lengths = d_candidate_sequences_lengths.data(),
                         qualityPitchInBytes = qualityPitchInBytes,
                         d_indices = d_indices.data(),
@@ -3035,7 +2962,7 @@ namespace gpu{
                 helpers::lambda_kernel<<<maxAnchors, 256, 0, stream>>>(
                     [
                         d_candidate_qualities_compact = d_candidate_qualities_compact.data(),
-                        d_candidate_qualities = d_candidate_qualities.data(),
+                        d_candidate_qualities = d_cand_qual,
                         d_candidate_sequences_lengths = d_candidate_sequences_lengths.data(),
                         qualityPitchInBytes = qualityPitchInBytes,
                         d_indices = d_indices.data(),
@@ -3045,7 +2972,7 @@ namespace gpu{
                         d_candidates_per_anchor_prefixsum = d_candidates_per_anchor_prefixsum.data(),
                         currentNumAnchors = currentNumAnchors
                     ] __device__ (){
-                        constexpr int groupsize = 32;
+                        constexpr int groupsize = 8;
                         auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
 
                         const int groupId = threadIdx.x / groupsize;
@@ -3095,11 +3022,11 @@ namespace gpu{
                 d_candidates_per_anchor_prefixsum.data(),
                 d_anchor_sequences_lengths.data(),
                 d_anchor_sequences_data.data(),
-                d_anchor_qualities.data(),
+                d_anchor_qual,
                 currentNumAnchors,
                 d_candidate_sequences_lengths.data(),
                 d_candidate_sequences_data.data(),
-                d_candidate_qualities.data(),
+                d_cand_qual,
                 d_isPairedCandidate.data(),
                 maxCandidates,
                 d_numAnchors.data(),
@@ -3130,11 +3057,11 @@ namespace gpu{
                     d_candidates_per_anchor_prefixsum.data(),
                     d_anchor_sequences_lengths.data(),
                     d_anchor_sequences_data.data(),
-                    d_anchor_qualities.data(),
+                    d_anchor_qual,
                     currentNumAnchors,
                     d_candidate_sequences_lengths.data(),
                     d_candidate_sequences_data.data(),
-                    d_candidate_qualities.data(),
+                    d_cand_qual,
                     d_isPairedCandidate.data(),
                     maxCandidates,
                     d_numAnchors.data(),
@@ -3152,6 +3079,11 @@ namespace gpu{
                 std::swap(d_indices_per_anchor_tmp, d_indices_per_anchor);
                 std::swap(d_num_indices_tmp, d_num_indices);
 
+            }
+
+            if(programOptions->useQualityScores){
+                mr->deallocate(d_anchor_qual, currentNumAnchors * qualityPitchInBytes, stream);
+                mr->deallocate(d_cand_qual, currentNumCandidates * qualityPitchInBytes, stream);
             }
 
             //CUDACHECK(cudaStreamSynchronize(stream)); //debug
@@ -3723,15 +3655,10 @@ namespace gpu{
         PinnedBuffer<read_number> h_indicesForGather;
         rmm::device_uvector<read_number> d_indicesForGather;
 
-        //rmm::device_uvector<char> d_candidate_qualities_compact;
-
         rmm::device_uvector<bool> d_anchorContainsN;
         rmm::device_uvector<bool> d_candidateContainsN;
         rmm::device_uvector<int> d_candidate_sequences_lengths;
         rmm::device_uvector<unsigned int> d_candidate_sequences_data;
-        //rmm::device_uvector<unsigned int> d_transposedCandidateSequencesData;
-        rmm::device_uvector<char> d_anchor_qualities;
-        rmm::device_uvector<char> d_candidate_qualities;
         rmm::device_uvector<int> d_anchorIndicesOfCandidates;
         rmm::device_uvector<int> d_alignment_overlaps;
         rmm::device_uvector<int> d_alignment_shifts;
