@@ -1730,7 +1730,7 @@ namespace gpu{
             CubCallWrapper(mr).cubExclusiveSum(
                 d_num_corrected_candidates_per_anchor.data(), 
                 d_num_corrected_candidates_per_anchor_prefixsum.data(), 
-                maxAnchors, 
+                currentNumAnchors, 
                 stream
             );
 
@@ -3055,7 +3055,6 @@ namespace gpu{
                 stream
             );
 
-            //int h_num_total_corrected_candidates = 0;
             CUDACHECK(cudaMemcpyAsync(
                 h_num_total_corrected_candidates.data(),
                 d_num_total_corrected_candidates.data(),
@@ -3128,8 +3127,7 @@ namespace gpu{
                 d_indices_of_corrected_candidates.data(),
                 d_num_total_corrected_candidates.data(),
                 d_anchorIndicesOfCandidates.data(),
-                d_numAnchors.data(),
-                d_numCandidates.data(),                
+                *h_num_total_corrected_candidates,
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
                 gpuReadStorage->getSequenceLengthUpperBound(),
@@ -3298,9 +3296,8 @@ namespace gpu{
                 d_candidate_sequences_data.data(),
                 d_candidate_sequences_lengths.data(),
                 d_indices_of_corrected_candidates.data(),
-                d_num_total_corrected_candidates.data(),
                 d_anchorIndicesOfCandidates.data(),
-                currentNumCandidates, //*h_num_total_corrected_candidates,
+                *h_num_total_corrected_candidates,
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
                 gpuReadStorage->getSequenceLengthUpperBound(),
@@ -3317,7 +3314,7 @@ namespace gpu{
                 d_candidate_sequences_data.data(),
                 d_candidate_sequences_lengths.data(),
                 d_corrected_candidates.data(),
-                (*h_num_total_corrected_candidates),
+                *h_num_total_corrected_candidates,
                 true,
                 maxNumEditsPerSequence,
                 encodedSequencePitchInInts,
