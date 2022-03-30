@@ -999,7 +999,7 @@ namespace gpu{
             const GpuForest* gpuForestCandidate_
         ) : 
             maxAnchors{maxAnchorsPerCall},
-            maxCandidates{0},
+            //maxCandidates{0},
             correctionFlags{&correctionFlags_},
             gpuReadStorage{&gpuReadStorage_},
             programOptions{&programOptions_},
@@ -1457,12 +1457,12 @@ namespace gpu{
             //std::cerr << "numReads: " << numReads << ", numCandidates: " << numCandidates << "\n";
 
             //bool maxCandidatesDidChange = false;
-            constexpr int stepsizeForMaxCandidates = 10000;
-            if(numCandidates > maxCandidates){
-                //round up numCandidates to next multiple of stepsize
-                maxCandidates = SDIV(numCandidates, stepsizeForMaxCandidates) * stepsizeForMaxCandidates;
-                //maxCandidatesDidChange = true;
-            }
+            // constexpr int stepsizeForMaxCandidates = 10000;
+            // if(numCandidates > maxCandidates){
+            //     //round up numCandidates to next multiple of stepsize
+            //     maxCandidates = SDIV(numCandidates, stepsizeForMaxCandidates) * stepsizeForMaxCandidates;
+            //     //maxCandidatesDidChange = true;
+            // }
 
             //std::size_t numEditsCandidates = SDIV(editsPitchInBytes * maxCandidates, sizeof(EncodedCorrectionEdit));
 
@@ -1494,38 +1494,38 @@ namespace gpu{
             // outputBuffersReallocated |= currentOutput->h_correctedCandidatesOffsets.resize(maxCandidates * decodedSequencePitchInBytes);
             
             
-            d_anchorIndicesOfCandidates.resize(maxCandidates, stream);
-            d_candidateContainsN.resize(maxCandidates, stream);
-            d_candidate_read_ids.resize(maxCandidates, stream);
-            d_candidate_sequences_lengths.resize(maxCandidates, stream);
-            d_candidate_sequences_data.resize(maxCandidates * encodedSequencePitchInInts, stream);
+            d_anchorIndicesOfCandidates.resize(numCandidates, stream);
+            d_candidateContainsN.resize(numCandidates, stream);
+            d_candidate_read_ids.resize(numCandidates, stream);
+            d_candidate_sequences_lengths.resize(numCandidates, stream);
+            d_candidate_sequences_data.resize(numCandidates * encodedSequencePitchInInts, stream);
             //d_transposedCandidateSequencesData.resize(maxCandidates * encodedSequencePitchInInts, stream);
-            d_isPairedCandidate.resize(maxCandidates, stream);
-            h_isPairedCandidate.resize(maxCandidates);
+            d_isPairedCandidate.resize(numCandidates, stream);
+            h_isPairedCandidate.resize(numCandidates);
 
-            h_flagsCandidates.resize(maxCandidates);
+            h_flagsCandidates.resize(numCandidates);
             
-            h_indicesForGather.resize(maxCandidates);
-            d_indicesForGather.resize(maxCandidates, stream);
+            h_indicesForGather.resize(numCandidates);
+            d_indicesForGather.resize(numCandidates, stream);
             
-            d_alignment_overlaps.resize(maxCandidates, stream);
-            d_alignment_shifts.resize(maxCandidates, stream);
-            d_alignment_nOps.resize(maxCandidates, stream);
-            d_alignment_best_alignment_flags.resize(maxCandidates, stream);
-            d_indices.resize(maxCandidates + 1, stream);
+            d_alignment_overlaps.resize(numCandidates, stream);
+            d_alignment_shifts.resize(numCandidates, stream);
+            d_alignment_nOps.resize(numCandidates, stream);
+            d_alignment_best_alignment_flags.resize(numCandidates, stream);
+            d_indices.resize(numCandidates + 1, stream);
             //d_corrected_candidates.resize(maxCandidates * decodedSequencePitchInBytes, stream);
             //d_editsPerCorrectedCandidate.resize(numEditsCandidates, stream);
 
             //d_numEditsPerCorrectedCandidate.resize(maxCandidates, stream);
-            d_indices_of_corrected_candidates.resize(maxCandidates, stream);
+            d_indices_of_corrected_candidates.resize(numCandidates, stream);
 
-            if(numCandidates > maxCandidates){
-                CUDACHECK(cudaStreamSynchronize(stream));
+            // if(numCandidates > numCandidates){
+            //     CUDACHECK(cudaStreamSynchronize(stream));
 
-                cudaMemPool_t mempool;
-                CUDACHECK(cudaDeviceGetMemPool(&mempool, deviceId));
-                CUDACHECK(cudaMemPoolTrimTo(mempool, 0));
-            }
+            //     cudaMemPool_t mempool;
+            //     CUDACHECK(cudaDeviceGetMemPool(&mempool, deviceId));
+            //     CUDACHECK(cudaMemPoolTrimTo(mempool, 0));
+            // }
 
             // if(maxCandidatesDidChange){
             //     std::cerr << "maxCandidates changed to " << maxCandidates << "\n";
@@ -2102,7 +2102,7 @@ namespace gpu{
             const bool removeAmbiguousAnchors = programOptions->excludeAmbiguousReads;
             const bool removeAmbiguousCandidates = programOptions->excludeAmbiguousReads;
             
-            rmm::device_uvector<bool> d_alignment_isValid(maxCandidates, stream, mr);
+            rmm::device_uvector<bool> d_alignment_isValid(currentNumCandidates, stream, mr);
 
             std::size_t bytes = 0;
 
@@ -2128,7 +2128,7 @@ namespace gpu{
                 d_candidateContainsN.data(),
                 removeAmbiguousCandidates,
                 maxAnchors,
-                maxCandidates,
+                currentNumCandidates,
                 gpuReadStorage->getSequenceLengthUpperBound(),
                 encodedSequencePitchInInts,
                 programOptions->min_overlap,
@@ -2162,7 +2162,7 @@ namespace gpu{
                 d_candidateContainsN.data(),
                 removeAmbiguousCandidates,
                 maxAnchors,
-                maxCandidates,
+                currentNumCandidates,
                 gpuReadStorage->getSequenceLengthUpperBound(),
                 encodedSequencePitchInInts,
                 programOptions->min_overlap,
@@ -2183,7 +2183,7 @@ namespace gpu{
                     d_numAnchors.data(),
                     d_numCandidates.data(),
                     maxAnchors,
-                    maxCandidates,
+                    currentNumCandidates,
                     programOptions->estimatedErrorrate,
                     programOptions->estimatedCoverage * programOptions->m_coverage,
                     stream
@@ -2319,7 +2319,7 @@ namespace gpu{
                     d_numAnchors.data(),
                     d_numCandidates.data(),
                     maxAnchors,
-                    maxCandidates,
+                    currentNumCandidates,
                     programOptions->estimatedErrorrate,
                     programOptions->estimatedCoverage * programOptions->m_coverage,
                     stream
@@ -2337,7 +2337,7 @@ namespace gpu{
                 d_numAnchors.data(),
                 d_numCandidates.data(),
                 maxAnchors,
-                maxCandidates,
+                currentNumCandidates,
                 stream
             );
 
@@ -2360,7 +2360,7 @@ namespace gpu{
             rmm::device_uvector<int> d_num_indices_new(1, stream, mr);        
             rmm::device_uvector<int> d_numCandidates_new(1, stream, mr);            
 
-            rmm::device_uvector<int> d_inputPositions(maxCandidates, stream, mr);
+            rmm::device_uvector<int> d_inputPositions(currentNumCandidates, stream, mr);
             auto newNumCandidates = thrust::distance(
                 d_inputPositions.begin(),
                 thrust::copy_if(
@@ -2392,8 +2392,7 @@ namespace gpu{
             ));
 
 
-            constexpr int stepsizeForMaxCandidates = 10000;
-            auto newNumCandidatesRounded = SDIV(newNumCandidates, stepsizeForMaxCandidates) * stepsizeForMaxCandidates;
+            auto newNumCandidatesRounded = newNumCandidates;
 
             rmm::device_uvector<bool> d_candidateContainsN_new(newNumCandidatesRounded, stream, mr);
             rmm::device_uvector<int> d_candidate_sequences_lengths_new(newNumCandidatesRounded, stream, mr);
@@ -2561,7 +2560,7 @@ namespace gpu{
             rmm::device_uvector<int> d_num_indices_new(1, stream, mr);        
             rmm::device_uvector<int> d_numCandidates_new(1, stream, mr);            
 
-            rmm::device_uvector<int> d_inputPositions(maxCandidates, stream, mr);
+            rmm::device_uvector<int> d_inputPositions(currentNumCandidates, stream, mr);
             CubCallWrapper(mr).cubSelectFlagged(
                 thrust::make_counting_iterator(0),
                 thrust::make_transform_iterator(
@@ -2594,8 +2593,8 @@ namespace gpu{
 
             CUDACHECK(cudaStreamSynchronize(stream));
             const int newNumCandidates = *h_num_indices;
-            constexpr int stepsizeForMaxCandidates = 10000;
-            auto newNumCandidatesRounded = SDIV(newNumCandidates, stepsizeForMaxCandidates) * stepsizeForMaxCandidates;
+
+            auto newNumCandidatesRounded = newNumCandidates;
 
             rmm::device_uvector<bool> d_candidateContainsN_new(newNumCandidatesRounded, stream, mr);
             rmm::device_uvector<int> d_candidate_sequences_lengths_new(newNumCandidatesRounded, stream, mr);
@@ -3028,7 +3027,7 @@ namespace gpu{
                 d_candidate_sequences_data.data(),
                 d_cand_qual,
                 d_isPairedCandidate.data(),
-                maxCandidates,
+                currentNumCandidates,
                 d_numAnchors.data(),
                 encodedSequencePitchInInts,
                 qualityPitchInBytes,
@@ -3040,7 +3039,7 @@ namespace gpu{
 
             if(useMsaRefinement()){
                 
-                rmm::device_uvector<int> d_indices_tmp(maxCandidates+1, stream, mr);
+                rmm::device_uvector<int> d_indices_tmp(currentNumCandidates+1, stream, mr);
                 rmm::device_uvector<int> d_indices_per_anchor_tmp(maxAnchors+1, stream, mr);
                 rmm::device_uvector<int> d_num_indices_tmp(1, stream, mr);
 
@@ -3063,7 +3062,7 @@ namespace gpu{
                     d_candidate_sequences_data.data(),
                     d_cand_qual,
                     d_isPairedCandidate.data(),
-                    maxCandidates,
+                    currentNumCandidates,
                     d_numAnchors.data(),
                     encodedSequencePitchInInts,
                     qualityPitchInBytes,
@@ -3240,7 +3239,7 @@ namespace gpu{
                 programOptions->m_coverage / 6.0f * programOptions->estimatedCoverage);
             const int new_columns_to_correct = programOptions->new_columns_to_correct;
 
-            rmm::device_uvector<bool> d_candidateCanBeCorrected(maxCandidates, stream, mr);
+            rmm::device_uvector<bool> d_candidateCanBeCorrected(currentNumCandidates, stream, mr);
 
             cub::TransformInputIterator<bool, IsHqAnchor, AnchorHighQualityFlag*>
                 d_isHqanchor(d_is_high_quality_anchor.data(), IsHqAnchor{});
@@ -3252,8 +3251,8 @@ namespace gpu{
                 d_numAnchors.data()
             ); CUDACHECKASYNC;
 
-            gpucorrectorkernels::initArraysBeforeCandidateCorrectionKernel<<<SDIV(maxCandidates, 128), 128, 0, stream>>>(
-                maxCandidates,
+            gpucorrectorkernels::initArraysBeforeCandidateCorrectionKernel<<<SDIV(currentNumCandidates, 128), 128, 0, stream>>>(
+                currentNumCandidates,
                 d_numAnchors.data(),
                 d_num_corrected_candidates_per_anchor.data(),
                 d_candidateCanBeCorrected.data()
@@ -3323,7 +3322,7 @@ namespace gpu{
                 d_candidateCanBeCorrected.data(),
                 d_indices_of_corrected_candidates.data(),
                 d_num_total_corrected_candidates.data(),
-                maxCandidates,
+                currentNumCandidates,
                 stream
             );
 
@@ -3439,7 +3438,7 @@ namespace gpu{
                 programOptions->m_coverage / 6.0f * programOptions->estimatedCoverage);
             const int new_columns_to_correct = programOptions->new_columns_to_correct;
 
-            rmm::device_uvector<bool> d_candidateCanBeCorrected(maxCandidates, stream, mr);
+            rmm::device_uvector<bool> d_candidateCanBeCorrected(currentNumCandidates, stream, mr);
 
             cub::TransformInputIterator<bool, IsHqAnchor, AnchorHighQualityFlag*>
                 d_isHqanchor(d_is_high_quality_anchor.data(), IsHqAnchor{});
@@ -3451,8 +3450,8 @@ namespace gpu{
                 d_numAnchors.data()
             ); CUDACHECKASYNC;
 
-            gpucorrectorkernels::initArraysBeforeCandidateCorrectionKernel<<<SDIV(maxCandidates, 128), 128, 0, stream>>>(
-                maxCandidates,
+            gpucorrectorkernels::initArraysBeforeCandidateCorrectionKernel<<<SDIV(currentNumCandidates, 128), 128, 0, stream>>>(
+                currentNumCandidates,
                 d_numAnchors.data(),
                 d_num_corrected_candidates_per_anchor.data(),
                 d_candidateCanBeCorrected.data()
@@ -3524,7 +3523,7 @@ namespace gpu{
                 d_candidateCanBeCorrected.data(),
                 d_indices_of_corrected_candidates.data(),
                 d_num_total_corrected_candidates.data(),
-                maxCandidates,
+                currentNumCandidates,
                 stream
             );
 
@@ -3620,7 +3619,7 @@ namespace gpu{
         std::size_t editsPitchInBytes;
 
         int maxAnchors;
-        int maxCandidates;
+        //int maxCandidates;
         int maxNumEditsPerSequence;
         int currentNumAnchors;
         int currentNumCandidates;
