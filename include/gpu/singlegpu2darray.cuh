@@ -23,9 +23,9 @@ namespace cg = cooperative_groups;
 
 namespace Gpu2dArrayManagedKernels{
 
-    template<class T, class IndexGenerator>
+    template<class T, class IndexIterator>
     __global__
-    void scatterkernel(TwoDimensionalArray<T> array, const T* __restrict__ src, size_t srcRowPitchInBytes, IndexGenerator indices, const size_t* __restrict__ d_numIndices){
+    void scatterkernel(TwoDimensionalArray<T> array, const T* __restrict__ src, size_t srcRowPitchInBytes, IndexIterator indices, const size_t* __restrict__ d_numIndices){
         auto gridGroup = cg::this_grid();
 
         const size_t numIndices = *d_numIndices;
@@ -35,9 +35,9 @@ namespace Gpu2dArrayManagedKernels{
         array.scatter(gridGroup, src, srcRowPitchInBytes, indices, numIndices);
     }
 
-    template<class T, class IndexGenerator>
+    template<class T, class IndexIterator>
     __global__
-    void scatterkernel(TwoDimensionalArray<T> array, const T* __restrict__ src, size_t srcRowPitchInBytes, IndexGenerator indices, size_t numIndices){
+    void scatterkernel(TwoDimensionalArray<T> array, const T* __restrict__ src, size_t srcRowPitchInBytes, IndexIterator indices, size_t numIndices){
         auto gridGroup = cg::this_grid();
 
         if(numIndices == 0) return;
@@ -45,9 +45,9 @@ namespace Gpu2dArrayManagedKernels{
         array.scatter(gridGroup, src, srcRowPitchInBytes, indices, numIndices);
     }
 
-    template<class T, class IndexGenerator>
+    template<class T, class IndexIterator>
     __global__
-    void gatherkernel(TwoDimensionalArray<T> array, T* __restrict__ dest, size_t destRowPitchInBytes, IndexGenerator indices, const size_t* __restrict__ d_numIndices){
+    void gatherkernel(TwoDimensionalArray<T> array, T* __restrict__ dest, size_t destRowPitchInBytes, IndexIterator indices, const size_t* __restrict__ d_numIndices){
         auto gridGroup = cg::this_grid();
 
         const size_t numIndices = *d_numIndices;
@@ -57,9 +57,9 @@ namespace Gpu2dArrayManagedKernels{
         array.gather(gridGroup, dest, destRowPitchInBytes, indices, numIndices);
     }
 
-    template<class T, class IndexGenerator>
+    template<class T, class IndexIterator>
     __global__
-    void gatherkernel(TwoDimensionalArray<T> array, T* __restrict__ dest, size_t destRowPitchInBytes, IndexGenerator indices, size_t numIndices){
+    void gatherkernel(TwoDimensionalArray<T> array, T* __restrict__ dest, size_t destRowPitchInBytes, IndexIterator indices, size_t numIndices){
         auto gridGroup = cg::this_grid();
 
         if(numIndices == 0) return;
@@ -195,7 +195,7 @@ public:
     void print() const{
         T* tmp;
         CUDACHECK(cudaMallocHost(&tmp, numRows * numColumns));
-        gather(tmp, numColumns * sizeof(T), [=]__device__(auto i){return i;}, numRows);
+        gather(tmp, numColumns * sizeof(T), thrust::make_counting_iterator<std::size_t>(0), numRows);
         CUDACHECK(cudaDeviceSynchronize());
 
         for(size_t i = 0; i < numRows; i++){
@@ -208,8 +208,8 @@ public:
         CUDACHECK(cudaFreeHost(tmp));
     }
 
-    template<class IndexGenerator>
-    void gather(T* d_dest, size_t destRowPitchInBytes, IndexGenerator d_indices, size_t numIndices, cudaStream_t stream = 0) const{
+    template<class IndexIterator>
+    void gather(T* d_dest, size_t destRowPitchInBytes, IndexIterator d_indices, size_t numIndices, cudaStream_t stream = 0) const{
         if(numIndices == 0) return;
         if(getNumRows() == 0) return;
 
@@ -229,8 +229,8 @@ public:
         CUDACHECKASYNC;
     }
 
-    template<class IndexGenerator>
-    void gather(T* d_dest, size_t destRowPitchInBytes, IndexGenerator d_indices, const size_t* d_numIndices, size_t maxNumIndices, cudaStream_t stream = 0) const{
+    template<class IndexIterator>
+    void gather(T* d_dest, size_t destRowPitchInBytes, IndexIterator d_indices, const size_t* d_numIndices, size_t maxNumIndices, cudaStream_t stream = 0) const{
         if(maxNumIndices == 0) return;
         if(getNumRows() == 0) return;
 
@@ -261,15 +261,13 @@ public:
 
         TwoDimensionalArray<T> array = wrapper();
 
-        auto indexgenerator = [rowBegin] __device__ (auto i){
-            return rowBegin + i;
-        };
+        auto IndexIterator = thrust::make_counting_iterator<std::size_t>(rowBegin);
 
         Gpu2dArrayManagedKernels::gatherkernel<<<grid, block, 0, stream>>>(
             array, 
             d_dest, 
             destRowPitchInBytes, 
-            indexgenerator, 
+            IndexIterator, 
             rows
         );
 
@@ -277,8 +275,8 @@ public:
     }
 
 
-    template<class IndexGenerator>
-    void scatter(const T* d_src, size_t srcRowPitchInBytes, IndexGenerator d_indices, size_t numIndices, cudaStream_t stream = 0) const{
+    template<class IndexIterator>
+    void scatter(const T* d_src, size_t srcRowPitchInBytes, IndexIterator d_indices, size_t numIndices, cudaStream_t stream = 0) const{
         if(numIndices == 0) return;
         if(getNumRows() == 0) return;
 
@@ -298,8 +296,8 @@ public:
         CUDACHECKASYNC;
     }
 
-    template<class IndexGenerator>
-    void scatter(const T* d_src, size_t srcRowPitchInBytes, IndexGenerator d_indices, const size_t* d_numIndices, size_t maxNumIndices, cudaStream_t stream = 0) const{
+    template<class IndexIterator>
+    void scatter(const T* d_src, size_t srcRowPitchInBytes, IndexIterator d_indices, const size_t* d_numIndices, size_t maxNumIndices, cudaStream_t stream = 0) const{
         if(maxNumIndices == 0) return;
         if(getNumRows() == 0) return;
 
@@ -329,15 +327,13 @@ public:
 
         TwoDimensionalArray<T> array = wrapper();
 
-        auto indexgenerator = [rowBegin] __device__ (auto i){
-            return rowBegin + i;
-        };
+        auto IndexIterator = thrust::make_counting_iterator<std::size_t>(rowBegin);
 
         Gpu2dArrayManagedKernels::scatterkernel<<<grid, block, 0, stream>>>(
             array, 
             d_src, 
             srcRowPitchInBytes, 
-            indexgenerator, 
+            IndexIterator, 
             rows
         );
 
