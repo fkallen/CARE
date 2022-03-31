@@ -1231,30 +1231,39 @@ private:
             maxRowsPerGpu[i] = memoryLimits[i] / rowPitchInBytes;
         }
 
-        if(layout == MultiGpu2dArrayLayout::EvenShare){
-            std::cerr << "Layout::EvenShare not implemented. Will use Layout::FirstFit\n";
-        }
-
-        std::vector<size_t> rowsPerGpu(numGpus);
-
+        std::vector<size_t> rowsPerGpu(numGpus, 0);
         size_t remaining = numRows;
-        for(int i = 0; i < numGpus; i++){
-            size_t myrows = std::min(maxRowsPerGpu[i], remaining);
-            rowsPerGpu[i] = myrows;
 
-            remaining -= myrows;
+        if(layout == MultiGpu2dArrayLayout::EvenShare){
+            std::cerr << "Layout::EvenShare\n";
+            std::size_t divided = numRows / numGpus;
 
-            //std::cerr << rowsPerGpu[i] << " ";
+            for(int outer = 0; outer < numGpus; outer++){
+                for(int i = 0; i < numGpus; i++){
+                    size_t myrows = std::min(maxRowsPerGpu[i] - rowsPerGpu[i], std::min(divided, remaining));
+                    rowsPerGpu[i] += myrows;
+
+                    remaining -= myrows;
+                }
+            }
+        }else{
+            assert(layout ==MultiGpu2dArrayLayout::FirstFit);
+
+            for(int i = 0; i < numGpus; i++){
+                size_t myrows = std::min(maxRowsPerGpu[i], remaining);
+                rowsPerGpu[i] = myrows;
+
+                remaining -= myrows;
+            }
         }
 
-        //std::cerr << ", remaining " << remaining << "\n";
 
         if(initMode == MultiGpu2dArrayInitMode::MustFitCompletely){
             if(remaining > 0){
                 throw std::invalid_argument("Cannot fit all array elements into provided memory\n");
             }
         }else{
-            //InitMode::CanDiscardRows
+            assert(initMode == MultiGpu2dArrayInitMode::CanDiscardRows);
 
             this->numRows -= remaining;
         }
