@@ -947,12 +947,15 @@ namespace gpu{
                     const int anchorbases = anchorSequencesLength[anchorIndex];
                     const int querybases = candidateSequencesLength[candidateIndex];
 
+                    const int hilointsAnchor = SequenceHelpers::getEncodedNumInts2BitHiLo(anchorbases);
+                    const int hilointsCand = SequenceHelpers::getEncodedNumInts2BitHiLo(querybases);
+
                     const unsigned int* anchorptr = anchorDataHiLoTransposed + std::size_t(anchorIndex);
 
                     #pragma unroll 
                     for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
                         anchorBackupHi[i] = anchorptr[(i) * n_anchors];
-                        anchorBackupLo[i] = anchorptr[(i + maxValidIntsPerSequence / 2) * n_anchors];
+                        anchorBackupLo[i] = anchorptr[(i + hilointsAnchor / 2) * n_anchors];
                     }
 
                     maskBitArray(anchorBackupHi, anchorBackupLo, anchorbases);
@@ -964,7 +967,7 @@ namespace gpu{
                     #pragma unroll 
                     for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
                         queryBackupHi[i] = candidateptr[i * n_candidates];
-                        queryBackupLo[i] = candidateptr[(i + maxValidIntsPerSequence / 2) * n_candidates];
+                        queryBackupLo[i] = candidateptr[(i + hilointsCand / 2) * n_candidates];
                     }
 
                     maskBitArray(queryBackupHi, queryBackupLo, querybases);
@@ -1005,18 +1008,7 @@ namespace gpu{
                                 int score = hammingDistanceWithShift(shift != 0, overlapsize, max_errors_excl,
                                                     shiftptr_hi, shiftptr_lo,
                                                     otherptr_hi, otherptr_lo);
-
                                 
-                                // printf("%d, %d %d %d --- ", queryIndex, shift, overlapsize, score);
-
-                                // printf("%d %d %d %d | %d %d %d %d --- ", 
-                                //     shiftptr_hi[0], shiftptr_hi[1], shiftptr_hi[2], shiftptr_hi[3],
-                                //     shiftptr_lo[0], shiftptr_lo[1], shiftptr_lo[2], shiftptr_lo[3]);
-
-                                // printf("%d %d %d %d | %d %d %d %d\n", 
-                                //     otherptr_hi[0], otherptr_hi[1], otherptr_hi[2], otherptr_hi[3],
-                                //     otherptr_lo[0], otherptr_lo[1], otherptr_lo[2], otherptr_lo[3]);
-
                                 score = (score < max_errors_excl ?
                                         score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
                                         : std::numeric_limits<int>::max()); // too many errors, discard
@@ -1358,13 +1350,15 @@ namespace gpu{
 
                     const int anchorbases = anchorSequencesLength[anchorIndex];
                     const int querybases = candidateSequencesLength[candidateIndex];
+                    const int hilointsAnchor = SequenceHelpers::getEncodedNumInts2BitHiLo(anchorbases);
+                    const int hilointsCand = SequenceHelpers::getEncodedNumInts2BitHiLo(querybases);
 
                     const unsigned int* anchorptr = anchorDataHiLoTransposed + std::size_t(anchorIndex);
 
                     #pragma unroll 
                     for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
                         anchorBackupHi[i] = anchorptr[(i) * n_anchors];
-                        anchorBackupLo[i] = anchorptr[(i + maxValidIntsPerSequence / 2) * n_anchors];
+                        anchorBackupLo[i] = anchorptr[(i + hilointsAnchor / 2) * n_anchors];
                     }
 
                     maskBitArray(anchorBackupHi, anchorBackupLo, anchorbases);
@@ -1376,15 +1370,12 @@ namespace gpu{
                     #pragma unroll 
                     for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
                         queryBackupHi[i] = candidateptr[i * n_candidates];
-                        queryBackupLo[i] = candidateptr[(i + maxValidIntsPerSequence / 2) * n_candidates];
+                        queryBackupLo[i] = candidateptr[(i + hilointsCand / 2) * n_candidates];
                     }
 
                     maskBitArray(queryBackupHi, queryBackupLo, querybases);
 
                     //begin SHD algorithm
-
-                    const int anchorints = SequenceHelpers::getEncodedNumInts2BitHiLo(anchorbases);
-                    const int queryints = SequenceHelpers::getEncodedNumInts2BitHiLo(querybases);
                     const int totalbases = anchorbases + querybases;
                     const int minoverlap = max(min_overlap, int(float(anchorbases) * min_overlap_ratio));
 
@@ -1398,7 +1389,7 @@ namespace gpu{
                         const bool isReverseComplement = orientation == 1;
 
                         if(isReverseComplement){
-                            reverseComplementQuery(querybases, queryints);
+                            reverseComplementQuery(querybases, hilointsCand);
                         }
 
                         bestScore[orientation] = totalbases;     // score is number of mismatches
