@@ -91,6 +91,11 @@ public:
 
     virtual bool hasGpuTables() const noexcept = 0;
 
+    virtual void writeToStream(std::ostream& os) const = 0;
+    virtual int loadFromStream(std::ifstream& is, int numMapsUpperLimit) = 0;
+    virtual bool canWriteToStream() const noexcept = 0;
+    virtual bool canLoadFromStream() const noexcept = 0;
+
 protected:
     MinhasherHandle constructHandle(int id) const{
         return MinhasherHandle{id};

@@ -1,3 +1,5 @@
+#if 0
+
 #ifndef CARE_FAKEGPU_SINGLE_HASH_MINHASHER_CUH
 #define CARE_FAKEGPU_SINGLE_HASH_MINHASHER_CUH
 
@@ -927,5 +929,7 @@ namespace fakegpusinglehashminhasherkernels{
 }
 
 
+
+#endif
 
 #endif

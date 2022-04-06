@@ -1,3 +1,5 @@
+#if 0
+
 
 #include <gpu/fakegpuminhasherconstruction.cuh>
 
@@ -198,6 +200,7 @@ namespace gpu{
                 programOptions.kmerlength,
                 loadfactor
             );
+            assert(false);
 
             if(programOptions.load_hashtables_from != ""){
 
@@ -291,3 +294,6 @@ namespace gpu{
         #endif
 }
 }
+
+
+#endif

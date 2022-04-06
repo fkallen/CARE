@@ -1,4 +1,6 @@
 
+#if 0
+
 #include <gpu/gpuminhasherconstruction.cuh>
 
 #include <gpu/singlegpuminhasher.cuh>
@@ -216,3 +218,5 @@ namespace gpu{
     
 }
 }
+
+#endif
