@@ -21,7 +21,6 @@
 #include <rangegenerator.hpp>
 #include <sortserializedresults.hpp>
 
-
 #include <algorithm>
 #include <iostream>
 #include <memory>
@@ -339,22 +338,15 @@ namespace care{
             return;
         }
 
-        if(minhasherAndType.second == gpu::GpuMinhasherType::Fake){
+        if(programOptions.save_hashtables_to != "" && gpuMinhasher->canWriteToStream()) {
+            std::cout << "Saving minhasher to file " << programOptions.save_hashtables_to << std::endl;
+            std::ofstream os(programOptions.save_hashtables_to);
+            assert((bool)os);
+            helpers::CpuTimer timer("save_to_file");
+            gpuMinhasher->writeToStream(os);
+            timer.print();
 
-            gpu::FakeGpuMinhasher* fakeGpuMinhasher = dynamic_cast<gpu::FakeGpuMinhasher*>(gpuMinhasher);
-            assert(fakeGpuMinhasher != nullptr);
-
-            if(programOptions.save_hashtables_to != "") {
-                std::cout << "Saving minhasher to file " << programOptions.save_hashtables_to << std::endl;
-                std::ofstream os(programOptions.save_hashtables_to);
-                assert((bool)os);
-                helpers::CpuTimer timer("save_to_file");
-                fakeGpuMinhasher->writeToStream(os);
-                timer.print();
-
-                std::cout << "Saved minhasher" << std::endl;
-            }
-
+            std::cout << "Saved minhasher" << std::endl;
         }
 
         printDataStructureMemoryUsage(*gpuMinhasher, "hash tables");        
