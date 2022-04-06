@@ -214,25 +214,7 @@ namespace gpu{
             rmm::device_uvector<read_number> d_indices(parallelReads, stream, mr);
             
             helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
-            
-            std::size_t d_insert_temp_size = 0;
-            std::size_t h_insert_temp_size = 0;
-            insert(
-                nullptr,
-                d_insert_temp_size,
-                nullptr,
-                h_insert_temp_size,
-                (const unsigned int*)nullptr,
-                int(parallelReads),
-                (const int*)nullptr,
-                encodedSequencePitchInInts,
-                (const read_number*)nullptr,
-                (const read_number*)nullptr,
-                0,
-                requestedNumberOfMaps,
-                (const int*)nullptr,
-                (cudaStream_t)0
-            );
+
             
             ThreadPool tpForHashing(programOptions.threads);
             ThreadPool tpForCompacting(std::min(2,programOptions.threads));
@@ -255,9 +237,6 @@ namespace gpu{
                     keepGoing = false;
                     break;
                 }
-
-                rmm::device_uvector<char> d_temp(d_insert_temp_size, stream, mr);
-                helpers::SimpleAllocationPinnedHost<char> h_temp(h_insert_temp_size);
 
                 std::cout << "Constructing maps: ";
                 for(int i = 0; i < addedHashFunctions; i++){
@@ -303,14 +282,7 @@ namespace gpu{
                         stream
                     );
 
-                    std::size_t s1 = d_insert_temp_size;
-                    std::size_t s2 = h_insert_temp_size;
-
                     insert(
-                        d_temp.data(),
-                        s1,
-                        h_temp.data(),
-                        s2,
                         d_sequenceData.data(),
                         curBatchsize,
                         d_lengths.data(),
@@ -325,9 +297,6 @@ namespace gpu{
 
                     CUDACHECK(cudaStreamSynchronize(stream));
                 }
-
-                ::destroy(d_temp, stream);
-                h_temp.destroy();
 
                 CUDACHECK(cudaStreamSynchronize(stream));
 
@@ -1189,10 +1158,6 @@ namespace gpu{
         } 
 
         void insert(
-            void* d_temp,
-            std::size_t& d_temp_storage_bytes,
-            void* h_temp,
-            std::size_t& h_temp_storage_bytes,
             const unsigned int* d_sequenceData2Bit,
             int numSequences,
             const int* d_sequenceLengths,
@@ -1211,43 +1176,12 @@ namespace gpu{
 
             const std::size_t signaturesRowPitchElements = numHashfunctions;
 
-            void* d_temp_allocations[3]{};
-            std::size_t d_temp_allocation_sizes[3]{};            
-            d_temp_allocation_sizes[0] = sizeof(kmer_type) * signaturesRowPitchElements * numSequences; // d_sig
-            d_temp_allocation_sizes[1] = sizeof(kmer_type) * signaturesRowPitchElements * numSequences; // d_sig_trans
-            d_temp_allocation_sizes[2] = sizeof(int) * numHashfunctions; // d_hashFunctionNumbers
-            
-            cudaError_t cubstatus = cub::AliasTemporaries(
-                d_temp,
-                d_temp_storage_bytes,
-                d_temp_allocations,
-                d_temp_allocation_sizes
-            );
-            assert(cubstatus == cudaSuccess);
-
-            void* h_temp_allocations[1]{};
-            std::size_t h_temp_allocation_sizes[1]{};            
-            h_temp_allocation_sizes[0] = sizeof(kmer_type) * signaturesRowPitchElements * numSequences; // h_signatures_transposed
-    
-            cubstatus = cub::AliasTemporaries(
-                h_temp,
-                h_temp_storage_bytes,
-                h_temp_allocations,
-                h_temp_allocation_sizes
-            );
-            assert(cubstatus == cudaSuccess);
-
-            if(d_temp == nullptr || h_temp == nullptr){
-                return;
-            }
-
             assert(firstHashfunction + numHashfunctions <= int(minhashTables.size()));
 
-            kmer_type* const d_signatures_transposed = static_cast<kmer_type*>(d_temp_allocations[1]);
-            int* const d_hashFunctionNumbers = static_cast<int*>(d_temp_allocations[2]);
+            rmm::device_uvector<int> d_hashFunctionNumbers(numHashfunctions, stream, mr);
 
             CUDACHECK(cudaMemcpyAsync(
-                d_hashFunctionNumbers, 
+                d_hashFunctionNumbers.data(), 
                 h_hashFunctionNumbers, 
                 sizeof(int) * numHashfunctions, 
                 H2D, 
@@ -1257,50 +1191,26 @@ namespace gpu{
             GPUSequenceHasher<kmer_type> hasher;
 
             auto hashResult = hasher.hash(
-            //auto hashResult = hasher.hashUniqueKmers(
                 d_sequenceData2Bit,
                 encodedSequencePitchInInts,
                 numSequences,
                 d_sequenceLengths,
                 getKmerSize(),
                 numHashfunctions,
-                d_hashFunctionNumbers,
+                d_hashFunctionNumbers.data(),
                 stream,
                 mr
             );
 
-            // callMinhashSignatures3264Kernel(
-            //     d_signatures,
-            //     signaturesRowPitchElements,
-            //     d_sequenceData2Bit,
-            //     encodedSequencePitchInInts,
-            //     numSequences,
-            //     d_sequenceLengths,
-            //     getKmerSize(),
-            //     numHashfunctions,
-            //     d_hashFunctionNumbers,
-            //     stream
-            // );
-
+            rmm::device_uvector<kmer_type> d_signatures_transposed(signaturesRowPitchElements * numSequences, stream, mr);
             helpers::call_transpose_kernel(
-                d_signatures_transposed, 
-                //d_signatures, 
+                d_signatures_transposed.data(), 
                 hashResult.d_hashvalues.data(),
                 numSequences, 
                 signaturesRowPitchElements, 
                 signaturesRowPitchElements,
                 stream
             );
-
-            kmer_type* const h_signatures_transposed = static_cast<kmer_type*>(h_temp_allocations[0]);
-
-            CUDACHECK(cudaMemcpyAsync(
-                h_signatures_transposed, 
-                d_signatures_transposed, 
-                sizeof(kmer_type) * signaturesRowPitchElements * numSequences, 
-                D2H, 
-                stream
-            ));
 
             rmm::device_uvector<bool> d_isValid_transposed(
                 numHashfunctions * numSequences,
@@ -1320,6 +1230,7 @@ namespace gpu{
             DEBUGSTREAMSYNC(stream);
 
             auto h_isValid = std::make_unique<bool[]>(numSequences * numHashfunctions);
+            auto h_signatures_transposed = std::make_unique<kmer_type[]>(signaturesRowPitchElements * numSequences);
 
             CUDACHECK(cudaMemcpyAsync(
                 h_isValid.get(),
@@ -1329,7 +1240,13 @@ namespace gpu{
                 stream
             ));
 
-            DEBUGSTREAMSYNC(stream);
+            CUDACHECK(cudaMemcpyAsync(
+                h_signatures_transposed.get(), 
+                d_signatures_transposed.data(), 
+                sizeof(kmer_type) * signaturesRowPitchElements * numSequences, 
+                D2H, 
+                stream
+            ));
 
             CUDACHECK(cudaStreamSynchronize(stream));
 
