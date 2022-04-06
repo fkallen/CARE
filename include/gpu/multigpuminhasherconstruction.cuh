@@ -1,3 +1,5 @@
+#if 0
+
 #ifndef CARE_MULTIGPUMINHASHERCONSTRUCTION_CUH
 #define CARE_MULTIGPUMINHASHERCONSTRUCTION_CUH
 
@@ -25,6 +27,8 @@ namespace gpu{
 
 }
 }
+
+#endif
 
 #endif
 

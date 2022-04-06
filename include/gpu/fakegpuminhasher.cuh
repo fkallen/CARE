@@ -11,7 +11,7 @@
 #include <gpu/cudaerrorcheck.cuh>
 #include <gpu/gpusequencehasher.cuh>
 #include <gpu/kernels.hpp>
-
+#include <gpu/cubwrappers.cuh>
 #include <options.hpp>
 #include <util.hpp>
 #include <hpc_helpers.cuh>
@@ -35,6 +35,7 @@
 #include <thrust/execution_policy.h>
 #include <thrust/sequence.h>
 #include <thrust/device_vector.h>
+#include <thrust/iterator/zip_iterator.h>
 
 #include <rmm/mr/device/device_memory_resource.hpp>
 #include <rmm/mr/device/per_device_resource.hpp>
@@ -220,7 +221,7 @@ namespace gpu{
             ThreadPool tpForCompacting(std::min(2,programOptions.threads));
 
             
-            setMemoryLimitForConstruction(maxMemoryForTables);
+            setHostMemoryLimitForConstruction(maxMemoryForTables);
             
             //std::size_t bytesOfCachedConstructedTables = 0;
             int remainingHashFunctions = requestedNumberOfMaps;
@@ -231,7 +232,14 @@ namespace gpu{
                 setThreadPool(&tpForHashing);
 
                 const int alreadyExistingHashFunctions = requestedNumberOfMaps - remainingHashFunctions;
-                int addedHashFunctions = addHashfunctions(remainingHashFunctions);
+                std::vector<int> h_hashfunctionNumbers(remainingHashFunctions);
+                std::iota(
+                    h_hashfunctionNumbers.begin(),
+                    h_hashfunctionNumbers.end(),
+                    alreadyExistingHashFunctions + hashFunctionOffset
+                );
+
+                int addedHashFunctions = addHashTables(remainingHashFunctions, h_hashfunctionNumbers.data(), stream);
 
                 if(addedHashFunctions == 0){
                     keepGoing = false;
@@ -244,14 +252,7 @@ namespace gpu{
                 }
                 std::cout << '\n';
 
-                std::vector<int> h_hashfunctionNumbers(addedHashFunctions);
-                std::iota(
-                    h_hashfunctionNumbers.begin(),
-                    h_hashfunctionNumbers.end(),
-                    alreadyExistingHashFunctions + hashFunctionOffset
-                );
-
-                usedHashFunctionNumbers.insert(usedHashFunctionNumbers.end(), h_hashfunctionNumbers.begin(), h_hashfunctionNumbers.end());
+                usedHashFunctionNumbers.insert(usedHashFunctionNumbers.end(), h_hashfunctionNumbers.begin(), h_hashfunctionNumbers.begin() + addedHashFunctions);
 
                 for (int iter = 0; iter < numIters; iter++){
                     read_number readIdBegin = iter * parallelReads;
@@ -292,7 +293,8 @@ namespace gpu{
                         alreadyExistingHashFunctions,
                         addedHashFunctions,
                         h_hashfunctionNumbers.data(),
-                        stream
+                        stream,
+                        mr
                     );
 
                     CUDACHECK(cudaStreamSynchronize(stream));
@@ -991,7 +993,7 @@ namespace gpu{
         }
         #endif
 
-        void compact(cudaStream_t /*stream*/) {
+        void compact(cudaStream_t /*stream*/) override{
             int id;
             CUDACHECK(cudaGetDevice(&id));
 
@@ -1126,11 +1128,11 @@ namespace gpu{
             return mapsToLoad;
         } 
 
-        int addHashfunctions(int numExtraFunctions){
+        int addHashTables(int numAdditionalTables, const int* /*hashFunctionIds*/, cudaStream_t /*stream*/) override{
             int added = 0;
             const int cur = minhashTables.size();
 
-            assert(!(numExtraFunctions + cur > 64));
+            assert(!(numAdditionalTables + cur > 64));
 
             std::size_t bytesOfCachedConstructedTables = 0;
             for(const auto& ptr : minhashTables){
@@ -1141,7 +1143,7 @@ namespace gpu{
             std::size_t requiredMemPerTable = (sizeof(kmer_type) + sizeof(read_number)) * maxNumKeys;
             int numTablesToConstruct = (memoryLimit - bytesOfCachedConstructedTables) / requiredMemPerTable;
             numTablesToConstruct -= 2; // keep free memory of 2 tables to perform transformation 
-            numTablesToConstruct = std::min(numTablesToConstruct, numExtraFunctions);
+            numTablesToConstruct = std::min(numTablesToConstruct, numAdditionalTables);
 
             for(int i = 0; i < numTablesToConstruct; i++){
                 try{
@@ -1162,14 +1164,14 @@ namespace gpu{
             int numSequences,
             const int* d_sequenceLengths,
             std::size_t encodedSequencePitchInInts,
-            const read_number* /*d_readIds*/, //unused???
+            const read_number* /*d_readIds*/,
             const read_number* h_readIds,
             int firstHashfunction,
             int numHashfunctions,
             const int* h_hashFunctionNumbers,
             cudaStream_t stream,
             rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
-        ){
+        ) override {
             ThreadPool::ParallelForHandle pforHandle{};
 
             ForLoopExecutor forLoopExecutor(threadPool, &pforHandle);
@@ -1226,8 +1228,6 @@ namespace gpu{
                 numHashfunctions,
                 stream
             );
-
-            DEBUGSTREAMSYNC(stream);
 
             auto h_isValid = std::make_unique<bool[]>(numSequences * numHashfunctions);
             auto h_signatures_transposed = std::make_unique<kmer_type[]>(signaturesRowPitchElements * numSequences);
@@ -1292,12 +1292,20 @@ namespace gpu{
             forLoopExecutor(0, numHashfunctions, loopbody);
         }   
 
-        void setThreadPool(ThreadPool* tp){
+        void setThreadPool(ThreadPool* tp) override{
             threadPool = tp;
         }
 
-        void setMemoryLimitForConstruction(std::size_t limit){
+        void setHostMemoryLimitForConstruction(std::size_t limit) override{
             memoryLimit = limit;
+        }
+
+        void setDeviceMemoryLimitsForConstruction(const std::vector<std::size_t>&) override{
+
+        }
+
+        void constructionIsFinished(cudaStream_t /*stream*/) override{
+
         }
 
     private:

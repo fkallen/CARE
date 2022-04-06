@@ -7,8 +7,10 @@
 #include <config.hpp>
 #include <memorymanagement.hpp>
 #include <minhasherhandle.hpp>
+#include <threadpool.hpp>
 
 #include <cstdint>
+#include <vector>
 
 #include <rmm/mr/device/device_memory_resource.hpp>
 
@@ -25,6 +27,30 @@ public:
     virtual MinhasherHandle makeMinhasherHandle() const = 0;
 
     virtual void destroyHandle(MinhasherHandle& handle) const = 0;
+
+    //construction
+    virtual void setHostMemoryLimitForConstruction(std::size_t bytes) = 0;
+    virtual void setDeviceMemoryLimitsForConstruction(const std::vector<std::size_t>&) = 0;
+    virtual int addHashTables(int numAdditionalTables, const int* hashFunctionIds, cudaStream_t stream) = 0;
+    virtual void setThreadPool(ThreadPool* tp) = 0;
+    virtual void compact(cudaStream_t stream) = 0;
+    virtual void constructionIsFinished(cudaStream_t stream) = 0;
+
+    virtual void insert(
+        const unsigned int* d_sequenceData2Bit,
+        int numSequences,
+        const int* d_sequenceLengths,
+        std::size_t encodedSequencePitchInInts,
+        const read_number* d_readIds,
+        const read_number* h_readIds,
+        int firstHashfunction,
+        int numHashfunctions,
+        const int* h_hashFunctionNumbers,
+        cudaStream_t stream,
+        rmm::mr::device_memory_resource* mr
+    ) = 0;
+
+    //query
 
     virtual void determineNumValues(
         MinhasherHandle& queryHandle,
@@ -50,7 +76,6 @@ public:
         rmm::mr::device_memory_resource* mr
     ) const = 0;
 
-    //virtual void compact(cudaStream_t stream) = 0;
 
     virtual MemoryUsage getMemoryInfo() const noexcept = 0;
 

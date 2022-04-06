@@ -323,7 +323,7 @@ namespace gpu{
 
         GpuHashtable(){}
 
-        GpuHashtable(std::size_t pairs_, float load_, std::size_t maxValuesPerKey_)
+        GpuHashtable(std::size_t pairs_, float load_, std::size_t maxValuesPerKey_, cudaStream_t /*stream*/)
             : maxPairs(pairs_), load(load_), maxValuesPerKey(maxValuesPerKey_){
 
             if(maxPairs > std::size_t(std::numeric_limits<int>::max())){

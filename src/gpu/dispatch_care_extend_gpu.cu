@@ -233,7 +233,7 @@ namespace care{
         auto minhasherAndType = gpu::constructGpuMinhasherFromGpuReadStorage(
             programOptions,
             gpuReadStorage,
-            gpu::GpuMinhasherType::Multi
+            gpu::GpuMinhasherType::Single
         );
 
         gpu::GpuMinhasher* gpuMinhasher = minhasherAndType.first.get();

@@ -1,4 +1,7 @@
+#if 0
+
 #ifdef CARE_HAS_WARPCORE
+
 
 #ifndef CARE_MULTI_GPU_MINHASHER_CUH
 #define CARE_MULTI_GPU_MINHASHER_CUH
@@ -870,7 +873,7 @@ namespace gpu{
             }
         }
 
-        void compact(cudaStream_t stream = 0) {
+        void compact(cudaStream_t stream) override {
             for(auto& minhasher : sgpuMinhashers){
                 DeviceSwitcher ds(minhasher->getDeviceId());
 
@@ -928,7 +931,15 @@ namespace gpu{
             return true;
         }
 
+        void setThreadPool(ThreadPool* /*tp*/) override {}
 
+        void setHostMemoryLimitForConstruction(std::size_t /*bytes*/) override{
+
+        }
+
+        void setDeviceMemoryLimitsForConstruction(const std::vector<std::size_t>&) override {
+
+        }
 
 private:        
 
@@ -1453,10 +1464,6 @@ private:
 
         }
 
-        void finalize(){
-            compact();
-        }
-
 
         std::uint64_t getKmerMask() const{
             constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
@@ -1500,3 +1507,6 @@ private:
 #endif
 
 #endif //#ifdef CARE_HAS_WARPCORE
+
+
+#endif

@@ -1,4 +1,4 @@
-
+#if 0
 #include <gpu/gpuminhasherconstruction.cuh>
 
 #include <gpu/multigpuminhasher.cuh>
@@ -49,3 +49,5 @@ namespace gpu{
     
 }
 }
+
+#endif

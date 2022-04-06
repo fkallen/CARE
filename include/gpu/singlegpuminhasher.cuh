@@ -130,44 +130,26 @@ namespace gpu{
 
             helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
 
-            std::size_t insert_temp_size = 0;
-            insert(
-                nullptr,
-                insert_temp_size,
-                (const unsigned int*)nullptr,
-                int(parallelReads),
-                (const int*)nullptr,
-                encodedSequencePitchInInts,
-                (const read_number*)nullptr,
-                0,
-                maxNumHashfunctions,
-                (const int*)nullptr,
-                (cudaStream_t)0
-            );
 
             std::vector<int> usedHashFunctionNumbers;
 
             auto sequencehandle = gpuReadStorage.makeHandle();
 
-            // auto showProgress = [&](auto totalCount, auto seconds){
-            //     if(programOptions.showProgress){
-            //         std::cout << "Hashed " << totalCount << " / " << numReads << " reads. Elapsed time: " 
-            //                 << seconds << " seconds.\n";
-            //     }
-            // };
-
-            // auto updateShowProgressInterval = [](auto duration){
-            //     return duration * 2;
-            // };
-
             int remainingHashFunctions = maxNumHashfunctions;
             bool keepGoing = true;
 
             while(remainingHashFunctions > 0 && keepGoing){
-                rmm::device_uvector<char> d_temp(insert_temp_size, stream, mr);
 
                 const int alreadyExistingHashFunctions = maxNumHashfunctions - remainingHashFunctions;
-                int addedHashFunctions = addHashfunctions(remainingHashFunctions + 1);
+                std::vector<int> h_hashfunctionNumbers(remainingHashFunctions + 1);
+                std::iota(
+                    h_hashfunctionNumbers.begin(),
+                    h_hashfunctionNumbers.end(),
+                    alreadyExistingHashFunctions + hashFunctionOffset
+                );
+
+
+                int addedHashFunctions = addHashTables(remainingHashFunctions + 1, h_hashfunctionNumbers.data(), stream);
 
                 if(addedHashFunctions == 0){
                     keepGoing = false;
@@ -184,6 +166,7 @@ namespace gpu{
                     }
                 }
 
+                usedHashFunctionNumbers.insert(usedHashFunctionNumbers.end(), h_hashfunctionNumbers.begin(), h_hashfunctionNumbers.begin() + addedHashFunctions);
                 //ProgressThread<read_number> progressThread(numReads, showProgress, updateShowProgressInterval);
 
                 std::cout << "Constructing maps: ";
@@ -192,14 +175,7 @@ namespace gpu{
                 }
                 std::cout << '\n';
 
-                std::vector<int> h_hashfunctionNumbers(addedHashFunctions);
-                std::iota(
-                    h_hashfunctionNumbers.begin(),
-                    h_hashfunctionNumbers.end(),
-                    alreadyExistingHashFunctions + hashFunctionOffset
-                );
 
-                usedHashFunctionNumbers.insert(usedHashFunctionNumbers.end(), h_hashfunctionNumbers.begin(), h_hashfunctionNumbers.end());
 
                 for (int iter = 0; iter < numIters; iter++){
                     read_number readIdBegin = iter * parallelReads;
@@ -231,17 +207,17 @@ namespace gpu{
                     );
 
                     insert(
-                        d_temp.data(),
-                        insert_temp_size,
                         d_sequenceData.data(),
                         curBatchsize,
                         d_lengths.data(),
                         encodedSequencePitchInInts,
                         d_indices.data(),
+                        h_indices.data(),
                         alreadyExistingHashFunctions,
                         addedHashFunctions,
                         h_hashfunctionNumbers.data(),
-                        stream
+                        stream,
+                        mr
                     );
 
                     CUDACHECK(cudaStreamSynchronize(stream));
@@ -249,7 +225,6 @@ namespace gpu{
                     //progressThread.addProgress(curBatchsize);
                 }
 
-                ::destroy(d_temp, stream);
                 CUDACHECK(cudaStreamSynchronize(stream));
 
                 std::cerr << "Compacting\n";
@@ -336,85 +311,70 @@ namespace gpu{
         }
 
 
-        int addHashfunctions(int numExtraFunctions){
+        int addHashTables(int numAdditionalTables, const int* hashFunctionIds, cudaStream_t stream) override {
             
             DeviceSwitcher ds(deviceId);
 
             int added = 0;
             int cur = gpuHashTables.size();
 
-            assert(!(numExtraFunctions + cur > 64));
+            assert(!(numAdditionalTables + cur > 64));
 
-            for(int i = 0; i < numExtraFunctions; i++){
+            std::vector<int> tmpNumbers(h_currentHashFunctionNumbers.begin(), h_currentHashFunctionNumbers.end());
+
+            for(int i = 0; i < numAdditionalTables; i++){
                 auto ptr = std::make_unique<GpuTable>(std::size_t(maxNumKeys / getLoad()),
                     getLoad(),
-                    resultsPerMapThreshold);
+                    resultsPerMapThreshold,
+                    stream
+                );
 
-                auto status = ptr->pop_status((cudaStream_t)0);
-                CUDACHECK(cudaDeviceSynchronize());
+                auto status = ptr->pop_status(stream);
+                CUDACHECK(cudaStreamSynchronize(stream));
                 if(status.has_any_errors()){
                     std::cerr << "observed error when initialiting hash function " << (gpuHashTables.size() + 1) << " : " << i << ", " << status << "\n";
                     break;
                 }else{
 
                     assert(!status.has_any_errors()); 
-                    //TODO errorhandling
 
                     gpuHashTables.emplace_back(std::move(ptr));
 
                     added++;
+                    tmpNumbers.push_back(hashFunctionIds[i]);
                 }
             }
+
+            h_currentHashFunctionNumbers.resize(tmpNumbers.size());
+            std::copy(tmpNumbers.begin(), tmpNumbers.end(), h_currentHashFunctionNumbers.begin());
 
             return added;
         }
 
         void insert(
-            void* d_temp,
-            std::size_t& temp_storage_bytes,
             const unsigned int* d_sequenceData2Bit,
             int numSequences,
             const int* d_sequenceLengths,
             std::size_t encodedSequencePitchInInts,
             const read_number* d_readIds,
+            const read_number* /*h_readIds*/,
             int firstHashfunction,
             int numHashfunctions,
             const int* h_hashFunctionNumbers,
             cudaStream_t stream,
-            rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
-        ){
+            rmm::mr::device_memory_resource* mr
+        ) override {
 
             const std::size_t signaturesRowPitchElements = numHashfunctions;
-
-            void* temp_allocations[3];
-            std::size_t temp_allocation_sizes[3];
-            
-            temp_allocation_sizes[0] = sizeof(kmer_type) * signaturesRowPitchElements * numSequences; // d_sig
-            temp_allocation_sizes[1] = sizeof(kmer_type) * signaturesRowPitchElements * numSequences; // d_sig_trans
-            temp_allocation_sizes[2] = sizeof(int) * numHashfunctions; // d_hashFunctionNumbers
-            
-            cudaError_t cubstatus = cub::AliasTemporaries(
-                d_temp,
-                temp_storage_bytes,
-                temp_allocations,
-                temp_allocation_sizes
-            );
-            assert(cubstatus == cudaSuccess);
-
-            if(d_temp == nullptr){
-                return;
-            }
 
             assert(firstHashfunction + numHashfunctions <= int(gpuHashTables.size()));
 
             DeviceSwitcher ds(deviceId);
 
-            //kmer_type* const d_signatures = static_cast<kmer_type*>(temp_allocations[0]);
-            kmer_type* const d_signatures_transposed = static_cast<kmer_type*>(temp_allocations[1]);
-            int* const d_hashFunctionNumbers = static_cast<int*>(temp_allocations[2]);
+            rmm::device_uvector<int> d_hashFunctionNumbers(numHashfunctions, stream, mr);
             
             CUDACHECK(cudaMemcpyAsync(
-                d_hashFunctionNumbers, 
+                d_hashFunctionNumbers.data(), 
                 h_hashFunctionNumbers, 
                 sizeof(int) * numHashfunctions, 
                 H2D, 
@@ -424,20 +384,20 @@ namespace gpu{
             GPUSequenceHasher<kmer_type> hasher;
 
             auto hashResult = hasher.hash(
-            //auto hashResult = hasher.hashUniqueKmers(
                 d_sequenceData2Bit,
                 encodedSequencePitchInInts,
                 numSequences,
                 d_sequenceLengths,
                 getKmerSize(),
                 numHashfunctions,
-                d_hashFunctionNumbers,
+                d_hashFunctionNumbers.data(),
                 stream,
                 mr
             );
 
+            rmm::device_uvector<kmer_type> d_signatures_transposed(signaturesRowPitchElements * numSequences, stream, mr);
             helpers::call_transpose_kernel(
-                d_signatures_transposed,
+                d_signatures_transposed.data(),
                 hashResult.d_hashvalues.data(),
                 numSequences, 
                 signaturesRowPitchElements, 
@@ -445,11 +405,11 @@ namespace gpu{
                 stream
             );
 
-            fixKeysForGpuHashTable(d_signatures_transposed, numSequences * numHashfunctions, stream);
+            fixKeysForGpuHashTable(d_signatures_transposed.data(), numSequences * numHashfunctions, stream);
 
             for(int i = 0; i < numHashfunctions; i++){
                 gpuHashTables[firstHashfunction + i]->insert(
-                    d_signatures_transposed + i * numSequences,
+                    d_signatures_transposed.data() + i * numSequences,
                     d_readIds,
                     numSequences,
                     stream
@@ -494,7 +454,7 @@ namespace gpu{
             handle = constructHandle(std::numeric_limits<int>::max());
         }
 
-        void compact(cudaStream_t stream = 0) {
+        void compact(cudaStream_t stream) override {
             DeviceSwitcher ds(deviceId);
 
             std::size_t required_temp_bytes = 0;
@@ -1147,6 +1107,35 @@ namespace gpu{
 
         constexpr int getDeviceId() const noexcept{
             return deviceId;
+        }
+
+        void setThreadPool(ThreadPool* /*tp*/) override {}
+
+        void setHostMemoryLimitForConstruction(std::size_t /*bytes*/) override{
+
+        }
+
+        void setDeviceMemoryLimitsForConstruction(const std::vector<std::size_t>&) override {
+
+        }
+
+        void constructionIsFinished(cudaStream_t stream) override {
+            auto numberOfAvailableHashFunctions = h_currentHashFunctionNumbers.size();
+            std::vector<GpuTable::DeviceTableView> views;
+            for(const auto& ptr : gpuHashTables){
+                views.emplace_back(ptr->makeDeviceView());
+            }
+
+            d_deviceAccessibleTableViews.resize(numberOfAvailableHashFunctions);
+            CUDACHECK(cudaMemcpyAsync(
+                d_deviceAccessibleTableViews.data(),
+                views.data(),
+                sizeof(GpuTable::DeviceTableView) * numberOfAvailableHashFunctions,
+                H2D,
+                stream
+            ));
+
+            CUDACHECK(cudaStreamSynchronize(stream));
         }
 
 private:

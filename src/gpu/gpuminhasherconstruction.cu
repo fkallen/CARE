@@ -4,7 +4,7 @@
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/fakegpuminhasherconstruction.cuh>
 #include <gpu/singlegpuminhasherconstruction.cuh>
-#include <gpu/multigpuminhasherconstruction.cuh>
+//#include <gpu/multigpuminhasherconstruction.cuh>
 #include <minhasherlimit.hpp>
 
 #include <options.hpp>
@@ -37,14 +37,15 @@ namespace gpu{
             GpuMinhasherType requestedType
         ){
             if(requestedType == GpuMinhasherType::Fake || programOptions.warpcore == 0 || programOptions.singlehash){
-                if(programOptions.singlehash){                    
-                    return std::make_pair(
-                        constructFakeGpuSingleHashMinhasherFromGpuReadStorage(
-                            programOptions,
-                            gpuReadStorage
-                        ),
-                        GpuMinhasherType::FakeSingleHash
-                    );
+                if(programOptions.singlehash){
+                    assert(false);
+                    // return std::make_pair(
+                    //     constructFakeGpuSingleHashMinhasherFromGpuReadStorage(
+                    //         programOptions,
+                    //         gpuReadStorage
+                    //     ),
+                    //     GpuMinhasherType::FakeSingleHash
+                    // );
                 }else{
                     return std::make_pair(
                         constructFakeGpuMinhasherFromGpuReadStorage(
@@ -63,14 +64,14 @@ namespace gpu{
                     ),
                     GpuMinhasherType::Single
                 );
-            }else if(requestedType == GpuMinhasherType::Multi){
-                return std::make_pair(
-                    constructMultiGpuMinhasherFromGpuReadStorage(
-                        programOptions,
-                        gpuReadStorage
-                    ),
-                    GpuMinhasherType::Multi
-                );
+            // }else if(requestedType == GpuMinhasherType::Multi){
+            //     return std::make_pair(
+            //         constructMultiGpuMinhasherFromGpuReadStorage(
+            //             programOptions,
+            //             gpuReadStorage
+            //         ),
+            //         GpuMinhasherType::Multi
+            //     );
             #endif
             }else{
                 return std::make_pair(
