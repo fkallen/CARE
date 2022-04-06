@@ -11,7 +11,7 @@
 #include <gpu/cudaerrorcheck.cuh>
 #include <gpu/gpusequencehasher.cuh>
 #include <gpu/kernels.hpp>
-
+#include <gpu/cubwrappers.cuh>
 #include <options.hpp>
 #include <util.hpp>
 #include <hpc_helpers.cuh>
@@ -23,6 +23,7 @@
 
 #include <sharedmutex.hpp>
 
+#include <cuda.h> //CUDA_VERSION
 
 #include <vector>
 #include <memory>
@@ -35,6 +36,7 @@
 #include <thrust/execution_policy.h>
 #include <thrust/sequence.h>
 #include <thrust/device_vector.h>
+#include <thrust/iterator/zip_iterator.h>
 
 #include <rmm/mr/device/device_memory_resource.hpp>
 #include <rmm/mr/device/per_device_resource.hpp>
@@ -58,6 +60,7 @@ namespace gpu{
         using HashTable = CpuReadOnlyMultiValueHashTable<kmer_type, read_number>;
         using Range_t = std::pair<const Value_t*, const Value_t*>;
 
+    public: //should be private, but nvcc bug can cause compilation failure in some cuda versions
         struct QueryData{
             static constexpr int overprovisioningPercent = 0;
             
@@ -137,7 +140,7 @@ namespace gpu{
             }
         };
 
-        
+    
     public:
 
         FakeGpuMinhasher() : FakeGpuMinhasher(0, 50, 16, 0.8f){
@@ -153,201 +156,7 @@ namespace gpu{
         FakeGpuMinhasher(FakeGpuMinhasher&&) = default;
         FakeGpuMinhasher& operator=(const FakeGpuMinhasher&) = delete;
         FakeGpuMinhasher& operator=(FakeGpuMinhasher&&) = default;
-
-
-        void constructFromReadStorage(
-            const ProgramOptions& programOptions,
-            std::uint64_t /*nReads*/,
-            const GpuReadStorage& gpuReadStorage
-        ){
-            
-            auto& readStorage = gpuReadStorage;
-            const auto& deviceIds = programOptions.deviceIds;
-
-            int deviceId = deviceIds[0];
-
-            cub::SwitchDevice sd{deviceId};
-
-            const int requestedNumberOfMaps = programOptions.numHashFunctions;
-
-            const read_number numReads = readStorage.getNumberOfReads();
-            const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
-
-            auto sequencehandle = gpuReadStorage.makeHandle();
-            const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
-
-            rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
-
-            constexpr read_number parallelReads = 1000000;
-            const int numIters = SDIV(numReads, parallelReads);
-
-            const MemoryUsage memoryUsageOfReadStorage = readStorage.getMemoryInfo();
-            std::size_t totalLimit = programOptions.memoryTotalLimit;
-            if(totalLimit > memoryUsageOfReadStorage.host){
-                totalLimit -= memoryUsageOfReadStorage.host;
-            }else{
-                totalLimit = 0;
-            }
-            if(totalLimit == 0){
-                throw std::runtime_error("Not enough memory available for hash tables. Abort!");
-            }
-            std::size_t maxMemoryForTables = getAvailableMemoryInKB() * 1024;
-            // std::cerr << "available: " << maxMemoryForTables 
-            //         << ",memoryForHashtables: " << programOptions.memoryForHashtables
-            //         << ", memoryTotalLimit: " << programOptions.memoryTotalLimit
-            //         << ", rsHostUsage: " << memoryUsageOfReadStorage.host << "\n";
-
-            maxMemoryForTables = std::min(maxMemoryForTables, 
-                                    std::min(programOptions.memoryForHashtables, totalLimit));
-
-            std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
-
-            const int hashFunctionOffset = 0;
-
-            
-            std::vector<int> usedHashFunctionNumbers;
-
-            cudaStream_t stream = cudaStreamPerThread;
-            
-            rmm::device_uvector<unsigned int> d_sequenceData(encodedSequencePitchInInts * parallelReads, stream, mr);
-            rmm::device_uvector<int> d_lengths(parallelReads, stream, mr);
-            rmm::device_uvector<read_number> d_indices(parallelReads, stream, mr);
-            
-            helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
-            
-            std::size_t d_insert_temp_size = 0;
-            std::size_t h_insert_temp_size = 0;
-            insert(
-                nullptr,
-                d_insert_temp_size,
-                nullptr,
-                h_insert_temp_size,
-                (const unsigned int*)nullptr,
-                int(parallelReads),
-                (const int*)nullptr,
-                encodedSequencePitchInInts,
-                (const read_number*)nullptr,
-                (const read_number*)nullptr,
-                0,
-                requestedNumberOfMaps,
-                (const int*)nullptr,
-                (cudaStream_t)0
-            );
-            
-            ThreadPool tpForHashing(programOptions.threads);
-            ThreadPool tpForCompacting(std::min(2,programOptions.threads));
-
-            
-            setMemoryLimitForConstruction(maxMemoryForTables);
-            
-            //std::size_t bytesOfCachedConstructedTables = 0;
-            int remainingHashFunctions = requestedNumberOfMaps;
-            bool keepGoing = true;
-
-            while(remainingHashFunctions > 0 && keepGoing){
-
-                setThreadPool(&tpForHashing);
-
-                const int alreadyExistingHashFunctions = requestedNumberOfMaps - remainingHashFunctions;
-                int addedHashFunctions = addHashfunctions(remainingHashFunctions);
-
-                if(addedHashFunctions == 0){
-                    keepGoing = false;
-                    break;
-                }
-
-                rmm::device_uvector<char> d_temp(d_insert_temp_size, stream, mr);
-                helpers::SimpleAllocationPinnedHost<char> h_temp(h_insert_temp_size);
-
-                std::cout << "Constructing maps: ";
-                for(int i = 0; i < addedHashFunctions; i++){
-                    std::cout << (alreadyExistingHashFunctions + i) << "(" << (hashFunctionOffset + alreadyExistingHashFunctions + i) << ") ";
-                }
-                std::cout << '\n';
-
-                std::vector<int> h_hashfunctionNumbers(addedHashFunctions);
-                std::iota(
-                    h_hashfunctionNumbers.begin(),
-                    h_hashfunctionNumbers.end(),
-                    alreadyExistingHashFunctions + hashFunctionOffset
-                );
-
-                usedHashFunctionNumbers.insert(usedHashFunctionNumbers.end(), h_hashfunctionNumbers.begin(), h_hashfunctionNumbers.end());
-
-                for (int iter = 0; iter < numIters; iter++){
-                    read_number readIdBegin = iter * parallelReads;
-                    read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
-
-                    const std::size_t curBatchsize = readIdEnd - readIdBegin;
-
-                    std::iota(h_indices.get(), h_indices.get() + curBatchsize, readIdBegin);
-
-                    CUDACHECK(cudaMemcpyAsync(d_indices.data(), h_indices, sizeof(read_number) * curBatchsize, H2D, stream));
-
-                    gpuReadStorage.gatherSequences(
-                        sequencehandle,
-                        d_sequenceData.data(),
-                        encodedSequencePitchInInts,
-                        makeAsyncConstBufferWrapper(h_indices.data()),
-                        d_indices.data(),
-                        curBatchsize,
-                        stream,
-                        mr
-                    );
-                
-                    gpuReadStorage.gatherSequenceLengths(
-                        sequencehandle,
-                        d_lengths.data(),
-                        d_indices.data(),
-                        curBatchsize,
-                        stream
-                    );
-
-                    std::size_t s1 = d_insert_temp_size;
-                    std::size_t s2 = h_insert_temp_size;
-
-                    insert(
-                        d_temp.data(),
-                        s1,
-                        h_temp.data(),
-                        s2,
-                        d_sequenceData.data(),
-                        curBatchsize,
-                        d_lengths.data(),
-                        encodedSequencePitchInInts,
-                        d_indices.data(),
-                        h_indices,
-                        alreadyExistingHashFunctions,
-                        addedHashFunctions,
-                        h_hashfunctionNumbers.data(),
-                        stream
-                    );
-
-                    CUDACHECK(cudaStreamSynchronize(stream));
-                }
-
-                ::destroy(d_temp, stream);
-                h_temp.destroy();
-
-                CUDACHECK(cudaStreamSynchronize(stream));
-
-                std::cerr << "Compacting\n";
-                if(tpForCompacting.getConcurrency() > 1){
-                    setThreadPool(&tpForCompacting);
-                }else{
-                    setThreadPool(nullptr);
-                }
-                
-                finalize();
-
-                remainingHashFunctions -= addedHashFunctions;
-            }
-
-            setThreadPool(nullptr); 
-            
-            gpuReadStorage.destroyHandle(sequencehandle);
-        }
-    
+   
 
         MinhasherHandle makeMinhasherHandle() const override {
             auto data = std::make_unique<QueryData>();
@@ -408,7 +217,6 @@ namespace gpu{
 
             GPUSequenceHasher<kmer_type> hasher;
             auto hashResult = hasher.hash(
-            //auto hashResult = hasher.hashUniqueKmers(
                 d_sequenceData2Bit,
                 encodedSequencePitchInInts,
                 numSequences,
@@ -419,27 +227,6 @@ namespace gpu{
                 stream,
                 mr
             );
-
-            // rmm::device_uvector<kmer_type> d_minhashSignatures(
-            //     getNumberOfMaps() * numSequences,
-            //     stream,
-            //     mr
-            // );
-
-            // DEBUGSTREAMSYNC(stream);
-
-            // callMinhashSignatures3264Kernel(
-            //     d_minhashSignatures.data(),
-            //     hashValuesPitchInElements,
-            //     d_sequenceData2Bit,
-            //     encodedSequencePitchInInts,
-            //     numSequences,
-            //     d_sequenceLengths,
-            //     getKmerSize(),
-            //     getNumberOfMaps(),
-            //     thrust::raw_pointer_cast(queryData->d_hashFunctionNumbers.data()),
-            //     stream
-            // );
 
             DEBUGSTREAMSYNC(stream);
 
@@ -472,7 +259,6 @@ namespace gpu{
             DEBUGSTREAMSYNC(stream);
 
             ::destroy(d_minhashSignatures_transposed, stream);
-            //::destroy(d_minhashSignatures, stream);
 
             rmm::device_uvector<bool> d_isValid_transposed(
                 getNumberOfMaps() * numSequences,
@@ -541,17 +327,6 @@ namespace gpu{
                 }
             }
 
-            // for(int i = 0; i < numSequences; i++){
-            //     const std::uint64_t* const signature = &queryData->h_minhashSignatures[i * getNumberOfMaps()];
-            //     FakeGpuMinhasher::Range_t* const range = &allRanges[i * getNumberOfMaps()];            
-
-            //     for(int map = 0; map < getNumberOfMaps(); ++map){
-            //         kmer_type key = signature[map] & kmer_mask;
-            //         auto entries_range = queryMap(map, key);
-            //         totalNumValues += std::distance(entries_range.first, entries_range.second);
-            //         range[map] = entries_range;
-            //     }
-            // }
             nvtx::pop_range();
 
             DEBUGSTREAMSYNC(stream);
@@ -560,39 +335,15 @@ namespace gpu{
 
             DEBUGSTREAMSYNC(stream);
 
-            // std::vector<int> numValuesPerSequence(numSequences);
-
-            // for(int sequenceIndex = 0; sequenceIndex < numSequences; sequenceIndex++){
-
-            //     int num = 0;
-
-            //     for(int mapIndex = 0; mapIndex < getNumberOfMaps(); mapIndex++){
-            //         const int k = sequenceIndex * getNumberOfMaps() + mapIndex;
-                    
-            //         const auto& range = allRanges[k];
-            //         if(std::distance(range.first, range.second) <= getNumResultsPerMapThreshold())
-            //             num += std::distance(range.first, range.second);
-            //     }
-
-            //     numValuesPerSequence[sequenceIndex] = num;
-            // }
-
-            //CUDACHECK(cudaMemcpyAsync(d_numValuesPerSequence, numValuesPerSequence.data(), sizeof(int) * numSequences, H2D, stream));
-
             queryData->previousStage = QueryData::Stage::NumValues;
         }
 
-
-
-        #if 1
-
         void retrieveValues(
             MinhasherHandle& queryHandle,
-            const read_number* d_readIds,
             int numSequences,
             int totalNumValues,
             read_number* d_values,
-            int* d_numValuesPerSequence,
+            const int* d_numValuesPerSequence,
             int* d_offsets, //numSequences + 1
             cudaStream_t stream,
             rmm::mr::device_memory_resource* mr
@@ -602,49 +353,40 @@ namespace gpu{
             DEBUGSTREAMSYNC(stream);
 
             assert(queryData->isInitialized);
+            assert(queryData->previousStage == QueryData::Stage::NumValues);
+            queryData->previousStage = QueryData::Stage::Retrieve;
+
             if(numSequences == 0) return;
 
-            assert(queryData->previousStage == QueryData::Stage::NumValues);
-
-            //std::cerr << "totalNumValues: " << totalNumValues << "\n";
-
             if(totalNumValues == 0){
-                cudaMemsetAsync(d_numValuesPerSequence, 0, sizeof(int) * numSequences, stream);
-                cudaMemsetAsync(d_offsets, 0, sizeof(int) * (numSequences + 1), stream);
-
-                queryData->previousStage = QueryData::Stage::Retrieve;
-
-                DEBUGSTREAMSYNC(stream);
-
+                CUDACHECK(cudaMemsetAsync(d_offsets, 0, sizeof(int) * (numSequences + 1), stream));
                 return;
             }
+
+            CubCallWrapper(mr).cubInclusiveSum(
+                d_numValuesPerSequence,
+                d_offsets + 1,
+                numSequences,
+                stream
+            );
+
+            CUDACHECK(cudaMemsetAsync(d_offsets, 0, sizeof(int), stream));
 
             constexpr int roundUpTo = 10000;
             const int roundedTotalNum = SDIV(totalNumValues, roundUpTo) * roundUpTo;
             queryData->h_candidate_read_ids_tmp.resize(roundedTotalNum);
 
-            rmm::device_uvector<read_number> d_candidate_read_ids_tmp(roundedTotalNum, stream, mr);
-
             queryData->h_begin_offsets.resize(numSequences+1);
             queryData->h_end_offsets.resize(numSequences+1);
-
-
-            //results will be in Current() buffer
-            cub::DoubleBuffer<read_number> d_values_dblbuf(d_values, d_candidate_read_ids_tmp.data());
 
             auto copyHitsToPinnedMemory = [queryData, numSequences, minhasher = this](){
                 int* h_numValuesPerSequence = queryData->h_numValuesPerSequence.data();
 
-                queryData->h_begin_offsets[0] = 0;
-                std::partial_sum(
-                    h_numValuesPerSequence, 
-                    h_numValuesPerSequence + numSequences - 1, 
-                    queryData->h_begin_offsets.begin() + 1
-                );
-                std::partial_sum(
+                std::exclusive_scan(
                     h_numValuesPerSequence, 
                     h_numValuesPerSequence + numSequences, 
-                    queryData->h_end_offsets.begin()
+                    queryData->h_begin_offsets.begin(),
+                    0
                 );
 
                 std::vector<int> processedPerSequence(numSequences, 0);
@@ -689,340 +431,19 @@ namespace gpu{
                 }
             };
 
-            
-
             copyHitsToPinnedMemory();
 
-            DEBUGSTREAMSYNC(stream);
-
             CUDACHECK(cudaMemcpyAsync(
-                d_values_dblbuf.Current(),
+                d_values,
                 queryData->h_candidate_read_ids_tmp.data(),
                 sizeof(read_number) * totalNumValues,
                 H2D,
                 stream
             ));
-
-            DEBUGSTREAMSYNC(stream);
-
-            rmm::device_uvector<int> d_begin_offsets((numSequences + 1), stream, mr);
-            rmm::device_uvector<int> d_end_offsets((numSequences + 1), stream, mr);
-            rmm::device_uvector<int> d_global_begin_offsets((numSequences), stream, mr);
-
-            DEBUGSTREAMSYNC(stream);
-
-            //copy h_endoffsets to d_endoffsets.
-            //Then copy d_endoffsets to d_begin_offsets shifted to the right by 1.
-            //Then copy d_begin_offsets to d_global_begin_offsets
-            helpers::lambda_kernel<<<SDIV(numSequences, 1024), 1024, 0, stream>>>(
-                [
-                    numSequences,
-                    h_end_offsets = queryData->h_end_offsets.data(),
-                    d_end_offsets = d_end_offsets.data(),
-                    d_begin_offsets = d_begin_offsets.data(),
-                    d_global_begin_offsets = d_global_begin_offsets.data()
-                ] __device__ (){
-                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-
-                    if(tid < numSequences){
-                        const int data = h_end_offsets[tid];
-                        d_end_offsets[tid] = data;
-
-                        if(tid < numSequences - 1){
-                            d_begin_offsets[tid + 1] = data;
-                            d_global_begin_offsets[tid + 1] = data;
-                        }
-                        
-                        if(tid == 0){
-                            d_begin_offsets[0] = 0;
-                            d_global_begin_offsets[0] = 0;
-                        }
-                    }
-                }
-            );
-
-            DEBUGSTREAMSYNC(stream);
-
-            GpuSegmentedUnique::unique(
-                d_values_dblbuf.Current(), //input
-                totalNumValues,
-                d_values_dblbuf.Alternate(), //output
-                d_numValuesPerSequence,
-                numSequences,
-                d_begin_offsets.data(), //device accessible
-                d_end_offsets.data(), //device accessible
-                queryData->h_begin_offsets,
-                queryData->h_end_offsets,
-                0,
-                sizeof(read_number) * 8,
-                stream,
-                mr
-            );
-
-            DEBUGSTREAMSYNC(stream);
-
-            ::destroy(d_begin_offsets, stream);
-            ::destroy(d_end_offsets, stream);
-
-            if(d_readIds != nullptr){
-
-                //remove self read ids (inplace)
-                //--------------------------------------------------------------------
-                callFindAndRemoveFromSegmentKernel<read_number,128,4>(
-                    d_readIds,
-                    d_values_dblbuf.Alternate(),
-                    numSequences,
-                    d_numValuesPerSequence,
-                    d_global_begin_offsets.data(),
-                    stream
-                );
-
-                DEBUGSTREAMSYNC(stream);
-
-            }
-
-            int* d_newOffsets = d_offsets;
-
-            CUDACHECK(cudaMemsetAsync(d_newOffsets, 0, sizeof(int), stream));
-
-            DEBUGSTREAMSYNC(stream);
-
-            std::size_t cubtempbytes = 0;
-            CUDACHECK(cub::DeviceScan::InclusiveSum(
-                nullptr,
-                cubtempbytes,
-                d_numValuesPerSequence,
-                d_newOffsets + 1,
-                numSequences,
-                stream
-            ));
-
-            rmm::device_uvector<char> d_cubTemp(cubtempbytes, stream);
-
-            CUDACHECK(cub::DeviceScan::InclusiveSum(
-                d_cubTemp.data(),
-                cubtempbytes,
-                d_numValuesPerSequence,
-                d_newOffsets + 1,
-                numSequences,
-                stream
-            ));
-
-            DEBUGSTREAMSYNC(stream);
-
-            //copy final remaining values into contiguous range
-            helpers::lambda_kernel<<<numSequences, 128, 0, stream>>>(
-                [
-                    d_values_in = d_values_dblbuf.Alternate(),
-                    d_values_out = d_values_dblbuf.Current(),
-                    numSequences,
-                    d_numValuesPerSequence,
-                    d_offsets = d_global_begin_offsets.data(),
-                    d_newOffsets
-                ] __device__ (){
-
-                    for(int s = blockIdx.x; s < numSequences; s += gridDim.x){
-                        const int numValues = d_numValuesPerSequence[s];
-                        const int inOffset = d_offsets[s];
-                        const int outOffset = d_newOffsets[s];
-
-                        for(int c = threadIdx.x; c < numValues; c += blockDim.x){
-                            d_values_out[outOffset + c] = d_values_in[inOffset + c];    
-                        }
-                    }
-                }
-            ); CUDACHECKASYNC;
-
-            DEBUGSTREAMSYNC(stream);
-
-            queryData->previousStage = QueryData::Stage::Retrieve;
+            
         }
 
-
-        #else
-
-        //uses host-side sort+unique instead of device-side sort+unique
-        void retrieveValues(
-            MinhasherHandle& queryHandle,
-            const read_number* d_readIds,
-            int numSequences,
-            int totalNumValues,
-            read_number* d_values,
-            int* d_numValuesPerSequence,
-            int* d_offsets, //numSequences + 1
-            cudaStream_t stream,
-            rmm::mr::device_memory_resource* mr
-        ) const override {
-            QueryData* const queryData = getQueryDataFromHandle(queryHandle);
-
-            DEBUGSTREAMSYNC(stream);
-
-            assert(queryData->isInitialized);
-            if(numSequences == 0) return;
-
-            assert(queryData->previousStage == QueryData::Stage::NumValues);
-
-            //std::cerr << "totalNumValues: " << totalNumValues << "\n";
-
-            if(totalNumValues == 0){
-                CUDACHECK(cudaMemsetAsync(d_numValuesPerSequence, 0, sizeof(int) * numSequences, stream));
-                CUDACHECK(cudaMemsetAsync(d_offsets, 0, sizeof(int) * (numSequences + 1), stream));
-
-                queryData->previousStage = QueryData::Stage::Retrieve;
-
-                DEBUGSTREAMSYNC(stream);
-
-                return;
-            }
-
-            if(d_readIds != nullptr){
-                queryData->h_anchorReadIds.resize(numSequences);
-                CUDACHECK(cudaMemcpyAsync(queryData->h_anchorReadIds.data(), d_readIds, sizeof(read_number) * numSequences, D2H, stream));
-            }
-
-            constexpr int roundUpTo = 10000;
-            const int roundedTotalNum = SDIV(totalNumValues, roundUpTo) * roundUpTo;
-            queryData->h_candidate_read_ids_tmp.resize(roundedTotalNum);
-
-            rmm::device_uvector<read_number> d_candidate_read_ids_tmp(roundedTotalNum, stream, mr);
-
-            queryData->h_begin_offsets.resize(numSequences+1);
-            queryData->h_end_offsets.resize(numSequences+1);
-
-
-            //results will be in Current() buffer
-            cub::DoubleBuffer<read_number> d_values_dblbuf(d_values, d_candidate_read_ids_tmp.data());
-
-            auto copyHitsToPinnedMemory = [queryData, numSequences, minhasher = this](){
-                int* h_numValuesPerSequence = queryData->h_numValuesPerSequence.data();
-
-                queryData->h_begin_offsets[0] = 0;
-                std::partial_sum(
-                    h_numValuesPerSequence, 
-                    h_numValuesPerSequence + numSequences - 1, 
-                    queryData->h_begin_offsets.begin() + 1
-                );
-                std::partial_sum(
-                    h_numValuesPerSequence, 
-                    h_numValuesPerSequence + numSequences, 
-                    queryData->h_end_offsets.begin()
-                );
-
-                std::vector<int> processedPerSequence(numSequences, 0);
-
-                for(int map = 0; map < minhasher->getNumberOfMaps(); ++map){
-                    for(int i = 0; i < numSequences; i++){
-
-                        
-
-                        //prefetch first element of next range if the next range is not empty
-                        // {
-                        //     constexpr int nextprefetch = 2;
-                        //     int prefetchSequence = 0;
-                        //     int prefetchMap = 0;
-                        //     if(i + nextprefetch < numSequences){
-                        //         prefetchMap = map;
-                        //         prefetchSequence = i + nextprefetch;
-                        //     }else{
-                        //         prefetchMap = map + 1;
-                        //         prefetchSequence = i + nextprefetch - numSequences;
-                        //     }
-
-                        //     if(prefetchMap < minhasher->getNumberOfMaps()){
-                        //         const auto& range = queryData->allRanges[prefetchMap * numSequences + prefetchSequence];
-                        //         if(range.first != range.second){
-                        //             __builtin_prefetch(range.first, 0, 0);
-                        //         }
-                        //     }
-                        // }
-
-                        const auto& range = queryData->allRanges[map * numSequences + i];
-
-                        std::copy(
-                            range.first, 
-                            range.second, 
-                            queryData->h_candidate_read_ids_tmp.data() 
-                                + queryData->h_begin_offsets[i] + processedPerSequence[i]
-                        );
-
-                        processedPerSequence[i] += std::distance(range.first, range.second);
-                    }
-                }
-            };
-
-            copyHitsToPinnedMemory();
-
-            read_number* const h_outputBegin = queryData->h_candidate_read_ids_tmp.data();
-            read_number* h_outputEnd = h_outputBegin;
-            int* const h_numValuesPerSequenceBegin = queryData->h_begin_offsets.data();
-            int* h_numValuesPerSequenceEnd = h_numValuesPerSequenceBegin;
-            int* const h_offsetsBegin = queryData->h_end_offsets.data();
-            int* h_offsetsEnd = h_offsetsBegin;
-
-            for(int s = 0; s < numSequences; s++){
-                const int beginIndex = queryData->h_begin_offsets[s];
-                const int endIndex = queryData->h_end_offsets[s];
-                read_number* begin = &queryData->h_candidate_read_ids_tmp[beginIndex];
-                read_number* end = &queryData->h_candidate_read_ids_tmp[endIndex];
-
-                std::sort(begin, end);
-
-                auto currentOutputEnd = h_outputEnd;
-
-                if(d_readIds != nullptr){
-                    const auto anchorReadId = queryData->h_anchorReadIds[s];
-
-                    auto isEqual = [toremove = anchorReadId](const auto& l, const auto& r){
-                        if(l == toremove) return true;
-                        if(r == toremove) return true;
-                        return l == r;
-                    };
-
-                    //make unique range and remove anchorReadId
-                    h_outputEnd = std::unique_copy(begin, end, h_outputEnd, isEqual);
-                }else{
-                    //make unique range
-                    h_outputEnd = std::unique_copy(begin, end, h_outputEnd);
-                }
-
-                *(h_numValuesPerSequenceEnd++) = std::distance(currentOutputEnd, h_outputEnd);
-                *(h_offsetsEnd++) = std::distance(h_outputBegin, currentOutputEnd);
-            }
-
-            const auto resultsize = h_offsetsBegin[numSequences - 1] + h_numValuesPerSequenceBegin[numSequences - 1];
-            h_offsetsBegin[numSequences] = resultsize;
-
-            CUDACHECK(cudaMemcpyAsync(
-                d_values,
-                queryData->h_candidate_read_ids_tmp.data(),
-                sizeof(read_number) * resultsize,
-                H2D,
-                stream
-            ));
-
-            CUDACHECK(cudaMemcpyAsync(
-                d_numValuesPerSequence,
-                h_numValuesPerSequenceBegin,
-                sizeof(int) * numSequences,
-                H2D,
-                stream
-            ));
-
-            CUDACHECK(cudaMemcpyAsync(
-                d_offsets,
-                h_offsetsBegin,
-                sizeof(int) * (numSequences + 1),
-                H2D,
-                stream
-            ));
-
-            DEBUGSTREAMSYNC(stream);
-
-            queryData->previousStage = QueryData::Stage::Retrieve;
-        }
-        #endif
-
-        void compact(cudaStream_t /*stream*/) {
+        void compact(cudaStream_t /*stream*/) override{
             int id;
             CUDACHECK(cudaGetDevice(&id));
 
@@ -1121,7 +542,7 @@ namespace gpu{
         }
 
 
-        void writeToStream(std::ostream& os) const{
+        void writeToStream(std::ostream& os) const override{
 
             os.write(reinterpret_cast<const char*>(&kmerSize), sizeof(int));
             os.write(reinterpret_cast<const char*>(&resultsPerMapThreshold), sizeof(int));
@@ -1135,7 +556,7 @@ namespace gpu{
             }
         }
 
-        int loadFromStream(std::ifstream& is, int numMapsUpperLimit = std::numeric_limits<int>::max()){
+        int loadFromStream(std::ifstream& is, int numMapsUpperLimit) override{
             destroy();
 
             is.read(reinterpret_cast<char*>(&kmerSize), sizeof(int));
@@ -1157,11 +578,14 @@ namespace gpu{
             return mapsToLoad;
         } 
 
-        int addHashfunctions(int numExtraFunctions){
+        bool canWriteToStream() const noexcept override { return true; };
+        bool canLoadFromStream() const noexcept override { return true; };
+
+        int addHashTables(int numAdditionalTables, const int* /*hashFunctionIds*/, cudaStream_t /*stream*/) override{
             int added = 0;
             const int cur = minhashTables.size();
 
-            assert(!(numExtraFunctions + cur > 64));
+            assert(!(numAdditionalTables + cur > 64));
 
             std::size_t bytesOfCachedConstructedTables = 0;
             for(const auto& ptr : minhashTables){
@@ -1172,7 +596,7 @@ namespace gpu{
             std::size_t requiredMemPerTable = (sizeof(kmer_type) + sizeof(read_number)) * maxNumKeys;
             int numTablesToConstruct = (memoryLimit - bytesOfCachedConstructedTables) / requiredMemPerTable;
             numTablesToConstruct -= 2; // keep free memory of 2 tables to perform transformation 
-            numTablesToConstruct = std::min(numTablesToConstruct, numExtraFunctions);
+            numTablesToConstruct = std::min(numTablesToConstruct, numAdditionalTables);
 
             for(int i = 0; i < numTablesToConstruct; i++){
                 try{
@@ -1189,65 +613,30 @@ namespace gpu{
         } 
 
         void insert(
-            void* d_temp,
-            std::size_t& d_temp_storage_bytes,
-            void* h_temp,
-            std::size_t& h_temp_storage_bytes,
             const unsigned int* d_sequenceData2Bit,
             int numSequences,
             const int* d_sequenceLengths,
             std::size_t encodedSequencePitchInInts,
-            const read_number* /*d_readIds*/, //unused???
+            const read_number* /*d_readIds*/,
             const read_number* h_readIds,
             int firstHashfunction,
             int numHashfunctions,
             const int* h_hashFunctionNumbers,
             cudaStream_t stream,
-            rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
-        ){
+            rmm::mr::device_memory_resource* mr
+        ) override {
             ThreadPool::ParallelForHandle pforHandle{};
 
             ForLoopExecutor forLoopExecutor(threadPool, &pforHandle);
 
             const std::size_t signaturesRowPitchElements = numHashfunctions;
 
-            void* d_temp_allocations[3]{};
-            std::size_t d_temp_allocation_sizes[3]{};            
-            d_temp_allocation_sizes[0] = sizeof(kmer_type) * signaturesRowPitchElements * numSequences; // d_sig
-            d_temp_allocation_sizes[1] = sizeof(kmer_type) * signaturesRowPitchElements * numSequences; // d_sig_trans
-            d_temp_allocation_sizes[2] = sizeof(int) * numHashfunctions; // d_hashFunctionNumbers
-            
-            cudaError_t cubstatus = cub::AliasTemporaries(
-                d_temp,
-                d_temp_storage_bytes,
-                d_temp_allocations,
-                d_temp_allocation_sizes
-            );
-            assert(cubstatus == cudaSuccess);
-
-            void* h_temp_allocations[1]{};
-            std::size_t h_temp_allocation_sizes[1]{};            
-            h_temp_allocation_sizes[0] = sizeof(kmer_type) * signaturesRowPitchElements * numSequences; // h_signatures_transposed
-    
-            cubstatus = cub::AliasTemporaries(
-                h_temp,
-                h_temp_storage_bytes,
-                h_temp_allocations,
-                h_temp_allocation_sizes
-            );
-            assert(cubstatus == cudaSuccess);
-
-            if(d_temp == nullptr || h_temp == nullptr){
-                return;
-            }
-
             assert(firstHashfunction + numHashfunctions <= int(minhashTables.size()));
 
-            kmer_type* const d_signatures_transposed = static_cast<kmer_type*>(d_temp_allocations[1]);
-            int* const d_hashFunctionNumbers = static_cast<int*>(d_temp_allocations[2]);
+            rmm::device_uvector<int> d_hashFunctionNumbers(numHashfunctions, stream, mr);
 
             CUDACHECK(cudaMemcpyAsync(
-                d_hashFunctionNumbers, 
+                d_hashFunctionNumbers.data(), 
                 h_hashFunctionNumbers, 
                 sizeof(int) * numHashfunctions, 
                 H2D, 
@@ -1257,50 +646,26 @@ namespace gpu{
             GPUSequenceHasher<kmer_type> hasher;
 
             auto hashResult = hasher.hash(
-            //auto hashResult = hasher.hashUniqueKmers(
                 d_sequenceData2Bit,
                 encodedSequencePitchInInts,
                 numSequences,
                 d_sequenceLengths,
                 getKmerSize(),
                 numHashfunctions,
-                d_hashFunctionNumbers,
+                d_hashFunctionNumbers.data(),
                 stream,
                 mr
             );
 
-            // callMinhashSignatures3264Kernel(
-            //     d_signatures,
-            //     signaturesRowPitchElements,
-            //     d_sequenceData2Bit,
-            //     encodedSequencePitchInInts,
-            //     numSequences,
-            //     d_sequenceLengths,
-            //     getKmerSize(),
-            //     numHashfunctions,
-            //     d_hashFunctionNumbers,
-            //     stream
-            // );
-
+            rmm::device_uvector<kmer_type> d_signatures_transposed(signaturesRowPitchElements * numSequences, stream, mr);
             helpers::call_transpose_kernel(
-                d_signatures_transposed, 
-                //d_signatures, 
+                d_signatures_transposed.data(), 
                 hashResult.d_hashvalues.data(),
                 numSequences, 
                 signaturesRowPitchElements, 
                 signaturesRowPitchElements,
                 stream
             );
-
-            kmer_type* const h_signatures_transposed = static_cast<kmer_type*>(h_temp_allocations[0]);
-
-            CUDACHECK(cudaMemcpyAsync(
-                h_signatures_transposed, 
-                d_signatures_transposed, 
-                sizeof(kmer_type) * signaturesRowPitchElements * numSequences, 
-                D2H, 
-                stream
-            ));
 
             rmm::device_uvector<bool> d_isValid_transposed(
                 numHashfunctions * numSequences,
@@ -1317,9 +682,8 @@ namespace gpu{
                 stream
             );
 
-            DEBUGSTREAMSYNC(stream);
-
             auto h_isValid = std::make_unique<bool[]>(numSequences * numHashfunctions);
+            auto h_signatures_transposed = std::make_unique<kmer_type[]>(signaturesRowPitchElements * numSequences);
 
             CUDACHECK(cudaMemcpyAsync(
                 h_isValid.get(),
@@ -1329,7 +693,13 @@ namespace gpu{
                 stream
             ));
 
-            DEBUGSTREAMSYNC(stream);
+            CUDACHECK(cudaMemcpyAsync(
+                h_signatures_transposed.get(), 
+                d_signatures_transposed.data(), 
+                sizeof(kmer_type) * signaturesRowPitchElements * numSequences, 
+                D2H, 
+                stream
+            ));
 
             CUDACHECK(cudaStreamSynchronize(stream));
 
@@ -1373,32 +743,44 @@ namespace gpu{
             };
 
             forLoopExecutor(0, numHashfunctions, loopbody);
-        }   
+        }
 
-        void setThreadPool(ThreadPool* tp){
+        int checkInsertionErrors(
+            int /*firstHashfunction*/,
+            int /*numHashfunctions*/,
+            cudaStream_t /*stream*/
+        ) override{
+            return 0;
+        }
+
+        void setThreadPool(ThreadPool* tp) override{
             threadPool = tp;
         }
 
-        void setMemoryLimitForConstruction(std::size_t limit){
+        void setHostMemoryLimitForConstruction(std::size_t limit) override{
             memoryLimit = limit;
         }
 
-    private:
+        void setDeviceMemoryLimitsForConstruction(const std::vector<std::size_t>&) override{
 
-        
+        }
+
+        void constructionIsFinished(cudaStream_t /*stream*/) override{
+
+        }
+
+    private:        
         QueryData* getQueryDataFromHandle(const MinhasherHandle& queryHandle) const{
             std::shared_lock<SharedMutex> lock(sharedmutex);
 
             return tempdataVector[queryHandle.getId()].get();
-        }
-        
+        }        
 
         Range_t queryMap(int id, const Key_t& key) const{
             HashTable::QueryResult qr = minhashTables[id]->query(key);
 
             return std::make_pair(qr.valuesBegin, qr.valuesBegin + qr.numValues);
         }
-
 
         mutable int counter = 0;
         mutable SharedMutex sharedmutex{};

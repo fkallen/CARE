@@ -352,7 +352,7 @@ public:
                 sizeof(unsigned int),
                 deviceIds,
                 memoryLimitsPerDevice,
-                MultiGpu2dArrayLayout::FirstFit,
+                MultiGpu2dArrayLayout::EvenShare,
                 MultiGpu2dArrayInitMode::CanDiscardRows
             )
         );
@@ -460,7 +460,7 @@ public:
                     sizeof(unsigned int),
                     deviceIds,
                     memoryLimitsPerDevice,
-                    MultiGpu2dArrayLayout::FirstFit,
+                    MultiGpu2dArrayLayout::EvenShare,
                     MultiGpu2dArrayInitMode::CanDiscardRows
                 )
             );

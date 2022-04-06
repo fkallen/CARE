@@ -1,7 +1,7 @@
 
 #include <gpu/dispatch_care_extend_gpu.cuh>
 #include <gpu/gpuminhasherconstruction.cuh>
-#include <gpu/fakegpuminhasher.cuh>
+//#include <gpu/fakegpuminhasher.cuh>
 #include <gpu/cudaerrorcheck.cuh>
 #include <gpu/multigpureadstorage.cuh>
 #include <gpu/readextension_gpu.hpp>
@@ -152,6 +152,19 @@ namespace care{
             auto resource = std::make_unique<rmm::mr::cuda_async_memory_resource>();
             rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), resource.get());
 
+            for(auto otherId : programOptions.deviceIds){
+                if(otherId != id){
+                    if(peerAccess.canAccessPeer(id, otherId)){
+                        cudaMemAccessDesc accessDesc = {};
+                        accessDesc.location.type = cudaMemLocationTypeDevice;
+                        accessDesc.location.id = otherId;
+                        accessDesc.flags = cudaMemAccessFlagsProtReadWrite;
+
+                        CUDACHECK(cudaMemPoolSetAccess(resource->pool_handle(), &accessDesc, 1));
+                    }
+                }
+            }
+
             CUDACHECK(cudaDeviceSetMemPool(id, resource->pool_handle()));
             rmmCudaAsyncResources.push_back(std::move(resource));
         }
@@ -233,7 +246,7 @@ namespace care{
         auto minhasherAndType = gpu::constructGpuMinhasherFromGpuReadStorage(
             programOptions,
             gpuReadStorage,
-            gpu::GpuMinhasherType::Multi
+            gpu::GpuMinhasherType::Single
         );
 
         gpu::GpuMinhasher* gpuMinhasher = minhasherAndType.first.get();
@@ -263,22 +276,15 @@ namespace care{
             return;
         }
 
-        if(minhasherAndType.second == gpu::GpuMinhasherType::Fake){
+        if(programOptions.save_hashtables_to != "" && gpuMinhasher->canWriteToStream()) {
+            std::cout << "Saving minhasher to file " << programOptions.save_hashtables_to << std::endl;
+            std::ofstream os(programOptions.save_hashtables_to);
+            assert((bool)os);
+            helpers::CpuTimer timer("save_to_file");
+            gpuMinhasher->writeToStream(os);
+            timer.print();
 
-            gpu::FakeGpuMinhasher* fakeGpuMinhasher = dynamic_cast<gpu::FakeGpuMinhasher*>(gpuMinhasher);
-            assert(fakeGpuMinhasher != nullptr);
-
-            if(programOptions.save_hashtables_to != "") {
-                std::cout << "Saving minhasher to file " << programOptions.save_hashtables_to << std::endl;
-                std::ofstream os(programOptions.save_hashtables_to);
-                assert((bool)os);
-                helpers::CpuTimer timer("save_to_file");
-                fakeGpuMinhasher->writeToStream(os);
-                timer.print();
-
-                std::cout << "Saved minhasher" << std::endl;
-            }
-
+            std::cout << "Saved minhasher" << std::endl;
         }
 
         printDataStructureMemoryUsage(*gpuMinhasher, "hash tables");        

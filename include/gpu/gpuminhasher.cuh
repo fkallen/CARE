@@ -7,8 +7,10 @@
 #include <config.hpp>
 #include <memorymanagement.hpp>
 #include <minhasherhandle.hpp>
+#include <threadpool.hpp>
 
 #include <cstdint>
+#include <vector>
 
 #include <rmm/mr/device/device_memory_resource.hpp>
 
@@ -26,6 +28,37 @@ public:
 
     virtual void destroyHandle(MinhasherHandle& handle) const = 0;
 
+    //construction
+    virtual void setHostMemoryLimitForConstruction(std::size_t bytes) = 0;
+    virtual void setDeviceMemoryLimitsForConstruction(const std::vector<std::size_t>&) = 0;
+    virtual int addHashTables(int numAdditionalTables, const int* hashFunctionIds, cudaStream_t stream) = 0;
+    virtual void setThreadPool(ThreadPool* tp) = 0;
+    virtual void compact(cudaStream_t stream) = 0;
+    virtual void constructionIsFinished(cudaStream_t stream) = 0;
+
+    virtual void insert(
+        const unsigned int* d_sequenceData2Bit,
+        int numSequences,
+        const int* d_sequenceLengths,
+        std::size_t encodedSequencePitchInInts,
+        const read_number* d_readIds,
+        const read_number* h_readIds,
+        int firstHashfunction,
+        int numHashfunctions,
+        const int* h_hashFunctionNumbers,
+        cudaStream_t stream,
+        rmm::mr::device_memory_resource* mr
+    ) = 0;
+
+    //return number of hash tables where insert was unsuccessfull
+    virtual int checkInsertionErrors(
+        int firstHashfunction,
+        int numHashfunctions,
+        cudaStream_t stream
+    ) = 0;
+
+    //query
+
     virtual void determineNumValues(
         MinhasherHandle& queryHandle,
         const unsigned int* d_sequenceData2Bit,
@@ -40,17 +73,15 @@ public:
 
     virtual void retrieveValues(
         MinhasherHandle& queryHandle,
-        const read_number* d_readIds,
         int numSequences,
         int totalNumValues,
         read_number* d_values,
-        int* d_numValuesPerSequence,
+        const int* d_numValuesPerSequence,
         int* d_offsets, //numSequences + 1
         cudaStream_t stream,
         rmm::mr::device_memory_resource* mr
     ) const = 0;
 
-    //virtual void compact(cudaStream_t stream) = 0;
 
     virtual MemoryUsage getMemoryInfo() const noexcept = 0;
 
@@ -65,6 +96,11 @@ public:
     //virtual void destroy() = 0;
 
     virtual bool hasGpuTables() const noexcept = 0;
+
+    virtual void writeToStream(std::ostream& os) const = 0;
+    virtual int loadFromStream(std::ifstream& is, int numMapsUpperLimit) = 0;
+    virtual bool canWriteToStream() const noexcept = 0;
+    virtual bool canLoadFromStream() const noexcept = 0;
 
 protected:
     MinhasherHandle constructHandle(int id) const{

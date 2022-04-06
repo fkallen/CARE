@@ -1726,7 +1726,7 @@ SerializedObjectStorage correct_gpu_impl(
                 gpuForestCandidate
             );
 
-            pipeline.runToCompletionDoubleBuffered(
+            pipeline.runToCompletionDoubleBufferedWithExtraThread(
                 deviceId,
                 readIdGenerator,
                 programOptions,
@@ -1798,29 +1798,38 @@ SerializedObjectStorage correct_gpu_impl(
         const int requiredNumThreadsForComplex = numHashersPerCorrectorByTime + (2 + 1 + 1);
         int availableThreads = programOptions.threads;
 
-        for(int i = 0; i < numDevices; i++){ 
-            if(availableThreads > 0){
-                const int deviceId = deviceIds[i];
+        if(minhasher.hasGpuTables()){
+            constexpr int maxThreadsPerGpu = 4;
+            std::vector<int> usedPerGpu(numDevices, 0);
+            int usedTotal = 0;
+            int current = 0;
 
-                int threadsForDevice = std::max(1,std::min(availableThreads, requiredNumThreadsForComplex));
+            while(availableThreads > 0 && usedTotal < numDevices * maxThreadsPerGpu){
+                if(usedPerGpu[current] < 4){    
+                    futures.emplace_back(std::async(
+                        std::launch::async,
+                        runSimpleGpuPipeline,
+                        deviceIds[current],
+                        &anchorForests[current],
+                        &candidateForests[current]
+                    ));
+                    availableThreads--;
+                    usedTotal++;
+                    usedPerGpu[current]++;
+                }
+                current = (current + 1) % numDevices;
+            }
 
-                if(minhasher.hasGpuTables()){
-                    int threadsForDeviceWithGpuTables = std::min(4, threadsForDevice);
-                    std::cerr << "\nWill use " << threadsForDeviceWithGpuTables << " gpu hashtable pipelines on device " << deviceId << "\n";
+            for(int i = 0; i < numDevices; i++){
+                std::cerr << "\nUsing " << usedPerGpu[i] << " gpu hashtable pipelines on device " << deviceIds[i] << "\n";
+            }
+        }else{
 
-                    while(threadsForDeviceWithGpuTables > 0){
-                        futures.emplace_back(std::async(
-                            std::launch::async,
-                            runSimpleGpuPipeline,
-                            deviceId,
-                            &anchorForests[i],
-                            &candidateForests[i]
-                        ));
+            for(int i = 0; i < numDevices; i++){ 
+                if(availableThreads > 0){
+                    const int deviceId = deviceIds[i];
 
-                        threadsForDeviceWithGpuTables--;
-                        availableThreads--;
-                    }
-                }else{
+                    int threadsForDevice = std::max(1,std::min(availableThreads, requiredNumThreadsForComplex));
 
                     if(threadsForDevice > 3){
 
