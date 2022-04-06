@@ -445,7 +445,6 @@ namespace gpu{
 
             gpuMinhasher->retrieveValues(
                 minhashHandle,
-                ecinput.d_anchorReadIds.data(),
                 (*ecinput.h_numAnchors.data()),                
                 totalNumValues,
                 ecinput.d_candidate_read_ids.data(),
@@ -455,7 +454,6 @@ namespace gpu{
                 mr
             );
 
-            #if 1
             rmm::device_uvector<read_number> d_candidate_read_ids2(totalNumValues, stream, mr);
             rmm::device_uvector<int> d_candidates_per_anchor2((*ecinput.h_numAnchors), stream, mr);
             rmm::device_uvector<int> d_candidates_per_anchor_prefixsum2(1 + (*ecinput.h_numAnchors), stream, mr);
@@ -487,8 +485,6 @@ namespace gpu{
                 //std::cerr << "swap d_candidates_per_anchor_prefixsum\n";
                 std::swap(ecinput.d_candidates_per_anchor_prefixsum, d_candidates_per_anchor_prefixsum2);
             }
-            #endif
-            
 
             gpucorrectorkernels::copyMinhashResultsKernel<<<640, 256, 0, stream>>>(
                 ecinput.d_numCandidates.data(),
