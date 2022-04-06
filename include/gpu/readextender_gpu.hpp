@@ -27,6 +27,7 @@
 #include <gpu/memcpykernel.cuh>
 #include <gpu/cubwrappers.cuh>
 #include <gpu/readextender_gpu_kernels.cuh>
+#include <gpu/minhashqueryfilter.cuh>
 
 
 #include <rmm/device_uvector.hpp>
@@ -1784,6 +1785,37 @@ struct GpuReadExtender{
                     mr
                 );
 
+                rmm::device_uvector<read_number> d_candidate_read_ids2(totalNumValues, stream, mr);
+                rmm::device_uvector<int> d_candidates_per_anchor2(numAnchors, stream, mr);
+                rmm::device_uvector<int> d_candidates_per_anchor_prefixsum2(1 + numAnchors, stream, mr);
+
+                cub::DoubleBuffer<read_number> d_items{results.d_candidateReadIds.data(), d_candidate_read_ids2.data()};
+                cub::DoubleBuffer<int> d_numItemsPerSegment{results.d_numCandidatesPerAnchor.data(), d_candidates_per_anchor2.data()};
+                cub::DoubleBuffer<int> d_numItemsPerSegmentPrefixSum{results.d_numCandidatesPerAnchorPrefixSum.data(), d_candidates_per_anchor_prefixsum2.data()};
+
+                GpuMinhashQueryFilter::keepDistinct(
+                    d_items,
+                    d_numItemsPerSegment,
+                    d_numItemsPerSegmentPrefixSum, //numSegments + 1
+                    numAnchors,
+                    totalNumValues,
+                    stream,
+                    mr
+                );
+
+                if(d_items.Current() != results.d_candidateReadIds.data()){
+                    //std::cerr << "swap d_candidate_read_ids\n";
+                    std::swap(results.d_candidateReadIds, d_candidate_read_ids2);
+                }
+                if(d_numItemsPerSegment.Current() != results.d_numCandidatesPerAnchor.data()){
+                    //std::cerr << "swap d_candidates_per_anchor\n";
+                    std::swap(results.d_numCandidatesPerAnchor, d_candidates_per_anchor2);
+                }
+                if(d_numItemsPerSegmentPrefixSum.Current() != results.d_numCandidatesPerAnchorPrefixSum.data()){
+                    //std::cerr << "swap d_candidates_per_anchor_prefixsum\n";
+                    std::swap(results.d_numCandidatesPerAnchorPrefixSum, d_candidates_per_anchor_prefixsum2);
+                }
+
                 CUDACHECK(cudaMemcpyAsync(
                     h_numCandidates.data(),
                     results.d_numCandidatesPerAnchorPrefixSum.data() + numAnchors,
@@ -1929,6 +1961,39 @@ struct GpuReadExtender{
 
                 DEBUGSTREAMSYNC(stream);
 
+                {
+                    rmm::device_uvector<read_number> d_candidate_read_ids2(totalNumValuesExtraSequences, stream, mr);
+                    rmm::device_uvector<int> d_candidates_per_anchor2(numAnchors, stream, mr);
+                    rmm::device_uvector<int> d_candidates_per_anchor_prefixsum2(1 + numAnchors, stream, mr);
+
+                    cub::DoubleBuffer<read_number> d_items{d_candidateReadIdsExtra.data(), d_candidate_read_ids2.data()};
+                    cub::DoubleBuffer<int> d_numItemsPerSegment{d_numCandidatesPerAnchorExtra.data(), d_candidates_per_anchor2.data()};
+                    cub::DoubleBuffer<int> d_numItemsPerSegmentPrefixSum{d_numCandidatesPerAnchorPrefixSumExtra.data(), d_candidates_per_anchor_prefixsum2.data()};
+
+                    GpuMinhashQueryFilter::keepDistinct(
+                        d_items,
+                        d_numItemsPerSegment,
+                        d_numItemsPerSegmentPrefixSum, //numSegments + 1
+                        numAnchors,
+                        totalNumValuesExtraSequences,
+                        stream,
+                        mr
+                    );
+
+                    if(d_items.Current() != d_candidateReadIdsExtra.data()){
+                        //std::cerr << "swap d_candidate_read_ids\n";
+                        std::swap(d_candidateReadIdsExtra, d_candidate_read_ids2);
+                    }
+                    if(d_numItemsPerSegment.Current() != d_numCandidatesPerAnchorExtra.data()){
+                        //std::cerr << "swap d_candidates_per_anchor\n";
+                        std::swap(d_numCandidatesPerAnchorExtra, d_candidates_per_anchor2);
+                    }
+                    if(d_numItemsPerSegmentPrefixSum.Current() != d_numCandidatesPerAnchorPrefixSumExtra.data()){
+                        //std::cerr << "swap d_candidates_per_anchor_prefixsum\n";
+                        std::swap(d_numCandidatesPerAnchorPrefixSumExtra, d_candidates_per_anchor_prefixsum2);
+                    }
+                }
+
 
                 CUDACHECK(cudaMemcpyAsync(
                     h_numCandidates.data(),
@@ -2013,6 +2078,39 @@ struct GpuReadExtender{
                 );
 
                 DEBUGSTREAMSYNC(stream);
+
+                {
+                    rmm::device_uvector<read_number> d_candidate_read_ids2(totalNumValuesAnchorSequences, stream, mr);
+                    rmm::device_uvector<int> d_candidates_per_anchor2(numAnchors, stream, mr);
+                    rmm::device_uvector<int> d_candidates_per_anchor_prefixsum2(1 + numAnchors, stream, mr);
+
+                    cub::DoubleBuffer<read_number> d_items{d_candidateReadIds.data(), d_candidate_read_ids2.data()};
+                    cub::DoubleBuffer<int> d_numItemsPerSegment{d_numCandidatesPerAnchor.data(), d_candidates_per_anchor2.data()};
+                    cub::DoubleBuffer<int> d_numItemsPerSegmentPrefixSum{d_numCandidatesPerAnchorPrefixSum.data(), d_candidates_per_anchor_prefixsum2.data()};
+
+                    GpuMinhashQueryFilter::keepDistinct(
+                        d_items,
+                        d_numItemsPerSegment,
+                        d_numItemsPerSegmentPrefixSum, //numSegments + 1
+                        numAnchors,
+                        totalNumValuesAnchorSequences,
+                        stream,
+                        mr
+                    );
+
+                    if(d_items.Current() != d_candidateReadIds.data()){
+                        //std::cerr << "swap d_candidate_read_ids\n";
+                        std::swap(d_candidateReadIds, d_candidate_read_ids2);
+                    }
+                    if(d_numItemsPerSegment.Current() != d_numCandidatesPerAnchor.data()){
+                        //std::cerr << "swap d_candidates_per_anchor\n";
+                        std::swap(d_numCandidatesPerAnchor, d_candidates_per_anchor2);
+                    }
+                    if(d_numItemsPerSegmentPrefixSum.Current() != d_numCandidatesPerAnchorPrefixSum.data()){
+                        //std::cerr << "swap d_candidates_per_anchor_prefixsum\n";
+                        std::swap(d_numCandidatesPerAnchorPrefixSum, d_candidates_per_anchor_prefixsum2);
+                    }
+                }
 
 
                 CUDACHECK(cudaMemcpyAsync(

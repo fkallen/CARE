@@ -14,6 +14,7 @@
 #include <gpu/cubwrappers.cuh>
 #include <gpu/gpumsamanaged.cuh>
 #include <gpu/global_cuda_stream_pool.cuh>
+#include <gpu/minhashqueryfilter.cuh>
 
 #include <config.hpp>
 #include <util.hpp>
@@ -453,6 +454,41 @@ namespace gpu{
                 stream,
                 mr
             );
+
+            #if 1
+            rmm::device_uvector<read_number> d_candidate_read_ids2(totalNumValues, stream, mr);
+            rmm::device_uvector<int> d_candidates_per_anchor2((*ecinput.h_numAnchors), stream, mr);
+            rmm::device_uvector<int> d_candidates_per_anchor_prefixsum2(1 + (*ecinput.h_numAnchors), stream, mr);
+
+            cub::DoubleBuffer<read_number> d_items{ecinput.d_candidate_read_ids.data(), d_candidate_read_ids2.data()};
+            cub::DoubleBuffer<int> d_numItemsPerSegment{ecinput.d_candidates_per_anchor.data(), d_candidates_per_anchor2.data()};
+            cub::DoubleBuffer<int> d_numItemsPerSegmentPrefixSum{ecinput.d_candidates_per_anchor_prefixsum.data(), d_candidates_per_anchor_prefixsum2.data()};
+
+            GpuMinhashQueryFilter::keepDistinctAndNotMatching(
+                ecinput.d_anchorReadIds.data(),
+                d_items,
+                d_numItemsPerSegment,
+                d_numItemsPerSegmentPrefixSum, //numSegments + 1
+                (*ecinput.h_numAnchors),
+                totalNumValues,
+                stream,
+                mr
+            );
+
+            if(d_items.Current() != ecinput.d_candidate_read_ids.data()){
+                //std::cerr << "swap d_candidate_read_ids\n";
+                std::swap(ecinput.d_candidate_read_ids, d_candidate_read_ids2);
+            }
+            if(d_numItemsPerSegment.Current() != ecinput.d_candidates_per_anchor.data()){
+                //std::cerr << "swap d_candidates_per_anchor\n";
+                std::swap(ecinput.d_candidates_per_anchor, d_candidates_per_anchor2);
+            }
+            if(d_numItemsPerSegmentPrefixSum.Current() != ecinput.d_candidates_per_anchor_prefixsum.data()){
+                //std::cerr << "swap d_candidates_per_anchor_prefixsum\n";
+                std::swap(ecinput.d_candidates_per_anchor_prefixsum, d_candidates_per_anchor_prefixsum2);
+            }
+            #endif
+            
 
             gpucorrectorkernels::copyMinhashResultsKernel<<<640, 256, 0, stream>>>(
                 ecinput.d_numCandidates.data(),

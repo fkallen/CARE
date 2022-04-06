@@ -512,6 +512,29 @@ namespace gpu{
                 stream
             ));
 
+            #if 1
+
+            CUDACHECK(cudaMemcpyAsync(
+                d_numValuesPerSequence,
+                queryData->h_numValuesPerSequence.data(),
+                sizeof(int) * numSequences,
+                H2D,
+                stream
+            ));
+
+            CUDACHECK(cudaMemcpyAsync(
+                d_offsets + 1,
+                queryData->h_end_offsets.data(),
+                sizeof(int) * numSequences,
+                H2D,
+                stream
+            ));
+            CUDACHECK(cudaMemsetAsync(
+                d_offsets, 0, sizeof(int), stream
+            ))
+
+            #else
+
             DEBUGSTREAMSYNC(stream);
 
             rmm::device_uvector<int> d_begin_offsets((numSequences + 1), stream, mr);
@@ -552,6 +575,30 @@ namespace gpu{
 
             DEBUGSTREAMSYNC(stream);
 
+            // helpers::lambda_kernel<<<1,1,0, stream>>>([
+            //     d_global_begin_offsets = d_global_begin_offsets.data(),
+            //     numSequences
+            // ] __device__ (){
+            //     printf("d_global_begin_offsets before unique\n");
+            //     for(int i = 0; i < numSequences+1; i++){
+            //         printf("%d ", d_global_begin_offsets[i]);
+            //     }
+            //     printf("\n");
+            // }); CUDACHECKASYNC;
+            // CUDACHECK(cudaDeviceSynchronize());
+
+            // helpers::lambda_kernel<<<1,1,0, stream>>>([
+            //     d_numValuesPerSequence,
+            //     numSequences
+            // ] __device__ (){
+            //     printf("numValuesPerSequence before unique\n");
+            //     for(int i = 0; i < numSequences; i++){
+            //         printf("%d ", d_numValuesPerSequence[i]);
+            //     }
+            //     printf("\n");
+            // }); CUDACHECKASYNC;
+            // CUDACHECK(cudaDeviceSynchronize());
+
             GpuSegmentedUnique::unique(
                 d_values_dblbuf.Current(), //input
                 totalNumValues,
@@ -567,6 +614,18 @@ namespace gpu{
                 stream,
                 mr
             );
+
+            // helpers::lambda_kernel<<<1,1,0, stream>>>([
+            //     d_numValuesPerSequence,
+            //     numSequences
+            // ] __device__ (){
+            //     printf("numValuesPerSequence after unique\n");
+            //     for(int i = 0; i < numSequences; i++){
+            //         printf("%d ", d_numValuesPerSequence[i]);
+            //     }
+            //     printf("\n");
+            // }); CUDACHECKASYNC;
+            // CUDACHECK(cudaDeviceSynchronize());
 
             DEBUGSTREAMSYNC(stream);
 
@@ -619,6 +678,30 @@ namespace gpu{
 
             DEBUGSTREAMSYNC(stream);
 
+            // helpers::lambda_kernel<<<1,1,0, stream>>>([
+            //     d_offsets,
+            //     numSequences
+            // ] __device__ (){
+            //     printf("final offsets before unique\n");
+            //     for(int i = 0; i < numSequences+1; i++){
+            //         printf("%d ", d_offsets[i]);
+            //     }
+            //     printf("\n");
+            // }); CUDACHECKASYNC;
+            // CUDACHECK(cudaDeviceSynchronize());
+
+            // helpers::lambda_kernel<<<1,1,0, stream>>>([
+            //     d_numValuesPerSequence,
+            //     numSequences
+            // ] __device__ (){
+            //     printf("final numValuesPerSequence\n");
+            //     for(int i = 0; i < numSequences; i++){
+            //         printf("%d ", d_numValuesPerSequence[i]);
+            //     }
+            //     printf("\n");
+            // }); CUDACHECKASYNC;
+            // CUDACHECK(cudaDeviceSynchronize());
+
             //copy final remaining values into contiguous range
             helpers::lambda_kernel<<<numSequences, 128, 0, stream>>>(
                 [
@@ -643,6 +726,22 @@ namespace gpu{
             ); CUDACHECKASYNC;
 
             DEBUGSTREAMSYNC(stream);
+
+            // helpers::lambda_kernel<<<1,1,0, stream>>>([
+            //     d_values_out = d_values_dblbuf.Current()
+            // ] __device__ (){
+            //     printf("final values\n");
+            //     for(int r = 0; r < 20; r++){
+            //         for(int c = 0; c < 16; c++){
+            //             printf("%d ", d_values_out[r * 16 + c]);
+            //         }
+            //         printf("\n");
+            //     }
+            //     printf("\n");
+            // }); CUDACHECKASYNC;
+            // CUDACHECK(cudaDeviceSynchronize());
+
+            #endif
 
             queryData->previousStage = QueryData::Stage::Retrieve;
         }

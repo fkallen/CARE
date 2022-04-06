@@ -860,6 +860,10 @@ namespace gpu{
 
             #endif
 
+
+
+            #if 0
+
             // all values for the same key are stored in consecutive locations in d_values_tmp.
             // now, make value ranges unique
 
@@ -935,6 +939,8 @@ namespace gpu{
             ); CUDACHECKASYNC;
 
             CUDACHECK(cudaMemcpyAsync(d_offsets, d_newOffsets, sizeof(int) * (numSequences+1), D2D, stream));
+
+            #endif
         }
 
         int getKmerSize() const noexcept override{
