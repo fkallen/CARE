@@ -16,6 +16,8 @@
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
 
+#include <thrust/iterator/counting_iterator.h>
+
 namespace cg = cooperative_groups;
 
 

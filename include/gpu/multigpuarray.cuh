@@ -20,6 +20,8 @@
 #include <cub/cub.cuh>
 #include <cooperative_groups.h>
 
+#include <thrust/iterator/transform_iterator.h>
+
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/device/per_device_resource.hpp>
 
