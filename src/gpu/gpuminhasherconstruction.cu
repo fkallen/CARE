@@ -4,9 +4,7 @@
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/fakegpuminhasher.cuh>
 #include <gpu/singlegpuminhasher.cuh>
-//#include <gpu/fakegpuminhasherconstruction.cuh>
-//#include <gpu/singlegpuminhasherconstruction.cuh>
-//#include <gpu/multigpuminhasherconstruction.cuh>
+#include <gpu/multigpuminhasher.cuh>
 #include <minhasherlimit.hpp>
 
 #include <options.hpp>
@@ -98,6 +96,8 @@ namespace gpu{
             
             gpuMinhasher->setHostMemoryLimitForConstruction(maxMemoryForTables);
             gpuMinhasher->setDeviceMemoryLimitsForConstruction({1*1024*1024*1024});
+
+            
             
             //std::size_t bytesOfCachedConstructedTables = 0;
             int remainingHashFunctions = requestedNumberOfMaps;
@@ -106,7 +106,7 @@ namespace gpu{
             while(remainingHashFunctions > 0 && keepGoing){
     
                 gpuMinhasher->setThreadPool(&tpForHashing);
-    
+
                 const int alreadyExistingHashFunctions = requestedNumberOfMaps - remainingHashFunctions;
                 std::vector<int> h_hashfunctionNumbers(remainingHashFunctions);
                 std::iota(
@@ -115,7 +115,18 @@ namespace gpu{
                     alreadyExistingHashFunctions + hashFunctionOffset
                 );
     
+                //Hacky way to limit gpu memory usage of hash tables
+                constexpr std::size_t hackbytes = 1024 * 1024 * 1024;
+                char* hackbuffer = nullptr;
+                std::size_t free, total;
+                CUDACHECK(cudaMemGetInfo(&free, &total));
+                if(free > hackbytes){
+                    CUDACHECK(cudaMalloc(&hackbuffer, hackbytes));
+                }
+
                 int addedHashFunctions = gpuMinhasher->addHashTables(remainingHashFunctions,h_hashfunctionNumbers.data(), stream);
+
+                CUDACHECK(cudaFree(hackbuffer));
     
                 if(addedHashFunctions == 0){
                     keepGoing = false;
@@ -230,12 +241,26 @@ namespace gpu{
                 gpuMinhasherType = GpuMinhasherType::Single;
             };
 
+            auto makeMulti = [&](){
+                gpuMinhasher = std::make_unique<MultiGpuMinhasher>(
+                    MultiGpuMinhasher::Layout::FirstFit,
+                    gpuReadStorage.getNumberOfReads(), 
+                    calculateResultsPerMapThreshold(programOptions.estimatedCoverage), 
+                    programOptions.kmerlength,
+                    programOptions.deviceIds
+                );
+
+                gpuMinhasherType = GpuMinhasherType::Multi;
+            };
+
             if(requestedType == GpuMinhasherType::Fake || programOptions.warpcore == 0){
                 makeFake();
 
             #ifdef CARE_HAS_WARPCORE
             }else if(requestedType == GpuMinhasherType::Single || programOptions.deviceIds.size() < 2){
                 makeSingle();
+            }else if(requestedType == GpuMinhasherType::Multi){
+                makeMulti();
             #endif
             }else{
                 makeFake();

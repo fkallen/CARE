@@ -306,7 +306,7 @@ namespace care{
         auto minhasherAndType = gpu::constructGpuMinhasherFromGpuReadStorage(
             programOptions,
             gpuReadStorage,
-            gpu::GpuMinhasherType::Single
+            gpu::GpuMinhasherType::Multi
         );
 
         //compareMaxRssToLimit(programOptions.memoryTotalLimit, "Error memorylimit after gpuminhasher");

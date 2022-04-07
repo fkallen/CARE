@@ -55,14 +55,11 @@ SOURCES_CORRECT_GPU = \
     src/gpu/correct_gpu.cu \
     src/gpu/correctionkernels.cu \
     src/gpu/dispatch_care_correct_gpu.cu \
-    src/gpu/fakegpuminhasherconstruction.cu \
     src/gpu/gpucorrectorkernels.cu \
     src/gpu/gpuminhasherconstruction.cu \
     src/gpu/main_correct_gpu.cu \
     src/gpu/msakernels.cu \
-    src/gpu/multigpuminhasherconstruction.cu \
-    src/gpu/sequenceconversionkernels.cu \
-    src/gpu/singlegpuminhasherconstruction.cu
+    src/gpu/sequenceconversionkernels.cu
 
 #sources for extend_cpu
 SOURCES_EXTEND_CPU = \
@@ -85,14 +82,11 @@ SOURCES_EXTEND_GPU = \
     src/threadpool.cpp \
     src/gpu/alignmentkernels.cu \
     src/gpu/dispatch_care_extend_gpu.cu \
-    src/gpu/fakegpuminhasherconstruction.cu \
     src/gpu/gpuminhasherconstruction.cu \
     src/gpu/main_extend_gpu.cu \
     src/gpu/msakernels.cu \
-    src/gpu/multigpuminhasherconstruction.cu \
     src/gpu/readextension_gpu.cu \
-    src/gpu/sequenceconversionkernels.cu \
-    src/gpu/singlegpuminhasherconstruction.cu
+    src/gpu/sequenceconversionkernels.cu 
 
 
 EXECUTABLE_CORRECT_CPU = care-cpu
@@ -262,9 +256,6 @@ $(DIR)/dispatch_care_correct_gpu.o : src/gpu/dispatch_care_correct_gpu.cu
 $(DIR)/dispatch_care_extend_gpu.o : src/gpu/dispatch_care_extend_gpu.cu
 	$(CUDA_COMPILE)
 
-$(DIR)/fakegpuminhasherconstruction.o : src/gpu/fakegpuminhasherconstruction.cu
-	$(CUDA_COMPILE)
-
 $(DIR)/gpucorrectorkernels.o : src/gpu/gpucorrectorkernels.cu
 	$(CUDA_COMPILE)
 
@@ -280,16 +271,10 @@ $(DIR)/main_extend_gpu.o : src/gpu/main_extend_gpu.cu
 $(DIR)/msakernels.o : src/gpu/msakernels.cu
 	$(CUDA_COMPILE)
 
-$(DIR)/multigpuminhasherconstruction.o : src/gpu/multigpuminhasherconstruction.cu
-	$(CUDA_COMPILE)
-
 $(DIR)/readextension_gpu.o : src/gpu/readextension_gpu.cu
 	$(CUDA_COMPILE)
 
 $(DIR)/sequenceconversionkernels.o : src/gpu/sequenceconversionkernels.cu
-	$(CUDA_COMPILE)
-
-$(DIR)/singlegpuminhasherconstruction.o : src/gpu/singlegpuminhasherconstruction.cu
 	$(CUDA_COMPILE)
 
 
