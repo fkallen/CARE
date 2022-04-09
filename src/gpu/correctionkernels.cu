@@ -237,13 +237,6 @@ namespace gpu{
     ){
         if(numCorrectedSequencesUpperBound == 0) return;
 
-        CUDACHECK(cudaMemsetAsync(
-            d_edits, 
-            0, 
-            editsPitchInBytes * numCorrectedSequencesUpperBound, 
-            stream
-        ));
-
         constexpr int groupsize = 16;
 
         const int blocksize = 128;

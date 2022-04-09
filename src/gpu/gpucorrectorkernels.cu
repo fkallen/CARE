@@ -130,7 +130,7 @@ namespace care{
         void compactEditsKernel(
             const EncodedCorrectionEdit* __restrict__ d_inputEdits,
             EncodedCorrectionEdit* __restrict__ d_outputEdits,
-            const int* __restrict__ d_editsOutputOffsets,
+            const int* __restrict__ d_editsOutputOffsets, 
             const int* __restrict__ d_numSequences,
             const int* __restrict__ d_numEditsPerSequence,
             int doNotUseEditsValue,
@@ -145,7 +145,7 @@ namespace care{
                 const int numEdits = d_numEditsPerSequence[c];
 
                 if(numEdits != doNotUseEditsValue && numEdits > 0){
-                    const int outputOffset = d_editsOutputOffsets[c];
+                    const int outputOffset = c == 0 ? 0 : d_editsOutputOffsets[c];
 
                     auto* outputPtr = d_outputEdits + outputOffset;
                     const auto* inputPtr = (const EncodedCorrectionEdit*)(((const char*)d_inputEdits) 
