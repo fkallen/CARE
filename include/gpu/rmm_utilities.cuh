@@ -13,6 +13,8 @@
 
 #include <cassert>
 #include <cstdint>
+#include <mutex>
+#include <map>
 
 #include <cub/cub.cuh>
 
@@ -160,6 +162,221 @@ using exec_policy_nosync = exec_policy;
 #endif
 
 }
+
+
+
+
+namespace rmm::mr {
+
+class DeviceCheckResourceAdapter final : public device_memory_resource {
+public:
+    DeviceCheckResourceAdapter(device_memory_resource* upstream) : upstream_(upstream){
+        CUDACHECK(cudaGetDevice(&deviceId));
+    }
+
+    DeviceCheckResourceAdapter()                            = default;
+    ~DeviceCheckResourceAdapter() override                  = default;
+    DeviceCheckResourceAdapter(DeviceCheckResourceAdapter const&) = default;
+    DeviceCheckResourceAdapter(DeviceCheckResourceAdapter&&)      = default;
+    DeviceCheckResourceAdapter& operator=(DeviceCheckResourceAdapter const&) = default;
+    DeviceCheckResourceAdapter& operator=(DeviceCheckResourceAdapter&&) = default;
+
+    bool supports_streams() const noexcept override
+    {
+        return upstream_->supports_streams();
+    }
+
+    bool supports_get_mem_info() const noexcept override
+    {
+        return upstream_->supports_get_mem_info();
+    }
+
+    device_memory_resource* get_upstream() const noexcept{
+        return upstream_;
+    }
+
+private:
+    void checkDeviceId() const{
+        int currentDevice;
+        CUDACHECK(cudaGetDevice(&currentDevice));
+        assert(deviceId == currentDevice);
+    }
+
+    void* do_allocate(std::size_t bytes, cuda_stream_view stream) override{
+        checkDeviceId();
+
+        return upstream_->allocate(bytes, stream);
+    }
+
+    void do_deallocate(void* ptr, std::size_t bytes, cuda_stream_view stream) override{
+        checkDeviceId();
+
+        upstream_->deallocate(ptr, bytes, stream);
+    }
+
+    bool do_is_equal(device_memory_resource const& other) const noexcept override{
+        if (this == &other) { return true; }
+        auto const* cast = dynamic_cast<DeviceCheckResourceAdapter const*>(&other);
+        if (cast != nullptr) { return upstream_->is_equal(*cast->get_upstream()); }
+        return upstream_->is_equal(other);
+    }
+
+    std::pair<std::size_t, std::size_t> do_get_mem_info(cuda_stream_view stream) const override {
+        return upstream_->get_mem_info(stream);
+    }
+
+    int deviceId;
+    device_memory_resource* upstream_;
+};
+
+
+
+class StreamCheckResourceAdapter final : public device_memory_resource {
+public:
+    StreamCheckResourceAdapter(device_memory_resource* upstream) : upstream_(upstream){}
+
+    StreamCheckResourceAdapter()                            = default;
+    ~StreamCheckResourceAdapter() override{
+        if(!allocations.empty()){
+            std::cerr << "~StreamCheckResourceAdapter: " << allocations.size() << "outstanding allocations\n";
+        }
+    }
+    StreamCheckResourceAdapter(StreamCheckResourceAdapter const&) = default;
+    StreamCheckResourceAdapter(StreamCheckResourceAdapter&&)      = default;
+    StreamCheckResourceAdapter& operator=(StreamCheckResourceAdapter const&) = default;
+    StreamCheckResourceAdapter& operator=(StreamCheckResourceAdapter&&) = default;
+
+    bool supports_streams() const noexcept override
+    {
+        return upstream_->supports_streams();
+    }
+
+    bool supports_get_mem_info() const noexcept override
+    {
+        return upstream_->supports_get_mem_info();
+    }
+
+    device_memory_resource* get_upstream() const noexcept{
+        return upstream_;
+    }
+
+private:
+    struct Payload{
+        void* ptr;
+        std::size_t bytes;
+
+        bool operator<(const Payload& rhs) const{
+            if(ptr < rhs.ptr) return true;
+            if(ptr > rhs.ptr) return false;
+            return bytes < rhs.bytes;
+        }
+    };
+
+    void track(void* ptr, std::size_t bytes, cuda_stream_view stream){
+        Payload p{ptr, bytes};
+        std::lock_guard<std::mutex> lg(mutex);
+
+        auto founditer = std::find_if(allocations.begin(), allocations.end(), [ptr](const auto& pair){
+            const auto& payload = pair.first;
+            return payload.ptr == ptr;
+        });
+        //ensure that pointer is not double allocated and inserted
+        assert(founditer == allocations.end());
+        allocations[p] = stream;
+    }
+
+    void checkAndRemove(void* ptr, std::size_t bytes, cuda_stream_view stream){
+        Payload p{ptr, bytes};
+        std::lock_guard<std::mutex> lg(mutex);
+        auto founditer = allocations.find(p);
+        assert(founditer != allocations.end());
+        assert(founditer->second == stream);
+        allocations.erase(founditer);
+    }
+    
+    void* do_allocate(std::size_t bytes, cuda_stream_view stream) override{
+        void* retval = upstream_->allocate(bytes, stream);
+        track(retval, bytes, stream);
+        return retval;
+    }
+
+    void do_deallocate(void* ptr, std::size_t bytes, cuda_stream_view stream) override{
+        checkAndRemove(ptr, bytes, stream);
+
+        upstream_->deallocate(ptr, bytes, stream);
+    }
+
+    bool do_is_equal(device_memory_resource const& other) const noexcept override{
+        if (this == &other) { return true; }
+        auto const* cast = dynamic_cast<StreamCheckResourceAdapter const*>(&other);
+        if (cast != nullptr) { return upstream_->is_equal(*cast->get_upstream()); }
+        return upstream_->is_equal(other);
+    }
+
+    std::pair<std::size_t, std::size_t> do_get_mem_info(cuda_stream_view stream) const override {
+        return upstream_->get_mem_info(stream);
+    }
+
+    std::mutex mutex;
+    std::map<Payload, cuda_stream_view> allocations;
+    device_memory_resource* upstream_;
+};
+
+
+
+class CudaAsyncDefaultPoolResource final : public device_memory_resource {
+public:
+    CudaAsyncDefaultPoolResource()                            = default;
+    ~CudaAsyncDefaultPoolResource() override = default;
+    CudaAsyncDefaultPoolResource(CudaAsyncDefaultPoolResource const&) = default;
+    CudaAsyncDefaultPoolResource(CudaAsyncDefaultPoolResource&&)      = default;
+    CudaAsyncDefaultPoolResource& operator=(CudaAsyncDefaultPoolResource const&) = default;
+    CudaAsyncDefaultPoolResource& operator=(CudaAsyncDefaultPoolResource&&) = default;
+
+    bool supports_streams() const noexcept override
+    {
+        return true;
+    }
+
+    bool supports_get_mem_info() const noexcept override
+    {
+        return false;
+    }
+
+    cudaMemPool_t pool_handle() const noexcept{
+        int deviceId = 0;
+        cudaMemPool_t memPool;
+        CUDACHECK(cudaGetDevice(&deviceId));
+        CUDACHECK(cudaDeviceGetMemPool(&memPool, deviceId));
+        return memPool;
+    }
+
+private:
+    
+    void* do_allocate(std::size_t bytes, cuda_stream_view stream) override{
+        void* ptr = nullptr;
+        CUDACHECK(cudaMallocAsync(&ptr, bytes, stream.value()));
+        return ptr;
+    }
+
+    void do_deallocate(void* ptr, std::size_t /*bytes*/, cuda_stream_view stream) override{
+        CUDACHECK(cudaFreeAsync(ptr, stream));
+    }
+
+    bool do_is_equal(device_memory_resource const& other) const noexcept override{
+        if (this == &other) { return true; }
+        auto const* cast = dynamic_cast<CudaAsyncDefaultPoolResource const*>(&other);
+        return cast != nullptr;
+    }
+
+    std::pair<std::size_t, std::size_t> do_get_mem_info(cuda_stream_view /*stream*/) const override {
+        return {0,0};
+    }
+};
+
+
+
+}  // namespace rmm::mr
 
 
 #endif

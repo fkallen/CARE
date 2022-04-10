@@ -15,10 +15,6 @@
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 
-#include <rmm/device_uvector.hpp>
-#include <rmm/device_scalar.hpp>
-#include <rmm/mr/device/device_memory_resource.hpp>
-
 
 namespace cg = cooperative_groups;
 

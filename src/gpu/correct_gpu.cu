@@ -1726,7 +1726,9 @@ SerializedObjectStorage correct_gpu_impl(
                 gpuForestCandidate
             );
 
-            pipeline.runToCompletionDoubleBufferedWithExtraThread(
+            //pipeline.runToCompletionDoubleBufferedWithExtraThread(
+            pipeline.runToCompletionDoubleBuffered(
+            //pipeline.runToCompletion(
                 deviceId,
                 readIdGenerator,
                 programOptions,
@@ -1805,7 +1807,7 @@ SerializedObjectStorage correct_gpu_impl(
             int current = 0;
 
             while(availableThreads > 0 && usedTotal < numDevices * maxThreadsPerGpu){
-                if(usedPerGpu[current] < 4){    
+                if(usedPerGpu[current] < maxThreadsPerGpu){    
                     futures.emplace_back(std::async(
                         std::launch::async,
                         runSimpleGpuPipeline,
@@ -1821,7 +1823,9 @@ SerializedObjectStorage correct_gpu_impl(
             }
 
             for(int i = 0; i < numDevices; i++){
-                std::cerr << "\nUsing " << usedPerGpu[i] << " gpu hashtable pipelines on device " << deviceIds[i] << "\n";
+                if(usedPerGpu[i] > 0){
+                    std::cerr << "\nUsing " << usedPerGpu[i] << " gpu hashtable pipelines on device " << deviceIds[i] << "\n";
+                }
             }
         }else{
 

@@ -303,32 +303,8 @@ namespace gpu{
                     desiredAlignmentMaxErrorRate,
                     anchorIndex
                 );
-
-                tbGroup.sync();
-        
+       
                 msa.checkAfterBuild(tbGroup, anchorIndex);
-
-                // bool mychecksuccess = msa.checkCoverages(tbGroup);
-                // int numchecksuccess = BlockReduceInt(*cubTempStorage).Sum(mychecksuccess ? 1 : 0);
-                // tbGroup.sync();
-                // bool checksuccess = numchecksuccess == tbGroup.size();
-                // if(tbGroup.thread_rank() == 0){
-                //     if(!checksuccess){
-                //         printf("numchecksuccess %d\n ", numchecksuccess);
-
-                //         const int firstColumnIncl = msa.columnProperties->firstColumn_incl;
-                //         const int lastColumnExcl = msa.columnProperties->lastColumn_excl;
-
-                //         printf("firstColumnIncl %d, lastColumnExcl %d\n", firstColumnIncl, lastColumnExcl);
-                //         printf("coverages:\n");
-                //         for(int x = 0; x < msa.columnPitchInElements; x++){
-                //             printf("%d, ", msa.coverages[x]);
-                //         }
-                //         printf("\n");
-                //     }
-                //     assert(checksuccess);
-                // }
-                // tbGroup.sync();
 
                 msa.findConsensus(
                     tbGroup,
@@ -875,19 +851,6 @@ namespace gpu{
                     int* const destNumIndices = (refinementIteration % 2 == 0) ?
                         myNewNumIndicesPerAnchorPtr : myNumIndicesPerAnchorPtr;
 
-                    //debug check
-                    {
-                        const int myMaxNumCandidates = d_candidates_per_anchor_prefixsum[anchorIndex + 1] - d_candidates_per_anchor_prefixsum[anchorIndex];
-                        for(int c = tbGroup.thread_rank(); c < *srcNumIndices; c += tbGroup.size()){
-                            assert(srcIndices[c] != - 1);
-                            assert(srcIndices[c] < myMaxNumCandidates);
-                        }
-
-                        for(int c = tbGroup.thread_rank(); c < *srcNumIndices; c += tbGroup.size()){
-                            destIndices[c] = -1;
-                        }
-                    }
-
                     tbGroup.sync();
 
                     auto groupReduceBool = [&](bool b, auto comp){
@@ -899,9 +862,7 @@ namespace gpu{
                         b = BlockReduceInt2(temp_storage.int2reduce).Reduce(b, comp);
                         return b;
                     };
-                    
-                    long long int t1 = clock64();
-
+ 
                     msa.flagCandidatesOfDifferentRegion(
                         tbGroup,
                         groupReduceBool,
@@ -925,23 +886,6 @@ namespace gpu{
                         dataset_coverage
                     );
 
-                    tbGroup.sync();
-
-                    //debug check
-                    {
-                        const int myMaxNumCandidates = d_candidates_per_anchor_prefixsum[anchorIndex + 1] - d_candidates_per_anchor_prefixsum[anchorIndex];
-                        for(int c = tbGroup.thread_rank(); c < *destNumIndices; c += tbGroup.size()){
-                            assert(destIndices[c] != - 1);
-                            assert(destIndices[c] < myMaxNumCandidates);
-                        }
-                    }
-
-                    long long int t2 = clock64();
-
-                    if(anchorIndex == 0 && tbGroup.thread_rank() == 0){
-                        //printf("duration flag: %lu\n", t2-t1);
-                    }
-
                     const int myNewNumIndices = *destNumIndices;
                     
                     assert(myNewNumIndices <= myNumIndices);
@@ -950,43 +894,7 @@ namespace gpu{
                             return !myShouldBeKept[i];
                         };
 
-                        long long int t3 = clock64();
-
-                        // bool mychecksuccess = msa.checkCoverages(tbGroup);
-                        // bool checksuccess = groupReduceBool(mychecksuccess, [](auto l, auto r){
-                        //     return l && r;
-                        // });
-                        // tbGroup.sync();
-                        // if(tbGroup.thread_rank() == 0){
-                        //     if(!checksuccess){
-                        //         const int firstColumnIncl = msa.columnProperties->firstColumn_incl;
-                        //         const int lastColumnExcl = msa.columnProperties->lastColumn_excl;
-
-                        //         printf("firstColumnIncl %d, lastColumnExcl %d\n", firstColumnIncl, lastColumnExcl);
-                        //         printf("coverages:\n");
-                        //         for(int x = 0; x < msa.columnPitchInElements; x++){
-                        //             printf("%d, ", msa.coverages[x]);
-                        //         }
-                        //         printf("\n");
-                        //         assert(checksuccess);
-                        //     }
-                        // }
-                        // tbGroup.sync();
-
-
-                        // if(tbGroup.thread_rank() == 0 && anchorReadId == debugreadid && refinementIteration >= 0){
-                        //     printf("counts before remove in iteration %d\n", refinementIteration);
-                        //     msa.printCounts(275,285);
-                        //     printf("weights before remove in iteration %d\n", refinementIteration);
-                        //     msa.printWeights(275,285);
-                        // }
-                        // tbGroup.sync();
-
-                        msa.checkAfterBuild(tbGroup, anchorIndex, __LINE__, anchorReadId);
-                        tbGroup.sync();
-
                         msa.removeCandidates(
-                        //msa.removeCandidates_verticalthreads(
                             tbGroup,
                             selector,
                             myShifts,
@@ -1005,69 +913,15 @@ namespace gpu{
                             desiredAlignmentMaxErrorRate
                         );
 
-                        tbGroup.sync();
-
                         msa.setWeightsToZeroIfCountIsZero(tbGroup);
-                        tbGroup.sync();
-
-                        // mychecksuccess = msa.checkCoverages(tbGroup);
-                        // checksuccess = groupReduceBool(mychecksuccess, [](auto l, auto r){
-                        //     return l && r;
-                        // });
-                        // tbGroup.sync();
-                        // if(tbGroup.thread_rank() == 0){
-                        //     if(!checksuccess){
-                        //         const int firstColumnIncl = msa.columnProperties->firstColumn_incl;
-                        //         const int lastColumnExcl = msa.columnProperties->lastColumn_excl;
-
-                        //         printf("firstColumnIncl %d, lastColumnExcl %d\n", firstColumnIncl, lastColumnExcl);
-                        //         printf("coverages:\n");
-                        //         for(int x = 0; x < msa.columnPitchInElements; x++){
-                        //             printf("%d, ", msa.coverages[x]);
-                        //         }
-                        //         printf("\n");
-                        //         assert(checksuccess);
-                        //     }
-                        // }
-                        // tbGroup.sync();
-
-                        long long int t4 = clock64();
-
-                        if(anchorIndex == 0 && tbGroup.thread_rank() == 0){
-                            //printf("duration removal: %lu. candidates before %d, after %d\n", t4-t3, myNumIndices, myNewNumIndices);
-                        }
 
                         bool error = msa.updateColumnProperties(tbGroup);
-
-                        tbGroup.sync();
-
-                        // if(tbGroup.thread_rank() == 0 && anchorReadId == debugreadid && refinementIteration >= 0){
-                        //     printf("counts after remove in iteration %d\n", refinementIteration);
-                        //     msa.printCounts(275,285);
-                        //     printf("weights after remove in iteration %d\n", refinementIteration);
-                        //     msa.printWeights(275,285);
-                        // }
-                        // tbGroup.sync();
-
-
-                        msa.checkAfterBuild(tbGroup, anchorIndex, __LINE__, anchorReadId);
-                        tbGroup.sync();
-
-                        // if(error){
-                        //     if(tbGroup.thread_rank() == 0){
-                        //         printf("error updateColumnProperties\n");
-                        //         printf("shifts")
-                        //     }
-                        // }
-                        // tbGroup.sync();
                         assert(!error);
 
-                        //msa.checkAfterBuild(tbGroup, anchorIndex);
+                        msa.checkAfterBuild(tbGroup, anchorIndex, __LINE__, anchorReadId);
 
                         assert(shared_columnProperties.firstColumn_incl != -1);
                         assert(shared_columnProperties.lastColumn_excl != -1);
-
-                        long long int t5 = clock64();
 
                         msa.findConsensus(
                             tbGroup,
@@ -1081,12 +935,6 @@ namespace gpu{
                         }
 
                         tbGroup.sync();
-
-                        long long int t6 = clock64();
-
-                        if(anchorIndex == 0 && tbGroup.thread_rank() == 0){
-                            //printf("duration consensus: %lu\n", t6-t5);
-                        }
 
                         myNumIndices = myNewNumIndices;
 

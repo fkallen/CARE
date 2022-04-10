@@ -129,20 +129,20 @@ namespace gpu{
                     const float weight = myweights[k * columnPitchInElements];
 
                     if(count > 0 && fleq(weight, 0.0f)){
-                        printf("msa check failed! firstColumn_incl %d, lastColumn_excl %d, anchorIndex %d, anchorReadId %u, column %d, base %d, count %d, weight %.20f, line %d\n",
-                            firstColumn_incl, lastColumn_excl, anchorIndex, anchorReadId, column, k, count, weight, line);
+                        // printf("msa check failed! firstColumn_incl %d, lastColumn_excl %d, anchorIndex %d, anchorReadId %u, column %d, base %d, count %d, weight %.20f, line %d\n",
+                        //     firstColumn_incl, lastColumn_excl, anchorIndex, anchorReadId, column, k, count, weight, line);
                         assert(false);
                     }
     
                     if(count < 0){
-                        printf("msa check failed! firstColumn_incl %d, lastColumn_excl %d, anchorIndex %d, anchorReadId %u, column %d, base %d, count %d, weight %.20f, line %d\n",
-                            firstColumn_incl, lastColumn_excl, anchorIndex, anchorReadId, column, k, count, weight, line);
+                        // printf("msa check failed! firstColumn_incl %d, lastColumn_excl %d, anchorIndex %d, anchorReadId %u, column %d, base %d, count %d, weight %.20f, line %d\n",
+                        //     firstColumn_incl, lastColumn_excl, anchorIndex, anchorReadId, column, k, count, weight, line);
                         assert(false);
                     }
 
                     if(count == 0 && (weight - 1e-5) > 0.0f){
-                        printf("msa check failed! firstColumn_incl %d, lastColumn_excl %d, anchorIndex %d, anchorReadId %u, column %d, base %d, count %d, weight %.20f, line %d\n",
-                            firstColumn_incl, lastColumn_excl, anchorIndex, anchorReadId, column, k, count, weight, line);
+                        // printf("msa check failed! firstColumn_incl %d, lastColumn_excl %d, anchorIndex %d, anchorReadId %u, column %d, base %d, count %d, weight %.20f, line %d\n",
+                        //     firstColumn_incl, lastColumn_excl, anchorIndex, anchorReadId, column, k, count, weight, line);
                         assert(false);
                     }
     
@@ -150,42 +150,22 @@ namespace gpu{
                 }
 
                 if(sumOfWeights == 0){
-                    printf("s %d c %d\n", anchorIndex, column);
+                    //printf("s %d c %d\n", anchorIndex, column);
                     assert(sumOfWeights != 0);
                 }
 
                 const int cov = coverages[column];
                 if(cov <= 0){
-                    printf("msa check failed! firstColumn_incl %d, lastColumn_excl %d, anchorIndex %d, anchorReadId %u, column %d, cov %d, line %d\n", 
-                        firstColumn_incl, lastColumn_excl, anchorIndex, anchorReadId, column, cov, line);
+                    // printf("msa check failed! firstColumn_incl %d, lastColumn_excl %d, anchorIndex %d, anchorReadId %u, column %d, cov %d, line %d\n", 
+                    //     firstColumn_incl, lastColumn_excl, anchorIndex, anchorReadId, column, cov, line);
                     assert(false);
                 }
     
             }
+
+            group.sync();
         }
 
-        template<class ThreadGroup>
-        __device__ __forceinline__
-        bool checkCoverages(ThreadGroup& group){
-    
-            const int firstColumn_incl = columnProperties->firstColumn_incl;
-            const int lastColumn_excl = columnProperties->lastColumn_excl;
-
-            bool success = true;
-    
-            for(int column = firstColumn_incl + group.thread_rank(); 
-                    column < lastColumn_excl; 
-                    column += group.size()){
-
-                const int cov = coverages[column];
-
-                if(cov <= 0){
-                    success = false;
-                }
-            }
-
-            return success;
-        }
 
         //only group.thread_rank() == 0 returns the correct MSAProperties
         template<
@@ -204,9 +184,6 @@ namespace gpu{
             GroupReduceIntMax& groupReduceIntMax,
             int firstCol,
             int lastCol //exclusive
-            // float estimatedErrorrate,
-            // float estimatedCoverage,
-            // float m_coverage
         ) const {
             const int firstColumn_incl = columnProperties->firstColumn_incl;
             const int lastColumn_excl = columnProperties->lastColumn_excl;
@@ -244,42 +221,6 @@ namespace gpu{
             msaProperties.avg_support = avg_support;
             msaProperties.min_coverage = min_coverage;
             msaProperties.max_coverage = max_coverage;
-
-            // msaProperties.isHQ = false;
-
-            // const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-            // const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
-            // const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
-
-            // auto isGoodAvgSupport = [=](float avgsupport){
-            //     return fgeq(avgsupport, avg_support_threshold);
-            // };
-            // auto isGoodMinSupport = [=](float minsupport){
-            //     return fgeq(minsupport, min_support_threshold);
-            // };
-            // auto isGoodMinCoverage = [=](float mincoverage){
-            //     return fgeq(mincoverage, min_coverage_threshold);
-            // };
-
-            // const bool allGood = isGoodAvgSupport(avg_support) 
-            //                                     && isGoodMinSupport(min_support) 
-            //                                     && isGoodMinCoverage(min_coverage);
-            // if(allGood){
-            //     int smallestErrorrateThatWouldMakeHQ = 100;
-
-            //     const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
-            //     for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
-            //         const float factor = percent / 100.0f;
-            //         const float avg_threshold = 1.0f - 1.0f * factor;
-            //         const float min_threshold = 1.0f - 3.0f * factor;
-            //         if(fgeq(avg_support, avg_threshold) && fgeq(min_support, min_threshold)){
-            //             smallestErrorrateThatWouldMakeHQ = percent;
-            //         }
-            //     }
-
-            //     msaProperties.isHQ = isGoodMinCoverage(min_coverage)
-            //                         && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
-            // }
 
             return msaProperties;
         }
@@ -468,7 +409,7 @@ namespace gpu{
 
                 if(thisCoverage < 0 || nextCoverage < 0){
                     error = true;
-                    printf("column %d, thisCoverage %d, nextCoverage %d\n", column, thisCoverage, nextCoverage);
+                    //printf("column %d, thisCoverage %d, nextCoverage %d\n", column, thisCoverage, nextCoverage);
                     // assert(thisCoverage >= 0);
                     // assert(nextCoverage >= 0);
                 }
@@ -485,16 +426,12 @@ namespace gpu{
             }
 
             group.sync();
-            if(group.thread_rank() == 0){
-                if(leftCount > 1 || rightCount > 1){
-                    printf("leftCount %d rightCount %d\n", leftCount, rightCount);
-                }
-            }
-            // for(int i = 0; i < group.size(); i++){
-            //     if(i == group.thread_rank() && error){
-
+            // if(group.thread_rank() == 0){
+            //     if(leftCount > 1 || rightCount > 1){
+            //         printf("leftCount %d rightCount %d\n", leftCount, rightCount);
             //     }
             // }
+
             __shared__ bool smemerror[128];
             assert(group.size() <= 128);
             smemerror[group.thread_rank()] = error;
@@ -527,7 +464,7 @@ namespace gpu{
 
         template<bool doAdd, class ThreadGroup>
         __device__ 
-        void msaAddOrDeleteASequence2Bit(
+        void msaAddOrDeleteASequence2BitAtomic(
             ThreadGroup& group,
             const unsigned int* __restrict__ sequence, //not transposed
             int sequenceLength, 
@@ -538,6 +475,7 @@ namespace gpu{
             bool canUseQualityScores,
             bool isPairedCandidate
         ){
+            constexpr char defaultQualityScore = 'I';
 
             auto defaultweightfunc = [&](char q){
                 return canUseQualityScores ? getQualityWeight(q) * overlapweight : overlapweight;
@@ -603,10 +541,13 @@ namespace gpu{
                 for(int k = 0; k < 4; k++){
                     alignas(4) char currentFourQualities[4];
 
-                    assert(size_t(&currentFourQualities[0]) % 4 == 0);
-
                     if(canUseQualityScores){
                         *((int*)&currentFourQualities[0]) = ((const int*)quality)[intIndex * 4 + k];
+                    }else{
+                        #pragma unroll
+                        for(int l = 0; l < 4; l++){
+                            currentFourQualities[l] = defaultQualityScore;
+                        }
                     }
 
                     #pragma unroll
@@ -624,12 +565,6 @@ namespace gpu{
                         const int rowOffset = encodedBaseAsInt * columnPitchInElements;
                         const int columnIndex = columnStart 
                                 + (isForward ? (intIndex * nucleotidesPerInt2Bit + posInInt) : sequenceLength - 1 - (intIndex * nucleotidesPerInt2Bit + posInInt));
-
-                        // if(debugflag){
-                        //     if(columnIndex == 279 && encodedBaseAsInt == 3){
-                        //         printf("column 279 remove weight %.10f\n", weight);
-                        //     }
-                        // }
                         
                         atomicAdd(counts + rowOffset + columnIndex, doAdd ? 1 : -1);
                         float n = atomicAdd(weights + rowOffset + columnIndex, doAdd ? weight : -weight);
@@ -649,7 +584,7 @@ namespace gpu{
                         //reverse complement
                         encodedBaseAsInt = SequenceHelpers::complementBase2Bit(encodedBaseAsInt);
                     }
-                    char q = 'I';
+                    char q = defaultQualityScore;
                     if(canUseQualityScores){
                         q = quality[fullInts * nucleotidesPerInt2Bit + posInInt];
                     }
@@ -659,16 +594,57 @@ namespace gpu{
                     const int rowOffset = encodedBaseAsInt * columnPitchInElements;
                     const int columnIndex = columnStart 
                         + (isForward ? (fullInts * nucleotidesPerInt2Bit + posInInt) : sequenceLength - 1 - (fullInts * nucleotidesPerInt2Bit + posInInt));
-                    // if(debugflag){
-                    //     if(columnIndex == 279 && encodedBaseAsInt == 3){
-                    //         printf("column 279 remove weight %.10f\n", weight);
-                    //     }
-                    // }
+
                     atomicAdd(counts + rowOffset + columnIndex, doAdd ? 1 : -1);
                     atomicAdd(weights + rowOffset + columnIndex, doAdd ? weight : -weight);
                     atomicAdd(coverages + columnIndex, doAdd ? 1 : -1);
                 } 
             }
+            group.sync();
+        }
+
+
+        template<bool doAdd, class ThreadGroup>
+        __device__ 
+        void msaAddOrDeleteASequence2BitNormal(
+            ThreadGroup& group,
+            const unsigned int* __restrict__ sequence, //not transposed
+            int sequenceLength, 
+            bool isForward,
+            int columnStart,
+            float overlapweight,
+            const char* __restrict__ quality, //not transposed
+            bool canUseQualityScores,
+            bool isPairedCandidate
+        ){
+
+            auto defaultweightfunc = [&](char q){
+                return canUseQualityScores ? getQualityWeight(q) * overlapweight : overlapweight;
+            };
+            auto weightfunc = defaultweightfunc;
+
+            for(int p = group.thread_rank(); p < sequenceLength; p += group.size()){
+                std::int8_t encodedBaseAsInt = SequenceHelpers::getEncodedNuc2Bit(sequence,sequenceLength,p);
+                if(!isForward){
+                    encodedBaseAsInt = SequenceHelpers::complementBase2Bit(encodedBaseAsInt);
+                }
+                const char qual = quality[p];
+                const float weight = weightfunc(qual);
+
+                assert(weight != 0);
+                const int rowOffset = encodedBaseAsInt * columnPitchInElements;
+                const int columnIndex = columnStart + (isForward ? p : sequenceLength - 1 - p);
+                if(doAdd){
+                    counts[rowOffset + columnIndex] += 1;
+                    weights[rowOffset + columnIndex] += weight;
+                    coverages[columnIndex] += 1;
+                }else{
+                    counts[rowOffset + columnIndex] -= 1;
+                    weights[rowOffset + columnIndex] -= weight;
+                    coverages[columnIndex] -= 1;
+                }
+            }
+            group.sync();
         }
 
         template<class ThreadGroup>
@@ -689,6 +665,7 @@ namespace gpu{
                     }
                 }
             }
+            group.sync();
         }
 
         template<class ThreadGroup>
@@ -713,11 +690,6 @@ namespace gpu{
             float desiredAlignmentMaxErrorRate,
             int anchorIndex
         ){   
-            constexpr int threadsPerSequence = 8;
-            auto tile = cg::tiled_partition<threadsPerSequence>(group);
-            const int tileIdInGroup = group.thread_rank() / threadsPerSequence;
-            const int numTilesInGroup = group.size() / threadsPerSequence;
-
             for(int column = group.thread_rank(); column < columnPitchInElements; column += group.size()){
                 for(int i = 0; i < 4; i++){
                     counts[i * columnPitchInElements + column] = 0;
@@ -728,7 +700,6 @@ namespace gpu{
             }
             
             group.sync();
-
             
             const int anchorColumnsBegin_incl = columnProperties->anchorColumnsBegin_incl;
             const int anchorColumnsEnd_excl = columnProperties->anchorColumnsEnd_excl;
@@ -737,34 +708,21 @@ namespace gpu{
             const unsigned int* const anchor = myAnchorSequenceData;
             const char* const anchorQualityScore = myAnchorQualityData;
                             
-            // for(int i = group.thread_rank(); i < anchorLength; i += group.size()){
-            //     const int columnIndex = anchorColumnsBegin_incl + i;
-            //     const unsigned int encbase = getEncodedNuc2Bit(anchor, anchorLength, i);
-            //     const float weight = canUseQualityScores ? getQualityWeight(anchorQualityScore[i]) : 1.0f;
-            //     const int rowOffset = int(encbase) * columnPitchInElements;
-
-            //     atomicAdd(counts + rowOffset + columnIndex, 1);
-            //     atomicAdd(weights + rowOffset + columnIndex, weight);
-            //     atomicAdd(coverages + columnIndex, 1);
-            // }
-
             //add anchor
+            msaAddOrDeleteASequence2BitNormal<true>(
+                group,
+                anchor, 
+                anchorLength, 
+                true,
+                anchorColumnsBegin_incl,
+                1.0f,
+                anchorQualityScore,
+                canUseQualityScores,
+                false
+            );
 
-            if(tileIdInGroup == 0){
-                msaAddOrDeleteASequence2Bit<true>(
-                    tile,
-                    anchor, 
-                    anchorLength, 
-                    true,
-                    anchorColumnsBegin_incl,
-                    1.0f,
-                    anchorQualityScore,
-                    canUseQualityScores,
-                    false
-                );
-            }
-
-            for(int indexInList = tileIdInGroup; indexInList < numIndices; indexInList += numTilesInGroup){
+            //add candidates
+            for(int indexInList = 0; indexInList < numIndices; indexInList += 1){
 
                 const int localCandidateIndex = myIndices[indexInList];
                 assert(localCandidateIndex != -1);
@@ -788,14 +746,6 @@ namespace gpu{
                     desiredAlignmentMaxErrorRate
                 );
 
-                if(tile.thread_rank() == 0){
-                    if(overlapweight > 1.0f){
-                        printf("error. overlapweight %.10f, anchorLength %d, nops %d, overlap %d, maxerrorrate %.10f\n", 
-                            overlapweight, anchorLength, query_alignment_nops, query_alignment_overlap, desiredAlignmentMaxErrorRate);
-                    }
-                }
-                tile.sync(); //debug
-
                 assert(overlapweight <= 1.0f);
                 assert(overlapweight >= 0.0f);
                 assert(flag != AlignmentOrientation::None); // indices should only be pointing to valid alignments
@@ -804,8 +754,8 @@ namespace gpu{
 
                 const bool isForward = flag == AlignmentOrientation::Forward;
 
-                msaAddOrDeleteASequence2Bit<true>(
-                    tile,
+                msaAddOrDeleteASequence2BitNormal<true>(
+                    group,
                     query, 
                     queryLength, 
                     isForward,
@@ -843,12 +793,7 @@ namespace gpu{
             const int anchorColumnsBegin_incl = columnProperties->anchorColumnsBegin_incl;
             const int anchorColumnsEnd_excl = columnProperties->anchorColumnsEnd_excl;
 
-            constexpr int threadsPerSequence = 8;
-            auto tile = cg::tiled_partition<threadsPerSequence>(group);
-            const int tileIdInGroup = group.thread_rank() / threadsPerSequence;
-            const int numTilesInGroup = group.size() / threadsPerSequence;
-                            
-            for(int indexInList = tileIdInGroup; indexInList < numIndices; indexInList += numTilesInGroup){
+            for(int indexInList = 0; indexInList < numIndices; indexInList += 1){
 
                 if(shouldBeRemoved(indexInList)){
 
@@ -873,24 +818,16 @@ namespace gpu{
                         desiredAlignmentMaxErrorRate
                     );
 
-                    if(tile.thread_rank() == 0){
-                        if(overlapweight > 1.0f){
-                            printf("error. overlapweight %.10f, anchorLength %d, nops %d, overlap %d, maxerrorrate %.10f\n", 
-                                overlapweight, anchorLength, query_alignment_nops, query_alignment_overlap, desiredAlignmentMaxErrorRate);
-                        }
-                    }
-                    tile.sync(); //debug
-
                     assert(overlapweight <= 1.0f);
                     assert(overlapweight >= 0.0f);
-                    assert(flag != AlignmentOrientation::None);                 // indices should only be pointing to valid alignments
+                    assert(flag != AlignmentOrientation::None); // indices should only be pointing to valid alignments
 
                     const int defaultcolumnoffset = anchorColumnsBegin_incl + shift;
 
                     const bool isForward = flag == AlignmentOrientation::Forward;
 
-                    msaAddOrDeleteASequence2Bit<false>(
-                        tile,
+                    msaAddOrDeleteASequence2BitNormal<false>(
+                        group,
                         query, 
                         queryLength, 
                         isForward,
@@ -900,158 +837,6 @@ namespace gpu{
                         canUseQualityScores,
                         myPairedCandidateFlags[localCandidateIndex]
                     );
-
-                }
-            }
-        }
-
-
-        template<class ThreadGroup, class Selector>
-        __device__ __forceinline__
-        void removeCandidates_verticalthreads(
-            ThreadGroup& group,
-            Selector shouldBeRemoved, //remove candidate myIndices[i] if shouldBeRemoved(i) == true
-            const int* __restrict__ myShifts,
-            const int* __restrict__ myOverlaps,
-            const int* __restrict__ myNops,
-            const AlignmentOrientation* __restrict__ myAlignmentFlags,
-            const unsigned int* __restrict__ myCandidateSequencesData, //not transposed
-            const char* __restrict__ myCandidateQualities, //not transposed
-            const int* __restrict__ myCandidateLengths,
-            const int* __restrict__ myIndices,
-            int numIndices,
-            bool canUseQualityScores, 
-            size_t encodedSequencePitchInInts,
-            size_t qualityPitchInBytes,
-            float desiredAlignmentMaxErrorRate
-        ){      
-
-            const int anchorColumnsBegin_incl = columnProperties->anchorColumnsBegin_incl;
-            const int anchorColumnsEnd_excl = columnProperties->anchorColumnsEnd_excl;
-            const int anchorLength = anchorColumnsEnd_excl - anchorColumnsBegin_incl;
-            const int msasize = columnProperties->lastColumn_excl;
-
-            //blocked arrangement. each thread is responsible for a number of consecutve columns in msa
-            constexpr int itemsPerThread = 3;
-
-            float myweights[4][itemsPerThread];
-            int mycounts[4][itemsPerThread];
-
-            const int numBlocks = SDIV(msasize, itemsPerThread * group.size());
-
-            for(int block = 0; block < numBlocks; block++){
-
-                #pragma unroll
-                for(int i = 0; i < itemsPerThread; i++){
-                    myweights[0][i] = 0.0f;
-                    myweights[1][i] = 0.0f;
-                    myweights[2][i] = 0.0f;
-                    myweights[3][i] = 0.0f;
-                    mycounts[0][i] = 0;
-                    mycounts[1][i] = 0;
-                    mycounts[2][i] = 0;
-                    mycounts[3][i] = 0;
-                }
-
-                const int myFirstColumn = block * group.size() * itemsPerThread + group.thread_rank() * itemsPerThread;
-                const int myLastColumnExcl = min(msasize, block * group.size() * itemsPerThread + (1+group.thread_rank()) * itemsPerThread);
-                            
-                for(int indexInList = 0; indexInList < numIndices; indexInList += 1){
-
-                    if(shouldBeRemoved(indexInList)){
-
-                        const int localCandidateIndex = myIndices[indexInList];
-                        const int shift = myShifts[localCandidateIndex];
-                        const int queryLength = myCandidateLengths[localCandidateIndex];
-                        
-
-                        bool IcanProcessCandidate = false;
-                        #pragma unroll
-                        for(int i = 0; i < itemsPerThread; i++){
-                            const int positionOfColumnInCandidate = myFirstColumn - (anchorColumnsBegin_incl + shift) + i;
-                            if(positionOfColumnInCandidate >= 0 && positionOfColumnInCandidate < queryLength){
-                                IcanProcessCandidate = true;
-                            }
-                        }
-
-                        if(IcanProcessCandidate){
-                            //get required data for processing
-                            const AlignmentOrientation flag = myAlignmentFlags[localCandidateIndex];     
-                            
-                        
-                            const unsigned int* const query = myCandidateSequencesData + localCandidateIndex * encodedSequencePitchInInts;
-
-                            const char* const queryQualityScore = myCandidateQualities + std::size_t(localCandidateIndex) * qualityPitchInBytes;
-
-                            const int query_alignment_overlap = myOverlaps[localCandidateIndex];
-                            const int query_alignment_nops = myNops[localCandidateIndex];
-
-                            const float overlapweight = calculateOverlapWeight(
-                                anchorLength, 
-                                query_alignment_nops, 
-                                query_alignment_overlap,
-                                desiredAlignmentMaxErrorRate
-                            );
-
-                            assert(overlapweight <= 1.0f);
-                            assert(overlapweight >= 0.0f);
-                            assert(flag != AlignmentOrientation::None); // indices should only be pointing to valid alignments
-
-                            const int defaultcolumnoffset = anchorColumnsBegin_incl + shift;
-                            const bool isForward = flag == AlignmentOrientation::Forward; 
-                                                       
-
-                            #pragma unroll
-                            for(int i = 0; i < itemsPerThread; i++){
-                                const int positionOfColumnInCandidate = myFirstColumn - defaultcolumnoffset + i;
-                                if(positionOfColumnInCandidate >= 0 && positionOfColumnInCandidate < queryLength){
-                                    //process
-
-                                    int positionInCandidate = positionOfColumnInCandidate;
-                                    if(!isForward){
-                                        positionInCandidate = queryLength - 1 - positionOfColumnInCandidate;
-                                    }
-
-                                    std::int8_t encodedBaseAsInt = SequenceHelpers::getEncodedNuc2Bit(query, queryLength, positionInCandidate);
-                                    if(!isForward){
-                                        encodedBaseAsInt = SequenceHelpers::complementBase2Bit(encodedBaseAsInt);
-                                    }
-                                    const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[positionInCandidate]) * overlapweight : overlapweight;
-
-                                    assert(weight != 0);
-                                    constexpr int doAdd = false;
-                                    if(encodedBaseAsInt == 0){
-                                        myweights[0][i] += (doAdd ? weight : -weight);
-                                        mycounts[0][i] += (doAdd ? 1 : -1);
-                                    } else if(encodedBaseAsInt == 1){
-                                        myweights[1][i] += (doAdd ? weight : -weight);
-                                        mycounts[1][i] += (doAdd ? 1 : -1);
-                                    } else if(encodedBaseAsInt == 2){
-                                        myweights[2][i] += (doAdd ? weight : -weight);
-                                        mycounts[2][i] += (doAdd ? 1 : -1);
-                                    } else if(encodedBaseAsInt == 3){
-                                        myweights[3][i] += (doAdd ? weight : -weight);
-                                        mycounts[3][i] += (doAdd ? 1 : -1);
-                                    }
-                                }
-                            }
-                        }
-
-                    }
-                }
-            
-                #pragma unroll
-                for(int i = 0; i < itemsPerThread; i++){
-                    if(myFirstColumn + i <= msasize){
-                        int sumcounts = 0;
-                        #pragma unroll
-                        for(int b = 0; b < 4; b++){
-                            counts[b * columnPitchInElements + myFirstColumn + i] += mycounts[b][i];
-                            weights[b * columnPitchInElements + myFirstColumn + i] += myweights[b][i];
-                            sumcounts += mycounts[b][i];
-                        }
-                        coverages[myFirstColumn + i] += sumcounts;
-                    }
                 }
             }
         }
@@ -1070,12 +855,6 @@ namespace gpu{
             const int firstColumn_incl = columnProperties->firstColumn_incl;
             const int lastColumn_excl = columnProperties->lastColumn_excl;
 
-            if(lastColumn_excl > columnPitchInElements){
-                if(group.thread_rank() == 0){
-                    printf("%d, %d %d\n", anchorIndex, lastColumn_excl, columnPitchInElements);
-                }
-                group.sync();
-            }
             assert(lastColumn_excl <= columnPitchInElements);
 
             const int anchorLength = anchorColumnsEnd_excl - anchorColumnsBegin_incl;
@@ -1168,10 +947,7 @@ namespace gpu{
                         consensusArray[i] = cons;
 
                         const float columnWeight = wa + wc + wg + wt;
-                        if(columnWeight == 0){
-                            printf("s %d c %d\n", anchorIndex, column);
-                            assert(columnWeight != 0);
-                        }
+                        assert(columnWeight != 0);
 
                         support[column] = consWeight / columnWeight;
 
@@ -1349,7 +1125,8 @@ namespace gpu{
                 if(foundColumn){
                     
                     auto discard_rows = [&](bool keepMatching){
-                        
+                        bool veryGoodAlignment = false;
+
                         for(int k = group.thread_rank(); k < myNumIndices; k += group.size()){
                             const int localCandidateIndex = myIndices[k];
                             const unsigned int* const candidateptr = myCandidateSequencesData + std::size_t(localCandidateIndex) * encodedSequencePitchInInts;
@@ -1374,40 +1151,28 @@ namespace gpu{
                                 }
                             }
 
+                            bool shouldBeKept = false;
                             if(notAffected){
-                                myShouldBeKept[k] = true;
+                                shouldBeKept = true;
                             }else if(keepMatching && (base == foundBase)){
                                 //keep candidates which match the found base
-                                myShouldBeKept[k] = true;
+                                shouldBeKept = true;
                             }else if(!keepMatching && (base != foundBase)){
                                 //keep candidates which do not match the found base
-                                myShouldBeKept[k] = true;
-                            }else{
-                                myShouldBeKept[k] = false;
+                                shouldBeKept = true;
                             }
-                        }
-                        #if 1
-                        //check that no candidate which should be removed has very good alignment.
-                        //if there is such a candidate, none of the candidates will be removed.
-                        bool veryGoodAlignment = false;
-                        for(int k = group.thread_rank(); k < myNumIndices && !veryGoodAlignment; k += group.size()){
-                            float overlapweight = 0.0f;
 
-                            if(!myShouldBeKept[k]){
-                                const int localCandidateIndex = myIndices[k];
+                            myShouldBeKept[k] = shouldBeKept;
+
+                            if(!shouldBeKept && !veryGoodAlignment){
                                 const int nOps = myNops[localCandidateIndex];
                                 const int overlapsize = myOverlaps[localCandidateIndex];
-                                overlapweight = calculateOverlapWeight(
+                                const float overlapweight = calculateOverlapWeight(
                                     anchorLength, 
                                     nOps, 
                                     overlapsize,
                                     desiredAlignmentMaxErrorRate
                                 );
-
-                                if(overlapweight > 1.0f){
-                                    printf("error. overlapweight %.10f, anchorLength %d, nops %d, overlap %d, maxerrorrate %.10f\n", 
-                                        overlapweight, anchorLength, nOps, overlapsize, desiredAlignmentMaxErrorRate);
-                                }
 
                                 assert(overlapweight <= 1.0f);
                                 assert(overlapweight >= 0.0f);
@@ -1417,6 +1182,9 @@ namespace gpu{
                                 }
                             }
                         }
+                        #if 1
+                        //check that no candidate which should be removed has very good alignment.
+                        //if there is such a candidate, none of the candidates will be removed.
 
                         veryGoodAlignment = groupReduceBool(veryGoodAlignment, [](auto l, auto r){
                             return l || r;
@@ -1452,21 +1220,21 @@ namespace gpu{
                             }                               
                 
                             //warp time-sliced compaction to make it a stable compaction
-                            #pragma unroll
-                            for(int x = 0; x < 256 / 32; x++){
-                                if(keep && group.thread_rank() / 32 == x){
-                                    cg::coalesced_group g = cg::coalesced_threads();
-                                    int outputPos;
-                                    if (g.thread_rank() == 0) {
-                                        outputPos = atomicAdd(&smemcounts[0], g.size());
+                            for(int x = 0; x < group.size() / 32; x++){
+                                if(group.thread_rank() / 32 == x){
+                                    if(keep){
+                                        cg::coalesced_group g = cg::coalesced_threads();
+                                        int outputPos;
+                                        if (g.thread_rank() == 0) {
+                                            outputPos = atomicAdd(&smemcounts[0], g.size());
+                                        }
+                                        outputPos = g.thread_rank() + g.shfl(outputPos, 0);
+                                        myNewIndicesPtr[outputPos] = myIndices[k];
                                     }
-                                    outputPos = g.thread_rank() + g.shfl(outputPos, 0);
-                                    myNewIndicesPtr[outputPos] = myIndices[k];
                                 }
+                                group.sync();
                             }
                         }
-
-                        group.sync();
 
                         if(group.thread_rank() == 0){
                             *myNewNumIndicesPerAnchorPtr = smemcounts[0];
@@ -1514,6 +1282,8 @@ namespace gpu{
                     *myNewNumIndicesPerAnchorPtr = myNumIndices;
                 }
             }
+
+            group.sync();
         }
 
         __device__ __forceinline__
@@ -1589,13 +1359,6 @@ namespace gpu{
         __device__ __forceinline__
         char getConsensusQualityOfPosition(int pos) const{
             const float sup = support[pos];
-            //const float cov = coverages[pos];
-
-            //char q = getQualityChar(sup);
-
-            //scale down quality depending on coverage
-            //q = char(float(q) * min(1.0f, cov * 1.0f / 5.0f));
-
             return getQualityChar(sup);
         }
 

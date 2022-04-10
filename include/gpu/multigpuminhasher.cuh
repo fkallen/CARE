@@ -469,6 +469,11 @@ namespace gpu{
                         cudaStreamPerThread,
                         rmm::mr::get_current_device_resource()
                     );
+                    if(deviceIds[g] != oldDeviceId){
+                        vec_d_sequenceData2Bit_target[g].release();
+                        vec_d_sequenceLengths_target[g].release();
+                        vec_d_readIds_target[g].release();
+                    }
                     events[g].record(cudaStreamPerThread);
                 }
             }
@@ -707,6 +712,11 @@ namespace gpu{
                     targetmr
                 );
 
+                if(deviceIds[g] != oldDeviceId){
+                    vec_d_sequenceData2Bit_target[g].release();
+                    vec_d_sequenceLengths_target[g].release();
+                }
+
                 queryData->vec_d_numValuesPerSequence.push_back(std::move(d_numValuesPerSequence_target));
             }
 
@@ -833,6 +843,7 @@ namespace gpu{
                     sizeof(read_number) * totalNumValuesTarget,
                     queryData->streams[g]
                 ));
+                vec_d_values_target[g].release();
             }
 
             for(int g = 0; g < int(deviceIds.size()); g++){
@@ -846,6 +857,7 @@ namespace gpu{
                     sizeof(int) * numSequences,
                     queryData->streams[g]
                 ));
+                queryData->vec_d_numValuesPerSequence[g].release();
             }
 
             for(int g = 0; g < int(deviceIds.size()); g++){
@@ -859,6 +871,7 @@ namespace gpu{
                     sizeof(int) * (numSequences+1),
                     queryData->streams[g]
                 ));
+                vec_d_offsets_target[g].release();
             }
 
             rmm::device_uvector<int> d_gatherOffsets(deviceIds.size(), stream, mr);
@@ -890,6 +903,7 @@ namespace gpu{
                 numSequences,
                 deviceIds.size()
             ); CUDACHECKASYNC
+
 
             queryData->vec_d_numValuesPerSequence.clear();
         }

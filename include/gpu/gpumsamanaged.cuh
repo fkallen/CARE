@@ -346,6 +346,14 @@ namespace gpu{
             resizeUninitialized(d_support, columnPitchInElements * numAnchors, stream);
             resizeUninitialized(d_origWeights, columnPitchInElements * numAnchors, stream);
             resizeUninitialized(d_columnProperties, numAnchors, stream);
+            // CUDACHECK(cudaMemsetAsync(d_consensusEncoded.data(), 0, sizeof(std::uint8_t) * columnPitchInElements * numAnchors, stream));
+            // CUDACHECK(cudaMemsetAsync(d_counts.data(), 0, sizeof(int) * 4*columnPitchInElements * numAnchors, stream));
+            // CUDACHECK(cudaMemsetAsync(d_coverages.data(), 0, sizeof(int) * columnPitchInElements * numAnchors, stream));
+            // CUDACHECK(cudaMemsetAsync(d_origCoverages.data(), 0, sizeof(int) * columnPitchInElements * numAnchors, stream));
+            // CUDACHECK(cudaMemsetAsync(d_weights.data(), 0, sizeof(float) * 4*columnPitchInElements * numAnchors, stream));
+            // CUDACHECK(cudaMemsetAsync(d_support.data(), 0, sizeof(float) * columnPitchInElements * numAnchors, stream));
+            // CUDACHECK(cudaMemsetAsync(d_origWeights.data(), 0, sizeof(float) * columnPitchInElements * numAnchors, stream));
+            // CUDACHECK(cudaMemsetAsync(d_columnProperties.data(), 0, sizeof(MSAColumnProperties) * numAnchors, stream));
 
             multiMSA.numMSAs = numMSAs;
             multiMSA.columnPitchInElements = columnPitchInElements;
