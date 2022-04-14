@@ -23,6 +23,7 @@
 #include <cub/cub.cuh>
 
 #include <thrust/iterator/constant_iterator.h>
+#include <thrust/execution_policy.h>
 
 #include <rmm/device_vector.hpp>
 #include <rmm/device_uvector.hpp>
