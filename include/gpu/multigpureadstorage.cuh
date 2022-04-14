@@ -309,31 +309,22 @@ public:
                 const int numBatches = SDIV(numAmbiguous, batchsize);
 
                 rmm::device_vector<bool> d_values(batchsize);
-                thrust::fill(thrust::device, d_values.begin(), d_values.end(), true);
-
-                rmm::device_vector<read_number> d_positions(batchsize);
+                thrust::fill(rmm::exec_policy_nosync(), d_values.begin(), d_values.end(), true);
 
                 for(int i = 0; i < numBatches; i++){
                     size_t begin = i * batchsize;
                     size_t end = std::min((i+1) * batchsize, numAmbiguous);
                     size_t elements = end - begin;
 
-                    CUDACHECK(cudaMemcpy(
-                        thrust::raw_pointer_cast(d_positions.data()), 
-                        h_positions.data() + begin, 
-                        sizeof(read_number) * elements, 
-                        H2D
-                    ));
-
                     setBitarray<<<SDIV(elements, 128), 128>>>(
                         bitArraysUndeterminedBase[deviceId], 
                         thrust::raw_pointer_cast(d_values.data()), 
-                        thrust::raw_pointer_cast(d_positions.data()), 
+                        h_positions.data() + begin, 
                         elements
                     ); CUDACHECKASYNC;
 
-                    CUDACHECK(cudaDeviceSynchronize());
                 }
+                CUDACHECK(cudaDeviceSynchronize());
 
                 ambigReadIds.clear();
                 ambigReadIds.insert(ambigReadIds.end(), h_positions.begin(), h_positions.end());

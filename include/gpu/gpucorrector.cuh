@@ -2622,7 +2622,7 @@ namespace gpu{
                     duplicateInput
                 );
                 auto copyifend = thrust::copy_if(
-                    rmm::exec_policy(stream, mr),
+                    rmm::exec_policy_nosync(stream, mr),
                     duplicatedIds,
                     duplicatedIds + currentNumCandidates,
                     d_alignment_best_alignment_flags.data(),
