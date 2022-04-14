@@ -1379,7 +1379,6 @@ namespace gpu{
         };
 
     public:
-        bool debugflag;
         int columnPitchInElements;
         std::uint8_t* consensus;
         int* counts;
@@ -1397,7 +1396,6 @@ namespace gpu{
         GpuSingleMSA getSingleMSA(int msaIndex) const{
             GpuSingleMSA msa;
 
-            msa.debugflag = false;
             msa.columnPitchInElements = columnPitchInElements;
             msa.counts = getCountsOfMSA(msaIndex);
             msa.weights = getWeightsOfMSA(msaIndex);

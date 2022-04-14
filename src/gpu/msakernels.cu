@@ -182,7 +182,7 @@ namespace gpu{
         const bool* __restrict__ d_isPairedCandidate,
         const char* __restrict__ anchorQualities,
         const char* __restrict__ candidateQualities,
-        const int* __restrict__ d_numAnchors,
+        int numAnchors,
         float desiredAlignmentMaxErrorRate,
         bool canUseQualityScores,
         int encodedSequencePitchInInts,
@@ -198,8 +198,6 @@ namespace gpu{
 
         auto tbGroup = cg::this_thread_block();
 
-        const int n_anchors = *d_numAnchors;
-
         typename BlockReduceInt::TempStorage* const cubTempStorage = (typename BlockReduceInt::TempStorage*)sharedmem;
 
         float* const shared_weights = sharedmem;
@@ -207,7 +205,7 @@ namespace gpu{
         int* const shared_coverages = (int*)(shared_counts + 4 * multiMSA.columnPitchInElements);
 
 
-        for(int anchorIndex = blockIdx.x; anchorIndex < n_anchors; anchorIndex += gridDim.x){
+        for(int anchorIndex = blockIdx.x; anchorIndex < numAnchors; anchorIndex += gridDim.x){
             const int myNumGoodCandidates = indices_per_anchor[anchorIndex];
 
             //if(myNumGoodCandidates > 0){
@@ -359,7 +357,7 @@ namespace gpu{
         const char* __restrict__ candidateQualities,
         bool* __restrict__ d_shouldBeKept,
         const int* __restrict__ d_candidates_per_anchor_prefixsum,
-        const int* __restrict__ d_numAnchors,
+        int numAnchors,
         float desiredAlignmentMaxErrorRate,
         bool canUseQualityScores,
         size_t encodedSequencePitchInInts,
@@ -391,11 +389,9 @@ namespace gpu{
         int* const shared_counts = (int*)(shared_weights + 4 * multiMSA.columnPitchInElements);
         int* const shared_coverages = (int*)(shared_counts + 4 * multiMSA.columnPitchInElements);
 
-        const int n_anchors = *d_numAnchors;
-
         auto tbGroup = cg::this_thread_block();
 
-        for(int anchorIndex = blockIdx.x; anchorIndex < n_anchors; anchorIndex += gridDim.x){
+        for(int anchorIndex = blockIdx.x; anchorIndex < numAnchors; anchorIndex += gridDim.x){
             const bool myAnchorIsFinished = d_anchorIsFinished[anchorIndex];
             const int myNumIndices = d_indices_per_anchor[anchorIndex];
 
@@ -647,7 +643,7 @@ namespace gpu{
         const char* __restrict__ candidateQualities,
         bool* __restrict__ d_shouldBeKept,
         const int* __restrict__ d_candidates_per_anchor_prefixsum,
-        const int* __restrict__ d_numAnchors,
+        int numAnchors,
         float desiredAlignmentMaxErrorRate,
         bool canUseQualityScores,
         size_t encodedSequencePitchInInts,
@@ -655,8 +651,7 @@ namespace gpu{
         int* __restrict__ d_indices,
         int* __restrict__ d_indices_per_anchor,
         int dataset_coverage,
-        int numRefinementIterations,
-        const read_number* __restrict__ anchorReadIds = nullptr
+        int numRefinementIterations
     ){
 
         constexpr bool useSmemMSA = (memoryType == MemoryType::Shared);
@@ -680,9 +675,7 @@ namespace gpu{
         int* const shared_counts = (int*)(shared_weights + 4 * multiMSA.columnPitchInElements);
         int* const shared_coverages = (int*)(shared_counts + 4 * multiMSA.columnPitchInElements);            
 
-        const int n_anchors = *d_numAnchors;
-
-        for(int anchorIndex = blockIdx.x; anchorIndex < n_anchors; anchorIndex += gridDim.x){
+        for(int anchorIndex = blockIdx.x; anchorIndex < numAnchors; anchorIndex += gridDim.x){
             int myNumIndices = d_indices_per_anchor[anchorIndex];
 
             if(myNumIndices > 0){
@@ -693,9 +686,6 @@ namespace gpu{
                     shared_columnProperties = *(multiMSA.getColumnPropertiesOfMSA(anchorIndex));
                 }
                 tbGroup.sync();
-
-                const read_number anchorReadId = anchorReadIds == nullptr ? 0 : anchorReadIds[anchorIndex];
-                constexpr read_number debugreadid = 42;
 
                 const int globalOffset = d_candidates_per_anchor_prefixsum[anchorIndex];
                 int* const myIndices = d_indices + globalOffset;
@@ -709,8 +699,6 @@ namespace gpu{
 
                 GpuSingleMSA msa = multiMSA.getSingleMSA(anchorIndex);
                 msa.columnProperties = &shared_columnProperties;
-
-                msa.debugflag = anchorReadId == debugreadid;
 
                 if(useSmemMSA){
                     msa.counts = shared_counts;
@@ -918,7 +906,7 @@ namespace gpu{
                         bool error = msa.updateColumnProperties(tbGroup);
                         assert(!error);
 
-                        msa.checkAfterBuild(tbGroup, anchorIndex, __LINE__, anchorReadId);
+                        msa.checkAfterBuild(tbGroup, anchorIndex, __LINE__, 0);
 
                         assert(shared_columnProperties.firstColumn_incl != -1);
                         assert(shared_columnProperties.lastColumn_excl != -1);
@@ -1067,10 +1055,8 @@ namespace gpu{
         const char* d_candidateQualities,
         bool* d_shouldBeKept,
         const int* d_candidates_per_anchor_prefixsum,
-        const int* d_numAnchors,
         float desiredAlignmentMaxErrorRate,
-        int /*maxNumAnchors*/,
-        int /*maxNumCandidates*/,
+        int numAnchors,
         bool canUseQualityScores,
         size_t encodedSequencePitchInInts,
         size_t qualityPitchInBytes,
@@ -1078,8 +1064,7 @@ namespace gpu{
         int* d_indices_per_anchor,
         int dataset_coverage,
         int numIterations,
-        cudaStream_t stream,
-        const read_number* d_anchorReadIds
+        cudaStream_t stream
     ){
 
         helpers::call_fill_kernel_async(
@@ -1118,9 +1103,7 @@ namespace gpu{
         const int maxBlocks = maxBlocksPerSM * numSMs;
 
         dim3 block(blocksize, 1, 1);
-        //dim3 grid(maxNumAnchors, 1, 1);
-        dim3 grid(maxBlocks, 1, 1);
-
+        dim3 grid(std::min(maxBlocks, numAnchors), 1, 1);
 
         msaCandidateRefinement_multiiter_kernel<blocksize, memoryType>
                 <<<grid, block, smem, stream>>>(
@@ -1141,7 +1124,7 @@ namespace gpu{
             d_candidateQualities,
             d_shouldBeKept,
             d_candidates_per_anchor_prefixsum,
-            d_numAnchors,
+            numAnchors,
             desiredAlignmentMaxErrorRate,
             canUseQualityScores,
             encodedSequencePitchInInts,
@@ -1149,8 +1132,7 @@ namespace gpu{
             d_indices,
             d_indices_per_anchor,
             dataset_coverage,
-            numIterations,
-            d_anchorReadIds
+            numIterations
         );
 
         CUDACHECKASYNC;
@@ -1178,10 +1160,8 @@ namespace gpu{
         const char* d_candidateQualities,
         bool* d_shouldBeKept,
         const int* d_candidates_per_anchor_prefixsum,
-        const int* d_numAnchors,
         float desiredAlignmentMaxErrorRate,
-        int /*maxNumAnchors*/,
-        int /*maxNumCandidates*/,
+        int numAnchors,
         bool canUseQualityScores,
         size_t encodedSequencePitchInInts,
         size_t qualityPitchInBytes,
@@ -1229,8 +1209,7 @@ namespace gpu{
         const int maxBlocks = maxBlocksPerSM * numSMs;
 
         dim3 block(blocksize, 1, 1);
-        //dim3 grid(maxNumAnchors, 1, 1);
-        dim3 grid(maxBlocks, 1, 1);
+        dim3 grid(std::min(maxBlocks, numAnchors), 1, 1);
 
         msaCandidateRefinement_singleiter_kernel<blocksize, memoryType><<<grid, block, smem, stream>>>(
             d_newIndices,
@@ -1250,7 +1229,7 @@ namespace gpu{
             d_candidateQualities,
             d_shouldBeKept,
             d_candidates_per_anchor_prefixsum,
-            d_numAnchors,
+            numAnchors,
             desiredAlignmentMaxErrorRate,
             canUseQualityScores,
             encodedSequencePitchInInts,
@@ -1269,30 +1248,29 @@ namespace gpu{
 
 
 
-    void callConstructMultipleSequenceAlignmentsKernel_async(
-        GPUMultiMSA multiMSA,
-        const int* d_overlaps,
-        const int* d_shifts,
-        const int* d_nOps,
-        const AlignmentOrientation* d_bestAlignmentFlags,
-        const int* d_anchorLengths,
-        const int* d_candidateLengths,
-        const int* d_indices,
-        const int* d_indices_per_anchor,
-        const int* d_candidatesPerAnchorPrefixSum,            
-        const unsigned int* d_anchorSequencesData,
-        const unsigned int* d_candidateSequencesData,
-        const bool* d_isPairedCandidate,
-        const char* d_anchorQualities,
-        const char* d_candidateQualities,
-        const int* d_numAnchors,
-        float desiredAlignmentMaxErrorRate,
-        int /*maxNumAnchors*/,
-        int /*maxNumCandidates*/,
-        bool canUseQualityScores,
-        int encodedSequencePitchInInts,
-        size_t qualityPitchInBytes,
-        cudaStream_t stream){
+void callConstructMultipleSequenceAlignmentsKernel_async(
+    GPUMultiMSA multiMSA,
+    const int* d_overlaps,
+    const int* d_shifts,
+    const int* d_nOps,
+    const AlignmentOrientation* d_bestAlignmentFlags,
+    const int* d_anchorLengths,
+    const int* d_candidateLengths,
+    const int* d_indices,
+    const int* d_indices_per_anchor,
+    const int* d_candidatesPerAnchorPrefixSum,            
+    const unsigned int* d_anchorSequencesData,
+    const unsigned int* d_candidateSequencesData,
+    const bool* d_isPairedCandidate,
+    const char* d_anchorQualities,
+    const char* d_candidateQualities,
+    float desiredAlignmentMaxErrorRate,
+    int numAnchors,
+    bool canUseQualityScores,
+    int encodedSequencePitchInInts,
+    size_t qualityPitchInBytes,
+    cudaStream_t stream
+){
             
 
     constexpr MemoryType memoryType = MemoryType::Shared;
@@ -1326,8 +1304,7 @@ namespace gpu{
     const int maxBlocks = maxBlocksPerSM * numSMs;
 
     dim3 block(BLOCKSIZE, 1, 1);
-    //dim3 grid(maxNumAnchors, 1, 1);
-    dim3 grid(maxBlocks, 1, 1);
+    dim3 grid(std::min(maxBlocks, numAnchors), 1, 1);
     
     constructMultipleSequenceAlignmentsKernel<BLOCKSIZE, memoryType><<<grid, block, smem, stream>>>(
         multiMSA,         
@@ -1345,14 +1322,12 @@ namespace gpu{
         d_isPairedCandidate,
         d_anchorQualities,
         d_candidateQualities,
-        d_numAnchors,
+        numAnchors,
         desiredAlignmentMaxErrorRate,
         canUseQualityScores,
         encodedSequencePitchInInts,
         qualityPitchInBytes
     ); CUDACHECKASYNC;
-
-
 
 }
 

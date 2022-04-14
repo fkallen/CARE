@@ -2788,8 +2788,6 @@ namespace gpu{
                 d_candidate_sequences_data.data(),
                 d_cand_qual,
                 d_isPairedCandidate.data(),
-                currentNumCandidates,
-                d_numAnchors.data(),
                 encodedSequencePitchInInts,
                 qualityPitchInBytes,
                 programOptions->useQualityScores,
@@ -2824,15 +2822,13 @@ namespace gpu{
                     d_cand_qual,
                     d_isPairedCandidate.data(),
                     currentNumCandidates,
-                    d_numAnchors.data(),
                     encodedSequencePitchInInts,
                     qualityPitchInBytes,
                     programOptions->useQualityScores,
                     programOptions->maxErrorRate,
                     programOptions->estimatedCoverage,
                     getNumRefinementIterations(),
-                    stream,
-                    d_anchorReadIds.data()
+                    stream
                 );
 
                 std::swap(d_indices_tmp, d_indices);
