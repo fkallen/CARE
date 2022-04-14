@@ -192,16 +192,12 @@ namespace care{
         }
 
 
-        #if 0
-
-        //retrieve values with sort + unique instead of set_union
         void retrieveValues(
             MinhasherHandle& queryHandle,
-            const read_number* h_readIds,
             int numSequences,
             int /*totalNumValues*/,
             read_number* h_values,
-            int* h_numValuesPerSequence,
+            const int* /*h_numValuesPerSequence*/,
             int* h_offsets //numSequences + 1
         ) const override {
             if(numSequences == 0) return;
@@ -210,138 +206,19 @@ namespace care{
 
             assert(queryData->previousStage == QueryData::Stage::NumValues);
 
-
             h_offsets[0] = 0;
 
-            read_number* h_valuesEnd = h_values;
-
+            auto iter = h_values;
             for(int s = 0; s < numSequences; s++){
-                read_number* myValues = h_valuesEnd;
-
                 for(int map = 0; map < getNumberOfMaps(); ++map){
-                    const auto& range = queryData->ranges[map * numSequences + s]; //todo transpose
-                    h_valuesEnd = std::copy(range.first, range.second, h_valuesEnd);
-                }
-
-                std::sort(myValues, h_valuesEnd);
-                if(h_readIds != nullptr){
-                    const auto anchorReadId = h_readIds[s];
-
-                    auto isEqual = [toremove = anchorReadId](const auto& l, const auto& r){
-                        if(l == toremove) return true;
-                        if(r == toremove) return true;
-                        return l == r;
-                    };
-
-                    //make unique range and remove anchorReadId
-                    h_valuesEnd = std::unique(myValues, h_valuesEnd, isEqual);
-                }else{
-                    //make unique range
-                    h_valuesEnd = std::unique(myValues, h_valuesEnd);
-                }
-
-                h_numValuesPerSequence[s] = std::distance(myValues, h_valuesEnd);
-                h_offsets[s+1] = h_numValuesPerSequence[s] + h_offsets[s];
-            }
-
-            queryData->previousStage = QueryData::Stage::Retrieve;
-        }
-
-        #else
-
-        void retrieveValues(
-            MinhasherHandle& queryHandle,
-            const read_number* h_readIds,
-            int numSequences,
-            int totalNumValues,
-            read_number* h_values,
-            int* h_numValuesPerSequence,
-            int* h_offsets //numSequences + 1
-        ) const override {
-            if(numSequences == 0) return;
-
-            QueryData* const queryData = getQueryDataFromHandle(queryHandle);
-
-            assert(queryData->previousStage == QueryData::Stage::NumValues);
-
-            #if 0
-            h_offsets[0] = 0;
-            auto first = h_values;
-
-            for(int s = 0; s < numSequences; s++){
-                auto rangesbegin = queryData->ranges.data() + s * getNumberOfMaps();
-
-                auto end = k_way_set_union(queryData->suHandle, first, rangesbegin, getNumberOfMaps());
-                if(h_readIds != nullptr){
-                    auto readIdPos = std::lower_bound(
-                        first,
-                        end,
-                        h_readIds[s]
-                    );
-
-                    if(readIdPos != end && *readIdPos == h_readIds[s]){
-                        end = std::copy(readIdPos + 1, end, readIdPos);
-                    }
-                }
-                h_numValuesPerSequence[s] = std::distance(first, end);
-                h_offsets[s+1] = h_offsets[s] + std::distance(first, end);
-                first = end;
-            }
-            #else
-
-            h_offsets[0] = 0;
-
-            std::vector<Value_t> valuestmp(totalNumValues);
-            std::vector<Range_t> rangestmp(numSequences * getNumberOfMaps());
-
-            //std::cerr << numSequences << "\n";
-
-            auto iter = valuestmp.begin();
-            int counter = 0;
-            for(int map = 0; map < getNumberOfMaps(); ++map){
-                for(int s = 0; s < numSequences; s++){
-                    //const auto& range = queryData->ranges[s * getNumberOfMaps() + map];
                     const auto& range = queryData->ranges[map * numSequences + s];
-                    auto& newrange = rangestmp[s * getNumberOfMaps() + map];
-
-                    newrange.first = valuestmp.data() + counter;
-
                     iter = std::copy(range.first, range.second, iter);
-                    counter += std::distance(range.first, range.second);
-
-                    newrange.second = valuestmp.data() + counter;
                 }
+                h_offsets[s+1] = std::distance(h_values, iter);
             }
-
-            
-            auto first = h_values;
-
-
-            for(int s = 0; s < numSequences; s++){
-                auto rangesbegin = rangestmp.data() + s * getNumberOfMaps();
-
-                auto end = k_way_set_union(queryData->suHandle, first, rangesbegin, getNumberOfMaps());
-                if(h_readIds != nullptr){
-                    auto readIdPos = std::lower_bound(
-                        first,
-                        end,
-                        h_readIds[s]
-                    );
-
-                    if(readIdPos != end && *readIdPos == h_readIds[s]){
-                        end = std::copy(readIdPos + 1, end, readIdPos);
-                    }
-                }
-                h_numValuesPerSequence[s] = std::distance(first, end);
-                h_offsets[s+1] = h_offsets[s] + std::distance(first, end);
-                first = end;
-            }
-            #endif
 
             queryData->previousStage = QueryData::Stage::Retrieve;
         }
-
-        #endif
 
         void compact() override {
             const int num = minhashTables.size();

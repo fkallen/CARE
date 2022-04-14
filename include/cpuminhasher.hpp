@@ -59,11 +59,10 @@ public:
 
     virtual void retrieveValues(
         MinhasherHandle& queryHandle,
-        const read_number* h_readIds,
         int numSequences,
         int totalNumValues,
         read_number* h_values,
-        int* h_numValuesPerSequence,
+        const int* h_numValuesPerSequence,
         int* h_offsets //numSequences + 1
     ) const = 0;
 

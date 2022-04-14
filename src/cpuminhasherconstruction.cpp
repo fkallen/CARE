@@ -70,7 +70,7 @@ namespace care{
         ThreadPool tpForCompacting(std::min(2,programOptions.threads));   
         
         cpuMinhasher->setHostMemoryLimitForConstruction(maxMemoryForTables);
-        cpuMinhasher->setDeviceMemoryLimitsForConstruction(0);
+        cpuMinhasher->setDeviceMemoryLimitsForConstruction({0});
 
         std::vector<read_number> currentReadIds(batchsize);
         std::vector<unsigned int> sequencedata(batchsize * encodedSequencePitchInInts);

@@ -19,6 +19,7 @@
 #include <hostdevicefunctions.cuh>
 #include <corrector_common.hpp>
 #include <cpucorrectortask.hpp>
+#include <util.hpp>
 
 #include <cstddef>
 #include <memory>
@@ -605,7 +606,6 @@ private:
 
             minhasher->retrieveValues(
                 minhashHandle,
-                nullptr,
                 1,
                 maxnumcandidates,
                 task.candidateReadIds.data(),
@@ -613,12 +613,18 @@ private:
                 offsets.data()
             );
 
-            task.candidateReadIds.erase(task.candidateReadIds.begin() + numPerSequence, task.candidateReadIds.end());
+            std::sort(task.candidateReadIds.begin(), task.candidateReadIds.end());
+            task.candidateReadIds.erase(
+                std::unique(task.candidateReadIds.begin(), task.candidateReadIds.end()),
+                task.candidateReadIds.end()
+            );
 
             //remove self
-            auto readIdPos = std::lower_bound(task.candidateReadIds.begin(),
-                                            task.candidateReadIds.end(),
-                                            readId);
+            auto readIdPos = std::lower_bound(
+                task.candidateReadIds.begin(),
+                task.candidateReadIds.end(),
+                readId
+            );
 
             if(readIdPos != task.candidateReadIds.end() && *readIdPos == readId){
                 task.candidateReadIds.erase(readIdPos);
@@ -691,7 +697,6 @@ private:
 
                 minhasher->retrieveValues(
                     minhashHandle,
-                    nullptr,
                     1,
                     maxnumcandidates,
                     candidateIds.data(),
@@ -699,12 +704,18 @@ private:
                     offsets.data()
                 );
 
-                candidateIds.erase(candidateIds.begin() + numPerSequence, candidateIds.end());
+                std::sort(candidateIds.begin(), candidateIds.end());
+                candidateIds.erase(
+                    std::unique(candidateIds.begin(), candidateIds.end()),
+                    candidateIds.end()
+                );
 
                 //remove self
-                auto readIdPos = std::lower_bound(candidateIds.begin(),
-                                                candidateIds.end(),
-                                                readId);
+                auto readIdPos = std::lower_bound(
+                    candidateIds.begin(),
+                    candidateIds.end(),
+                    readId
+                );
 
                 if(readIdPos != candidateIds.end() && *readIdPos == readId){
                     candidateIds.erase(readIdPos);
@@ -725,17 +736,7 @@ private:
                     );
                 }
 
-                candidateIds.erase(resultsEnd, candidateIds.end());
-
-                //if(readId == 12859){
-                // if(readId > 12850 && readId < 12870){
-
-                // std::cerr << "a = " << i << " " << readId << "\n";
-                // std::copy(candidateIds.begin(), candidateIds.end(), std::ostream_iterator<read_number>(std::cerr, " "));
-                // std::cerr << "\n";
-
-                // }
-                
+                candidateIds.erase(resultsEnd, candidateIds.end());                
             }
         
             multiCandidateIds.numCandidatesPerAnchor[i] = candidateIds.size();

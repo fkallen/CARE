@@ -12,6 +12,7 @@
 #include <readextender_common.hpp>
 #include <qualityscoreweights.hpp>
 #include <hostdevicefunctions.cuh>
+#include <numeric>
 
 #include <vector>
 #include <algorithm>
@@ -352,7 +353,6 @@ private:
 
             activeMinhasher->retrieveValues(
                 minhashHandle,
-                nullptr, //do not remove selfid
                 1,
                 totalNumValues,
                 result.data(),
@@ -360,7 +360,11 @@ private:
                 offsets.data()
             );
 
-            result.erase(result.begin() + numValuesPerSequence, result.end());
+            std::sort(result.begin(), result.end());
+            result.erase(
+                std::unique(result.begin(), result.end()),
+                result.end()
+            );
 
             //exclude candidates with ambiguous bases
 
@@ -429,13 +433,41 @@ private:
 
             activeMinhasher->retrieveValues(
                 minhashHandle,
-                nullptr, //do not remove selfid
                 numSequences,
                 totalNumValues,
                 allCandidates.data(),
                 numValuesPerSequence.data(),
                 offsets.data()
             );
+
+
+            #if 0
+            auto iterator = allCandidates.data();
+            for(int s = 0; s < numSequences; s++){
+                const int first = offsets[s];
+                const int last = first + numValuesPerSequence[s];
+                std::sort(&allCandidates[first], &allCandidates[last]);
+                auto uniqueEnd = std::unique_copy(&allCandidates[first], &allCandidates[last], iterator);
+                numValuesPerSequence[s] = std::distance(iterator, uniqueEnd);
+                iterator = uniqueEnd;
+            }
+
+            std::inclusive_scan(
+                numValuesPerSequence.begin(), 
+                numValuesPerSequence.end(),
+                offsets.begin() + 1
+            );
+            offsets[0] = 0;
+            #else
+            for(int s = 0; s < numSequences; s++){
+                const int first = offsets[s];
+                const int last = first + numValuesPerSequence[s];
+                std::sort(&allCandidates[first], &allCandidates[last]);
+                auto uniqueEnd = std::unique(&allCandidates[first], &allCandidates[last]);
+                numValuesPerSequence[s] = std::distance(&allCandidates[first], uniqueEnd);
+            }
+
+            #endif
 
             for(int i = 0; i < numSequences; i++){
                 auto& task = tasks[indicesOfActiveTasks[i]];
@@ -512,13 +544,40 @@ private:
 
         activeMinhasher->retrieveValues(
             minhashHandle,
-            nullptr, //do not remove selfid
             numSequences,
             totalNumValues,
             allCandidates.data(),
             numValuesPerSequence.data(),
             offsets.data()
         );
+
+        #if 0
+        auto iterator = allCandidates.data();
+        for(int s = 0; s < numSequences; s++){
+            const int first = offsets[s];
+            const int last = first + numValuesPerSequence[s];
+            std::sort(&allCandidates[first], &allCandidates[last]);
+            auto uniqueEnd = std::unique_copy(&allCandidates[first], &allCandidates[last], iterator);
+            numValuesPerSequence[s] = std::distance(iterator, uniqueEnd);
+            iterator = uniqueEnd;
+        }
+
+        std::inclusive_scan(
+            numValuesPerSequence.begin(), 
+            numValuesPerSequence.end(),
+            offsets.begin() + 1
+        );
+        offsets[0] = 0;
+        #else
+        for(int s = 0; s < numSequences; s++){
+            const int first = offsets[s];
+            const int last = first + numValuesPerSequence[s];
+            std::sort(&allCandidates[first], &allCandidates[last]);
+            auto uniqueEnd = std::unique(&allCandidates[first], &allCandidates[last]);
+            numValuesPerSequence[s] = std::distance(&allCandidates[first], uniqueEnd);
+        }
+
+        #endif
 
         for(int i = 0; i < numAnchors; i++){
             auto& task = tasks[indicesOfActiveTasks[i]];
