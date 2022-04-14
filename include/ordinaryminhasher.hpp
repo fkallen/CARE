@@ -81,142 +81,34 @@ namespace care{
         OrdinaryCpuMinhasher(const OrdinaryCpuMinhasher&) = delete;
         OrdinaryCpuMinhasher(OrdinaryCpuMinhasher&&) = default;
         OrdinaryCpuMinhasher& operator=(const OrdinaryCpuMinhasher&) = delete;
-        OrdinaryCpuMinhasher& operator=(OrdinaryCpuMinhasher&&) = default;        
+        OrdinaryCpuMinhasher& operator=(OrdinaryCpuMinhasher&&) = default; 
 
-
-        void constructFromReadStorage(
-            const ProgramOptions& programOptions,
-            std::uint64_t /*nReads*/,
-            const CpuReadStorage& cpuReadStorage
-        ){
-            auto& readStorage = cpuReadStorage;
-
-            const int requestedNumberOfMaps = programOptions.numHashFunctions;
-
-            const std::uint64_t numReads = readStorage.getNumberOfReads();
-            const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
-            const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
-
-            const MemoryUsage memoryUsageOfReadStorage = readStorage.getMemoryInfo();
-            std::size_t totalLimit = programOptions.memoryTotalLimit;
-            if(totalLimit > memoryUsageOfReadStorage.host){
-                totalLimit -= memoryUsageOfReadStorage.host;
-            }else{
-                totalLimit = 0;
-            }
-            if(totalLimit == 0){
-                throw std::runtime_error("Not enough memory available for hash tables. Abort!");
-            }
-            std::size_t maxMemoryForTables = getAvailableMemoryInKB() * 1024;
-            // std::cerr << "available: " << maxMemoryForTables 
-            //         << ",memoryForHashtables: " << programOptions.memoryForHashtables
-            //         << ", memoryTotalLimit: " << programOptions.memoryTotalLimit
-            //         << ", rsHostUsage: " << memoryUsageOfReadStorage.host << "\n";
-
-            maxMemoryForTables = std::min(maxMemoryForTables, 
-                                    std::min(programOptions.memoryForHashtables, totalLimit));
-
-            std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
-
-            const int hashFunctionOffset = 0;
-
-            
-            std::vector<int> usedHashFunctionNumbers;
-
-            ThreadPool tpForHashing(programOptions.threads);
-            ThreadPool tpForCompacting(std::min(2,programOptions.threads));
-
-            setMemoryLimitForConstruction(maxMemoryForTables);
-
-            int remainingHashFunctions = requestedNumberOfMaps;
-            bool keepGoing = true;
-
-            std::vector<kmer_type> tempvector{};
-
-            while(remainingHashFunctions > 0 && keepGoing){
-
-                setThreadPool(&tpForHashing);
-
-                const int alreadyExistingHashFunctions = requestedNumberOfMaps - remainingHashFunctions;
-                int addedHashFunctions = addHashfunctions(remainingHashFunctions);
-
-                if(addedHashFunctions == 0){
-                    keepGoing = false;
-                    break;
-                }
-
-                std::cout << "Constructing maps: ";
-                for(int i = 0; i < addedHashFunctions; i++){
-                    std::cout << (alreadyExistingHashFunctions + i) << "(" << (hashFunctionOffset + alreadyExistingHashFunctions + i) << ") ";
-                }
-                std::cout << '\n';
-
-                std::vector<int> h_hashfunctionNumbers(addedHashFunctions);
-                std::iota(
-                    h_hashfunctionNumbers.begin(),
-                    h_hashfunctionNumbers.end(),
-                    alreadyExistingHashFunctions + hashFunctionOffset
-                );
-
-                usedHashFunctionNumbers.insert(usedHashFunctionNumbers.end(), h_hashfunctionNumbers.begin(), h_hashfunctionNumbers.end());
-
-                constexpr int batchsize = 1000000;
-                const int numIterations = SDIV(numReads, batchsize);
-
-                std::vector<read_number> currentReadIds(batchsize);
-                std::vector<unsigned int> sequencedata(batchsize * encodedSequencePitchInInts);
-                std::vector<int> sequencelengths(batchsize);
-
-                for(int iteration = 0; iteration < numIterations; iteration++){
-                    const read_number beginid = iteration * batchsize;
-                    const read_number endid = std::min((iteration + 1) * batchsize, int(numReads));
-                    const read_number currentbatchsize = endid - beginid;
-
-                    std::iota(currentReadIds.begin(), currentReadIds.end(), beginid);
-
-                    readStorage.gatherSequences(
-                        sequencedata.data(),
-                        encodedSequencePitchInInts,
-                        currentReadIds.data(),
-                        currentbatchsize
-                    );
-
-                    readStorage.gatherSequenceLengths(
-                        sequencelengths.data(),
-                        currentReadIds.data(),
-                        currentbatchsize
-                    );
-
-                    insert(
-                        tempvector,
-                        sequencedata.data(),
-                        currentbatchsize,
-                        sequencelengths.data(),
-                        encodedSequencePitchInInts,
-                        currentReadIds.data(),
-                        alreadyExistingHashFunctions,
-                        addedHashFunctions,
-                        h_hashfunctionNumbers.data()
-                    );
-                
-                }
-
-                std::cerr << "Compacting\n";
-                //setThreadPool(nullptr);
-                if(tpForCompacting.getConcurrency() > 1){
-                    setThreadPool(&tpForCompacting);
-                }else{
-                    setThreadPool(nullptr);
-                }
-                
-                finalize();
-
-                remainingHashFunctions -= addedHashFunctions;
-            }
-
-            setThreadPool(nullptr); 
+        void setHostMemoryLimitForConstruction(std::size_t bytes) override{
+            memoryLimit = bytes;
         }
- 
+        
+        void setDeviceMemoryLimitsForConstruction(const std::vector<std::size_t>&) override{
+            
+        }
+
+        void setThreadPool(ThreadPool* tp) override {
+            threadPool = tp;
+        }
+
+        void constructionIsFinished() override {
+            
+        }
+
+        int checkInsertionErrors(
+            int /*firstHashfunction*/,
+            int /*numHashfunctions*/
+        ) override{
+            return 0;
+        }
+
+        bool canWriteToStream() const noexcept override { return true; };
+        bool canLoadFromStream() const noexcept override { return true; };
+
 
         MinhasherHandle makeMinhasherHandle() const override {
             auto data = std::make_unique<QueryData>();
@@ -451,7 +343,7 @@ namespace care{
 
         #endif
 
-        void compact() {
+        void compact() override {
             const int num = minhashTables.size();
 
             auto groupByKey = [&](auto& keys, auto& values, auto& countsPrefixSum){
@@ -531,7 +423,7 @@ namespace care{
             return std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - getKmerSize()) * 2);
         }
 
-        void writeToStream(std::ostream& os) const{
+        void writeToStream(std::ostream& os) const override{
 
             os.write(reinterpret_cast<const char*>(&kmerSize), sizeof(int));
             os.write(reinterpret_cast<const char*>(&resultsPerMapThreshold), sizeof(int));
@@ -546,7 +438,7 @@ namespace care{
             }
         }
 
-        int loadFromStream(std::ifstream& is, int numMapsUpperLimit = std::numeric_limits<int>::max()){
+        int loadFromStream(std::ifstream& is, int numMapsUpperLimit = std::numeric_limits<int>::max()) override{
             destroy();
 
             is.read(reinterpret_cast<char*>(&kmerSize), sizeof(int));
@@ -570,12 +462,12 @@ namespace care{
         }
         
 
-        int addHashfunctions(int numExtraFunctions){
+        int addHashTables(int numAdditionalTables, const int* /*hashFunctionIds*/) override{
             int added = 0;
 
             #ifndef NDEBUG
             const int cur = minhashTables.size();
-            assert(!(numExtraFunctions + cur > 64));
+            assert(!(numAdditionalTables + cur > 64));
             #endif
 
             std::size_t bytesOfCachedConstructedTables = 0;
@@ -587,7 +479,7 @@ namespace care{
             std::size_t requiredMemPerTable = (sizeof(kmer_type) + sizeof(read_number)) * maxNumKeys;
             int numTablesToConstruct = (memoryLimit - bytesOfCachedConstructedTables) / requiredMemPerTable;
             numTablesToConstruct -= 2; // keep free memory of 2 tables to perform transformation 
-            numTablesToConstruct = std::min(numTablesToConstruct, numExtraFunctions);
+            numTablesToConstruct = std::min(numTablesToConstruct, numAdditionalTables);
             //maxNumTablesInIteration = std::min(numTablesToConstruct, 4);
 
             for(int i = 0; i < numTablesToConstruct; i++){
@@ -604,8 +496,7 @@ namespace care{
             return added;
         } 
 
-        void insert(
-            std::vector<kmer_type>& tempvector,
+        void insert(            
             const unsigned int* h_sequenceData2Bit,
             int numSequences,
             const int* h_sequenceLengths,
@@ -614,15 +505,14 @@ namespace care{
             int firstHashfunction,
             int numHashfunctions,
             const int* /*h_hashFunctionNumbers*/
-        ){
+        ) override {
             if(numSequences == 0) return;
 
             ThreadPool::ParallelForHandle pforHandle{};
 
             ForLoopExecutor forLoopExecutor(threadPool, &pforHandle);
 
-            auto& allHashValues = tempvector;
-            allHashValues.resize(numSequences * getNumberOfMaps());            
+            std::vector<kmer_type> allHashValues(numSequences * getNumberOfMaps());
 
             auto hashloopbody = [&](auto begin, auto end, int /*threadid*/){
                 CPUSequenceHasher<kmer_type> hasher;
@@ -658,13 +548,6 @@ namespace care{
             forLoopExecutor(firstHashfunction, firstHashfunction + numHashfunctions, insertloopbody);
         }   
 
-        void setThreadPool(ThreadPool* tp){
-            threadPool = tp;
-        }
-
-        void setMemoryLimitForConstruction(std::size_t limit){
-            memoryLimit = limit;
-        }
 
     private:
 

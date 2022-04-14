@@ -1,3 +1,5 @@
+#if 0
+
 #ifndef CARE_SINGLEHASHCPUMINHASHER_HPP
 #define CARE_SINGLEHASHCPUMINHASHER_HPP
 
@@ -547,5 +549,8 @@ namespace care{
 
 
 }
+
+#endif
+
 
 #endif

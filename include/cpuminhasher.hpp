@@ -4,8 +4,10 @@
 #include <config.hpp>
 #include <memorymanagement.hpp>
 #include <minhasherhandle.hpp>
+#include <threadpool.hpp>
 
 #include <cstdint>
+#include <vector>
 
 namespace care{
 
@@ -19,6 +21,31 @@ public:
     virtual MinhasherHandle makeMinhasherHandle() const = 0;
 
     virtual void destroyHandle(MinhasherHandle& handle) const = 0;
+
+    //construction
+    virtual void setHostMemoryLimitForConstruction(std::size_t bytes) = 0;
+    virtual void setDeviceMemoryLimitsForConstruction(const std::vector<std::size_t>&) = 0;
+    virtual int addHashTables(int numAdditionalTables, const int* hashFunctionIds) = 0;
+    virtual void setThreadPool(ThreadPool* tp) = 0;
+    virtual void compact() = 0;
+    virtual void constructionIsFinished() = 0;
+
+    virtual void insert(
+        const unsigned int* h_sequenceData2Bit,
+        int numSequences,
+        const int* h_sequenceLengths,
+        std::size_t encodedSequencePitchInInts,
+        const read_number* h_readIds,
+        int firstHashfunction,
+        int numHashfunctions,
+        const int* h_hashFunctionNumbers
+    ) = 0;
+
+    //return number of hash tables where insert was unsuccessfull
+    virtual int checkInsertionErrors(
+        int firstHashfunction,
+        int numHashfunctions
+    ) = 0;
 
     virtual void determineNumValues(
         MinhasherHandle& queryHandle,
@@ -53,6 +80,11 @@ public:
     virtual int getKmerSize() const noexcept = 0;
 
     //virtual void destroy() = 0;
+
+    virtual void writeToStream(std::ostream& os) const = 0;
+    virtual int loadFromStream(std::ifstream& is, int numMapsUpperLimit) = 0;
+    virtual bool canWriteToStream() const noexcept = 0;
+    virtual bool canLoadFromStream() const noexcept = 0;
 
 protected:
     MinhasherHandle constructHandle(int id) const{
