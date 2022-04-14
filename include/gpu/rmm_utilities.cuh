@@ -281,7 +281,7 @@ private:
             return payload.ptr == ptr;
         });
         //ensure that pointer is not double allocated and inserted
-        assert(founditer == allocations.end());
+        if(founditer != allocations.end()) throw std::runtime_error("Observed invalid device allocation");
         allocations[p] = stream;
     }
 
@@ -289,8 +289,8 @@ private:
         Payload p{ptr, bytes};
         std::lock_guard<std::mutex> lg(mutex);
         auto founditer = allocations.find(p);
-        assert(founditer != allocations.end());
-        assert(founditer->second == stream);
+        if(founditer == allocations.end()) throw std::runtime_error("Observed invalid device allocation");
+        if(founditer->second != stream) throw std::runtime_error("Observed invalid device allocation");
         allocations.erase(founditer);
     }
     

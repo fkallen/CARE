@@ -64,8 +64,9 @@ namespace care{
             }
 
             if(valuesOfSameKeyMustBeSorted){
-                bool isIotaValues = checkIotaValues(values);
-                assert(isIotaValues);
+                const bool isIotaValues = checkIotaValues(values);
+                if(!isIotaValues)
+                    throw std::runtime_error("Error hashtable compaction");
             }
 
             executeWithIotaValues(keys, values, offsets);
@@ -141,8 +142,10 @@ namespace care{
                 valuesPerKey_begin
             );
 
-            assert(histogramEndIterators.first == uniqueKeys.data() + nUniqueKeys);
-            assert(histogramEndIterators.second == valuesPerKey.data() + nUniqueKeys);
+            if(histogramEndIterators.first != uniqueKeys.data() + nUniqueKeys) 
+                throw std::runtime_error("Error hashtable compaction");
+            if(histogramEndIterators.second != valuesPerKey.data() + nUniqueKeys) 
+                throw std::runtime_error("Error hashtable compaction");
 
             keys.swap(uniqueKeys);
             deallocVector(uniqueKeys);
@@ -356,8 +359,10 @@ namespace care{
                 d_valuesPerKey.begin()
             );
 
-            assert(histogramEndIterators.first == d_uniqueKeys.begin() + nUniqueKeys);
-            assert(histogramEndIterators.second == d_valuesPerKey.begin() + nUniqueKeys);
+            if(histogramEndIterators.first != d_uniqueKeys.begin() + nUniqueKeys) 
+                throw std::runtime_error("Error hashtable compaction");
+            if(histogramEndIterators.second != d_valuesPerKey.begin() + nUniqueKeys) 
+                throw std::runtime_error("Error hashtable compaction");
 
             deallocVector(keys);
             keys.resize(nUniqueKeys);

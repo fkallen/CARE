@@ -572,9 +572,11 @@ namespace care{
 
         int addHashfunctions(int numExtraFunctions){
             int added = 0;
-            const int cur = minhashTables.size();
 
+            #ifndef NDEBUG
+            const int cur = minhashTables.size();
             assert(!(numExtraFunctions + cur > 64));
+            #endif
 
             std::size_t bytesOfCachedConstructedTables = 0;
             for(const auto& ptr : minhashTables){

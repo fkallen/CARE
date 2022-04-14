@@ -1379,8 +1379,8 @@ namespace gpu{
             d_totalNumEdits.resize(1, stream);
         }
  
-        void resizeBuffers(int numReads, int numCandidates, cudaStream_t stream){  
-            assert(numReads <= maxAnchors);
+        void resizeBuffers(int /*numReads*/, int numCandidates, cudaStream_t stream){  
+            //assert(numReads <= maxAnchors);
 
             const std::size_t numEditsAnchors = SDIV(editsPitchInBytes * maxAnchors, sizeof(EncodedCorrectionEdit));          
 

@@ -185,8 +185,12 @@ namespace gpu{
             int firstCol,
             int lastCol //exclusive
         ) const {
+            #ifndef NDEBUG
             const int firstColumn_incl = columnProperties->firstColumn_incl;
             const int lastColumn_excl = columnProperties->lastColumn_excl;
+            assert(firstColumn_incl <= firstCol && firstCol <= lastColumn_excl);
+            assert(firstColumn_incl <= lastColumn_excl && lastColumn_excl <= lastColumn_excl);
+            #endif
 
             float avg_support = 0;
             float min_support = 1.0f;
@@ -297,11 +301,14 @@ namespace gpu{
             for(int k = group.thread_rank(); k < numGoodCandidates; k += group.size()) {
                 const int localCandidateIndex = goodCandidateIndices[k];
 
-                const int shift = shifts[localCandidateIndex];
+                #ifndef NDEBUG
                 const AlignmentOrientation flag = alignmentFlags[localCandidateIndex];
+                assert(flag != AlignmentOrientation::None);
+                #endif
+
+                const int shift = shifts[localCandidateIndex];
                 const int queryLength = candidateLengths[localCandidateIndex];
 
-                assert(flag != AlignmentOrientation::None);
 
                 const int queryEndsAt = queryLength + shift;
                 startindex = min(startindex, shift);

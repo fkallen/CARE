@@ -1369,12 +1369,13 @@ namespace readextendergpukernels{
         const int* __restrict__ task_ids,
         const int* __restrict__ d_minmax_pairId
     ){
-
+        #ifndef NDEBUG
         constexpr int maxInputSize = blocksize * elementsPerThread;
+        assert(numTasks <= maxInputSize);
+        #endif
 
         assert(blockDim.x == blocksize);
         assert(gridDim.x == 1);
-        assert(numTasks <= maxInputSize);
 
         using BlockLoad = cub::BlockLoad<int, blocksize, elementsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
         using BlockRadixSort = cub::BlockRadixSort<int, blocksize, elementsPerThread, int>;
@@ -2228,14 +2229,16 @@ namespace readextendergpukernels{
 
                 int read1begin = 0;
                 int newread2begin = mergedLength - (read1begin + originalReadLengths[i2]);
-                int newread2length = originalReadLengths[i2];
                 int newread1begin = sizeOfRightExtension;
-                int newread1length = originalReadLengths[i3];
 
                 assert(newread1begin >= 0);
                 assert(newread2begin >= 0);
+                #ifndef NDEBUG
+                int newread2length = originalReadLengths[i2];
+                int newread1length = originalReadLengths[i3];
                 assert(newread1begin + newread1length <= mergedLength);
                 assert(newread2begin + newread2length <= mergedLength);
+                #endif
 
                 if(extendedReadLength1 > originalLength1){
                     //insert extensions of d1 at end

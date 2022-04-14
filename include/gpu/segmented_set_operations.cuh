@@ -153,7 +153,8 @@ struct GpuSegmentedSetOperation{
     ){
 
         const int expectedNumOutputSegments = numSegments1;
-        assert(numOutputSegments == expectedNumOutputSegments);
+        if(numOutputSegments != expectedNumOutputSegments) 
+            throw std::runtime_error("numOutputSegments != expectedNumOutputSegments");
 
         const int maxOutputElements = numElements1;
 
@@ -211,7 +212,8 @@ struct GpuSegmentedSetOperation{
     ){
 
         const int expectedNumOutputSegments = std::max(numSegments1, numSegments2);
-        assert(numOutputSegments == expectedNumOutputSegments);
+        if(numOutputSegments != expectedNumOutputSegments) 
+            throw std::runtime_error("numOutputSegments != expectedNumOutputSegments");
 
         const int maxOutputElements = std::max(numElements1, numElements2);
 
@@ -269,7 +271,8 @@ struct GpuSegmentedSetOperation{
     ){
 
         const int expectedNumOutputSegments = std::max(numSegments1, numSegments2);
-        assert(numOutputSegments == expectedNumOutputSegments);
+        if(numOutputSegments != expectedNumOutputSegments) 
+            throw std::runtime_error("numOutputSegments != expectedNumOutputSegments");
 
         const int maxOutputElements = numElements1 + numElements2;
 
@@ -327,7 +330,8 @@ struct GpuSegmentedSetOperation{
     ){
 
         const int expectedNumOutputSegments = std::max(numSegments1, numSegments2);
-        assert(numOutputSegments == expectedNumOutputSegments);
+        if(numOutputSegments != expectedNumOutputSegments) 
+            throw std::runtime_error("numOutputSegments != expectedNumOutputSegments");
 
         const int maxOutputElements = numElements1 + numElements2;
 
@@ -385,7 +389,8 @@ struct GpuSegmentedSetOperation{
     ){
 
         const int expectedNumOutputSegments = std::max(numSegments1, numSegments2);
-        assert(numOutputSegments == expectedNumOutputSegments);
+        if(numOutputSegments != expectedNumOutputSegments) 
+            throw std::runtime_error("numOutputSegments != expectedNumOutputSegments");
 
         const int maxOutputElements = numElements1 + numElements2;
 

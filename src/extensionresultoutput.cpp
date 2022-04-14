@@ -144,9 +144,10 @@ void outputUnchangedReadPairs(
 
     for(auto it = idsToOutput.begin(); it != idsToOutput.end(); it += 2){
         const read_number id1 = *it;
+        #ifndef NDEBUG
         const read_number id2 = *(it + 1);
-
         assert(id1 + 1 == id2);
+        #endif
 
         int readerstatus = pairedInputReader.next();
 

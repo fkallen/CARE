@@ -124,41 +124,41 @@ struct ThrustTupleAddition<3>{
 
 
 
-__global__
-void checkSortedSegmentsKernel(
-    int numAnchors, 
-    int numCandidates,
-    const read_number* d_candidateReadIds,
-    const int* d_numCandidatesPerAnchor,
-    const int* d_numCandidatesPerAnchorPrefixSum
-){
-    for(int a = blockIdx.x; a < numAnchors; a += gridDim.x){
-        __syncthreads();
+// __global__
+// void checkSortedSegmentsKernel(
+//     int numAnchors, 
+//     int numCandidates,
+//     const read_number* d_candidateReadIds,
+//     const int* d_numCandidatesPerAnchor,
+//     const int* d_numCandidatesPerAnchorPrefixSum
+// ){
+//     for(int a = blockIdx.x; a < numAnchors; a += gridDim.x){
+//         __syncthreads();
 
-        for(int i = 1 + threadIdx.x; i < numAnchors + 1; i+=blockDim.x){
-            assert(d_numCandidatesPerAnchor[i-1] == 
-                (d_numCandidatesPerAnchorPrefixSum[i] - d_numCandidatesPerAnchorPrefixSum[i - 1]));
-        }
-        if(!(numCandidates == d_numCandidatesPerAnchorPrefixSum[numAnchors])){
-            if(threadIdx.x == 0){
-                printf("a %d, numCandidates %d, lastps %d\n", a, numCandidates, d_numCandidatesPerAnchorPrefixSum[numAnchors]);
-            }
-            __syncthreads();
-            assert(numCandidates == d_numCandidatesPerAnchorPrefixSum[numAnchors]);
-        }
+//         for(int i = 1 + threadIdx.x; i < numAnchors + 1; i+=blockDim.x){
+//             assert(d_numCandidatesPerAnchor[i-1] == 
+//                 (d_numCandidatesPerAnchorPrefixSum[i] - d_numCandidatesPerAnchorPrefixSum[i - 1]));
+//         }
+//         if(!(numCandidates == d_numCandidatesPerAnchorPrefixSum[numAnchors])){
+//             if(threadIdx.x == 0){
+//                 printf("a %d, numCandidates %d, lastps %d\n", a, numCandidates, d_numCandidatesPerAnchorPrefixSum[numAnchors]);
+//             }
+//             __syncthreads();
+//             assert(numCandidates == d_numCandidatesPerAnchorPrefixSum[numAnchors]);
+//         }
 
-        __syncthreads();
+//         __syncthreads();
 
-        const int offset = d_numCandidatesPerAnchorPrefixSum[a];
-        const int num = d_numCandidatesPerAnchor[a];
+//         const int offset = d_numCandidatesPerAnchorPrefixSum[a];
+//         const int num = d_numCandidatesPerAnchor[a];
 
-        for(int i = 1 + threadIdx.x; i < num; i+=blockDim.x){
-            assert(d_candidateReadIds[offset + i - 1] < d_candidateReadIds[offset + i]);
-        }
+//         for(int i = 1 + threadIdx.x; i < num; i+=blockDim.x){
+//             assert(d_candidateReadIds[offset + i - 1] < d_candidateReadIds[offset + i]);
+//         }
 
-        __syncthreads();
-    }
-}
+//         __syncthreads();
+//     }
+// }
 
 
 struct GpuReadExtender{
@@ -3074,8 +3074,6 @@ struct GpuReadExtender{
             d_candidateSequencesData.data(),
             d_candidateQualityScores.data(),
             d_isPairedCandidate.data(),
-            initialNumCandidates,
-            h_numAnchors.data(), //d_numAnchors
             encodedSequencePitchInInts,
             qualityPitchInBytes,
             useQualityScoresForMSA,
@@ -3104,15 +3102,13 @@ struct GpuReadExtender{
             d_candidateQualityScores.data(),
             d_isPairedCandidate.data(),
             initialNumCandidates,
-            h_numAnchors.data(), //d_numAnchors
             encodedSequencePitchInInts,
             qualityPitchInBytes,
             useQualityScoresForMSA,
             programOptions->maxErrorRate,
             programOptions->estimatedCoverage,
             getNumRefinementIterations(),
-            stream,
-            tasks->myReadId.data()
+            stream
         );
  
         rmm::device_uvector<bool> d_shouldBeKept(initialNumCandidates, stream, mr);
@@ -3623,7 +3619,7 @@ struct GpuReadExtender{
             end_bit, 
             stream
         );
-        assert(cudaSuccess == status);
+        CUDACHECK(status);
 
         rmm::device_uvector<char> d_temp(tempbytes, stream, mr);
 
@@ -3637,7 +3633,7 @@ struct GpuReadExtender{
             end_bit, 
             stream
         );
-        assert(cudaSuccess == status);
+        CUDACHECK(status);
         destroy(d_temp, stream);       
 
         const int* d_theSortedPairIds = d_keys.Current();
@@ -3891,8 +3887,6 @@ struct GpuReadExtender{
             d_extendedIterationSequences.data(),
             nullptr, //candidate qualities
             d_isPairedCandidate_tmp.data(),
-            numCandidates,
-            d_numFinishedTasks.data(), //d_numAnchors
             encodedSequencePitchInInts,
             qualityPitchInBytes,
             false, //useQualityScores

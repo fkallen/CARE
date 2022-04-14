@@ -233,7 +233,8 @@ public:
         const auto it = std::copy_n(g.s1.begin(), s11remaining, result.begin());
 
         auto end = std::copy(g.s2.begin(), g.s2.end(), it);
-        assert(end == result.end());
+        if(end != result.end())
+            throw std::runtime_error("Error glueing");
 
         return result;
     }

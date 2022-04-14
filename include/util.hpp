@@ -1135,7 +1135,8 @@ std::pair<OutputIt1, OutputIt2> flagPairedCandidates(
         }
     }
     
-    assert(std::distance(outputbegin1, d_first1) == std::distance(outputbegin2, d_first2));
+    if(std::distance(outputbegin1, d_first1) != std::distance(outputbegin2, d_first2))
+        throw std::runtime_error("Error flagging paired candidates");
 
     return std::make_pair(d_first1, d_first2);
 }

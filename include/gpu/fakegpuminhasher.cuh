@@ -711,7 +711,7 @@ namespace gpu{
 
                     std::vector<kmer_type> hashes(numSequences);
 
-                    auto hashesEnd = select_if(
+                    select_if(
                         orighashesBegin,
                         orighashesBegin + numSequences,
                         validflagsBegin,
@@ -726,8 +726,7 @@ namespace gpu{
                         validflagsBegin,
                         validIds.begin()
                     );
-                    const auto numvalid = std::distance(hashes.begin(), hashesEnd);
-                    assert(numvalid == std::distance(validIds.begin(), validIdsEnd));
+                    const auto numvalid = std::distance(validIds.begin(), validIdsEnd);
 
                     // std::for_each(
                     //     hashesBegin, hashesBegin + numSequences,
