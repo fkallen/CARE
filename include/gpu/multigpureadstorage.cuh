@@ -990,7 +990,7 @@ public: //inherited GPUReadStorage interface
                 const int sizeOfCurrentBatch = end - begin;
 
                 std::vector<read_number> readIds(sizeOfCurrentBatch);
-                std::iota(readIds.begin(), readIds.end(), firstIndexOnHost);
+                std::iota(readIds.begin(), readIds.end(), firstIndexOnHost + begin);
 
                 CUDACHECK(cudaStreamSynchronize(tempData->streams[bufferIndex])); // protect pinned buffer
 
@@ -1439,7 +1439,7 @@ public: //inherited GPUReadStorage interface
                 const int sizeOfCurrentBatch = end - begin;
 
                 std::vector<read_number> readIds(sizeOfCurrentBatch);
-                std::iota(readIds.begin(), readIds.end(), firstIndexOnHost);
+                std::iota(readIds.begin(), readIds.end(), firstIndexOnHost + begin);
 
                 CUDACHECK(cudaStreamSynchronize(tempData->streams[bufferIndex])); // protect pinned buffer
 
