@@ -156,7 +156,6 @@ namespace gpu{
             int cur = gpuHashTables.size();
 
             assert(!(numAdditionalTables + cur > 64));
-
             std::vector<int> tmpNumbers(h_currentHashFunctionNumbers.begin(), h_currentHashFunctionNumbers.end());
 
             for(int i = 0; i < numAdditionalTables; i++){
@@ -169,7 +168,9 @@ namespace gpu{
                 auto status = ptr->pop_status(stream);
                 CUDACHECK(cudaStreamSynchronize(stream));
                 if(status.has_any_errors()){
-                    std::cerr << "observed error when initialiting hash function " << (gpuHashTables.size() + 1) << " : " << i << ", " << status << "\n";
+                    if(!status.has_out_of_memory()){
+                        std::cerr << "observed error when initializing hash function " << (gpuHashTables.size() + 1) << " : " << i << ", " << status << "\n";
+                    }
                     break;
                 }else{
 
@@ -252,17 +253,24 @@ namespace gpu{
                     stream
                 );
             }
+        }
 
-            CUDACHECK(cudaStreamSynchronize(stream));
-
+        int checkInsertionErrors(
+            int firstHashfunction,
+            int numHashfunctions,
+            cudaStream_t stream        
+        ) override{
+            int count = 0;
             for(int i = 0; i < numHashfunctions; i++){
                 auto status = gpuHashTables[firstHashfunction + i]->pop_status(stream);
                 CUDACHECK(cudaStreamSynchronize(stream));
 
                 if(status.has_any_errors()){
+                    count++;
                     std::cerr << "Error table " << (firstHashfunction + i) << " after insertion: " << status << "\n";
                 }
             }
+            return count;
         }
 
         MinhasherHandle makeMinhasherHandle() const override {
@@ -406,7 +414,7 @@ namespace gpu{
             int numSequences,
             int totalNumValues,
             read_number* d_values,
-            int* d_numValuesPerSequence,
+            const int* d_numValuesPerSequence,
             int* d_offsets, //numSequences + 1
             cudaStream_t stream,
             rmm::mr::device_memory_resource* mr
@@ -588,7 +596,13 @@ namespace gpu{
                 stream
             );
 
-            totalNumValues = d_totalNumValues.value(stream);
+            CUDACHECK(cudaMemcpyAsync(
+                &totalNumValues,
+                d_totalNumValues.data(),
+                sizeof(int),
+                D2H,
+                stream
+            ));
         }
 
         void retrieveValues(
@@ -597,13 +611,12 @@ namespace gpu{
             int numSequences,
             int totalNumValues,
             read_number* d_values,
-            int* d_numValuesPerSequence,
+            const int* d_numValuesPerSequence,
             int* d_offsets, //numSequences + 1
             cudaStream_t stream,
             rmm::mr::device_memory_resource* mr
         ) const {
             if(totalNumValues == 0){
-                CUDACHECK(cudaMemsetAsync(d_numValuesPerSequence, 0, sizeof(int) * numSequences, stream));
                 CUDACHECK(cudaMemsetAsync(d_offsets, 0, sizeof(int) * (numSequences + 1), stream));
                 return;
             }

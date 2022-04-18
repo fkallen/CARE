@@ -515,12 +515,14 @@ public:
             if(numReads == 0) return;
             
             //TIMERSTARTCPU(internalinit);
+            #ifndef NDEBUG
             auto lengthInRange = [&](Length_t length){
                 return getSequenceLengthLowerBound() <= length && length <= getSequenceLengthUpperBound();
             };
             assert(numReads > 0);
             assert(std::all_of(indices, indices + numReads, [&](auto i){ return i < getMaximumNumberOfSequences();}));
             assert(std::all_of(reads, reads + numReads, [&](const auto& r){ return lengthInRange(Length_t(r.sequence.length()));}));
+            #endif
             
             if(canUseQualityScores()){
                 assert(std::all_of(reads, reads + numReads, [&](const auto& r){ return r.sequence.length() == r.quality.length();}));

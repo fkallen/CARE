@@ -15,10 +15,6 @@
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 
-#include <rmm/device_uvector.hpp>
-#include <rmm/device_scalar.hpp>
-#include <rmm/mr/device/device_memory_resource.hpp>
-
 
 namespace cg = cooperative_groups;
 
@@ -236,13 +232,6 @@ namespace gpu{
         cudaStream_t stream
     ){
         if(numCorrectedSequencesUpperBound == 0) return;
-
-        CUDACHECK(cudaMemsetAsync(
-            d_edits, 
-            0, 
-            editsPitchInBytes * numCorrectedSequencesUpperBound, 
-            stream
-        ));
 
         constexpr int groupsize = 16;
 

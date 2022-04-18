@@ -153,7 +153,8 @@ struct GpuSegmentedSetOperation{
     ){
 
         const int expectedNumOutputSegments = numSegments1;
-        assert(numOutputSegments == expectedNumOutputSegments);
+        if(numOutputSegments != expectedNumOutputSegments) 
+            throw std::runtime_error("numOutputSegments != expectedNumOutputSegments");
 
         const int maxOutputElements = numElements1;
 
@@ -211,7 +212,8 @@ struct GpuSegmentedSetOperation{
     ){
 
         const int expectedNumOutputSegments = std::max(numSegments1, numSegments2);
-        assert(numOutputSegments == expectedNumOutputSegments);
+        if(numOutputSegments != expectedNumOutputSegments) 
+            throw std::runtime_error("numOutputSegments != expectedNumOutputSegments");
 
         const int maxOutputElements = std::max(numElements1, numElements2);
 
@@ -269,7 +271,8 @@ struct GpuSegmentedSetOperation{
     ){
 
         const int expectedNumOutputSegments = std::max(numSegments1, numSegments2);
-        assert(numOutputSegments == expectedNumOutputSegments);
+        if(numOutputSegments != expectedNumOutputSegments) 
+            throw std::runtime_error("numOutputSegments != expectedNumOutputSegments");
 
         const int maxOutputElements = numElements1 + numElements2;
 
@@ -327,7 +330,8 @@ struct GpuSegmentedSetOperation{
     ){
 
         const int expectedNumOutputSegments = std::max(numSegments1, numSegments2);
-        assert(numOutputSegments == expectedNumOutputSegments);
+        if(numOutputSegments != expectedNumOutputSegments) 
+            throw std::runtime_error("numOutputSegments != expectedNumOutputSegments");
 
         const int maxOutputElements = numElements1 + numElements2;
 
@@ -385,7 +389,8 @@ struct GpuSegmentedSetOperation{
     ){
 
         const int expectedNumOutputSegments = std::max(numSegments1, numSegments2);
-        assert(numOutputSegments == expectedNumOutputSegments);
+        if(numOutputSegments != expectedNumOutputSegments) 
+            throw std::runtime_error("numOutputSegments != expectedNumOutputSegments");
 
         const int maxOutputElements = numElements1 + numElements2;
 
@@ -447,7 +452,7 @@ private:
     ){
         static_assert(sizeof(typename ThrustAllocator::value_type) == 1, "Allocator for GpuSegmentedSetOperation difference must allocate bytes.");
 
-        auto policy = thrust::cuda::par(allocator).on(stream);
+        auto policy = thrust::cuda::par_nosync(allocator).on(stream);
 
         auto d_segmentIds1Ptr = allocator.allocate(sizeof(int) * numElements1);
         int* const d_segmentIds1 = (int*)thrust::raw_pointer_cast(d_segmentIds1Ptr);

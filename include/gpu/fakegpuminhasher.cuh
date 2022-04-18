@@ -343,30 +343,35 @@ namespace gpu{
             int numSequences,
             int totalNumValues,
             read_number* d_values,
-            int* d_numValuesPerSequence,
+            const int* d_numValuesPerSequence,
             int* d_offsets, //numSequences + 1
             cudaStream_t stream,
-            rmm::mr::device_memory_resource* /*mr*/
+            rmm::mr::device_memory_resource* mr
         ) const override {
             QueryData* const queryData = getQueryDataFromHandle(queryHandle);
 
             DEBUGSTREAMSYNC(stream);
 
             assert(queryData->isInitialized);
-            if(numSequences == 0) return;
 
             assert(queryData->previousStage == QueryData::Stage::NumValues);
+            queryData->previousStage = QueryData::Stage::Retrieve;
+
+            if(numSequences == 0) return;
 
             if(totalNumValues == 0){
-                CUDACHECK(cudaMemsetAsync(d_numValuesPerSequence, 0, sizeof(int) * numSequences, stream));
                 CUDACHECK(cudaMemsetAsync(d_offsets, 0, sizeof(int) * (numSequences + 1), stream));
-
-                queryData->previousStage = QueryData::Stage::Retrieve;
-
-                DEBUGSTREAMSYNC(stream);
-
                 return;
             }
+
+            CubCallWrapper(mr).cubInclusiveSum(
+                d_numValuesPerSequence,
+                d_offsets + 1,
+                numSequences,
+                stream
+            );
+
+            CUDACHECK(cudaMemsetAsync(d_offsets, 0, sizeof(int), stream));
 
             constexpr int roundUpTo = 10000;
             const int roundedTotalNum = SDIV(totalNumValues, roundUpTo) * roundUpTo;
@@ -378,16 +383,11 @@ namespace gpu{
             auto copyHitsToPinnedMemory = [queryData, numSequences, minhasher = this](){
                 int* h_numValuesPerSequence = queryData->h_numValuesPerSequence.data();
 
-                queryData->h_begin_offsets[0] = 0;
-                std::partial_sum(
-                    h_numValuesPerSequence, 
-                    h_numValuesPerSequence + numSequences - 1, 
-                    queryData->h_begin_offsets.begin() + 1
-                );
-                std::partial_sum(
+                std::exclusive_scan(
                     h_numValuesPerSequence, 
                     h_numValuesPerSequence + numSequences, 
-                    queryData->h_end_offsets.begin()
+                    queryData->h_begin_offsets.begin(),
+                    0
                 );
 
                 std::vector<int> processedPerSequence(numSequences, 0);
@@ -441,28 +441,6 @@ namespace gpu{
                 H2D,
                 stream
             ));
-
-            CUDACHECK(cudaMemcpyAsync(
-                d_numValuesPerSequence,
-                queryData->h_numValuesPerSequence.data(),
-                sizeof(int) * numSequences,
-                H2D,
-                stream
-            ));
-
-            CUDACHECK(cudaMemcpyAsync(
-                d_offsets + 1,
-                queryData->h_end_offsets.data(),
-                sizeof(int) * numSequences,
-                H2D,
-                stream
-            ));
-
-            CUDACHECK(cudaMemsetAsync(
-                d_offsets, 0, sizeof(int), stream
-            ))
-
-            queryData->previousStage = QueryData::Stage::Retrieve;
         }
 
         void compact(cudaStream_t /*stream*/) override{
@@ -733,7 +711,7 @@ namespace gpu{
 
                     std::vector<kmer_type> hashes(numSequences);
 
-                    auto hashesEnd = select_if(
+                    select_if(
                         orighashesBegin,
                         orighashesBegin + numSequences,
                         validflagsBegin,
@@ -748,8 +726,7 @@ namespace gpu{
                         validflagsBegin,
                         validIds.begin()
                     );
-                    const auto numvalid = std::distance(hashes.begin(), hashesEnd);
-                    assert(numvalid == std::distance(validIds.begin(), validIdsEnd));
+                    const auto numvalid = std::distance(validIds.begin(), validIdsEnd);
 
                     // std::for_each(
                     //     hashesBegin, hashesBegin + numSequences,
@@ -765,7 +742,15 @@ namespace gpu{
             };
 
             forLoopExecutor(0, numHashfunctions, loopbody);
-        }   
+        }
+
+        int checkInsertionErrors(
+            int /*firstHashfunction*/,
+            int /*numHashfunctions*/,
+            cudaStream_t /*stream*/
+        ) override{
+            return 0;
+        }
 
         void setThreadPool(ThreadPool* tp) override{
             threadPool = tp;

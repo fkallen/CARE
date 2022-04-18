@@ -252,28 +252,60 @@ public:
         CUDACHECKASYNC;
     }
 
-    void gather(T* d_dest, size_t destRowPitchInBytes, size_t rowBegin, size_t rowEnd, cudaStream_t stream = 0) const{
-        const size_t rows = rowEnd - rowBegin;
-
-        if(rows == 0) return;
+    void gatherContiguous(T* d_dest, size_t destRowPitchInBytes, size_t rowBegin, size_t numRowsToGather, cudaStream_t stream = 0) const{
+        assert(rowBegin + numRowsToGather <= getNumRows());
+        if(numRowsToGather == 0) return;
         if(getNumRows() == 0) return;
 
-        dim3 block(128, 1, 1);
-        dim3 grid(SDIV(rows * numColumns, block.x), 1, 1);
+        if(destRowPitchInBytes == getPitch()){
+            CUDACHECK(cudaMemcpyAsync(
+                d_dest, 
+                ((char*)getGpuData()) + getPitch() * rowBegin, 
+                getPitch() * numRowsToGather, 
+                D2D, 
+                stream
+            ));
+        }else{
+            CUDACHECK(cudaMemcpy2DAsync(
+                d_dest, 
+                destRowPitchInBytes, 
+                ((char*)getGpuData()) + getPitch() * rowBegin, 
+                getPitch(), 
+                getNumColumns() * sizeof(T), 
+                numRowsToGather, 
+                D2D, 
+                stream
+            ));
+        }
+    }
 
-        TwoDimensionalArray<T> array = wrapper();
+    //d_dest and stream are on device destDeviceId
+    void gatherContiguousPeer(int destDeviceId, T* d_dest, size_t destRowPitchInBytes, size_t rowBegin, size_t numRowsToGather, cudaStream_t stream = 0) const{
+        assert(rowBegin + numRowsToGather <= getNumRows());
+        if(numRowsToGather == 0) return;
+        if(getNumRows() == 0) return;
 
-        auto IndexIterator = thrust::make_counting_iterator<std::size_t>(rowBegin);
+        if(destRowPitchInBytes == getPitch()){
+            peercopy(
+                d_dest, 
+                destDeviceId, 
+                ((char*)getGpuData()) + getPitch() * rowBegin, 
+                deviceId,
+                getPitch() * numRowsToGather, 
+                stream
+            );
+        }else{
+            cudaMemcpy3DPeerParms p;
+            std::memset(&p, 0, sizeof(cudaMemcpy3DPeerParms));
 
-        Gpu2dArrayManagedKernels::gatherkernel<<<grid, block, 0, stream>>>(
-            array, 
-            d_dest, 
-            destRowPitchInBytes, 
-            IndexIterator, 
-            rows
-        );
+            p.dstPtr = make_cudaPitchedPtr((void*)d_dest, destRowPitchInBytes, getNumColumns() * sizeof(T), numRowsToGather);
+            p.dstDevice = destDeviceId;
+            p.srcPtr = make_cudaPitchedPtr(((char*)getGpuData()) + getPitch() * rowBegin, getPitch(), getNumColumns() * sizeof(T), getNumRows() - rowBegin);
+            p.srcDevice = deviceId;
+            p.extent = make_cudaExtent(getNumColumns() * sizeof(T), numRowsToGather, 1);
 
-        CUDACHECKASYNC;
+            CUDACHECK(cudaMemcpy3DPeerAsync(&p, stream));
+        }
     }
 
 
@@ -319,28 +351,63 @@ public:
         CUDACHECKASYNC;
     }
 
-    void scatter(const T* d_src, size_t srcRowPitchInBytes, size_t rowBegin, size_t rowEnd, cudaStream_t stream = 0) const{
-        const size_t rows = rowEnd - rowBegin;
-        if(rows == 0) return;
+    void scatterContiguous(const T* d_src, size_t srcRowPitchInBytes, size_t rowBegin, size_t numRowsToScatter, cudaStream_t stream = 0) const{
+        assert(rowBegin + numRowsToScatter <= getNumRows());
+        if(numRowsToScatter == 0) return;
         if(getNumRows() == 0) return;
 
-        dim3 block(128, 1, 1);
-        dim3 grid(SDIV(rows * numColumns, block.x), 1, 1);
-
-        TwoDimensionalArray<T> array = wrapper();
-
-        auto IndexIterator = thrust::make_counting_iterator<std::size_t>(rowBegin);
-
-        Gpu2dArrayManagedKernels::scatterkernel<<<grid, block, 0, stream>>>(
-            array, 
-            d_src, 
-            srcRowPitchInBytes, 
-            IndexIterator, 
-            rows
-        );
-
-        CUDACHECKASYNC;
+        if(srcRowPitchInBytes == getPitch()){
+            CUDACHECK(cudaMemcpyAsync(
+                ((char*)getGpuData()) + getPitch() * rowBegin, 
+                d_src, 
+                getPitch() * numRowsToScatter, 
+                D2D, 
+                stream
+            ));
+        }else{
+            CUDACHECK(cudaMemcpy2DAsync(
+                ((char*)getGpuData()) + getPitch() * rowBegin, 
+                getPitch(), 
+                d_src,
+                srcRowPitchInBytes, 
+                getNumColumns() * sizeof(T), 
+                numRowsToScatter, 
+                D2D, 
+                stream
+            ));
+        }
     }
+
+    //d_src and stream are on device sourceDeviceId
+    void scatterContiguousPeer(int sourceDeviceId, const T* d_src, size_t srcRowPitchInBytes, size_t rowBegin, size_t numRowsToScatter, cudaStream_t stream = 0) const{
+        assert(rowBegin + numRowsToScatter <= getNumRows());
+        if(numRowsToScatter == 0) return;
+        if(getNumRows() == 0) return;
+
+        if(srcRowPitchInBytes == getPitch()){
+            peercopy(
+                ((char*)getGpuData()) + getPitch() * rowBegin, 
+                deviceId,
+                d_src, 
+                sourceDeviceId, 
+                getPitch() * numRowsToScatter, 
+                stream
+            );
+        }else{
+            cudaMemcpy3DPeerParms p;
+            std::memset(&p, 0, sizeof(cudaMemcpy3DPeerParms));
+
+            p.dstDevice = deviceId;
+            p.dstPtr = make_cudaPitchedPtr(((char*)getGpuData()) + getPitch() * rowBegin, getPitch(), getNumColumns() * sizeof(T), getNumRows() - rowBegin);
+            p.srcDevice = sourceDeviceId;
+            p.srcPtr = make_cudaPitchedPtr((void*)d_src, srcRowPitchInBytes, getNumColumns() * sizeof(T), numRowsToScatter);
+            p.extent = make_cudaExtent(getNumColumns() * sizeof(T), numRowsToScatter, 1);
+
+            CUDACHECK(cudaMemcpy3DPeerAsync(&p, stream));
+        }
+    }
+
+
 
     int getDeviceId() const noexcept{
         return deviceId;
@@ -376,6 +443,26 @@ public:
     }
 
 private:
+    void peercopy(
+        void* dst, 
+        int dstDevice, 
+        const void* src, 
+        int srcDevice, 
+        size_t count, 
+        cudaStream_t stream = 0
+    ) const{
+        cudaError_t status = cudaMemcpyPeerAsync(dst, dstDevice, src, srcDevice, count, stream);
+        if(status != cudaSuccess){
+            cudaGetLastError();
+            std::cerr << "dst=" << dst << ", "
+            << "dstDevice=" << dstDevice << ", "
+            << "src=" << src << ", "
+            << "srcDevice=" << srcDevice << ", "
+            << "count=" << count << "\n";
+        }
+        CUDACHECK(status);
+    }
+
     int deviceId{};
     size_t numRows{};
     size_t numColumns{};

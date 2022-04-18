@@ -47,12 +47,32 @@ public:
         rmm::mr::device_memory_resource* mr
     ) const = 0;
 
+    virtual void gatherContiguousSequences(
+        ReadStorageHandle& handle,
+        unsigned int* d_sequence_data,
+        size_t outSequencePitchInInts,
+        read_number firstIndex,
+        int numSequences,
+        cudaStream_t stream,
+        rmm::mr::device_memory_resource* mr
+    ) const = 0;
+
     virtual void gatherQualities(
         ReadStorageHandle& handle,
         char* d_quality_data,
         size_t out_quality_pitch,
         const AsyncConstBufferWrapper<read_number> h_readIds,
         const read_number* d_readIds,
+        int numSequences,
+        cudaStream_t stream,
+        rmm::mr::device_memory_resource* mr
+    ) const = 0;
+
+    virtual void gatherContiguousQualities(
+        ReadStorageHandle& handle,
+        char* d_quality_data,
+        size_t out_quality_pitch,
+        read_number firstIndex,
         int numSequences,
         cudaStream_t stream,
         rmm::mr::device_memory_resource* mr

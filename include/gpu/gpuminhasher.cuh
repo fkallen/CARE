@@ -50,6 +50,13 @@ public:
         rmm::mr::device_memory_resource* mr
     ) = 0;
 
+    //return number of hash tables where insert was unsuccessfull
+    virtual int checkInsertionErrors(
+        int firstHashfunction,
+        int numHashfunctions,
+        cudaStream_t stream
+    ) = 0;
+
     //query
 
     virtual void determineNumValues(
@@ -69,7 +76,7 @@ public:
         int numSequences,
         int totalNumValues,
         read_number* d_values,
-        int* d_numValuesPerSequence,
+        const int* d_numValuesPerSequence,
         int* d_offsets, //numSequences + 1
         cudaStream_t stream,
         rmm::mr::device_memory_resource* mr

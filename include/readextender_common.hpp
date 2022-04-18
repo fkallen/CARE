@@ -535,7 +535,8 @@ namespace extension{
         std::vector<Task> vec(num * 4);
 
         auto endIter = makePairedEndTasksFromInput4(inputsBegin, inputsEnd, vec.begin());
-        assert(endIter == vec.end());
+        if(endIter != vec.end())
+            throw std::runtime_error("Error initializing batch");
 
         return vec;
     }

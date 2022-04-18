@@ -82,8 +82,6 @@ namespace gpu{
             const unsigned int* d_candidateSequences,
             const char* d_candidateQualities,
             const bool* d_isPairedCandidate,
-            int maxNumCandidates,
-            const int* d_numAnchors,
             std::size_t encodedSequencePitchInInts,
             std::size_t qualityPitchInBytes,
             bool useQualityScores,
@@ -91,7 +89,6 @@ namespace gpu{
             MSAColumnCount maximumMsaWidth, // upper bound for number of columns in a single msa. must be large enough to actually fit the data.
             cudaStream_t stream
         ){
-            //std::cerr << "thread " << std::this_thread::get_id() << " msa construct, stream " << stream << "\n";
             initializeBuffers(
                 maximumMsaWidth, 
                 numAnchors, 
@@ -120,10 +117,8 @@ namespace gpu{
                 d_isPairedCandidate,
                 d_anchorQualities,
                 d_candidateQualities,
-                d_numAnchors,
                 desiredAlignmentMaxErrorRate,
                 numAnchors,
-                maxNumCandidates,
                 useQualityScores,
                 encodedSequencePitchInInts,
                 qualityPitchInBytes,
@@ -151,15 +146,13 @@ namespace gpu{
             const char* d_candidateQualities,
             const bool* d_isPairedCandidate,
             int maxNumCandidates,
-            const int* d_numAnchors,
             std::size_t encodedSequencePitchInInts,
             std::size_t qualityPitchInBytes,
             bool useQualityScores,
             float desiredAlignmentMaxErrorRate,
             int dataset_coverage,
             int numIterations,
-            cudaStream_t stream,
-            const read_number* d_anchorReadIds
+            cudaStream_t stream
         ){
             //std::cerr << "thread " << std::this_thread::get_id() << " msa refine, stream " << stream << "\n";
 
@@ -183,10 +176,8 @@ namespace gpu{
                 d_candidateQualities,
                 d_temp.data(),
                 d_segmentBeginOffsets,
-                d_numAnchors,
                 desiredAlignmentMaxErrorRate,
                 numAnchors,
-                maxNumCandidates,
                 useQualityScores,
                 encodedSequencePitchInInts,
                 qualityPitchInBytes,
@@ -194,8 +185,7 @@ namespace gpu{
                 d_numCandidatePositionsInSegments,
                 dataset_coverage,
                 numIterations,
-                stream,
-                d_anchorReadIds
+                stream
             );
         }
 
@@ -346,6 +336,14 @@ namespace gpu{
             resizeUninitialized(d_support, columnPitchInElements * numAnchors, stream);
             resizeUninitialized(d_origWeights, columnPitchInElements * numAnchors, stream);
             resizeUninitialized(d_columnProperties, numAnchors, stream);
+            // CUDACHECK(cudaMemsetAsync(d_consensusEncoded.data(), 0, sizeof(std::uint8_t) * columnPitchInElements * numAnchors, stream));
+            // CUDACHECK(cudaMemsetAsync(d_counts.data(), 0, sizeof(int) * 4*columnPitchInElements * numAnchors, stream));
+            // CUDACHECK(cudaMemsetAsync(d_coverages.data(), 0, sizeof(int) * columnPitchInElements * numAnchors, stream));
+            // CUDACHECK(cudaMemsetAsync(d_origCoverages.data(), 0, sizeof(int) * columnPitchInElements * numAnchors, stream));
+            // CUDACHECK(cudaMemsetAsync(d_weights.data(), 0, sizeof(float) * 4*columnPitchInElements * numAnchors, stream));
+            // CUDACHECK(cudaMemsetAsync(d_support.data(), 0, sizeof(float) * columnPitchInElements * numAnchors, stream));
+            // CUDACHECK(cudaMemsetAsync(d_origWeights.data(), 0, sizeof(float) * columnPitchInElements * numAnchors, stream));
+            // CUDACHECK(cudaMemsetAsync(d_columnProperties.data(), 0, sizeof(MSAColumnProperties) * numAnchors, stream));
 
             multiMSA.numMSAs = numMSAs;
             multiMSA.columnPitchInElements = columnPitchInElements;

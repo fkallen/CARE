@@ -34,7 +34,9 @@ namespace gpu{
             const GpuReadStorage& gpuReadStorage,
             GpuMinhasher* gpuMinhasher
         ){
-            
+
+            nvtx::ScopedRange sr("constructGpuMinhasherFromReadStorage", 0);
+
             auto& readStorage = gpuReadStorage;
             const auto& deviceIds = programOptions.deviceIds;
     
@@ -116,17 +118,23 @@ namespace gpu{
                 );
     
                 //Hacky way to limit gpu memory usage of hash tables
-                constexpr std::size_t hackbytes = 1024 * 1024 * 1024;
-                char* hackbuffer = nullptr;
-                std::size_t free, total;
-                CUDACHECK(cudaMemGetInfo(&free, &total));
-                if(free > hackbytes){
-                    CUDACHECK(cudaMalloc(&hackbuffer, hackbytes));
+                constexpr std::size_t hackbytes = 1024ul * 1024ul * 1024ul * 1ul;
+                std::vector<char*> hackbuffers(programOptions.deviceIds.size());
+                for(std::size_t i = 0; i < programOptions.deviceIds.size(); i++){
+                    cub::SwitchDevice sd{programOptions.deviceIds[i]};
+                    std::size_t free, total;
+                    CUDACHECK(cudaMemGetInfo(&free, &total));
+                    if(free > hackbytes){
+                        CUDACHECK(cudaMalloc(&hackbuffers[i], hackbytes));
+                    }
                 }
 
                 int addedHashFunctions = gpuMinhasher->addHashTables(remainingHashFunctions,h_hashfunctionNumbers.data(), stream);
 
-                CUDACHECK(cudaFree(hackbuffer));
+                for(std::size_t i = 0; i < programOptions.deviceIds.size(); i++){
+                    cub::SwitchDevice sd{programOptions.deviceIds[i]};
+                    CUDACHECK(cudaFree(hackbuffers[i]));
+                }
     
                 if(addedHashFunctions == 0){
                     keepGoing = false;
@@ -182,8 +190,17 @@ namespace gpu{
                         h_hashfunctionNumbers.data(),
                         stream,
                         mr
+                    );                   
+
+                    int errorcount = gpuMinhasher->checkInsertionErrors(
+                        alreadyExistingHashFunctions,
+                        addedHashFunctions,
+                        stream
                     );
-    
+                    if(errorcount > 0){
+                        throw std::runtime_error("An error occurred during hash table construction.");
+                    }
+
                     CUDACHECK(cudaStreamSynchronize(stream));
                 }
     
@@ -243,7 +260,7 @@ namespace gpu{
 
             auto makeMulti = [&](){
                 gpuMinhasher = std::make_unique<MultiGpuMinhasher>(
-                    MultiGpuMinhasher::Layout::FirstFit,
+                    MultiGpuMinhasher::Layout::EvenShare,
                     gpuReadStorage.getNumberOfReads(), 
                     calculateResultsPerMapThreshold(programOptions.estimatedCoverage), 
                     programOptions.kmerlength,

@@ -1,5 +1,3 @@
-#if 1
-
 #ifdef CARE_HAS_WARPCORE
 
 
@@ -251,6 +249,7 @@ namespace gpu{
             : layout(layout_), maxNumKeys(maxNumKeys_), kmerSize(k), resultsPerMapThreshold(maxValuesPerKey), deviceIds(deviceIds_)
         {
             for(auto deviceId : deviceIds){
+                cub::SwitchDevice sd{deviceId};
                 auto mh = std::make_unique<SingleGpuMinhasher>(maxNumKeys, resultsPerMapThreshold, k);
                 sgpuMinhashers.emplace_back(std::move(mh));
 
@@ -259,7 +258,6 @@ namespace gpu{
         }
 
         int addHashTables(int numAdditionalTables, const int* hashFunctionIds, cudaStream_t stream) override{
-            assert(layout == Layout::FirstFit);
 
             std::vector<int> hashFunctionIdsTmp(hashFunctionIds, hashFunctionIds + numAdditionalTables);
 
@@ -276,24 +274,59 @@ namespace gpu{
             }
 
             int remainingTables = numAdditionalTables;
-            for(int i = 0; i < numDevices; i++){
-                if(remainingTables > 0){
-                    
-                    int addedTables = sgpuMinhashers[i]->addHashTables(remainingTables, hashFunctionIdsTmp.data(), cudaStreamPerThread);
 
-                    for(int x = 0; x < addedTables; x++){
-                        hashTableLocations.push_back(i);
+            if(layout == Layout::EvenShare){
+                while(remainingTables > 0){
+                    int numZeroAdded = 0;
+
+                    for(int g = 0; g < numDevices; g++){
+                        if(remainingTables > 0){
+                            cub::SwitchDevice sd{deviceIds[g]};
+                            int addedTables = sgpuMinhashers[g]->addHashTables(1, hashFunctionIdsTmp.data(), cudaStreamPerThread);
+
+                            for(int x = 0; x < addedTables; x++){
+                                hashTableLocations.push_back(g);
+                            }
+                            hashFunctionIdsPerGpu[g].insert(hashFunctionIdsPerGpu[g].end(), hashFunctionIdsTmp.begin(), hashFunctionIdsTmp.begin() + addedTables);
+
+                            hashFunctionIdsTmp.erase(hashFunctionIdsTmp.begin(), hashFunctionIdsTmp.begin() + addedTables);
+                            remainingTables -= addedTables;
+
+                            if(addedTables == 0){
+                                numZeroAdded++;
+                            }
+                        }
                     }
-                    hashFunctionIdsPerGpu[i].insert(hashFunctionIdsPerGpu[i].end(), hashFunctionIdsTmp.begin(), hashFunctionIdsTmp.begin() + addedTables);
 
-                    hashFunctionIdsTmp.erase(hashFunctionIdsTmp.begin(), hashFunctionIdsTmp.begin() + addedTables);
-                    remainingTables -= addedTables;
+                    if(numZeroAdded == numDevices){
+                        break;
+                    }
+                }
+            }else{
+                assert(layout == Layout::FirstFit);
+
+                for(int g = 0; g < numDevices; g++){
+                    if(remainingTables > 0){
+                        cub::SwitchDevice sd{deviceIds[g]};
+                        int addedTables = sgpuMinhashers[g]->addHashTables(remainingTables, hashFunctionIdsTmp.data(), cudaStreamPerThread);
+
+                        for(int x = 0; x < addedTables; x++){
+                            hashTableLocations.push_back(g);
+                        }
+                        hashFunctionIdsPerGpu[g].insert(hashFunctionIdsPerGpu[g].end(), hashFunctionIdsTmp.begin(), hashFunctionIdsTmp.begin() + addedTables);
+
+                        hashFunctionIdsTmp.erase(hashFunctionIdsTmp.begin(), hashFunctionIdsTmp.begin() + addedTables);
+                        remainingTables -= addedTables;
+                    }
                 }
             }
 
             for(int g = 0; g < numDevices; g++){
                 cub::SwitchDevice sd{deviceIds[g]};
                 events[g].record(cudaStreamPerThread);
+            }
+
+            for(int g = 0; g < numDevices; g++){
                 CUDACHECK(cudaStreamWaitEvent(stream, events[g], 0));
             }
 
@@ -352,66 +385,143 @@ namespace gpu{
                 assert(numHashfunctionsPerTargetGpu[g] == int(hashFunctionIdsPerTargetGpu[g].size()));
             }
             
-            //TODO interleave gpus transfers of different gpus
+            std::vector<rmm::device_uvector<unsigned int>> vec_d_sequenceData2Bit_target;
+            std::vector<rmm::device_uvector<int>> vec_d_sequenceLengths_target;
+            std::vector<rmm::device_uvector<read_number>> vec_d_readIds_target;
 
+            //broadcast to all gpus, excluding current gpu
+            for(int g = 0; g < int(deviceIds.size()); g++){
+                if(numHashfunctionsPerTargetGpu[g] > 0){
+                    if(deviceIds[g] != oldDeviceId){
+                        cub::SwitchDevice sd{deviceIds[g]};
+
+                        //copy input data to target gpu
+                        auto* targetmr = rmm::mr::get_current_device_resource();
+                        rmm::device_uvector<unsigned int> d_sequenceData2Bit_target(encodedSequencePitchInInts * numSequences, cudaStreamPerThread, targetmr);
+                        rmm::device_uvector<int> d_sequenceLengths_target(numSequences, cudaStreamPerThread, targetmr);
+                        rmm::device_uvector<read_number> d_readIds_target(numSequences, cudaStreamPerThread, targetmr);
+
+                        CUDACHECK(cudaMemcpyPeerAsync(
+                            d_sequenceData2Bit_target.data(),
+                            deviceIds[g],
+                            d_sequenceData2Bit,
+                            oldDeviceId,
+                            sizeof(unsigned int) * encodedSequencePitchInInts * numSequences,
+                            cudaStreamPerThread
+                        ));
+
+                        CUDACHECK(cudaMemcpyPeerAsync(
+                            d_sequenceLengths_target.data(),
+                            deviceIds[g],
+                            d_sequenceLengths,
+                            oldDeviceId,
+                            sizeof(int) * numSequences,
+                            cudaStreamPerThread
+                        ));
+
+                        CUDACHECK(cudaMemcpyPeerAsync(
+                            d_readIds_target.data(),
+                            deviceIds[g],
+                            d_readIds,
+                            oldDeviceId,
+                            sizeof(read_number) * numSequences,
+                            cudaStreamPerThread
+                        ));
+
+                        vec_d_sequenceData2Bit_target.push_back(std::move(d_sequenceData2Bit_target));
+                        vec_d_sequenceLengths_target.push_back(std::move(d_sequenceLengths_target));
+                        vec_d_readIds_target.push_back(std::move(d_readIds_target));
+                    }else{
+                        vec_d_sequenceData2Bit_target.emplace_back(0, cudaStreamPerThread);
+                        vec_d_sequenceLengths_target.emplace_back(0, cudaStreamPerThread);
+                        vec_d_readIds_target.emplace_back(0, cudaStreamPerThread);
+                    }
+                }
+            }
+
+            //insert on each gpu
             for(int g = 0; g < int(deviceIds.size()); g++){
                 if(numHashfunctionsPerTargetGpu[g] > 0){
                     cub::SwitchDevice sd{deviceIds[g]};
 
-                    //copy input data to target gpu
-                    auto* targetmr = rmm::mr::get_current_device_resource();
-                    rmm::device_uvector<unsigned int> d_sequenceData2Bit_target(encodedSequencePitchInInts * numSequences, cudaStreamPerThread, targetmr);
-                    rmm::device_uvector<int> d_sequenceLengths_target(numSequences, cudaStreamPerThread, targetmr);
-                    rmm::device_uvector<read_number> d_readIds_target(numSequences, cudaStreamPerThread, targetmr);
+                    const unsigned int* d_seq = d_sequenceData2Bit;
+                    const int* d_len = d_sequenceLengths;
+                    const read_number* d_ids = d_readIds;
 
-                    CUDACHECK(cudaMemcpyPeerAsync(
-                        d_sequenceData2Bit_target.data(),
-                        deviceIds[g],
-                        d_sequenceData2Bit,
-                        oldDeviceId,
-                        sizeof(unsigned int) * encodedSequencePitchInInts * numSequences,
-                        cudaStreamPerThread
-                    ));
-
-                    CUDACHECK(cudaMemcpyPeerAsync(
-                        d_sequenceLengths_target.data(),
-                        deviceIds[g],
-                        d_sequenceLengths,
-                        oldDeviceId,
-                        sizeof(int) * numSequences,
-                        cudaStreamPerThread
-                    ));
-
-                    CUDACHECK(cudaMemcpyPeerAsync(
-                        d_readIds_target.data(),
-                        deviceIds[g],
-                        d_readIds,
-                        oldDeviceId,
-                        sizeof(read_number) * numSequences,
-                        cudaStreamPerThread
-                    ));
+                    if(deviceIds[g] != oldDeviceId){
+                        d_seq = vec_d_sequenceData2Bit_target[g].data();
+                        d_len = vec_d_sequenceLengths_target[g].data();
+                        d_ids = vec_d_readIds_target[g].data();
+                    }
 
                     sgpuMinhashers[g]->insert(
-                        d_sequenceData2Bit_target.data(),
+                        d_seq,
                         numSequences,
-                        d_sequenceLengths_target.data(),
+                        d_len,
                         encodedSequencePitchInInts,
-                        d_readIds_target.data(),
+                        d_ids,
                         h_readIds,
                         firstHashfunctionPerTargetGpu[g],
                         numHashfunctionsPerTargetGpu[g],
                         hashFunctionIdsPerTargetGpu[g].data(),
                         cudaStreamPerThread,
-                        targetmr
+                        rmm::mr::get_current_device_resource()
                     );
+                    if(deviceIds[g] != oldDeviceId){
+                        vec_d_sequenceData2Bit_target[g].release();
+                        vec_d_sequenceLengths_target[g].release();
+                        vec_d_readIds_target[g].release();
+                    }
+                    events[g].record(cudaStreamPerThread);
                 }
             }
 
             for(int g = 0; g < int(deviceIds.size()); g++){
-                cub::SwitchDevice sd{deviceIds[g]};
-                events[g].record(cudaStreamPerThread);
-                CUDACHECK(cudaStreamWaitEvent(stream, events[g], 0));
+                if(numHashfunctionsPerTargetGpu[g] > 0){
+                    CUDACHECK(cudaStreamWaitEvent(stream, events[g], 0));
+                }
             }
+        }
+
+        int checkInsertionErrors(
+            int firstHashfunction,
+            int numHashfunctions,
+            cudaStream_t stream        
+        ) override{
+            CudaEvent event;
+            event.record(stream);
+
+            std::vector<int> numHashfunctionsPerTargetGpu(deviceIds.size(), 0);
+            std::vector<int> firstHashfunctionPerTargetGpu(deviceIds.size(), 0);
+
+            for(int g = 0; g < int(deviceIds.size()); g++){
+                int countBefore = 0;
+                for(int i = 0; i < firstHashfunction + numHashfunctions; i++){
+                    if(hashTableLocations[i] == g){
+                        if(i < firstHashfunction){
+                            countBefore++;
+                        }else{
+                            numHashfunctionsPerTargetGpu[g]++;
+                        }
+                    }
+                }
+                firstHashfunctionPerTargetGpu[g] = countBefore;
+            }
+
+            int count = 0;
+
+            for(int g = 0; g < int(deviceIds.size()); g++){
+                cub::SwitchDevice sd{deviceIds[g]};
+
+                CUDACHECK(cudaStreamWaitEvent(cudaStreamPerThread, event, 0));
+                count += sgpuMinhashers[g]->checkInsertionErrors(
+                    firstHashfunctionPerTargetGpu[g],
+                    numHashfunctionsPerTargetGpu[g],
+                    cudaStreamPerThread
+                );
+            }
+
+            return count;
         }
 
         // bool tryReplication(){
@@ -530,42 +640,69 @@ namespace gpu{
             CUDACHECK(cudaEventRecord(queryData->callerEvent, stream));
 
             for(int g = 0; g < int(deviceIds.size()); g++){
-                assert(sgpuMinhashers[g]->getNumberOfMaps() > 0);
                 cub::SwitchDevice sd{deviceIds[g]};
 
                 CUDACHECK(cudaStreamWaitEvent(queryData->streams[g], queryData->callerEvent, 0));
+            }
 
-                //copy input data to target gpu
+            std::vector<rmm::device_uvector<unsigned int>> vec_d_sequenceData2Bit_target;
+            std::vector<rmm::device_uvector<int>> vec_d_sequenceLengths_target;
+
+            //broadcast to other gpus
+            for(int g = 0; g < int(deviceIds.size()); g++){
+                if(deviceIds[g] != oldDeviceId){
+                    cub::SwitchDevice sd{deviceIds[g]};
+
+                    auto* targetmr = rmm::mr::get_current_device_resource();
+                    rmm::device_uvector<unsigned int> d_sequenceData2Bit_target(encodedSequencePitchInInts * numSequences, queryData->streams[g].getStream(), targetmr);
+                    rmm::device_uvector<int> d_sequenceLengths_target(numSequences, queryData->streams[g].getStream(), targetmr);
+
+                    CUDACHECK(cudaMemcpyPeerAsync(
+                        d_sequenceData2Bit_target.data(),
+                        deviceIds[g],
+                        d_sequenceData2Bit,
+                        oldDeviceId,
+                        sizeof(unsigned int) * encodedSequencePitchInInts * numSequences,
+                        queryData->streams[g]
+                    ));
+
+                    CUDACHECK(cudaMemcpyPeerAsync(
+                        d_sequenceLengths_target.data(),
+                        deviceIds[g],
+                        d_sequenceLengths,
+                        oldDeviceId,
+                        sizeof(int) * numSequences,
+                        queryData->streams[g]
+                    ));
+
+                    vec_d_sequenceData2Bit_target.push_back(std::move(d_sequenceData2Bit_target));
+                    vec_d_sequenceLengths_target.push_back(std::move(d_sequenceLengths_target));
+                }else{
+                    vec_d_sequenceData2Bit_target.emplace_back(0, queryData->streams[g].getStream());
+                    vec_d_sequenceLengths_target.emplace_back(0, queryData->streams[g].getStream());
+                }
+            }
+
+            //determine num values on each gpu, and collect results in d_numValuesPerSequencePerGpu
+            for(int g = 0; g < int(deviceIds.size()); g++){
+                cub::SwitchDevice sd{deviceIds[g]};
+
+                const unsigned int* d_seq = d_sequenceData2Bit;
+                const int* d_len = d_sequenceLengths;
+                if(deviceIds[g] != oldDeviceId){
+                    d_seq = vec_d_sequenceData2Bit_target[g].data();
+                    d_len = vec_d_sequenceLengths_target[g].data();
+                }
+
+                int& myTotalNumValues = queryData->pinnedData[g];
                 auto* targetmr = rmm::mr::get_current_device_resource();
-                rmm::device_uvector<unsigned int> d_sequenceData2Bit_target(encodedSequencePitchInInts * numSequences, queryData->streams[g].getStream(), targetmr);
-                rmm::device_uvector<int> d_sequenceLengths_target(numSequences, queryData->streams[g].getStream(), targetmr);
-
-                CUDACHECK(cudaMemcpyPeerAsync(
-                    d_sequenceData2Bit_target.data(),
-                    deviceIds[g],
-                    d_sequenceData2Bit,
-                    oldDeviceId,
-                    sizeof(unsigned int) * encodedSequencePitchInInts * numSequences,
-                    queryData->streams[g]
-                ));
-
-                CUDACHECK(cudaMemcpyPeerAsync(
-                    d_sequenceLengths_target.data(),
-                    deviceIds[g],
-                    d_sequenceLengths,
-                    oldDeviceId,
-                    sizeof(int) * numSequences,
-                    queryData->streams[g]
-                ));
-
-                int& myTotalNumValues = queryData->pinnedData[2*g + 0];
                 rmm::device_uvector<int> d_numValuesPerSequence_target(numSequences, queryData->streams[g].getStream(), targetmr);
 
                 sgpuMinhashers[g]->determineNumValues(
                     *queryData->singlegpuMinhasherHandles[g].get(),
-                    d_sequenceData2Bit_target.data(),
+                    d_seq,
                     encodedSequencePitchInInts,
-                    d_sequenceLengths_target.data(),
+                    d_len,
                     numSequences,
                     d_numValuesPerSequence_target.data(),
                     myTotalNumValues,
@@ -573,28 +710,32 @@ namespace gpu{
                     targetmr
                 );
 
+                if(deviceIds[g] != oldDeviceId){
+                    vec_d_sequenceData2Bit_target[g].release();
+                    vec_d_sequenceLengths_target[g].release();
+                }
+
+                queryData->vec_d_numValuesPerSequence.push_back(std::move(d_numValuesPerSequence_target));
+            }
+
+            //gather num values to d_numValuesPerSequencePerGpu
+            for(int g = 0; g < int(deviceIds.size()); g++){
+                cub::SwitchDevice sd{deviceIds[g]};
+
                 CUDACHECK(cudaMemcpyPeerAsync(
                     d_numValuesPerSequencePerGpu.data() + numSequences * g,
                     oldDeviceId,
-                    d_numValuesPerSequence_target.data(),
+                    queryData->vec_d_numValuesPerSequence[g].data(),
                     deviceIds[g],
                     sizeof(int) * numSequences,
                     queryData->streams[g]
                 ));
-
-                queryData->vec_d_numValuesPerSequence.push_back(std::move(d_numValuesPerSequence_target));
-
-                CUDACHECK(cudaEventRecord(queryData->events[g], queryData->streams[g]));
             }
 
+            //join streams to wait for pinnedData and d_numValuesPerSequencePerGpu
             for(int g = 0; g < int(deviceIds.size()); g++){
-                CUDACHECK(cudaStreamWaitEvent(stream, queryData->events[g], 0));
-            }
-            CUDACHECK(cudaStreamSynchronize(stream));
-
-            totalNumValues = 0;
-            for(int g = 0; g < int(deviceIds.size()); g++){
-                totalNumValues += queryData->pinnedData[2*g + 0];
+                cub::SwitchDevice sd{deviceIds[g]};
+                CUDACHECK(cudaStreamSynchronize(queryData->streams[g])); 
             }
 
             dim3 block = 128;
@@ -607,14 +748,19 @@ namespace gpu{
                 deviceIds.size()
             );
             CUDACHECKASYNC;
+
+            totalNumValues = 0;
+            for(int g = 0; g < int(deviceIds.size()); g++){
+                totalNumValues += queryData->pinnedData[g];
+            }
         }
 
         void retrieveValues(
             MinhasherHandle& queryHandle,
             int numSequences,
-            int /*totalNumValues*/,
+            int totalNumValues,
             read_number* d_values,
-            int* d_numValuesPerSequence,
+            const int* d_numValuesPerSequence,
             int* d_offsets, //numSequences + 1
             cudaStream_t stream,
             rmm::mr::device_memory_resource* mr
@@ -630,18 +776,30 @@ namespace gpu{
 
             int oldDeviceId = 0;
             CUDACHECK(cudaGetDevice(&oldDeviceId));
+
+            rmm::device_uvector<read_number> d_allValues(totalNumValues, stream, mr);
+            rmm::device_uvector<int> d_numValuesPerSequencePerGpu(numSequences * deviceIds.size(), stream, mr);
+            rmm::device_uvector<int> d_offsetsPerSequencePerGpu((numSequences+1) * deviceIds.size(), stream, mr);
+
             CUDACHECK(cudaEventRecord(queryData->callerEvent, stream));
+
+            CubCallWrapper(mr).cubInclusiveSum(
+                d_numValuesPerSequence,
+                d_offsets + 1,
+                numSequences,
+                stream
+            );
+            CUDACHECK(cudaMemsetAsync(d_offsets, 0, sizeof(int), stream));
 
             std::vector<rmm::device_uvector<read_number>> vec_d_values_target;
             std::vector<rmm::device_uvector<int>> vec_d_offsets_target;
 
             for(int g = 0; g < int(deviceIds.size()); g++){
-                assert(sgpuMinhashers[g]->getNumberOfMaps() > 0);
                 cub::SwitchDevice sd{deviceIds[g]};
 
                 CUDACHECK(cudaStreamWaitEvent(queryData->streams[g], queryData->callerEvent, 0));
 
-                const int totalNumValuesTarget = queryData->pinnedData[2*g + 0];
+                const int totalNumValuesTarget = queryData->pinnedData[g];
 
                 auto* targetmr = rmm::mr::get_current_device_resource();
                 rmm::device_uvector<read_number> d_values_target(totalNumValuesTarget, queryData->streams[g].getStream(), targetmr);
@@ -658,83 +816,81 @@ namespace gpu{
                     targetmr
                 );
 
-                CUDACHECK(cudaMemcpyAsync(
-                    &queryData->pinnedData[2*g + 0],
-                    d_offsets_target.data() + numSequences,
-                    sizeof(int),
-                    D2H,
-                    queryData->streams[g]
-                ));
-
                 vec_d_values_target.push_back(std::move(d_values_target));
                 vec_d_offsets_target.push_back(std::move(d_offsets_target));
             }
 
-            std::vector<int> finalNumValuesPerTarget(deviceIds.size());
+            int* h_gatherOffsets = queryData->pinnedData.data() + deviceIds.size();
+            std::exclusive_scan(
+                queryData->pinnedData.data(), 
+                queryData->pinnedData.data() + deviceIds.size(), 
+                h_gatherOffsets, 
+                0
+            );
+
+            //gather results from targets
             for(int g = 0; g < int(deviceIds.size()); g++){
                 cub::SwitchDevice sd{deviceIds[g]};
-                CUDACHECK(cudaStreamSynchronize(queryData->streams[g]));
+                const int totalNumValuesTarget = queryData->pinnedData[g];
 
-                finalNumValuesPerTarget[g] = queryData->pinnedData[2*g + 0];
-            }
-            std::vector<int> gatherOffsets(deviceIds.size(), 0);
-            std::exclusive_scan(finalNumValuesPerTarget.begin(), finalNumValuesPerTarget.end(), gatherOffsets.begin(), 0);
-            const int finalNumValues = gatherOffsets.back() + finalNumValuesPerTarget.back();
-
-            rmm::device_uvector<read_number> d_allValues(finalNumValues, stream, mr);
-            rmm::device_uvector<int> d_numValuesPerSequencePerGpu(numSequences * deviceIds.size(), stream, mr);
-            rmm::device_uvector<int> d_offsetsPerSequencePerGpu((numSequences+1) * deviceIds.size(), stream, mr);
-            //copy results from targets
-            for(int g = 0; g < int(deviceIds.size()); g++){
                 CUDACHECK(cudaMemcpyPeerAsync(
-                    d_allValues.data() + gatherOffsets[g],
+                    d_allValues.data() + h_gatherOffsets[g],
                     oldDeviceId,
                     vec_d_values_target[g].data(),
                     deviceIds[g],
-                    sizeof(read_number) * finalNumValuesPerTarget[g],
-                    stream
+                    sizeof(read_number) * totalNumValuesTarget,
+                    queryData->streams[g]
                 ));
+                vec_d_values_target[g].release();
+            }
+
+            for(int g = 0; g < int(deviceIds.size()); g++){
+                cub::SwitchDevice sd{deviceIds[g]};
+
                 CUDACHECK(cudaMemcpyPeerAsync(
                     d_numValuesPerSequencePerGpu.data() + numSequences * g,
                     oldDeviceId,
                     queryData->vec_d_numValuesPerSequence[g].data(),
                     deviceIds[g],
                     sizeof(int) * numSequences,
-                    stream
+                    queryData->streams[g]
                 ));
+                queryData->vec_d_numValuesPerSequence[g].release();
+            }
+
+            for(int g = 0; g < int(deviceIds.size()); g++){
+                cub::SwitchDevice sd{deviceIds[g]};
+
                 CUDACHECK(cudaMemcpyPeerAsync(
                     d_offsetsPerSequencePerGpu.data() + (numSequences+1) * g,
                     oldDeviceId,
                     vec_d_offsets_target[g].data(),
                     deviceIds[g],
                     sizeof(int) * (numSequences+1),
-                    stream
+                    queryData->streams[g]
                 ));
+                vec_d_offsets_target[g].release();
             }
 
-            //compute final num values per sequence, and prefix sum
-            dim3 block = 128;
-            dim3 grid = SDIV(numSequences, block.x);
-            multigpuminhasherkernels::aggregateNumValuesPartitionResultsKernel
-                    <<<grid, block, 0, stream>>>(
-                d_numValuesPerSequencePerGpu.data(),
-                d_numValuesPerSequence,
-                numSequences,
-                deviceIds.size()
-            );
-            CUDACHECKASYNC;
-
-            CubCallWrapper(mr).cubInclusiveSum(
-                d_numValuesPerSequence,
-                d_offsets + 1,
-                numSequences,
+            rmm::device_uvector<int> d_gatherOffsets(deviceIds.size(), stream, mr);
+            CUDACHECK(cudaMemcpyAsync(
+                d_gatherOffsets.data(), 
+                h_gatherOffsets, 
+                sizeof(int) * deviceIds.size(), 
+                H2D, 
                 stream
-            );
-            CUDACHECK(cudaMemsetAsync(d_offsets, 0, sizeof(int), stream));
+            ));
+
+            //join per-gpu streams to caller stream to wait for gathered results
+            for(int g = 0; g < int(deviceIds.size()); g++){
+                cub::SwitchDevice sd{deviceIds[g]};
+                CUDACHECK(cudaEventRecord(queryData->events[g], queryData->streams[g]));
+            }
+            for(int g = 0; g < int(deviceIds.size()); g++){
+                CUDACHECK(cudaStreamWaitEvent(stream, queryData->events[g]));
+            }
 
             //copy values to output array, interleave results for same sequence
-            rmm::device_uvector<int> d_gatherOffsets(deviceIds.size(), stream, mr);
-            CUDACHECK(cudaMemcpyAsync(d_gatherOffsets.data(), gatherOffsets.data(), sizeof(int) * deviceIds.size(), H2D, stream));
             multigpuminhasherkernels::copyToInterleavedKernel<<<numSequences, 128, 0, stream>>>(
                 d_allValues.data(),
                 d_offsetsPerSequencePerGpu.data(),
@@ -745,6 +901,7 @@ namespace gpu{
                 numSequences,
                 deviceIds.size()
             ); CUDACHECKASYNC
+
 
             queryData->vec_d_numValuesPerSequence.clear();
         }
@@ -931,5 +1088,3 @@ private:
 
 #endif //#ifdef CARE_HAS_WARPCORE
 
-
-#endif

@@ -152,6 +152,19 @@ namespace care{
             auto resource = std::make_unique<rmm::mr::cuda_async_memory_resource>();
             rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), resource.get());
 
+            for(auto otherId : programOptions.deviceIds){
+                if(otherId != id){
+                    if(peerAccess.canAccessPeer(id, otherId)){
+                        cudaMemAccessDesc accessDesc = {};
+                        accessDesc.location.type = cudaMemLocationTypeDevice;
+                        accessDesc.location.id = otherId;
+                        accessDesc.flags = cudaMemAccessFlagsProtReadWrite;
+
+                        CUDACHECK(cudaMemPoolSetAccess(resource->pool_handle(), &accessDesc, 1));
+                    }
+                }
+            }
+
             CUDACHECK(cudaDeviceSetMemPool(id, resource->pool_handle()));
             rmmCudaAsyncResources.push_back(std::move(resource));
         }

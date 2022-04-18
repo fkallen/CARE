@@ -761,6 +761,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
         return result;
     }
 
+    #ifndef NDEBUG
     const bool sameId = std::all_of(
         tmpresults.begin(),
         tmpresults.end(),
@@ -769,6 +770,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
         }
     );
     assert(sameId);
+    #endif
 
     constexpr bool outputHQ = true;
     constexpr bool outputLQWithCandidates = true;
