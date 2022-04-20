@@ -10,6 +10,94 @@ namespace gpu{
     template<class T, int blocksize, int elemsPerThread>
     struct BlockUnique{
     private:
+
+        using BlockDiscontinuity = cub::BlockDiscontinuity<T, blocksize>;
+        using BlockScan = cub::BlockScan<int, blocksize>; 
+
+    public:
+        struct TempStorage{
+            union{
+                union{
+                    typename BlockDiscontinuity::TempStorage discontinuity;
+                    typename BlockScan::TempStorage scan;
+                } cubtemp;
+
+            } data;
+        };
+
+
+        __device__
+        BlockUnique(TempStorage& temp) : temp_storage(temp){}
+
+        //return size of output
+        __device__
+        int execute(T (&input)[elemsPerThread], int validInputSize, T* output){
+            constexpr bool isFirstChunk = true;
+            return execute_impl<isFirstChunk>(input, validInputSize, T{}, output);
+        }
+
+        //return size of output
+        __device__
+        int execute(T (&input)[elemsPerThread], int validInputSize, T lastElementOfPreviousChunk, T* output){
+            constexpr bool isFirstChunk = false;
+            return execute_impl<isFirstChunk>(input, validInputSize, lastElementOfPreviousChunk, output);
+        }
+
+    private:
+
+        TempStorage& temp_storage;
+
+        template<bool isFirstChunk>
+        __device__
+        int execute_impl(T (&input)[elemsPerThread], int validInputSize, T lastElementOfPreviousChunk, T* output){
+            int prefixsum[elemsPerThread];
+            int head_flags[elemsPerThread];
+
+            if(isFirstChunk){
+                BlockDiscontinuity(temp_storage.data.cubtemp.discontinuity).FlagHeads(
+                    head_flags, 
+                    input, 
+                    cub::Inequality()
+                );
+                __syncthreads();
+            }else{
+                BlockDiscontinuity(temp_storage.data.cubtemp.discontinuity).FlagHeads(
+                    head_flags, 
+                    input, 
+                    cub::Inequality(),
+                    lastElementOfPreviousChunk
+                );
+                __syncthreads();
+            }
+
+            #pragma unroll
+            for(int i = 0; i < elemsPerThread; i++){
+                if(threadIdx.x * elemsPerThread + i >= validInputSize){
+                    head_flags[i] = 0;
+                }
+            }
+
+            int numSelected = 0;
+            BlockScan(temp_storage.data.cubtemp.scan).ExclusiveSum(head_flags, prefixsum, numSelected);
+            __syncthreads();
+
+            #pragma unroll
+            for(int i = 0; i < elemsPerThread; i++){
+                if(threadIdx.x * elemsPerThread + i < validInputSize){
+                    if(head_flags[i]){
+                        output[prefixsum[i]] = input[i];
+                    }
+                }
+            }
+            return numSelected;
+        }
+
+    };
+
+#if 0
+    template<class T, int blocksize, int elemsPerThread>
+    struct BlockUniqueWithLimit{
+    private:
         struct SegmentIdCountPair{
             int segmentId;
             int count;
@@ -35,17 +123,22 @@ namespace gpu{
 
     public:
         struct TempStorage{
-            union{
-                typename BlockDiscontinuity::TempStorage discontinuity;
-                typename BlockScan::TempStorage scan;
-                typename BlockScanPair::TempStorage scanpair;
-            } cubtemp;
+            struct{
+                union{
+                    typename BlockDiscontinuity::TempStorage discontinuity;
+                    typename BlockScan::TempStorage scan;
+                    typename BlockScanPair::TempStorage scanpair;
+                } cubtemp;
+
+                int countOfLastSegment;
+                int numSelected;
+            } data;
         };
 
         TempStorage& temp_storage;
 
         __device__
-        BlockUnique(TempStorage& temp) : temp_storage(temp){}
+        BlockUniqueWithLimit(TempStorage& temp) : temp_storage(temp){}
 
         /*
             For each segment of equal elements in input, if the segment size is >= minimumSegmentSize,
@@ -55,23 +148,53 @@ namespace gpu{
             numUnique is written by thread threadIdx.x == 0
         */
         __device__
-        void execute(T (&input)[elemsPerThread], int validInputSize, int minimumSegmentSize, T* output, int* numUnique){
-            execute_impl<true>(input, validInputSize, minimumSegmentSize, output, numUnique);
+        int executeSingleChunk(T (&input)[elemsPerThread], int validInputSize, int minimumSegmentSize, T* output, int* numUnique){
+            constexpr bool isFirstChunk = true;
+            constexpr bool isLastChunk = true;
+            return execute_impl<isFirstChunk, isLastChunk>(input, validInputSize, minimumSegmentSize, T{}, 0, T{}, output, numUnique);
         }
 
         __device__
-        void execute(T (&input)[elemsPerThread], int validInputSize, T* output, int* numUnique){
-            execute_impl<false>(input, validInputSize, 1, output, numUnique);
+        int executeFirstChunk(T (&input)[elemsPerThread], int validInputSize, int minimumSegmentSize, T firstElementOfNextChunk, T* output, int* numUnique){
+            constexpr bool isFirstChunk = true;
+            constexpr bool isLastChunk = false;
+            return execute_impl<isFirstChunk, isLastChunk>(input, validInputSize, minimumSegmentSize, T{}, 0, firstElementOfNextChunk, output, numUnique);
         }
+
+        __device__
+        int executeLastChunk(T (&input)[elemsPerThread], int validInputSize, int minimumSegmentSize, int lastSegmentSizeOfPreviousChunk, T lastElementOfPreviousChunk, T* output, int* numUnique){
+            constexpr bool isFirstChunk = false;
+            constexpr bool isLastChunk = true;
+            return execute_impl<isFirstChunk, isLastChunk>(input, validInputSize, minimumSegmentSize, lastElementOfPreviousChunk, lastSegmentSizeOfPreviousChunk, T{}, output, numUnique);
+        }
+
+        __device__
+        int executeIntermediateChunk(T (&input)[elemsPerThread], int validInputSize, int minimumSegmentSize, T firstElementOfNextChunk, int lastSegmentSizeOfPreviousChunk, T lastElementOfPreviousChunk, T* output, int* numUnique){
+            constexpr bool isFirstChunk = false;
+            constexpr bool isLastChunk = false;
+            return execute_impl<isFirstChunk, isLastChunk>(input, validInputSize, minimumSegmentSize, lastElementOfPreviousChunk, lastSegmentSizeOfPreviousChunk, lastElementOfPreviousChunk, output, numUnique);
+        }
+
+
 
     private:
-        template<bool checksegmentsize>
+        template<bool isFirstChunk, bool isLastChunk>
         __device__
-        void execute_impl(T (&input)[elemsPerThread], int validInputSize, int minimumSegmentSize, T* output, int* numUnique){
+        int execute_impl(
+            T (&input)[elemsPerThread], 
+            int validInputSize, 
+            int minimumSegmentSize, 
+            T firstElementOfNextChunk, 
+            int lastSegmentSizeOfPreviousChunk,
+            T lastElementOfPreviousChunk, 
+            T* output, 
+            int* numUnique
+        ){
+
             int prefixsum[elemsPerThread];
             int tail_flags[elemsPerThread];
 
-            BlockDiscontinuity(temp_storage.cubtemp.discontinuity).FlagTails(
+            BlockDiscontinuity(temp_storage.data.cubtemp.discontinuity).FlagTails(
                 tail_flags, 
                 input, 
                 cub::Inequality()
@@ -84,72 +207,99 @@ namespace gpu{
                     tail_flags[i] = 0;
                 }
             }
-
-            int numSelected = 0;
-            BlockScan(temp_storage.cubtemp.scan).ExclusiveSum(tail_flags, prefixsum, numSelected);
+            
+            BlockScan(temp_storage.data.cubtemp.scan).ExclusiveSum(tail_flags, prefixsum);
             __syncthreads();
 
-            // if(threadIdx.x == 0){
-            //     printf("validInputSize %d, numSelected %d\n", validInputSize, numSelected);
-            // }
+            SegmentIdCountPair zipped[elemsPerThread];
 
-            if(checksegmentsize){
+            #pragma unroll
+            for(int i = 0; i < elemsPerThread; i++){
+                zipped[i].count = 1;
+                zipped[i].segmentId = prefixsum[i];
+            }
 
-                SegmentIdCountPair zipped[elemsPerThread];
-
-                #pragma unroll
-                for(int i = 0; i < elemsPerThread; i++){
-                    zipped[i].count = 1;
-                    zipped[i].segmentId = prefixsum[i];
-                }
-
-                SegmentIdCountPair zippedprefixsum[elemsPerThread];
-                BlockScanPair(temp_storage.cubtemp.scanpair).InclusiveScan(
-                    zipped, 
-                    zippedprefixsum, 
-                    PairScanOp{}
-                );
-                __syncthreads();
-
-                #pragma unroll
-                for(int i = 0; i < elemsPerThread; i++){
-                    if(threadIdx.x * elemsPerThread + i < validInputSize){
-                        if(tail_flags[i]){
-                            if(zippedprefixsum[i].count < minimumSegmentSize){
-                                tail_flags[i] = 0;
-                            }
-                        }
-                    }else{
-                        tail_flags[i] = 0;
+            if(!isFirstChunk){
+                if(threadIdx.x == 0){
+                    if(input[0] == lastElementOfPreviousChunk){
+                        zipped[0].count = 1 + lastSegmentSizeOfPreviousChunk;
                     }
                 }
-
-                BlockScan(temp_storage.cubtemp.scan).ExclusiveSum(tail_flags, prefixsum, numSelected);
-                __syncthreads();
-
             }
+
+            SegmentIdCountPair zippedprefixsum[elemsPerThread];
+            BlockScanPair(temp_storage.data.cubtemp.scanpair).InclusiveScan(
+                zipped, 
+                zippedprefixsum, 
+                PairScanOp{}
+            );
+            __syncthreads();
 
             #pragma unroll
             for(int i = 0; i < elemsPerThread; i++){
                 if(threadIdx.x * elemsPerThread + i < validInputSize){
                     if(tail_flags[i]){
-                        // if(input[i] == std::numeric_limits<T>::max()){
-                        //     printf("maxint observed. threadIdx.x %d, i %d, elemsPerThread %d, validInputSize %d\n", threadIdx.x, i, elemsPerThread, validInputSize);
-                        //     // printf("my tail flags:\n");
-                        //     // for(int k = 0; k < elemsPerThread)
-                        //     assert(input[i] != std::numeric_limits<T>::max());
-                        // }
-                        output[prefixsum[i]] = input[i];
+                        if(zippedprefixsum[i].count < minimumSegmentSize){
+                            tail_flags[i] = 0;
+                        }
                     }
+                }else{
+                    tail_flags[i] = 0;
+                }
+            }
+
+            int numSelected = 0;
+            BlockScan(temp_storage.data.cubtemp.scan).ExclusiveSum(tail_flags, prefixsum, numSelected);
+            __syncthreads();
+
+            #pragma unroll
+            for(int i = 0; i < elemsPerThread; i++){
+                if(threadIdx.x * elemsPerThread + i == validInputSize - 1){
+                    temp_storage.data.countOfLastSegment = zippedprefixsum[i].count;
                 }
             }
             if(threadIdx.x == 0){
-                *numUnique = numSelected;
+                temp_storage.data.numSelected = numSelected;
             }
             __syncthreads();
+
+            if(isLastChunk){
+                #pragma unroll
+                for(int i = 0; i < elemsPerThread; i++){
+                    if(threadIdx.x * elemsPerThread + i < validInputSize){
+                        if(tail_flags[i]){
+                            output[prefixsum[i]] = input[i];
+                        }
+                    }
+                }
+            }else{
+                #pragma unroll
+                for(int i = 0; i < elemsPerThread; i++){
+                    if(threadIdx.x * elemsPerThread + i < validInputSize){
+                        if(tail_flags[i]){
+                            if(threadIdx.x * elemsPerThread + i == validInputSize - 1){
+                                if(input[i] != firstElementOfNextChunk){
+                                    output[prefixsum[i]] = input[i];
+                                }else{
+                                    temp_storage.data.numSelected -= 1;
+                                }
+                            }else{
+                                output[prefixsum[i]] = input[i];
+                            }
+                        }
+                    }
+                }
+            }
+            __syncthreads();
+
+            *numUnique = temp_storage.data.numSelected;           
+
+            return temp_storage.data.countOfLastSegment;
         }
 
     };
+
+#endif
 
 } //namespace gpu
 } //namespace care
