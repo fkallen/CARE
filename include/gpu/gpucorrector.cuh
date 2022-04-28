@@ -1949,11 +1949,7 @@ namespace gpu{
             
             rmm::device_uvector<bool> d_alignment_isValid(currentNumCandidates, stream, mr);
 
-            std::size_t bytes = 0;
-
             call_popcount_shifted_hamming_distance_kernel_async(
-                nullptr,
-                bytes,
                 d_alignment_overlaps.data(),
                 d_alignment_shifts.data(),
                 d_alignment_nOps.data(),
@@ -1966,55 +1962,20 @@ namespace gpu{
                 d_candidates_per_anchor_prefixsum.data(),
                 d_candidates_per_anchor.data(),
                 d_anchorIndicesOfCandidates.data(),
-                d_numAnchors.data(),
-                d_numCandidates.data(),
+                currentNumAnchors,
+                currentNumCandidates,
                 d_anchorContainsN.data(),
                 removeAmbiguousAnchors,
                 d_candidateContainsN.data(),
                 removeAmbiguousCandidates,
-                maxAnchors,
-                currentNumCandidates,
                 gpuReadStorage->getSequenceLengthUpperBound(),
                 encodedSequencePitchInInts,
                 programOptions->min_overlap,
                 programOptions->maxErrorRate,
                 programOptions->min_overlap_ratio,
                 programOptions->estimatedErrorrate,
-                stream
-            );
-
-            rmm::device_uvector<char> d_temp(bytes, stream, mr);
-
-            call_popcount_shifted_hamming_distance_kernel_async(
-                d_temp.data(),
-                bytes,
-                d_alignment_overlaps.data(),
-                d_alignment_shifts.data(),
-                d_alignment_nOps.data(),
-                d_alignment_isValid.data(),
-                d_alignment_best_alignment_flags.data(),
-                d_anchor_sequences_data.data(),
-                d_candidate_sequences_data.data(),
-                d_anchor_sequences_lengths.data(),
-                d_candidate_sequences_lengths.data(),
-                d_candidates_per_anchor_prefixsum.data(),
-                d_candidates_per_anchor.data(),
-                d_anchorIndicesOfCandidates.data(),
-                d_numAnchors.data(),
-                d_numCandidates.data(),
-                d_anchorContainsN.data(),
-                removeAmbiguousAnchors,
-                d_candidateContainsN.data(),
-                removeAmbiguousCandidates,
-                maxAnchors,
-                currentNumCandidates,
-                gpuReadStorage->getSequenceLengthUpperBound(),
-                encodedSequencePitchInInts,
-                programOptions->min_overlap,
-                programOptions->maxErrorRate,
-                programOptions->min_overlap_ratio,
-                programOptions->estimatedErrorrate,
-                stream
+                stream,
+                mr
             );
 
             #if 1
@@ -2025,9 +1986,7 @@ namespace gpu{
                     d_alignment_nOps.data(),
                     d_alignment_overlaps.data(),
                     d_candidates_per_anchor_prefixsum.data(),
-                    d_numAnchors.data(),
-                    d_numCandidates.data(),
-                    maxAnchors,
+                    currentNumAnchors,
                     currentNumCandidates,
                     programOptions->estimatedErrorrate,
                     programOptions->estimatedCoverage * programOptions->m_coverage,
@@ -2097,12 +2056,22 @@ namespace gpu{
                 d_candidates_per_anchor.data(),
                 d_candidates_per_anchor_prefixsum.data(),
                 d_anchorIndicesOfCandidates.data(),
-                d_numAnchors.data(),
-                d_numCandidates.data(),
-                maxAnchors,
+                currentNumAnchors,
                 currentNumCandidates,
                 stream
             );
+
+            void callSelectIndicesOfGoodCandidatesKernelAsync(
+                int* d_indicesOfGoodCandidates,
+                int* d_numIndicesPerAnchor,
+                int* d_totalNumIndices,
+                const AlignmentOrientation* d_alignmentFlags,
+                const int* d_candidates_per_anchor,
+                const int* d_candidates_per_anchor_prefixsum,
+                const int* d_anchorIndicesOfCandidates,
+                int numAnchors,
+                int numCandidates,
+                cudaStream_t stream);
 
             CUDACHECK(cudaMemcpyAsync(
                 h_numRemainingCandidatesAfterAlignment.data(),

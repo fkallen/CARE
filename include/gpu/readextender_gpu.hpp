@@ -2882,8 +2882,8 @@ struct GpuReadExtender{
         const bool* const d_candidateContainsN = nullptr;
         const bool removeAmbiguousAnchors = false;
         const bool removeAmbiguousCandidates = false;
-        const int maxNumAnchors = tasks->size();
-        const int maxNumCandidates = initialNumCandidates; //this does not need to be exact, but it must be >= d_numCandidatesPerAnchorPrefixSum[tasks->size()]
+        const int currentNumAnchors = tasks->size();
+        const int currentNumCandidates = initialNumCandidates; //this does not need to be exact, but it must be >= d_numCandidatesPerAnchorPrefixSum[tasks->size()]
         const int maximumSequenceLength = encodedSequencePitchInInts * 16;
         const int encodedSequencePitchInInts2Bit = encodedSequencePitchInInts;
         const int min_overlap = programOptions->min_overlap;
@@ -2891,47 +2891,34 @@ struct GpuReadExtender{
         const float min_overlap_ratio = programOptions->min_overlap_ratio;
         const float estimatedNucleotideErrorRate = programOptions->estimatedErrorrate;
 
-        auto callAlignmentKernel = [&](void* d_tempstorage, size_t& tempstoragebytes){
-
-            call_popcount_rightshifted_hamming_distance_kernel_async(
-                d_tempstorage,
-                tempstoragebytes,
-                d_alignment_overlaps.data(),
-                d_alignment_shifts.data(),
-                d_alignment_nOps.data(),
-                d_alignment_isValid.data(),
-                d_alignment_best_alignment_flags.data(),
-                d_anchorSequencesData.data(),
-                d_candidateSequencesData.data(),
-                d_anchorSequencesLength.data(),
-                d_candidateSequencesLength.data(),
-                d_numCandidatesPerAnchorPrefixSum.data(),
-                d_numCandidatesPerAnchor.data(),
-                d_segmentIdsOfCandidates.data(),
-                h_numAnchors.data(),
-                d_numCandidatesPerAnchorPrefixSum.element_ptr(tasks->size()),
-                d_anchorContainsN,
-                removeAmbiguousAnchors,
-                d_candidateContainsN,
-                removeAmbiguousCandidates,
-                maxNumAnchors,
-                maxNumCandidates,
-                maximumSequenceLength,
-                encodedSequencePitchInInts2Bit,
-                min_overlap,
-                maxErrorRate,
-                min_overlap_ratio,
-                estimatedNucleotideErrorRate,
-                stream
-            );
-        };
-
-        size_t tempstoragebytes = 0;
-        callAlignmentKernel(nullptr, tempstoragebytes);
-
-        rmm::device_uvector<char> d_tempstorage(tempstoragebytes, stream, mr);
-
-        callAlignmentKernel(d_tempstorage.data(), tempstoragebytes);
+        call_popcount_rightshifted_hamming_distance_kernel_async(
+            d_alignment_overlaps.data(),
+            d_alignment_shifts.data(),
+            d_alignment_nOps.data(),
+            d_alignment_isValid.data(),
+            d_alignment_best_alignment_flags.data(),
+            d_anchorSequencesData.data(),
+            d_candidateSequencesData.data(),
+            d_anchorSequencesLength.data(),
+            d_candidateSequencesLength.data(),
+            d_numCandidatesPerAnchorPrefixSum.data(),
+            d_numCandidatesPerAnchor.data(),
+            d_segmentIdsOfCandidates.data(),
+            currentNumAnchors,
+            currentNumCandidates,
+            d_anchorContainsN,
+            removeAmbiguousAnchors,
+            d_candidateContainsN,
+            removeAmbiguousCandidates,            
+            maximumSequenceLength,
+            encodedSequencePitchInInts2Bit,
+            min_overlap,
+            maxErrorRate,
+            min_overlap_ratio,
+            estimatedNucleotideErrorRate,
+            stream,
+            mr
+        );
 
         setState(GpuReadExtender::State::BeforeAlignmentFilter);
     }

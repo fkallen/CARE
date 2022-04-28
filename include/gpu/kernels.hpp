@@ -14,6 +14,7 @@
 
 #include <map>
 
+#include <rmm/mr/device/per_device_resource.hpp>
 
 namespace care {
 namespace gpu {
@@ -53,8 +54,6 @@ struct IsHqAnchor{
 
 
 void call_popcount_shifted_hamming_distance_kernel_async(
-            void* d_tempstorage,
-            size_t& tempstoragebytes,
             int* d_alignment_overlaps,
             int* d_alignment_shifts,
             int* d_alignment_nOps,
@@ -67,26 +66,23 @@ void call_popcount_shifted_hamming_distance_kernel_async(
             const int* d_candidates_per_anchor_prefixsum,
             const int* d_candidates_per_anchor,
             const int* d_anchorIndicesOfCandidates,
-            const int* d_numAnchors,
-            const int* d_numCandidates,
+            int numAnchors,
+            int numCandidates,
             const bool* d_anchorContainsN,
             bool removeAmbiguousAnchors,
             const bool* d_candidateContainsN,
             bool removeAmbiguousCandidates,
-            int maxNumAnchors,
-            int maxNumCandidates,
             int maximumSequenceLength,
             int encodedSequencePitchInInts2Bit,
             int min_overlap,
             float maxErrorRate,
             float min_overlap_ratio,
             float estimatedNucleotideErrorRate,
-            cudaStream_t stream);
+            cudaStream_t stream,
+            rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource());
 
 
 void call_popcount_rightshifted_hamming_distance_kernel_async(
-            void* d_tempstorage,
-            size_t& tempstoragebytes,
             int* d_alignment_overlaps,
             int* d_alignment_shifts,
             int* d_alignment_nOps,
@@ -99,21 +95,20 @@ void call_popcount_rightshifted_hamming_distance_kernel_async(
             const int* d_candidates_per_anchor_prefixsum,
             const int* d_candidates_per_anchor,
             const int* d_anchorIndicesOfCandidates,
-            const int* d_numAnchors,
-            const int* d_numCandidates,
+            int numAnchors,
+            int numCandidates,
             const bool* d_anchorContainsN,
             bool removeAmbiguousAnchors,
             const bool* d_candidateContainsN,
             bool removeAmbiguousCandidates,
-            int maxNumAnchors,
-            int maxNumCandidates,
             int maximumSequenceLength,
             int encodedSequencePitchInInts2Bit,
             int min_overlap,
             float maxErrorRate,
             float min_overlap_ratio,
             float estimatedNucleotideErrorRate,
-            cudaStream_t stream);
+            cudaStream_t stream,
+            rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource());
 
 
 void callSelectIndicesOfGoodCandidatesKernelAsync(
@@ -124,10 +119,8 @@ void callSelectIndicesOfGoodCandidatesKernelAsync(
             const int* d_candidates_per_anchor,
             const int* d_candidates_per_anchor_prefixsum,
             const int* d_anchorIndicesOfCandidates,
-            const int* d_numAnchors,
-            const int* d_numCandidates,
-            int maxNumAnchors,
-            int maxNumCandidates,
+            int numAnchors,
+            int numCandidates,
             cudaStream_t stream);
 
 
@@ -136,10 +129,8 @@ void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
             const int* d_nOps,
             const int* d_overlaps,
             const int* d_candidates_per_anchor_prefixsum,
-            const int* d_numAnchors,
-            const int* d_numCandidates,
-            int maxNumAnchors,
-            int maxNumCandidates,
+            int numAnchors,
+            int numCandidates,
             float mismatchratioBaseFactor,
             float goodAlignmentsCountThreshold,
             cudaStream_t stream);
@@ -430,15 +421,13 @@ void callConstructSequenceCorrectionResultsKernel(
 );
 
 
-
 void callConversionKernel2BitTo2BitHiLoNN(
             const unsigned int* d_inputdata,
             size_t inputpitchInInts,
             unsigned int* d_outputdata,
             size_t outputpitchInInts,
             const int* d_sequenceLengths,
-            const int* d_numSequences,
-            int maxNumSequences,
+            int numSequences,
             cudaStream_t stream);
 
 void callConversionKernel2BitTo2BitHiLoNT(
@@ -447,8 +436,7 @@ void callConversionKernel2BitTo2BitHiLoNT(
             unsigned int* d_outputdata,
             size_t outputpitchInInts,
             const int* d_sequenceLengths,
-            const int* d_numSequences,
-            int maxNumSequences,
+            int numSequences,
             cudaStream_t stream);
 
 void callConversionKernel2BitTo2BitHiLoTT(
@@ -457,11 +445,30 @@ void callConversionKernel2BitTo2BitHiLoTT(
             unsigned int* d_outputdata,
             size_t outputpitchInInts,
             const int* d_sequenceLengths,
-            const int* d_numSequences,
-            int maxNumSequences,
+            int numSequences,
             cudaStream_t stream);            
 
+void callEncodeSequencesTo2BitKernel(
+    unsigned int* d_encodedSequences,
+    const char* d_decodedSequences,
+    const int* d_sequenceLengths,
+    int decodedSequencePitchInBytes,
+    int encodedSequencePitchInInts,
+    int numSequences,
+    int groupsize,
+    cudaStream_t stream
+);
 
+void callDecodeSequencesFrom2BitKernel(
+    char* d_decodedSequences,
+    const unsigned int* d_encodedSequences,
+    const int* d_sequenceLengths,
+    int decodedSequencePitchInBytes,
+    int encodedSequencePitchInInts,
+    int numSequences,
+    int groupsize,
+    cudaStream_t stream
+);
 
 /*
     If toFind[s] exists in segment s, remove it from this segment s 
