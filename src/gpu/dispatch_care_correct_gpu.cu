@@ -846,61 +846,63 @@ namespace care{
             CUDACHECK(cudaMemPoolTrimTo(rmmCudaAsyncResources[i]->pool_handle(), 0));
         }
 
+        if(programOptions.correctionType != CorrectionType::Print && programOptions.correctionTypeCands != CorrectionType::Print){
 
-        //Merge corrected reads with input file to generate output file
+            //Merge corrected reads with input file to generate output file
 
-        const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
-        const auto partialResultMemUsage = partialResults.getMemoryInfo();
+            const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
+            const auto partialResultMemUsage = partialResults.getMemoryInfo();
 
-        // std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
-        // std::cerr << "memoryLimitOption = " << programOptions.memoryTotalLimit << "\n";
-        // std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
+            // std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
+            // std::cerr << "memoryLimitOption = " << programOptions.memoryTotalLimit << "\n";
+            // std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
 
-        std::size_t memoryForSorting = std::min(
-            availableMemoryInBytes,
-            programOptions.memoryTotalLimit - partialResultMemUsage.host
-        );
+            std::size_t memoryForSorting = std::min(
+                availableMemoryInBytes,
+                programOptions.memoryTotalLimit - partialResultMemUsage.host
+            );
 
-        if(memoryForSorting > 1*(std::size_t(1) << 30)){
-            memoryForSorting = memoryForSorting - 1*(std::size_t(1) << 30);
+            if(memoryForSorting > 1*(std::size_t(1) << 30)){
+                memoryForSorting = memoryForSorting - 1*(std::size_t(1) << 30);
+            }
+            //std::cerr << "memoryForSorting = " << memoryForSorting << "\n";     
+
+            std::cout << "STEP 3: Constructing output file(s)" << std::endl;
+
+            helpers::CpuTimer step3timer("STEP3");
+
+            helpers::CpuTimer sorttimer("sort_results_by_read_id");
+
+            sortSerializedResultsByReadIdAscending<EncodedTempCorrectedSequence>(
+                partialResults,
+                memoryForSorting
+            );
+
+            sorttimer.print();
+
+            std::vector<FileFormat> formats;
+            for(const auto& inputfile : programOptions.inputfiles){
+                formats.emplace_back(getFileFormat(inputfile));
+            }
+            std::vector<std::string> outputfiles;
+            for(const auto& outputfilename : programOptions.outputfilenames){
+                outputfiles.emplace_back(programOptions.outputdirectory + "/" + outputfilename);
+            }
+            constructOutputFileFromCorrectionResults(
+                programOptions.inputfiles, 
+                partialResults, 
+                formats[0],
+                outputfiles,
+                programOptions.showProgress,
+                programOptions
+            );
+
+            step3timer.print();
+
+            //compareMaxRssToLimit(programOptions.memoryTotalLimit, "Error memorylimit after output construction");
+
+            std::cout << "Construction of output file(s) finished." << std::endl;
         }
-        //std::cerr << "memoryForSorting = " << memoryForSorting << "\n";     
-
-        std::cout << "STEP 3: Constructing output file(s)" << std::endl;
-
-        helpers::CpuTimer step3timer("STEP3");
-
-        helpers::CpuTimer sorttimer("sort_results_by_read_id");
-
-        sortSerializedResultsByReadIdAscending<EncodedTempCorrectedSequence>(
-            partialResults,
-            memoryForSorting
-        );
-
-        sorttimer.print();
-
-        std::vector<FileFormat> formats;
-        for(const auto& inputfile : programOptions.inputfiles){
-            formats.emplace_back(getFileFormat(inputfile));
-        }
-        std::vector<std::string> outputfiles;
-        for(const auto& outputfilename : programOptions.outputfilenames){
-            outputfiles.emplace_back(programOptions.outputdirectory + "/" + outputfilename);
-        }
-        constructOutputFileFromCorrectionResults(
-            programOptions.inputfiles, 
-            partialResults, 
-            formats[0],
-            outputfiles,
-            programOptions.showProgress,
-            programOptions
-        );
-
-        step3timer.print();
-
-        //compareMaxRssToLimit(programOptions.memoryTotalLimit, "Error memorylimit after output construction");
-
-        std::cout << "Construction of output file(s) finished." << std::endl;
 
         // for(size_t i = 0; i < rmmCudaAsyncResources.size(); i++){
         //     cub::SwitchDevice sd(programOptions.deviceIds[i]);
@@ -909,7 +911,6 @@ namespace care{
         // }
 
         // CUDACHECK(cudaDeviceReset());
-
     }
 #endif
 

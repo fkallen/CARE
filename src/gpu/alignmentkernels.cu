@@ -19,6 +19,9 @@
 #include <cooperative_groups.h>
 #include <thrust/binary_search.h>
 
+#include <rmm/device_uvector.hpp>
+#include <rmm/mr/device/per_device_resource.hpp>
+
 namespace cg = cooperative_groups;
 
 
@@ -26,28 +29,78 @@ namespace cg = cooperative_groups;
 namespace care{
 namespace gpu{
 
+namespace alignmentdetail{
+
+    template<int BLOCKSIZE, int ITEMS_PER_THREAD, class InputIter>
+    __global__
+    void inclusivePrefixSumLeadingZeroSingleBlockKernel(
+        int* __restrict__ output,
+        InputIter input,
+        int numItems
+    ){
+        using BlockScan = cub::BlockScan<int, BLOCKSIZE>;
+
+        __shared__ typename BlockScan::TempStorage temp_storage;
+
+        int aggregate = 0;
+
+        const int iters = SDIV(numItems, BLOCKSIZE * ITEMS_PER_THREAD);
+
+        const int threadoffset = ITEMS_PER_THREAD * threadIdx.x;
+
+        if(threadIdx.x == 0){
+            output[0] = 0;
+        }
+
+        for(int iter = 0; iter < iters; iter++){
+            int thread_data[ITEMS_PER_THREAD];
+
+            const int iteroffset = BLOCKSIZE * ITEMS_PER_THREAD * iter;
+
+            #pragma unroll
+            for(int k = 0; k < ITEMS_PER_THREAD; k++){
+                if(iteroffset + threadoffset + k < numItems){
+                    thread_data[k] = input[iteroffset + threadoffset + k];
+                }else{
+                    thread_data[k] = 0;
+                }
+            }
+
+            int block_aggregate = 0;
+            BlockScan(temp_storage).InclusiveSum(thread_data, thread_data, block_aggregate);
+
+            #pragma unroll
+            for(int k = 0; k < ITEMS_PER_THREAD; k++){
+                if(iteroffset + threadoffset + k < numItems){
+                    output[1+iteroffset + threadoffset + k] = aggregate + thread_data[k];
+                }
+            }
+
+            aggregate += block_aggregate;
+
+            __syncthreads();
+        } 
+    }
+}
+
 
     template<int blocksize, int tilesize>
     __global__
     void selectIndicesOfGoodCandidatesKernel(
-            int* __restrict__ d_indicesOfGoodCandidates,
-            int* __restrict__ d_numIndicesPerAnchor,
-            int* __restrict__ d_totalNumIndices,
-            const AlignmentOrientation* __restrict__ d_alignmentFlags,
-            const int* __restrict__ d_candidates_per_anchor,
-            const int* __restrict__ d_candidates_per_anchor_prefixsum,
-            const int* __restrict__ d_anchorIndicesOfCandidates,
-            const int* __restrict__ d_numAnchors,
-            const int* __restrict__ d_numCandidates
-            ){
+        int* __restrict__ d_indicesOfGoodCandidates,
+        int* __restrict__ d_numIndicesPerAnchor,
+        int* __restrict__ d_totalNumIndices,
+        const AlignmentOrientation* __restrict__ d_alignmentFlags,
+        const int* __restrict__ d_candidates_per_anchor,
+        const int* __restrict__ d_candidates_per_anchor_prefixsum,
+        const int* __restrict__ d_anchorIndicesOfCandidates,
+        int numAnchors
+    ){
 
         static_assert(blocksize % tilesize == 0);
         static_assert(tilesize == 32);
 
         constexpr int numTilesPerBlock = blocksize / tilesize;
-
-        const int numAnchors = *d_numAnchors;
-        //const int numCandidates = *d_numCandidates;
 
         const int numTiles = (gridDim.x * blocksize) / tilesize;
         const int tileId = (threadIdx.x + blockIdx.x * blocksize) / tilesize;
@@ -127,31 +180,32 @@ namespace gpu{
     __global__
     void
     popcount_shifted_hamming_distance_smem_kernel(
-                const unsigned int* __restrict__ anchorDataHiLo,
-                const unsigned int* __restrict__ candidateDataHiLoTransposed,
-                int* __restrict__ d_alignment_overlaps,
-                int* __restrict__ d_alignment_shifts,
-                int* __restrict__ d_alignment_nOps,
-                bool* __restrict__ d_alignment_isValid,
-                AlignmentOrientation* __restrict__ d_alignment_best_alignment_flags,
-                const int* __restrict__ anchorSequencesLength,
-                const int* __restrict__ candidateSequencesLength,
-                const int* __restrict__ candidates_per_anchor_prefixsum,
-                const int* __restrict__ tiles_per_anchor_prefixsum,
-                const int* __restrict__ numAnchorsPtr,
-                const int* __restrict__ numCandidatesPtr,
-                const bool* __restrict__ anchorContainsN,
-                bool removeAmbiguousAnchors,
-                const bool* __restrict__ candidateContainsN,
-                bool removeAmbiguousCandidates,
-                int encodedSequencePitchInInts2BitHiLo,
-                int min_overlap,
-                float maxErrorRate,
-                float min_overlap_ratio,
-                float estimatedNucleotideErrorRate){
+        const unsigned int* __restrict__ anchorDataHiLo,
+        const unsigned int* __restrict__ candidateDataHiLoTransposed,
+        int* __restrict__ d_alignment_overlaps,
+        int* __restrict__ d_alignment_shifts,
+        int* __restrict__ d_alignment_nOps,
+        bool* __restrict__ d_alignment_isValid,
+        AlignmentOrientation* __restrict__ d_alignment_best_alignment_flags,
+        const int* __restrict__ anchorSequencesLength,
+        const int* __restrict__ candidateSequencesLength,
+        const int* __restrict__ candidates_per_anchor_prefixsum,
+        const int* __restrict__ tiles_per_anchor_prefixsum,
+        int numAnchors,
+        int numCandidates,
+        const bool* __restrict__ anchorContainsN,
+        bool removeAmbiguousAnchors,
+        const bool* __restrict__ candidateContainsN,
+        bool removeAmbiguousCandidates,
+        int encodedSequencePitchInInts2BitHiLo,
+        int min_overlap,
+        float maxErrorRate,
+        float min_overlap_ratio,
+        float estimatedNucleotideErrorRate
+    ){
 
-        const int n_anchors = *numAnchorsPtr;
-        const int n_candidates = *numCandidatesPtr;
+        const int n_anchors = numAnchors;
+        const int n_candidates = numCandidates;
 
         auto no_bank_conflict_index = [](int logical_index) -> int {
             return logical_index * blockDim.x;
@@ -422,31 +476,32 @@ namespace gpu{
     __global__
     void
     popcount_rightshifted_hamming_distance_smem_kernel(
-                const unsigned int* __restrict__ anchorDataHiLo,
-                const unsigned int* __restrict__ candidateDataHiLoTransposed,
-                int* __restrict__ d_alignment_overlaps,
-                int* __restrict__ d_alignment_shifts,
-                int* __restrict__ d_alignment_nOps,
-                bool* __restrict__ d_alignment_isValid,
-                AlignmentOrientation* __restrict__ d_alignment_best_alignment_flags,
-                const int* __restrict__ anchorSequencesLength,
-                const int* __restrict__ candidateSequencesLength,
-                const int* __restrict__ candidates_per_anchor_prefixsum,
-                const int* __restrict__ tiles_per_anchor_prefixsum,
-                const int* __restrict__ numAnchorsPtr,
-                const int* __restrict__ numCandidatesPtr,
-                const bool* __restrict__ anchorContainsN,
-                bool removeAmbiguousAnchors,
-                const bool* __restrict__ candidateContainsN,
-                bool removeAmbiguousCandidates,
-                int encodedSequencePitchInInts2BitHiLo,
-                int min_overlap,
-                float maxErrorRate,
-                float min_overlap_ratio,
-                float estimatedNucleotideErrorRate){
+        const unsigned int* __restrict__ anchorDataHiLo,
+        const unsigned int* __restrict__ candidateDataHiLoTransposed,
+        int* __restrict__ d_alignment_overlaps,
+        int* __restrict__ d_alignment_shifts,
+        int* __restrict__ d_alignment_nOps,
+        bool* __restrict__ d_alignment_isValid,
+        AlignmentOrientation* __restrict__ d_alignment_best_alignment_flags,
+        const int* __restrict__ anchorSequencesLength,
+        const int* __restrict__ candidateSequencesLength,
+        const int* __restrict__ candidates_per_anchor_prefixsum,
+        const int* __restrict__ tiles_per_anchor_prefixsum,
+        int numAnchors,
+        int numCandidates,
+        const bool* __restrict__ anchorContainsN,
+        bool removeAmbiguousAnchors,
+        const bool* __restrict__ candidateContainsN,
+        bool removeAmbiguousCandidates,
+        int encodedSequencePitchInInts2BitHiLo,
+        int min_overlap,
+        float maxErrorRate,
+        float min_overlap_ratio,
+        float estimatedNucleotideErrorRate
+    ){
 
-        const int n_anchors = *numAnchorsPtr;
-        const int n_candidates = *numCandidatesPtr;
+        const int n_anchors = numAnchors;
+        const int n_candidates = numCandidates;
 
         auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
             SequenceHelpers::reverseComplementSequenceInplace2BitHiLo((unsigned int*)sequence, sequencelength, indextrafo);
@@ -707,33 +762,34 @@ namespace gpu{
     __global__
     void
     popcount_shifted_hamming_distance_reg_kernel(
-                const unsigned int* __restrict__ anchorDataHiLoTransposed,
-                const unsigned int* __restrict__ candidateDataHiLoTransposed,
-                const int* __restrict__ anchorSequencesLength,
-                const int* __restrict__ candidateSequencesLength,
-                AlignmentOrientation* __restrict__ bestAlignmentFlags,
-                int* __restrict__ alignment_overlaps,
-                int* __restrict__ alignment_shifts,
-                int* __restrict__ alignment_nOps,
-                bool* __restrict__ alignment_isValid,
-                const int* __restrict__ d_anchorIndicesOfCandidates,
-                const int* __restrict__ numAnchorsPtr,
-                const int* __restrict__ numCandidatesPtr,
-                const bool* __restrict__ anchorContainsN,
-                bool removeAmbiguousAnchors,
-                const bool* __restrict__ candidateContainsN,
-                bool removeAmbiguousCandidates,
-                size_t encodedSequencePitchInInts2BitHiLo,
-                int min_overlap,
-                float maxErrorRate,
-                float min_overlap_ratio,
-                float estimatedNucleotideErrorRate){
+        const unsigned int* __restrict__ anchorDataHiLoTransposed,
+        const unsigned int* __restrict__ candidateDataHiLoTransposed,
+        const int* __restrict__ anchorSequencesLength,
+        const int* __restrict__ candidateSequencesLength,
+        AlignmentOrientation* __restrict__ bestAlignmentFlags,
+        int* __restrict__ alignment_overlaps,
+        int* __restrict__ alignment_shifts,
+        int* __restrict__ alignment_nOps,
+        bool* __restrict__ alignment_isValid,
+        const int* __restrict__ d_anchorIndicesOfCandidates,
+        int numAnchors,
+        int numCandidates,
+        const bool* __restrict__ anchorContainsN,
+        bool removeAmbiguousAnchors,
+        const bool* __restrict__ candidateContainsN,
+        bool removeAmbiguousCandidates,
+        size_t encodedSequencePitchInInts2BitHiLo,
+        int min_overlap,
+        float maxErrorRate,
+        float min_overlap_ratio,
+        float estimatedNucleotideErrorRate
+    ){
 
         static_assert(maxValidIntsPerSequence % 2 == 0, ""); //2bithilo has even number of ints
 
 
-        const int n_anchors = *numAnchorsPtr;
-        const int n_candidates = *numCandidatesPtr;
+        const int n_anchors = numAnchors;
+        const int n_candidates = numCandidates;
 
         auto popcount = [](auto i){return __popc(i);};
 
@@ -1111,33 +1167,34 @@ namespace gpu{
     __global__
     void
     popcount_rightshifted_hamming_distance_reg_kernel(
-                const unsigned int* __restrict__ anchorDataHiLoTransposed,
-                const unsigned int* __restrict__ candidateDataHiLoTransposed,
-                const int* __restrict__ anchorSequencesLength,
-                const int* __restrict__ candidateSequencesLength,
-                AlignmentOrientation* __restrict__ bestAlignmentFlags,
-                int* __restrict__ alignment_overlaps,
-                int* __restrict__ alignment_shifts,
-                int* __restrict__ alignment_nOps,
-                bool* __restrict__ alignment_isValid,
-                const int* __restrict__ d_anchorIndicesOfCandidates,
-                const int* __restrict__ numAnchorsPtr,
-                const int* __restrict__ numCandidatesPtr,
-                const bool* __restrict__ anchorContainsN,
-                bool removeAmbiguousAnchors,
-                const bool* __restrict__ candidateContainsN,
-                bool removeAmbiguousCandidates,
-                size_t encodedSequencePitchInInts2BitHiLo,
-                int min_overlap,
-                float maxErrorRate,
-                float min_overlap_ratio,
-                float estimatedNucleotideErrorRate){
+        const unsigned int* __restrict__ anchorDataHiLoTransposed,
+        const unsigned int* __restrict__ candidateDataHiLoTransposed,
+        const int* __restrict__ anchorSequencesLength,
+        const int* __restrict__ candidateSequencesLength,
+        AlignmentOrientation* __restrict__ bestAlignmentFlags,
+        int* __restrict__ alignment_overlaps,
+        int* __restrict__ alignment_shifts,
+        int* __restrict__ alignment_nOps,
+        bool* __restrict__ alignment_isValid,
+        const int* __restrict__ d_anchorIndicesOfCandidates,
+        int numAnchors,
+        int numCandidates,
+        const bool* __restrict__ anchorContainsN,
+        bool removeAmbiguousAnchors,
+        const bool* __restrict__ candidateContainsN,
+        bool removeAmbiguousCandidates,
+        size_t encodedSequencePitchInInts2BitHiLo,
+        int min_overlap,
+        float maxErrorRate,
+        float min_overlap_ratio,
+        float estimatedNucleotideErrorRate
+    ){
 
         static_assert(maxValidIntsPerSequence % 2 == 0, ""); //2bithilo has even number of ints
 
 
-        const int n_anchors = *numAnchorsPtr;
-        const int n_candidates = *numCandidatesPtr;
+        const int n_anchors = numAnchors;
+        const int n_candidates = numCandidates;
 
         auto popcount = [](auto i){return __popc(i);};
 
@@ -1502,14 +1559,14 @@ namespace gpu{
     template<int BLOCKSIZE>
     __global__
     void cuda_filter_alignments_by_mismatchratio_kernel(
-                AlignmentOrientation* __restrict__ bestAlignmentFlags,
-                const int* __restrict__ nOps,
-                const int* __restrict__ overlaps,
-                const int* __restrict__ d_candidates_per_anchor_prefixsum,
-                const int* __restrict__ d_numAnchors,
-                const int* __restrict__ d_numCandidates,
-                float mismatchratioBaseFactor,
-                float goodAlignmentsCountThreshold){
+        AlignmentOrientation* __restrict__ bestAlignmentFlags,
+        const int* __restrict__ nOps,
+        const int* __restrict__ overlaps,
+        const int* __restrict__ d_candidates_per_anchor_prefixsum,
+        int numAnchors,
+        float mismatchratioBaseFactor,
+        float goodAlignmentsCountThreshold
+    ){
 
         using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
 
@@ -1518,9 +1575,7 @@ namespace gpu{
             int broadcast[3];
         } temp_storage;
 
-        const int n_anchors = *d_numAnchors;
-        //const int n_candidates = *d_numCandidates;
-
+        const int n_anchors = numAnchors;
 
         for(int anchorindex = blockIdx.x; anchorindex < n_anchors; anchorindex += gridDim.x) {
 
@@ -1529,13 +1584,7 @@ namespace gpu{
 
             const int firstIndex = d_candidates_per_anchor_prefixsum[anchorindex];
 
-            //printf("anchorindex %d\n", anchorindex);
-
             int counts[3]{0,0,0};
-
-            //if(threadIdx.x == 0){
-            //    printf("my_n_indices %d\n", my_n_indices);
-            //}
 
             for(int index = threadIdx.x; index < candidatesForAnchor; index += blockDim.x) {
 
@@ -1551,7 +1600,7 @@ namespace gpu{
                         bestAlignmentFlags[candidate_index] = AlignmentOrientation::None;
                     }else{
 
-                            #pragma unroll
+                        #pragma unroll
                         for(int i = 2; i <= 4; i++) {
                             counts[i-2] += (mismatchratio < i * mismatchratioBaseFactor);
                         }
@@ -1561,7 +1610,7 @@ namespace gpu{
             }
 
             //accumulate counts over block
-                #pragma unroll
+            #pragma unroll
             for(int i = 0; i < 3; i++) {
                 counts[i] = BlockReduceInt(temp_storage.intreduce).Sum(counts[i]);
                 __syncthreads();
@@ -1572,9 +1621,7 @@ namespace gpu{
                 #pragma unroll
                 for(int i = 0; i < 3; i++) {
                     temp_storage.broadcast[i] = counts[i];
-                    //printf("count[%d] = %d\n", i, counts[i]);
                 }
-                //printf("mismatchratioBaseFactor %f, goodAlignmentsCountThreshold %f\n", mismatchratioBaseFactor, goodAlignmentsCountThreshold);
             }
 
             __syncthreads();
@@ -1626,8 +1673,6 @@ namespace gpu{
 
     template<int maxValidIntsPerSequence>
     void call_popcount_shifted_hamming_distance_reg_kernel_async(
-        void* d_tempstorage,
-        size_t& tempstoragebytes,
         int* d_alignment_overlaps,
         int* d_alignment_shifts,
         int* d_alignment_nOps,
@@ -1640,48 +1685,34 @@ namespace gpu{
         const int* /*d_candidates_per_anchor_prefixsum*/,
         const int* /*d_candidates_per_anchor*/,
         const int* d_anchorIndicesOfCandidates,
-        const int* d_numAnchors,
-        const int* d_numCandidates,
+        int numAnchors,
+        int numCandidates,
         const bool* d_anchorContainsN,
         bool removeAmbiguousAnchors,
         const bool* d_candidateContainsN,
         bool removeAmbiguousCandidates,
-        int maxNumAnchors,
-        int maxNumCandidates,
         int maximumSequenceLength,
         int encodedSequencePitchInInts2Bit,
         int min_overlap,
         float maxErrorRate,
         float min_overlap_ratio,
         float estimatedNucleotideErrorRate,
-        cudaStream_t stream){
+        cudaStream_t stream,
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
+    ){
 
         const int intsPerSequence2BitHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLength);
         
         
-        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumCandidates, 512) * 512;
-        const std::size_t d_anchorDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumAnchors, 512) * 512;
-        
-        {
+        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * numCandidates, 512) * 512;
+        const std::size_t d_anchorDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * numAnchors, 512) * 512;        
+        const std::size_t requiredTempBytes = d_candidateDataHiLoTransposedBytes + d_anchorDataHiLoTransposedBytes;
             
-            const std::size_t requiredTempBytes 
-                = d_candidateDataHiLoTransposedBytes
-                    + d_anchorDataHiLoTransposedBytes;
-            
-            if(d_tempstorage == 0){
-                tempstoragebytes = requiredTempBytes;
-                return;
-            }else{
-                assert(tempstoragebytes >= requiredTempBytes);
-            }
-            
-        }
+        rmm::device_uvector<char> d_tmp(requiredTempBytes, stream, mr);
         
         //Alias temp storage 
-        unsigned int* const d_anchorDataHiLoTransposed = (unsigned int*)d_tempstorage;
-        unsigned int* const d_candidateDataHiLoTransposed 
-            = (unsigned int*)(((char*)d_anchorDataHiLoTransposed) 
-            + d_anchorDataHiLoTransposedBytes);
+        unsigned int* const d_anchorDataHiLoTransposed = (unsigned int*)d_tmp.data();
+        unsigned int* const d_candidateDataHiLoTransposed = (unsigned int*)(((char*)d_anchorDataHiLoTransposed) + d_anchorDataHiLoTransposedBytes);
        
 
         callConversionKernel2BitTo2BitHiLoNT(
@@ -1690,8 +1721,7 @@ namespace gpu{
             d_candidateDataHiLoTransposed,
             intsPerSequence2BitHiLo,
             d_candidateSequencesLength,
-            d_numCandidates,
-            maxNumCandidates,
+            numCandidates,
             stream
         );
 
@@ -1701,8 +1731,7 @@ namespace gpu{
             d_anchorDataHiLoTransposed,
             intsPerSequence2BitHiLo,
             d_anchorSequencesLength,
-            d_numAnchors,
-            maxNumAnchors,
+            numAnchors,
             stream
         );
         
@@ -1724,9 +1753,8 @@ namespace gpu{
         const int maxBlocks = maxBlocksPerSM * numSMs;
 
         dim3 block(blocksize, 1, 1);
-        //const int numBlocks = SDIV(maxNumCandidates, blocksize);
-        //dim3 grid(std::min(numBlocks, maxBlocks), 1, 1);
-        dim3 grid(maxBlocks, 1, 1);
+        const int numBlocks = SDIV(numCandidates, blocksize);
+        dim3 grid(std::min(numBlocks, maxBlocks), 1, 1);
 
         popcount_shifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>
             <<<grid, block, 0, stream>>>(
@@ -1740,8 +1768,8 @@ namespace gpu{
                 d_alignment_nOps,
                 d_alignment_isValid,
                 d_anchorIndicesOfCandidates,
-                d_numAnchors,
-                d_numCandidates,
+                numAnchors,
+                numCandidates,
                 d_anchorContainsN,
                 removeAmbiguousAnchors,
                 d_candidateContainsN,
@@ -1757,8 +1785,6 @@ namespace gpu{
 
     template<int maxValidIntsPerSequence>
     void call_popcount_rightshifted_hamming_distance_reg_kernel_async(
-        void* d_tempstorage,
-        size_t& tempstoragebytes,
         int* d_alignment_overlaps,
         int* d_alignment_shifts,
         int* d_alignment_nOps,
@@ -1771,44 +1797,34 @@ namespace gpu{
         const int* /*d_candidates_per_anchor_prefixsum*/,
         const int* /*d_candidates_per_anchor*/,
         const int* d_anchorIndicesOfCandidates,
-        const int* d_numAnchors,
-        const int* d_numCandidates,
+        int numAnchors,
+        int numCandidates,
         const bool* d_anchorContainsN,
         bool removeAmbiguousAnchors,
         const bool* d_candidateContainsN,
         bool removeAmbiguousCandidates,
-        int maxNumAnchors,
-        int maxNumCandidates,
         int maximumSequenceLength,
         int encodedSequencePitchInInts2Bit,
         int min_overlap,
         float maxErrorRate,
         float min_overlap_ratio,
         float estimatedNucleotideErrorRate,
-        cudaStream_t stream){
+        cudaStream_t stream,
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
+    ){
 
         const int intsPerSequence2BitHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLength);       
         
-        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumCandidates, 512) * 512;
-        const std::size_t d_anchorDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumAnchors, 512) * 512;
-        
-        {
-            
-            const std::size_t requiredTempBytes 
+        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * numCandidates, 512) * 512;
+        const std::size_t d_anchorDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * numAnchors, 512) * 512;
+        const std::size_t requiredTempBytes 
                 = d_candidateDataHiLoTransposedBytes
                     + d_anchorDataHiLoTransposedBytes;
-            
-            if(d_tempstorage == 0){
-                tempstoragebytes = requiredTempBytes;
-                return;
-            }else{
-                assert(tempstoragebytes >= requiredTempBytes);
-            }
-            
-        }
-        
+
+        rmm::device_uvector<char> d_tmp(requiredTempBytes, stream, mr);
+
         //Alias temp storage 
-        unsigned int* const d_anchorDataHiLoTransposed = (unsigned int*)d_tempstorage;
+        unsigned int* const d_anchorDataHiLoTransposed = (unsigned int*)d_tmp.data();
         unsigned int* const d_candidateDataHiLoTransposed 
             = (unsigned int*)(((char*)d_anchorDataHiLoTransposed) 
             + d_anchorDataHiLoTransposedBytes);
@@ -1820,8 +1836,7 @@ namespace gpu{
             d_candidateDataHiLoTransposed,
             intsPerSequence2BitHiLo,
             d_candidateSequencesLength,
-            d_numCandidates,
-            maxNumCandidates,
+            numCandidates,
             stream
         );
 
@@ -1831,8 +1846,7 @@ namespace gpu{
             d_anchorDataHiLoTransposed,
             intsPerSequence2BitHiLo,
             d_anchorSequencesLength,
-            d_numAnchors,
-            maxNumAnchors,
+            numAnchors,
             stream
         );
 
@@ -1853,9 +1867,8 @@ namespace gpu{
         const int maxBlocks = maxBlocksPerSM * numSMs;  
 
         dim3 block(blocksize, 1, 1);
-        //const int numBlocks = SDIV(maxNumCandidates, blocksize);
-        //dim3 grid(std::min(numBlocks, maxBlocks), 1, 1);
-        dim3 grid(maxBlocks, 1, 1);
+        const int numBlocks = SDIV(numCandidates, blocksize);
+        dim3 grid(std::min(numBlocks, maxBlocks), 1, 1);
 
         popcount_rightshifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>
             <<<grid, block, 0, stream>>>(
@@ -1869,8 +1882,8 @@ namespace gpu{
                 d_alignment_nOps,
                 d_alignment_isValid,
                 d_anchorIndicesOfCandidates,
-                d_numAnchors,
-                d_numCandidates,
+                numAnchors,
+                numCandidates,
                 d_anchorContainsN,
                 removeAmbiguousAnchors,
                 d_candidateContainsN,
@@ -1886,35 +1899,33 @@ namespace gpu{
 
 
     void call_popcount_shifted_hamming_distance_smem_kernel_async(
-            void* d_tempstorage,
-            size_t& tempstoragebytes,
-            int* d_alignment_overlaps,
-            int* d_alignment_shifts,
-            int* d_alignment_nOps,
-            bool* d_alignment_isValid,
-            AlignmentOrientation* d_alignment_best_alignment_flags,
-            const unsigned int* d_anchorSequencesData,
-            const unsigned int* d_candidateSequencesData,
-            const int* d_anchorSequencesLength,
-            const int* d_candidateSequencesLength,
-            const int* d_candidates_per_anchor_prefixsum,
-            const int* d_candidates_per_anchor,
-            const int* /*d_anchorIndicesOfCandidates*/,
-            const int* d_numAnchors,
-            const int* d_numCandidates,
-            const bool* d_anchorContainsN,
-            bool removeAmbiguousAnchors,
-            const bool* d_candidateContainsN,
-            bool removeAmbiguousCandidates,
-            int maxNumAnchors,
-            int maxNumCandidates,
-            int maximumSequenceLength,
-            int encodedSequencePitchInInts2Bit,
-            int min_overlap,
-            float maxErrorRate,
-            float min_overlap_ratio,
-            float estimatedNucleotideErrorRate,
-            cudaStream_t stream){
+        int* d_alignment_overlaps,
+        int* d_alignment_shifts,
+        int* d_alignment_nOps,
+        bool* d_alignment_isValid,
+        AlignmentOrientation* d_alignment_best_alignment_flags,
+        const unsigned int* d_anchorSequencesData,
+        const unsigned int* d_candidateSequencesData,
+        const int* d_anchorSequencesLength,
+        const int* d_candidateSequencesLength,
+        const int* d_candidates_per_anchor_prefixsum,
+        const int* d_candidates_per_anchor,
+        const int* /*d_anchorIndicesOfCandidates*/,
+        int numAnchors,
+        int numCandidates,
+        const bool* d_anchorContainsN,
+        bool removeAmbiguousAnchors,
+        const bool* d_candidateContainsN,
+        bool removeAmbiguousCandidates,
+        int maximumSequenceLength,
+        int encodedSequencePitchInInts2Bit,
+        int min_overlap,
+        float maxErrorRate,
+        float min_overlap_ratio,
+        float estimatedNucleotideErrorRate,
+        cudaStream_t stream,
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
+    ){
         
         constexpr int tilesize = 16;
         
@@ -1929,39 +1940,19 @@ namespace gpu{
         const int intsPerSequence2BitHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLength);
         const int bytesPerSequence2BitHilo = intsPerSequence2BitHiLo * sizeof(unsigned int);
         
-        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumCandidates, 512) * 512;
-        const std::size_t d_anchorDataHiLoBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumAnchors, 512) * 512;
-        const std::size_t d_tiles_per_anchor_prefixsumBytes = SDIV(sizeof(int) * (maxNumAnchors+1), 512) * 512;
-        std::size_t cubBytes = 0;
-        
-        // CUDACHECK(cub::DeviceScan::InclusiveSum(
-        //     nullptr,
-        //     cubBytes,
-        //     d_tiles_per_anchor,
-        //     (int*) nullptr,
-        //     maxNumAnchors,
-        //     stream
-        // ));
-        
-        {
+        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * numCandidates, 512) * 512;
+        const std::size_t d_anchorDataHiLoBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * numAnchors, 512) * 512;
+        const std::size_t d_tiles_per_anchor_prefixsumBytes = SDIV(sizeof(int) * (numAnchors+1), 512) * 512;
 
-            const std::size_t requiredTempBytes 
+        const std::size_t requiredTempBytes 
                 = d_candidateDataHiLoTransposedBytes
                     + d_anchorDataHiLoBytes
-                    + d_tiles_per_anchor_prefixsumBytes
-                    + cubBytes;
-            
-            if(d_tempstorage == 0){
-                tempstoragebytes = requiredTempBytes;
-                return;
-            }else{
-                assert(tempstoragebytes >= requiredTempBytes);
-            }
-        
-        }
+                    + d_tiles_per_anchor_prefixsumBytes;
+
+        rmm::device_uvector<char> d_tmp(requiredTempBytes, stream, mr);
         
         //Alias temp storage 
-        unsigned int* const d_candidateDataHiLoTransposed = (unsigned int*)d_tempstorage;
+        unsigned int* const d_candidateDataHiLoTransposed = (unsigned int*)d_tmp.data();
         unsigned int* const d_anchorDataHiLo 
             = (unsigned int*)(((char*)d_candidateDataHiLoTransposed) 
                 + d_candidateDataHiLoTransposedBytes);
@@ -1975,8 +1966,7 @@ namespace gpu{
             d_candidateDataHiLoTransposed,
             intsPerSequence2BitHiLo,
             d_candidateSequencesLength,
-            d_numCandidates,
-            maxNumCandidates,
+            numCandidates,
             stream
         );
 
@@ -1986,61 +1976,17 @@ namespace gpu{
             d_anchorDataHiLo,
             intsPerSequence2BitHiLo,
             d_anchorSequencesLength,
-            d_numAnchors,
-            maxNumAnchors,
+            numAnchors,
             stream
         );
 
         //calculate d_tiles_per_anchor_prefixsum
-        helpers::lambda_kernel<<<1, 256, 0, stream>>>([=]__device__(){
-            using BlockScan = cub::BlockScan<int, 256>;
-
-            __shared__ typename BlockScan::TempStorage temp_storage;
-
-            const int numItems = *d_numAnchors;
-
-            constexpr int ITEMS_PER_THREAD = 4;
-
-            int aggregate = 0;
-
-            const int iters = SDIV(numItems, 256 * ITEMS_PER_THREAD);
-
-            const int threadoffset = ITEMS_PER_THREAD * threadIdx.x;
-
-            if(threadIdx.x == 0){
-                d_tiles_per_anchor_prefixsum[0] = 0;
-            }
-
-            for(int iter = 0; iter < iters; iter++){
-                int thread_data[ITEMS_PER_THREAD];
-
-                const int iteroffset = 256 * ITEMS_PER_THREAD * iter;
-
-                #pragma unroll
-                for(int k = 0; k < ITEMS_PER_THREAD; k++){
-                    if(iteroffset + threadoffset + k < numItems){
-                        thread_data[k] = d_tiles_per_anchor[iteroffset + threadoffset + k];
-                    }else{
-                        thread_data[k] = 0;
-                    }
-                }
-
-                int block_aggregate = 0;
-                BlockScan(temp_storage).InclusiveSum(thread_data, thread_data, block_aggregate);
-
-                #pragma unroll
-                for(int k = 0; k < ITEMS_PER_THREAD; k++){
-                    if(iteroffset + threadoffset + k < numItems){
-                        d_tiles_per_anchor_prefixsum[1+iteroffset + threadoffset + k] = aggregate + thread_data[k];
-                    }
-                }
-
-                aggregate += block_aggregate;
-
-                __syncthreads();
-            }
-        }); CUDACHECKASYNC;
-
+        alignmentdetail::inclusivePrefixSumLeadingZeroSingleBlockKernel<512, 4><<<1, 512, 0, stream>>>(
+            d_tiles_per_anchor_prefixsum,
+            d_tiles_per_anchor,
+            numAnchors
+        );
+        CUDACHECKASYNC;
 
         constexpr int blocksize = 128;
         constexpr int tilesPerBlock = blocksize / tilesize;
@@ -2062,7 +2008,6 @@ namespace gpu{
         const int maxBlocks = maxBlocksPerSM * numSMs;
 
         dim3 block(blocksize, 1, 1);
-        //dim3 grid(std::min(requiredBlocks, maxBlocks), 1, 1);
         dim3 grid(maxBlocks, 1, 1);
 
         popcount_shifted_hamming_distance_smem_kernel<tilesize><<<grid, block, smem, stream>>>(
@@ -2077,8 +2022,8 @@ namespace gpu{
             d_candidateSequencesLength, 
             d_candidates_per_anchor_prefixsum, 
             d_tiles_per_anchor_prefixsum, 
-            d_numAnchors, 
-            d_numCandidates, 
+            numAnchors, 
+            numCandidates, 
             d_anchorContainsN, 
             removeAmbiguousAnchors, 
             d_candidateContainsN, 
@@ -2093,8 +2038,6 @@ namespace gpu{
     }
 
     void call_popcount_rightshifted_hamming_distance_smem_kernel_async(
-            void* d_tempstorage,
-            size_t& tempstoragebytes,
             int* d_alignment_overlaps,
             int* d_alignment_shifts,
             int* d_alignment_nOps,
@@ -2107,21 +2050,21 @@ namespace gpu{
             const int* d_candidates_per_anchor_prefixsum,
             const int* d_candidates_per_anchor,
             const int* /*d_anchorIndicesOfCandidates*/,
-            const int* d_numAnchors,
-            const int* d_numCandidates,
+            int numAnchors,
+            int numCandidates,
             const bool* d_anchorContainsN,
             bool removeAmbiguousAnchors,
             const bool* d_candidateContainsN,
             bool removeAmbiguousCandidates,
-            int maxNumAnchors,
-            int maxNumCandidates,
             int maximumSequenceLength,
             int encodedSequencePitchInInts2Bit,
             int min_overlap,
             float maxErrorRate,
             float min_overlap_ratio,
             float estimatedNucleotideErrorRate,
-            cudaStream_t stream){
+            cudaStream_t stream,
+            rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
+        ){
         
         constexpr int tilesize = 16;
         
@@ -2136,39 +2079,19 @@ namespace gpu{
         const int intsPerSequence2BitHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLength);
         const int bytesPerSequence2BitHilo = intsPerSequence2BitHiLo * sizeof(unsigned int);
         
-        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumCandidates, 512) * 512;
-        const std::size_t d_anchorDataHiLoBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumAnchors, 512) * 512;
-        const std::size_t d_tiles_per_anchor_prefixsumBytes = SDIV(sizeof(int) * (maxNumAnchors+1), 512) * 512;
-        std::size_t cubBytes = 0;
-        
-        // CUDACHECK(cub::DeviceScan::InclusiveSum(
-        //     nullptr,
-        //     cubBytes,
-        //     d_tiles_per_anchor,
-        //     (int*) nullptr,
-        //     maxNumAnchors,
-        //     stream
-        // ));
-        
-        {
+        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * numCandidates, 512) * 512;
+        const std::size_t d_anchorDataHiLoBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * numAnchors, 512) * 512;
+        const std::size_t d_tiles_per_anchor_prefixsumBytes = SDIV(sizeof(int) * (numAnchors+1), 512) * 512;
 
-            const std::size_t requiredTempBytes 
-                = d_candidateDataHiLoTransposedBytes
-                    + d_anchorDataHiLoBytes
-                    + d_tiles_per_anchor_prefixsumBytes
-                    + cubBytes;
-            
-            if(d_tempstorage == 0){
-                tempstoragebytes = requiredTempBytes;
-                return;
-            }else{
-                assert(tempstoragebytes >= requiredTempBytes);
-            }
-        
-        }
+        const std::size_t requiredTempBytes 
+            = d_candidateDataHiLoTransposedBytes
+                + d_anchorDataHiLoBytes
+                + d_tiles_per_anchor_prefixsumBytes;
+
+        rmm::device_uvector<char> d_tmp(requiredTempBytes, stream, mr);
         
         //Alias temp storage 
-        unsigned int* const d_candidateDataHiLoTransposed = (unsigned int*)d_tempstorage;
+        unsigned int* const d_candidateDataHiLoTransposed = (unsigned int*)d_tmp.data();
         unsigned int* const d_anchorDataHiLo 
             = (unsigned int*)(((char*)d_candidateDataHiLoTransposed) 
                 + d_candidateDataHiLoTransposedBytes);
@@ -2182,8 +2105,7 @@ namespace gpu{
             d_candidateDataHiLoTransposed,
             intsPerSequence2BitHiLo,
             d_candidateSequencesLength,
-            d_numCandidates,
-            maxNumCandidates,
+            numCandidates,
             stream
         );
 
@@ -2193,61 +2115,17 @@ namespace gpu{
             d_anchorDataHiLo,
             intsPerSequence2BitHiLo,
             d_anchorSequencesLength,
-            d_numAnchors,
-            maxNumAnchors,
+            numAnchors,
             stream
         );
 
         //calculate d_tiles_per_anchor_prefixsum
-        helpers::lambda_kernel<<<1, 256, 0, stream>>>([=]__device__(){
-            using BlockScan = cub::BlockScan<int, 256>;
-
-            __shared__ typename BlockScan::TempStorage temp_storage;
-
-            const int numItems = *d_numAnchors;
-
-            constexpr int ITEMS_PER_THREAD = 4;
-
-            int aggregate = 0;
-
-            const int iters = SDIV(numItems, 256 * ITEMS_PER_THREAD);
-
-            const int threadoffset = ITEMS_PER_THREAD * threadIdx.x;
-
-            if(threadIdx.x == 0){
-                d_tiles_per_anchor_prefixsum[0] = 0;
-            }
-
-            for(int iter = 0; iter < iters; iter++){
-                int thread_data[ITEMS_PER_THREAD];
-
-                const int iteroffset = 256 * ITEMS_PER_THREAD * iter;
-
-                #pragma unroll
-                for(int k = 0; k < ITEMS_PER_THREAD; k++){
-                    if(iteroffset + threadoffset + k < numItems){
-                        thread_data[k] = d_tiles_per_anchor[iteroffset + threadoffset + k];
-                    }else{
-                        thread_data[k] = 0;
-                    }
-                }
-
-                int block_aggregate = 0;
-                BlockScan(temp_storage).InclusiveSum(thread_data, thread_data, block_aggregate);
-
-                #pragma unroll
-                for(int k = 0; k < ITEMS_PER_THREAD; k++){
-                    if(iteroffset + threadoffset + k < numItems){
-                        d_tiles_per_anchor_prefixsum[1+iteroffset + threadoffset + k] = aggregate + thread_data[k];
-                    }
-                }
-
-                aggregate += block_aggregate;
-
-                __syncthreads();
-            } 
-        }); CUDACHECKASYNC;
-
+        alignmentdetail::inclusivePrefixSumLeadingZeroSingleBlockKernel<512, 4><<<1, 512, 0, stream>>>(
+            d_tiles_per_anchor_prefixsum,
+            d_tiles_per_anchor,
+            numAnchors
+        );
+        CUDACHECKASYNC;
 
         constexpr int blocksize = 128;
         constexpr int tilesPerBlock = blocksize / tilesize;
@@ -2284,8 +2162,8 @@ namespace gpu{
             d_candidateSequencesLength, 
             d_candidates_per_anchor_prefixsum, 
             d_tiles_per_anchor_prefixsum, 
-            d_numAnchors, 
-            d_numCandidates, 
+            numAnchors, 
+            numCandidates, 
             d_anchorContainsN, 
             removeAmbiguousAnchors, 
             d_candidateContainsN, 
@@ -2302,40 +2180,36 @@ namespace gpu{
 
 
     void call_popcount_shifted_hamming_distance_kernel_async(
-            void* d_tempstorage,
-            size_t& tempstoragebytes,
-            int* d_alignment_overlaps,
-            int* d_alignment_shifts,
-            int* d_alignment_nOps,
-            bool* d_alignment_isValid,
-            AlignmentOrientation* d_alignment_best_alignment_flags,
-            const unsigned int* d_anchorSequencesData,
-            const unsigned int* d_candidateSequencesData,
-            const int* d_anchorSequencesLength,
-            const int* d_candidateSequencesLength,
-            const int* d_candidates_per_anchor_prefixsum,
-            const int* d_candidates_per_anchor,
-            const int* d_anchorIndicesOfCandidates,
-            const int* d_numAnchors,
-            const int* d_numCandidates,
-            const bool* d_anchorContainsN,
-            bool removeAmbiguousAnchors,
-            const bool* d_candidateContainsN,
-            bool removeAmbiguousCandidates,
-            int maxNumAnchors,
-            int maxNumCandidates,
-            int maximumSequenceLength,
-            int encodedSequencePitchInInts2Bit,
-            int min_overlap,
-            float maxErrorRate,
-            float min_overlap_ratio,
-            float estimatedNucleotideErrorRate,
-            cudaStream_t stream){
+        int* d_alignment_overlaps,
+        int* d_alignment_shifts,
+        int* d_alignment_nOps,
+        bool* d_alignment_isValid,
+        AlignmentOrientation* d_alignment_best_alignment_flags,
+        const unsigned int* d_anchorSequencesData,
+        const unsigned int* d_candidateSequencesData,
+        const int* d_anchorSequencesLength,
+        const int* d_candidateSequencesLength,
+        const int* d_candidates_per_anchor_prefixsum,
+        const int* d_candidates_per_anchor,
+        const int* d_anchorIndicesOfCandidates,
+        int numAnchors,
+        int numCandidates,
+        const bool* d_anchorContainsN,
+        bool removeAmbiguousAnchors,
+        const bool* d_candidateContainsN,
+        bool removeAmbiguousCandidates,
+        int maximumSequenceLength,
+        int encodedSequencePitchInInts2Bit,
+        int min_overlap,
+        float maxErrorRate,
+        float min_overlap_ratio,
+        float estimatedNucleotideErrorRate,
+        cudaStream_t stream,
+        rmm::mr::device_memory_resource* mr
+    ){
 
             #define regKernel(intsPerSequence){ \
                 call_popcount_shifted_hamming_distance_reg_kernel_async<intsPerSequence>( \
-                    d_tempstorage, \
-                    tempstoragebytes, \
                     d_alignment_overlaps, \
                     d_alignment_shifts, \
                     d_alignment_nOps, \
@@ -2348,21 +2222,20 @@ namespace gpu{
                     d_candidates_per_anchor_prefixsum, \
                     d_candidates_per_anchor, \
                     d_anchorIndicesOfCandidates, \
-                    d_numAnchors, \
-                    d_numCandidates, \
+                    numAnchors, \
+                    numCandidates, \
                     d_anchorContainsN, \
                     removeAmbiguousAnchors, \
                     d_candidateContainsN, \
                     removeAmbiguousCandidates, \
-                    maxNumAnchors, \
-                    maxNumCandidates, \
                     maximumSequenceLength, \
                     encodedSequencePitchInInts2Bit, \
                     min_overlap, \
                     maxErrorRate, \
                     min_overlap_ratio, \
                     estimatedNucleotideErrorRate, \
-                    stream \
+                    stream, \
+                    mr \
                 ); \
             };
             
@@ -2410,8 +2283,6 @@ namespace gpu{
                     
                 }else{
                     call_popcount_shifted_hamming_distance_smem_kernel_async(
-                        d_tempstorage,
-                        tempstoragebytes,
                         d_alignment_overlaps,
                         d_alignment_shifts,
                         d_alignment_nOps,
@@ -2424,29 +2295,26 @@ namespace gpu{
                         d_candidates_per_anchor_prefixsum,
                         d_candidates_per_anchor,
                         d_anchorIndicesOfCandidates,
-                        d_numAnchors,
-                        d_numCandidates,
+                        numAnchors,
+                        numCandidates,
                         d_anchorContainsN,
                         removeAmbiguousAnchors,
                         d_candidateContainsN,
-                        removeAmbiguousCandidates,
-                        maxNumAnchors,
-                        maxNumCandidates,
+                        removeAmbiguousCandidates,                        
                         maximumSequenceLength,
                         encodedSequencePitchInInts2Bit,
                         min_overlap,
                         maxErrorRate,
                         min_overlap_ratio,
                         estimatedNucleotideErrorRate,
-                        stream
+                        stream,
+                        mr
                     );
                 }
 
                 #else 
 
                     call_popcount_shifted_hamming_distance_smem_kernel_async(
-                        d_tempstorage,
-                        tempstoragebytes,
                         d_alignment_overlaps,
                         d_alignment_shifts,
                         d_alignment_nOps,
@@ -2459,34 +2327,24 @@ namespace gpu{
                         d_candidates_per_anchor_prefixsum,
                         d_candidates_per_anchor,
                         d_anchorIndicesOfCandidates,
-                        d_numAnchors,
-                        d_numCandidates,
+                        numAnchors,
+                        numCandidates,
                         d_anchorContainsN,
                         removeAmbiguousAnchors,
                         d_candidateContainsN,
                         removeAmbiguousCandidates,
-                        maxNumAnchors,
-                        maxNumCandidates,
                         maximumSequenceLength,
                         encodedSequencePitchInInts2Bit,
                         min_overlap,
                         maxErrorRate,
                         min_overlap_ratio,
                         estimatedNucleotideErrorRate,
-                        stream
+                        stream,
+                        mr
                     );
                 #endif
             };
-            
-            if(d_tempstorage == nullptr){
-                tempstoragebytes = 0;
-                
-                run();
-                
-                return;
-            }
-
-            
+                        
             run();
 
         #undef regKernel 
@@ -2495,40 +2353,36 @@ namespace gpu{
 
 
     void call_popcount_rightshifted_hamming_distance_kernel_async(
-            void* d_tempstorage,
-            size_t& tempstoragebytes,
-            int* d_alignment_overlaps,
-            int* d_alignment_shifts,
-            int* d_alignment_nOps,
-            bool* d_alignment_isValid,
-            AlignmentOrientation* d_alignment_best_alignment_flags,
-            const unsigned int* d_anchorSequencesData,
-            const unsigned int* d_candidateSequencesData,
-            const int* d_anchorSequencesLength,
-            const int* d_candidateSequencesLength,
-            const int* d_candidates_per_anchor_prefixsum,
-            const int* d_candidates_per_anchor,
-            const int* d_anchorIndicesOfCandidates,
-            const int* d_numAnchors,
-            const int* d_numCandidates,
-            const bool* d_anchorContainsN,
-            bool removeAmbiguousAnchors,
-            const bool* d_candidateContainsN,
-            bool removeAmbiguousCandidates,
-            int maxNumAnchors,
-            int maxNumCandidates,
-            int maximumSequenceLength,
-            int encodedSequencePitchInInts2Bit,
-            int min_overlap,
-            float maxErrorRate,
-            float min_overlap_ratio,
-            float estimatedNucleotideErrorRate,
-            cudaStream_t stream){
+        int* d_alignment_overlaps,
+        int* d_alignment_shifts,
+        int* d_alignment_nOps,
+        bool* d_alignment_isValid,
+        AlignmentOrientation* d_alignment_best_alignment_flags,
+        const unsigned int* d_anchorSequencesData,
+        const unsigned int* d_candidateSequencesData,
+        const int* d_anchorSequencesLength,
+        const int* d_candidateSequencesLength,
+        const int* d_candidates_per_anchor_prefixsum,
+        const int* d_candidates_per_anchor,
+        const int* d_anchorIndicesOfCandidates,
+        int numAnchors,
+        int numCandidates,
+        const bool* d_anchorContainsN,
+        bool removeAmbiguousAnchors,
+        const bool* d_candidateContainsN,
+        bool removeAmbiguousCandidates,
+        int maximumSequenceLength,
+        int encodedSequencePitchInInts2Bit,
+        int min_overlap,
+        float maxErrorRate,
+        float min_overlap_ratio,
+        float estimatedNucleotideErrorRate,
+        cudaStream_t stream,
+        rmm::mr::device_memory_resource* mr
+    ){
 
             #define regKernel(intsPerSequence){ \
                 call_popcount_rightshifted_hamming_distance_reg_kernel_async<intsPerSequence>( \
-                    d_tempstorage, \
-                    tempstoragebytes, \
                     d_alignment_overlaps, \
                     d_alignment_shifts, \
                     d_alignment_nOps, \
@@ -2541,29 +2395,26 @@ namespace gpu{
                     d_candidates_per_anchor_prefixsum, \
                     d_candidates_per_anchor, \
                     d_anchorIndicesOfCandidates, \
-                    d_numAnchors, \
-                    d_numCandidates, \
+                    numAnchors, \
+                    numCandidates, \
                     d_anchorContainsN, \
                     removeAmbiguousAnchors, \
                     d_candidateContainsN, \
                     removeAmbiguousCandidates, \
-                    maxNumAnchors, \
-                    maxNumCandidates, \
                     maximumSequenceLength, \
                     encodedSequencePitchInInts2Bit, \
                     min_overlap, \
                     maxErrorRate, \
                     min_overlap_ratio, \
                     estimatedNucleotideErrorRate, \
-                    stream \
+                    stream, \
+                    mr \
                 ); \
             };
             
             auto run = [&](){
                 #if 0
                 call_popcount_rightshifted_hamming_distance_smem_kernel_async(
-                    d_tempstorage,
-                    tempstoragebytes,
                     d_alignment_overlaps,
                     d_alignment_shifts,
                     d_alignment_nOps,
@@ -2576,21 +2427,20 @@ namespace gpu{
                     d_candidates_per_anchor_prefixsum,
                     d_candidates_per_anchor,
                     d_anchorIndicesOfCandidates,
-                    d_numAnchors,
-                    d_numCandidates,
+                    numAnchors,
+                    numCandidates,
                     d_anchorContainsN,
                     removeAmbiguousAnchors,
                     d_candidateContainsN,
-                    removeAmbiguousCandidates,
-                    maxNumAnchors,
-                    maxNumCandidates,
+                    removeAmbiguousCandidates,                    
                     maximumSequenceLength,
                     encodedSequencePitchInInts2Bit,
                     min_overlap,
                     maxErrorRate,
                     min_overlap_ratio,
                     estimatedNucleotideErrorRate,
-                    stream
+                    stream,
+                    mr
                 );
                 #else
                 if(1 <= maximumSequenceLength && maximumSequenceLength <= 32){
@@ -2636,8 +2486,6 @@ namespace gpu{
                 }else{
                     
                     call_popcount_rightshifted_hamming_distance_smem_kernel_async(
-                        d_tempstorage,
-                        tempstoragebytes,
                         d_alignment_overlaps,
                         d_alignment_shifts,
                         d_alignment_nOps,
@@ -2650,35 +2498,25 @@ namespace gpu{
                         d_candidates_per_anchor_prefixsum,
                         d_candidates_per_anchor,
                         d_anchorIndicesOfCandidates,
-                        d_numAnchors,
-                        d_numCandidates,
+                        numAnchors,
+                        numCandidates,
                         d_anchorContainsN,
                         removeAmbiguousAnchors,
                         d_candidateContainsN,
                         removeAmbiguousCandidates,
-                        maxNumAnchors,
-                        maxNumCandidates,
                         maximumSequenceLength,
                         encodedSequencePitchInInts2Bit,
                         min_overlap,
                         maxErrorRate,
                         min_overlap_ratio,
                         estimatedNucleotideErrorRate,
-                        stream
+                        stream,
+                        mr
                     );
                 }
                 #endif
             };
-            
-            if(d_tempstorage == nullptr){
-                tempstoragebytes = 0;
-                
-                run();
-                
-                return;
-            }
-
-            
+                        
             run();
 
         #undef regKernel 
@@ -2690,10 +2528,8 @@ namespace gpu{
         const int* d_nOps,
         const int* d_overlaps,
         const int* d_candidates_per_anchor_prefixsum,
-        const int* d_numAnchors,
-        const int* d_numCandidates,
-        int /*maxNumAnchors*/,
-        int /*maxNumCandidates*/,
+        int numAnchors,
+        int /*numCandidates*/,
         float mismatchratioBaseFactor,
         float goodAlignmentsCountThreshold,
         cudaStream_t stream
@@ -2718,16 +2554,14 @@ namespace gpu{
         const int maxBlocks = maxBlocksPerSM * numSMs;
 
         dim3 block(blocksize, 1, 1);
-        //dim3 grid(std::min(maxNumAnchors, maxBlocks));
-        dim3 grid(maxBlocks, 1, 1);
+        dim3 grid(std::min(numAnchors, maxBlocks));
 
         cuda_filter_alignments_by_mismatchratio_kernel<blocksize><<<grid, block, smem, stream>>>( 
             d_bestAlignmentFlags, 
             d_nOps, 
             d_overlaps, 
             d_candidates_per_anchor_prefixsum, 
-            d_numAnchors, 
-            d_numCandidates, 
+            numAnchors,
             mismatchratioBaseFactor, 
             goodAlignmentsCountThreshold
         ); 
@@ -2745,10 +2579,8 @@ namespace gpu{
         const int* d_candidates_per_anchor,
         const int* d_candidates_per_anchor_prefixsum,
         const int* d_anchorIndicesOfCandidates,
-        const int* d_numAnchors,
-        const int* d_numCandidates,
-        int maxNumAnchors,
-        int /*maxNumCandidates*/,
+        int numAnchors,
+        int numCandidates,
         cudaStream_t stream
     ){
 
@@ -2771,18 +2603,15 @@ namespace gpu{
 
         const int maxBlocks = maxBlocksPerSM * numSMs;
 
-        helpers::lambda_kernel<<<4, 256, 0, stream>>>([=] __device__(){
+        helpers::lambda_kernel<<<SDIV(numCandidates, 256), 256, 0, stream>>>([=] __device__(){
             const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-            const int stride = blockDim.x * gridDim.x;
 
-            const int numCandidates = *d_numCandidates;
-
-            for(int i = tid; i < numCandidates; i += stride){
-                d_indicesOfGoodCandidates[i] = -1;
+            if(tid < numCandidates){
+                d_indicesOfGoodCandidates[tid] = -1;
             }
 
-            for(int i = tid; i < maxNumAnchors; i += stride){
-                d_numIndicesPerAnchor[i] = 0;
+            if(tid < numAnchors){
+                d_numIndicesPerAnchor[tid] = 0;
             }
 
             if(tid == 0){
@@ -2791,8 +2620,7 @@ namespace gpu{
         }); CUDACHECKASYNC;
 
         dim3 block(blocksize, 1, 1);
-        //dim3 grid(std::min(SDIV(maxNumCandidates, blocksize), maxBlocks));
-        dim3 grid(maxBlocks, 1, 1);
+        dim3 grid(std::min(SDIV(numCandidates, blocksize), maxBlocks));
 
         selectIndicesOfGoodCandidatesKernel<blocksize, tilesize><<<grid, block, 0, stream>>>(
             d_indicesOfGoodCandidates,
@@ -2802,8 +2630,7 @@ namespace gpu{
             d_candidates_per_anchor,
             d_candidates_per_anchor_prefixsum,
             d_anchorIndicesOfCandidates,
-            d_numAnchors,
-            d_numCandidates
+            numAnchors
         ); CUDACHECKASYNC;
     }
 
