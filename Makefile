@@ -127,13 +127,13 @@ correct_cpu_release:
 	@$(MAKE) correct_cpu_release_dummy DIR=$(BUILDDIR_CORRECT_CPU) CXXFLAGS="-std=c++17"
 
 correct_gpu_release: gpuarchs.txt
-	@$(MAKE) correct_gpu_release_dummy DIR=$(BUILDDIR_CORRECT_GPU) CXXFLAGS="-std=c++17" CUDA_ARCH=$(shell cat gpuarchs.txt)
+	@$(MAKE) correct_gpu_release_dummy DIR=$(BUILDDIR_CORRECT_GPU) CXXFLAGS="-std=c++17" CUDA_ARCH="$(shell cat gpuarchs.txt)"
 
 extend_cpu_release:
 	@$(MAKE) extend_cpu_release_dummy DIR=$(BUILDDIR_EXTEND_CPU) CXXFLAGS="-std=c++17"
 
 extend_gpu_release: gpuarchs.txt
-	@$(MAKE) extend_gpu_release_dummy DIR=$(BUILDDIR_EXTEND_GPU) CXXFLAGS="-std=c++17" CUDA_ARCH=$(shell cat gpuarchs.txt)
+	@$(MAKE) extend_gpu_release_dummy DIR=$(BUILDDIR_EXTEND_GPU) CXXFLAGS="-std=c++17" CUDA_ARCH="$(shell cat gpuarchs.txt)"
 
 
 
