@@ -452,8 +452,8 @@ void callEncodeSequencesTo2BitKernel(
     unsigned int* d_encodedSequences,
     const char* d_decodedSequences,
     const int* d_sequenceLengths,
-    int decodedSequencePitchInBytes,
-    int encodedSequencePitchInInts,
+    size_t decodedSequencePitchInBytes,
+    size_t encodedSequencePitchInInts,
     int numSequences,
     int groupsize,
     cudaStream_t stream
@@ -463,8 +463,8 @@ void callDecodeSequencesFrom2BitKernel(
     char* d_decodedSequences,
     const unsigned int* d_encodedSequences,
     const int* d_sequenceLengths,
-    int decodedSequencePitchInBytes,
-    int encodedSequencePitchInInts,
+    size_t decodedSequencePitchInBytes,
+    size_t encodedSequencePitchInInts,
     int numSequences,
     int groupsize,
     cudaStream_t stream

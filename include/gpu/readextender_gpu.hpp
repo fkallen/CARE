@@ -666,15 +666,16 @@ struct GpuReadExtender{
                     soainputAnchorsDecoded.data()
                 ); CUDACHECKASYNC;
 
-                readextendergpukernels::encodeSequencesTo2BitKernel<8>
-                <<<SDIV(size(), (128 / 8)), 128, 0, stream>>>(
+                callEncodeSequencesTo2BitKernel(
                     anchorData.d_anchorSequencesData.data(),
                     anchorData.d_anchorSequencesDataDecoded.data(),
                     anchorData.d_anchorSequencesLength.data(),
                     decodedSequencePitchInBytes,
                     encodedSequencePitchInInts,
-                    size()
-                ); CUDACHECKASYNC;
+                    size(),
+                    8,
+                    stream
+                );
             }
         }
 
@@ -1875,17 +1876,16 @@ struct GpuReadExtender{
             // CUDACHECKASYNC; //DEBUG
             // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
 
-            readextendergpukernels::encodeSequencesTo2BitKernel<8>
-            <<<SDIV(numAnchors, (128 / 8)), 128, 0, stream>>>(
+            callEncodeSequencesTo2BitKernel(
                 extraEncodedSequences.data(),
                 extraDecodedSequences.data(),
                 extraSequenceLengths.data(),
                 extraDecodedPitch,
                 extraEncodedPitchInInts,
-                numAnchors
-            ); CUDACHECKASYNC;
-
-            DEBUGSTREAMSYNC(stream);
+                numAnchors,
+                8,
+                stream
+            );
 
             // CUDACHECKASYNC; //DEBUG
             // CUDACHECK(cudaStreamSynchronizeWrapper(stream)); //DEBUG
@@ -3802,15 +3802,16 @@ struct GpuReadExtender{
 
         rmm::device_uvector<unsigned int> d_extendedIterationSequences(numCandidates * encodedSequencePitchInInts, stream, mr);
 
-        readextendergpukernels::encodeSequencesTo2BitKernel<8>
-        <<<SDIV(numCandidates, (128 / 8)), 128, 0, stream>>>(
+        callEncodeSequencesTo2BitKernel(
             d_extendedIterationSequences.data(),
             finishedTasks4.soatotalDecodedAnchorsFlat.data(),
             finishedTasks4.soatotalDecodedAnchorsLengths.data(),
             decodedSequencePitchInBytes,
             encodedSequencePitchInInts,
-            numCandidates
-        ); CUDACHECKASYNC;
+            numCandidates,
+            8,
+            stream
+        );
 
 
         //sequence data has been transfered to gpu. now set up remaining msa input data
