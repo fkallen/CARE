@@ -490,6 +490,45 @@ public: //inherited interface
         }
     }
 
+    void gatherContiguousSequences(
+        unsigned int* sequence_data,
+        std::size_t outSequencePitchInInts,
+        read_number firstIndex,
+        int numSequences
+    ) const override{
+        if(hasShrinkedSequences){
+            if(encodedSequencePitchInInts == outSequencePitchInInts){
+                std::copy_n(
+                    shrinkedEncodedSequences.data() + encodedSequencePitchInInts * firstIndex,
+                    encodedSequencePitchInInts * numSequences,
+                    sequence_data
+                );
+            }else{
+                for(int i = 0; i < numSequences; i++){
+                    const std::size_t readId = firstIndex + i;
+                    const unsigned int* const data = shrinkedEncodedSequences.data() + encodedSequencePitchInInts * readId;
+                    unsigned int* const destData = sequence_data + outSequencePitchInInts * i;
+                    const int l = std::min(outSequencePitchInInts, encodedSequencePitchInInts);
+                    std::copy_n(data, l, destData);
+                }
+            }
+        }else{
+
+            for(int i = 0; i < numSequences; i++){
+                const std::size_t readId = firstIndex + i;
+                const std::size_t chunkIndex = getChunkIndexOfRow(readId);
+                const std::size_t rowInChunk = getRowIndexInChunk(chunkIndex, readId);
+
+                const unsigned int* const data = sequenceStorage[chunkIndex].encodedSequences.data()
+                    + rowInChunk * sequenceStorage[chunkIndex].encodedSequencePitchInInts;
+
+                unsigned int* const destData = sequence_data + outSequencePitchInInts * i;
+                const int l = std::min(outSequencePitchInInts, sequenceStorage[chunkIndex].encodedSequencePitchInInts);
+                std::copy_n(data, l, destData);
+            }
+        }
+    }
+
     void gatherQualities(
         char* quality_data,
         size_t out_quality_pitch,
@@ -628,6 +667,41 @@ public: //inherited interface
                 std::copy_n(data, l, destData);
             }
 
+        }
+    }
+
+    void gatherContiguousEncodedQualities(
+        unsigned int* encodedQualities,
+        std::size_t outputPitchInInts,
+        read_number firstIndex,
+        int numSequences
+    ) const override{
+        if(hasShrinkedQualities){
+            if(encodedSequencePitchInInts == outputPitchInInts){
+                std::copy_n(
+                    shrinkedEncodedQualities.data() + encodedqualityPitchInInts * firstIndex,
+                    encodedqualityPitchInInts * numSequences,
+                    encodedQualities
+                );
+            }else{
+                for(int i = 0; i < numSequences; i++){
+                    const std::size_t readId = firstIndex + i;
+                    const unsigned int* const data = shrinkedEncodedQualities.data() + encodedqualityPitchInInts * readId;
+                    unsigned int* const destData = encodedQualities + outputPitchInInts * i;
+                    const int l = std::min(outputPitchInInts, encodedqualityPitchInInts);
+                    std::copy_n(data, l, destData);
+                }
+            }
+        }else{
+
+            for(int i = 0; i < numSequences; i++){
+                const std::size_t readId = firstIndex + i;
+                const unsigned int* const data = getPointerToQualityRow(readId);
+                unsigned int* const destData = encodedQualities + outputPitchInInts * i;
+
+                const int l = std::min(outputPitchInInts, encodedqualityPitchInInts);
+                std::copy_n(data, l, destData);
+            }
         }
     }
 
