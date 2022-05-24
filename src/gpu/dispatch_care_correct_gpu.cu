@@ -888,10 +888,19 @@ namespace care{
             for(const auto& outputfilename : programOptions.outputfilenames){
                 outputfiles.emplace_back(programOptions.outputdirectory + "/" + outputfilename);
             }
+            FileFormat outputFormat = formats[0];
+            if(programOptions.gzoutput){
+                if(outputFormat == FileFormat::FASTQ){
+                    outputFormat = FileFormat::FASTQGZ;
+                }else if(outputFormat == FileFormat::FASTA){
+                    outputFormat = FileFormat::FASTAGZ;
+                }
+            }
+
             constructOutputFileFromCorrectionResults(
                 programOptions.inputfiles, 
                 partialResults, 
-                formats[0],
+                outputFormat,
                 outputfiles,
                 programOptions.showProgress,
                 programOptions

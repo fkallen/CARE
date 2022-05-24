@@ -90,6 +90,10 @@ namespace care{
             result.useQualityScores = pr["useQualityScores"].as<bool>();
         }
 
+        if(pr.count("gzoutput")){
+            result.gzoutput = pr["gzoutput"].as<bool>();
+        }
+
         if(pr.count("enforceHashmapCount")){
             result.mustUseAllHashfunctions = pr["enforceHashmapCount"].as<bool>();
         }
@@ -628,6 +632,7 @@ namespace care{
         stream << "Maximum memory total: " << memoryTotalLimit << "\n";
         stream << "Hashtable load factor: " << hashtableLoadfactor << "\n";
         stream << "Fixed number of reads: " << fixedNumberOfReads << "\n";
+        stream << "GZ compressed output: " << gzoutput << "\n";
         //stream << "singlehash: " << singlehash << "\n";
     
     }
@@ -817,7 +822,9 @@ namespace care{
             ("hashloadfactor", "Load factor of hashtables. 0.0 < hashloadfactor < 1.0. Smaller values can improve the runtime at the expense of greater memory usage."
                 "Default: " + std::to_string(ProgramOptions{}.hashtableLoadfactor), cxxopts::value<float>())
             ("fixedNumberOfReads", "Process only the first n reads. Default: " + tostring(ProgramOptions{}.fixedNumberOfReads), cxxopts::value<std::size_t>())
-            ("singlehash", "Use 1 hashtables with h smallest unique hashes. Default: " + tostring(ProgramOptions{}.singlehash), cxxopts::value<bool>());
+            ("singlehash", "Use 1 hashtables with h smallest unique hashes. Default: " + tostring(ProgramOptions{}.singlehash), cxxopts::value<bool>())
+            ("gzoutput", "gz compressed output (very slow). Default: " + tostring(ProgramOptions{}.gzoutput), cxxopts::value<bool>());
+            
     }
 
     void addAdditionalOptionsCorrect(cxxopts::Options& commandLineOptions){

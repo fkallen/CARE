@@ -26,6 +26,13 @@ public:
         int numSequences
     ) const = 0;
 
+    virtual void gatherContiguousSequences(
+        unsigned int* sequence_data,
+        std::size_t outSequencePitchInInts,
+        read_number firstIndex,
+        int numSequences
+    ) const = 0;
+
     virtual void gatherQualities(
         char* quality_data,
         std::size_t out_quality_pitch,
@@ -37,6 +44,13 @@ public:
         unsigned int* encodedQualities,
         std::size_t outputPitchInInts,
         const read_number* readIds,
+        int numSequences
+    ) const = 0;
+
+    virtual void gatherContiguousEncodedQualities(
+        unsigned int* encodedQualities,
+        std::size_t outputPitchInInts,
+        read_number firstIndex,
         int numSequences
     ) const = 0;
 

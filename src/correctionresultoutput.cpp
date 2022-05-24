@@ -41,34 +41,21 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
 
     if(partialResults.getNumElements() == 0){
         if(outputfiles.size() == 1){
+            if(pairType == SequencePairType::SingleEnd 
+                || (pairType == SequencePairType::PairedEnd && originalReadFiles.size() == 1)){
+                auto filewriter = makeSequenceWriter(outputfiles[0], outputFormat);
 
-            if(pairType == SequencePairType::SingleEnd){
-                std::ofstream outstream(outputfiles[0], std::ios::binary);
-                if(!bool(outstream)){
-                    throw std::runtime_error("Cannot open output file " + outputfiles[0]);
-                }
-                for(const auto& ifname : originalReadFiles){
-                    std::ifstream instream(ifname, std::ios::binary);
-                    if(bool(instream) && instream.rdbuf()->in_avail() > 0){
-                        outstream << instream.rdbuf();
-                    }
+                MultiInputReader reader(originalReadFiles);
+                while(reader.next() >= 0){
+                    ReadWithId& readWithId = reader.getCurrent();
+                    filewriter->writeRead(readWithId.read);
                 }
             }else{
                 assert(pairType == SequencePairType::PairedEnd);
                 assert(originalReadFiles.size() == 2);
-
-                //no gz output
-                auto format = outputFormat;
-
-                if(format == FileFormat::FASTQGZ)
-                    format = FileFormat::FASTQ;
-                if(format == FileFormat::FASTAGZ)
-                    format = FileFormat::FASTA;
-
-                auto filewriter = makeSequenceWriter(outputfiles[0], format);
+                auto filewriter = makeSequenceWriter(outputfiles[0], outputFormat);
 
                 //merged output
-
                 forEachReadInPairedFiles(originalReadFiles[0], originalReadFiles[1], 
                     [&](auto /*readnumber*/, const auto& read){
                         filewriter->writeRead(read);
@@ -78,15 +65,13 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
         }else{
             const int numFiles = outputfiles.size();
             for(int i = 0; i < numFiles; i++){
-                std::ofstream outstream(outputfiles[i], std::ios::binary);
-                if(!bool(outstream)){
-                    throw std::runtime_error("Cannot open output file " + outputfiles[0]);
-                }
+                auto filewriter = makeSequenceWriter(outputfiles[i], outputFormat);
 
-                std::ifstream instream(originalReadFiles[i], std::ios::binary);
-                if(bool(instream) && instream.rdbuf()->in_avail() > 0){
-                    outstream << instream.rdbuf();
-                }
+                forEachReadInFile(originalReadFiles[i], 
+                    [&](auto /*readnumber*/, const auto& read){
+                        filewriter->writeRead(read);
+                    }
+                );
             }
         }
 
@@ -284,20 +269,12 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
 
     auto outputWriterFuture = std::async(std::launch::async,
         [&](){
-            //no gz output
-            auto format = outputFormat;
-
-            if(format == FileFormat::FASTQGZ)
-                format = FileFormat::FASTQ;
-            if(format == FileFormat::FASTAGZ)
-                format = FileFormat::FASTA;
-
             std::vector<std::unique_ptr<SequenceFileWriter>> writerVector;
 
             assert(originalReadFiles.size() == outputfiles.size() || outputfiles.size() == 1);
 
             for(const auto& outputfile : outputfiles){
-                writerVector.emplace_back(makeSequenceWriter(outputfile, format));
+                writerVector.emplace_back(makeSequenceWriter(outputfile, outputFormat));
             }
 
             const int numOutputfiles = outputfiles.size();

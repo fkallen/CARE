@@ -153,7 +153,7 @@ public:
     template<class W>
     using HostBuffer = helpers::SimpleAllocationPinnedHost<W>;
 
-    using IndexType = care::read_number;
+    using IndexType = read_number;
 
     struct TempData{
 
@@ -385,12 +385,19 @@ public:
                 CUDACHECK(cudaStreamSynchronize(streams[bufferIndex]));
 
                 const std::size_t currentBatchsize = std::min(batchsize, sequencesGpu.getNumRows() - i);
-                std::iota(indexarray[bufferIndex], indexarray[bufferIndex] + currentBatchsize, i);
+                //std::iota(indexarray[bufferIndex], indexarray[bufferIndex] + currentBatchsize, i);
 
-                cpuReadStorage->gatherSequences(
+                // cpuReadStorage->gatherSequences(
+                //     hostdataarray[bufferIndex],
+                //     numColumnsSequences,
+                //     indexarray[bufferIndex],
+                //     currentBatchsize
+                // );
+
+                cpuReadStorage->gatherContiguousSequences(
                     hostdataarray[bufferIndex],
                     numColumnsSequences,
-                    indexarray[bufferIndex],
+                    i,
                     currentBatchsize
                 );
 
@@ -406,7 +413,8 @@ public:
                     arrayhandle, 
                     dataarray[bufferIndex], 
                     numColumnsSequences * sizeof(unsigned int), 
-                    indexarray[bufferIndex][0],
+                    //indexarray[bufferIndex][0],
+                    i,
                     currentBatchsize, 
                     streams[bufferIndex]
                 );
@@ -478,12 +486,18 @@ public:
                     CUDACHECK(cudaStreamSynchronize(streams[bufferIndex]));
 
                     const std::size_t currentBatchsize = std::min(batchsize, qualitiesGpu.getNumRows() - i);
-                    std::iota(indexarray[bufferIndex], indexarray[bufferIndex] + currentBatchsize, i);
+                    // std::iota(indexarray[bufferIndex], indexarray[bufferIndex] + currentBatchsize, i);
 
-                    cpuReadStorage->gatherEncodedQualities(
+                    // cpuReadStorage->gatherEncodedQualities(
+                    //     hostdataarray[bufferIndex],
+                    //     numColumnsCompressedQualitiesInts,
+                    //     indexarray[bufferIndex],
+                    //     currentBatchsize
+                    // );
+                    cpuReadStorage->gatherContiguousEncodedQualities(
                         hostdataarray[bufferIndex],
                         numColumnsCompressedQualitiesInts,
-                        indexarray[bufferIndex],
+                        i,
                         currentBatchsize
                     );
 
@@ -499,7 +513,7 @@ public:
                         arrayhandle, 
                         compresseddataarray[bufferIndex], 
                         numColumnsCompressedQualitiesInts * sizeof(unsigned int), 
-                        indexarray[bufferIndex][0], 
+                        i, 
                         currentBatchsize, 
                         streams[bufferIndex]
                     );

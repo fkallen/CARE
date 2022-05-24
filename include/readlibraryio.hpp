@@ -233,7 +233,7 @@ struct UncompressedWriter : public SequenceFileWriter{
 };
 
 struct GZipWriter : public SequenceFileWriter{
-    static constexpr int maxBufferedReads = 128;
+    static constexpr int maxBufferedBytes = 4*1024*1024;
 
     GZipWriter(const std::string& filename, FileFormat format);
     ~GZipWriter();
@@ -244,29 +244,32 @@ struct GZipWriter : public SequenceFileWriter{
 
 private:
 
-    void bufferRead(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality){
-        buffer << delimHeader << name << ' ' << comment << '\n'
-            << sequence << '\n';
-        if(isFastq){
-            buffer << '+' << '\n'
-                << quality << '\n';
+    void flush(){
+        gzwrite(fp, charbuffer.data(), charbuffer.size());
+        charbuffer.clear();
+    }
+
+    void write(std::string_view data){
+        std::size_t remaining = data.size();
+        auto src = data.begin();
+        while(remaining > 0){
+            const std::size_t free = charbuffer.size() < maxBufferedBytes ? maxBufferedBytes - charbuffer.size() : 0;
+            const std::size_t toCopy = std::min(free, remaining);
+            charbuffer.insert(charbuffer.end(), src, src + toCopy);
+            src += toCopy;
+            remaining -= toCopy;
+            if(charbuffer.size() >= maxBufferedBytes){
+                flush();
+            }
         }
-
-        numBufferedReads++;
     }
 
-    void writeBufferedReads(){
-        writeImpl(buffer.str());
-        numBufferedReads = 0;
-        buffer.str(std::string());
-        buffer.clear();
-    }
+
 
     bool isFastq;
     char delimHeader;
 
-    int numBufferedReads;
-    std::stringstream buffer;
+    std::vector<char> charbuffer;
 
     gzFile fp;
 };
