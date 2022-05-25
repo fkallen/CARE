@@ -9,7 +9,6 @@
 #include <gpu/cuda_unique.cuh>
 #include <cpuhashtable.hpp>
 #include <gpu/gpuhashtable.cuh>
-#include <gpu/kernels.hpp>
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/cudaerrorcheck.cuh>
 #include <gpu/cubwrappers.cuh>
@@ -45,12 +44,202 @@
 namespace care{
 namespace gpu{
 
+    namespace sgpuminhasherkernels{
+
+        /*
+            Insert kv-pairs [i * numKeysPerTable, (i+1) * numKeysPerTable] into table i .
+            There are numKeysPerTable * numTables keys, and numKeysPerTable values.
+            Values are the same for each table
+        */
+ 
+        template<class DeviceTableInsertView, class Key, class Value>
+        __global__
+        void insertIntoTablesKernel(
+            DeviceTableInsertView* __restrict__ tables,
+            const int numTables,
+            const Key* __restrict__ keys,
+            const bool* __restrict__ isValid,
+            const int numKeysPerTable,
+            const Value* __restrict__ values
+        ){
+            const int tid = threadIdx.x + blockDim.x * blockIdx.x;
+            const int stride = blockDim.x * gridDim.x;
+
+            constexpr int tilesize = DeviceTableInsertView::cg_size();
+            assert(stride % tilesize == 0);
+
+            constexpr int warpsize = 32;
+            constexpr int tilesPerWarp = warpsize / tilesize;
+
+            auto warp = cg::tiled_partition<warpsize>(cg::this_thread_block());
+            auto tile = cg::tiled_partition<tilesize>(warp);
+
+            const int warpId = tid / warpsize;
+            const int numWarpsInGrid = stride / warpsize;
+            const int warpsPerTable = SDIV(numKeysPerTable, tilesPerWarp);
+
+            for(int w = warpId; w < warpsPerTable * numTables; w += numWarpsInGrid){
+                const int tableIndex = w / warpsPerTable;
+                const int valueIndex = tilesPerWarp * (w % warpsPerTable) + tile.meta_group_rank();
+                const int keyIndex = numKeysPerTable * tableIndex + valueIndex;
+                if(isValid[keyIndex]){
+                    DeviceTableInsertView table = tables[tableIndex];
+                    table.insert(keys[keyIndex], values[valueIndex], tile);
+                }
+            }
+        }
+
+        template<class DeviceTableInsertView, class Key>
+        __global__
+        void hashAndFixAndInsertIntoTablesKernel(
+            DeviceTableInsertView* __restrict__ tables,
+            const int numTables,
+            const unsigned int* __restrict__ sequences2Bit,
+            std::size_t encodedSequencePitchInInts,
+            const int numSequences,
+            const int* __restrict__ sequenceLengths,
+            const read_number* __restrict__ readIds,
+            int k,
+            const int* __restrict__ hashFunctionNumbers
+        ){
+            const int tid = threadIdx.x + blockDim.x * blockIdx.x;
+            const int stride = blockDim.x * gridDim.x;
+
+            constexpr int tilesize = DeviceTableInsertView::cg_size();
+            constexpr int warpsize = 32;
+            constexpr int tilesPerWarp = warpsize / tilesize;
+
+            auto warp = cg::tiled_partition<warpsize>(cg::this_thread_block());
+            auto tile = cg::tiled_partition<tilesize>(warp);
+            const int numWarpsInGrid = stride / warpsize;
+            const int warpId = tid / warpsize;
+
+            constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
+            const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - k) * 2);
+
+            static_assert(tilesize == 8, "tilesize not 8. only tested for 8");
+
+            //use 1 warp per tilesPerWarp sequences
+            const int maxNumSequencesPerWarp = tilesPerWarp;
+            const int numWarpIterations = SDIV(numSequences, maxNumSequencesPerWarp);
+
+
+            for(int w = warpId; w < numWarpIterations; w += numWarpsInGrid){
+                const int sequenceOffset = maxNumSequencesPerWarp * w;
+                const int numWarpSequences = std::min(maxNumSequencesPerWarp, numSequences - sequenceOffset);
+                //process sequences [sequenceOffset, sequenceOffset + numWarpSequences)
+
+                constexpr int regKeys = 1;
+                Key keys[regKeys];
+                bool keyIsValid[regKeys];
+
+                constexpr int xStride = 8 * regKeys;
+
+                /*
+                thread mapping for regKeys == 1
+                    h0 h1 h2 h3 h4 h5 h6 h7
+                s0  0  1  2  3  4  5  6  7
+                s1  8  9 10 11 12 13 14 15
+                s2 16 17 18 19 20 21 22 23
+                s3 24 25 26 27 28 19 30 31
+                */
+
+                /*
+                thread mapping for regKeys == 2
+                    h0 h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
+                s0   0  0  1  1  2  2  3  3  4  4  5   5   6   6   7   7
+                s1   8  8  9  9  10 10 11 11 12 12 13  13  14  14  15  15
+                s2   16 16 17 17 18 18 19 19 20 20 21  21  22  22  23  23
+                s3   24 24 25 25 26 26 27 27 28 28 29  29  30  30  31  31
+                */
+
+
+                for(int x = 0; x < numTables; x += xStride){
+                    const int numHashesToComputePerSequence = std::min(xStride, numTables - x);
+                    //compute hashes [x, x+numHashesToComputePerSequence) for sequences [sequenceOffset, sequenceOffset + numWarpSequences)
+
+                    const int s = warp.thread_rank() / 8;
+                    const unsigned int* const sequenceData = sequences2Bit + encodedSequencePitchInInts * (sequenceOffset + s);
+                    const int sequenceLength = sequenceLengths[(sequenceOffset + s)];
+
+                    if(sequenceLength >= k){
+                        std::uint64_t minHashValue[regKeys];
+                        int hashFuncId[regKeys];
+                        #pragma unroll
+                        for(int c = 0; c < regKeys; c++){
+                            minHashValue[c] = std::numeric_limits<std::uint64_t>::max();
+
+                            const int h = regKeys*(warp.thread_rank() % 8) + c;
+                            if(h < numTables){
+                                hashFuncId[c] = hashFunctionNumbers[x+h];
+                            }else{
+                                hashFuncId[c] = 0;
+                            }
+                        }
+
+                        SequenceHelpers::forEachEncodedCanonicalKmerFromEncodedSequence(
+                            sequenceData,
+                            sequenceLength,
+                            k,
+                            [&](std::uint64_t kmer, int /*pos*/){
+                                using hasher = hashers::MurmurHash<std::uint64_t>;
+
+                                #pragma unroll
+                                for(int c = 0; c < regKeys; c++){
+                                    const auto hashvalue = hasher::hash(kmer + hashFuncId[c]);
+                                    minHashValue[c] = min(minHashValue[c], hashvalue);
+                                }
+                            }
+                        );
+
+                        #pragma unroll
+                        for(int c = 0; c < regKeys; c++){
+                            keys[c] = Key(minHashValue[c] & kmer_mask);
+                            GpuHashtableKeyCheck<Key, read_number> isValidKey;
+
+                            while(!isValidKey(keys[c])){
+                                keys[c]++;
+                            }
+                            keyIsValid[c] = true;
+                        }
+
+                    }else{
+                        for(int i = 0; i < regKeys; i++){
+                            keyIsValid[i] = false;
+                        }
+                    }
+
+                    //insert keys
+                    for(int t = 0; t < numHashesToComputePerSequence; t += regKeys){
+                        const int shflSrcIndex = tile.meta_group_rank() * 8 + t / regKeys;
+                        const int tableOffset = x + t;
+
+                        for(int c = 0; c < regKeys; c++){                            
+                            const Key keyToInsert = warp.shfl(keys[c], shflSrcIndex);
+                            const bool keyIsValidToInsert = warp.shfl(keyIsValid[c], shflSrcIndex);
+                            const read_number valueToInsert = readIds[(sequenceOffset + s)];
+                            if(keyIsValidToInsert){
+                                DeviceTableInsertView table = tables[tableOffset + c];
+                                table.insert(keyToInsert, valueToInsert, tile);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+
+    }
+
     class MultiGpuMinhasher; //forward declaration
 
     class SingleGpuMinhasher : public GpuMinhasher{
         friend class MultiGpuMinhasher;
+    public:
+        using Key = kmer_type;
+        using Value = read_number;
     private:
-        using GpuTable = GpuHashtable<Key, read_number>;
+        using GpuTable = GpuHashtable<Key, Value>;
 
         using DeviceSwitcher = cub::SwitchDevice;
 
@@ -89,11 +278,9 @@ namespace gpu{
         };
 
     public:
-        using Key = kmer_type;
 
-
-        SingleGpuMinhasher(int maxNumKeys_, int maxValuesPerKey, int k)
-            : maxNumKeys(maxNumKeys_), kmerSize(k), resultsPerMapThreshold(maxValuesPerKey)
+        SingleGpuMinhasher(int maxNumKeys_, int maxValuesPerKey, int k, float loadfactor_)
+            : maxNumKeys(maxNumKeys_), kmerSize(k), resultsPerMapThreshold(maxValuesPerKey), loadfactor(loadfactor_)
         {
             CUDACHECK(cudaGetDevice(&deviceId));
         }
@@ -101,7 +288,7 @@ namespace gpu{
         std::unique_ptr<SingleGpuMinhasher> makeCopy(int targetDeviceId) const{
             DeviceSwitcher ds(targetDeviceId);
 
-            auto result = std::make_unique<SingleGpuMinhasher>(0,0,0);
+            auto result = std::make_unique<SingleGpuMinhasher>(0,0,0, loadfactor);
             if(!result) return nullptr;
             
             result->maxNumKeys = maxNumKeys;
@@ -197,27 +384,60 @@ namespace gpu{
             const read_number* d_readIds,
             const read_number* /*h_readIds*/,
             int firstHashfunction,
-            int numHashfunctions,
+            int numHashFunctions,
             const int* h_hashFunctionNumbers,
             cudaStream_t stream,
             rmm::mr::device_memory_resource* mr
         ) override {
 
-            const std::size_t signaturesRowPitchElements = numHashfunctions;
+            const std::size_t signaturesRowPitchElements = numHashFunctions;
 
-            assert(firstHashfunction + numHashfunctions <= int(gpuHashTables.size()));
+            assert(firstHashfunction + numHashFunctions <= int(gpuHashTables.size()));
 
             DeviceSwitcher ds(deviceId);
 
-            rmm::device_uvector<int> d_hashFunctionNumbers(numHashfunctions, stream, mr);
+            rmm::device_uvector<int> d_hashFunctionNumbers(numHashFunctions, stream, mr);
             
             CUDACHECK(cudaMemcpyAsync(
                 d_hashFunctionNumbers.data(), 
                 h_hashFunctionNumbers, 
-                sizeof(int) * numHashfunctions, 
+                sizeof(int) * numHashFunctions, 
                 H2D, 
                 stream
             ));
+
+            #if 0
+
+            h_insertTemp.resize(numHashFunctions);
+            d_insertTemp.resize(numHashFunctions);
+
+            //create device views
+            for(int i = 0; i < numHashFunctions; i++){
+                new (&h_insertTemp[i]) GpuTable::DeviceTableInsertView(gpuHashTables[firstHashfunction + i]->makeDeviceInsertView());
+            }
+            //transfer to device
+            CUDACHECK(cudaMemcpyAsync(
+                d_insertTemp.data(),
+                h_insertTemp.data(),
+                sizeof(GpuTable::DeviceTableInsertView) * numHashFunctions,
+                H2D,
+                stream
+            ));
+
+            callHashAndInsertKernel(
+                d_insertTemp.data(),
+                numHashFunctions,
+                d_sequenceData2Bit,
+                encodedSequencePitchInInts,
+                numSequences,
+                d_sequenceLengths,
+                d_readIds,
+                getKmerSize(),
+                d_hashFunctionNumbers.data(),
+                stream
+            );
+
+            #else
 
             GPUSequenceHasher<kmer_type> hasher;
 
@@ -227,7 +447,7 @@ namespace gpu{
                 numSequences,
                 d_sequenceLengths,
                 getKmerSize(),
-                numHashfunctions,
+                numHashFunctions,
                 d_hashFunctionNumbers.data(),
                 stream,
                 mr
@@ -243,9 +463,54 @@ namespace gpu{
                 stream
             );
 
-            fixKeysForGpuHashTable(d_signatures_transposed.data(), numSequences * numHashfunctions, stream);
+            fixKeysForGpuHashTable<Key, Value>(d_signatures_transposed.data(), numSequences * numHashFunctions, stream);
 
-            for(int i = 0; i < numHashfunctions; i++){
+            rmm::device_uvector<bool> d_isValid_transposed(
+                numHashFunctions * numSequences,
+                stream,
+                mr
+            );
+
+            helpers::call_transpose_kernel(
+                d_isValid_transposed.data(), 
+                hashResult.d_isValid.data(),
+                numSequences, 
+                numHashFunctions, 
+                numHashFunctions,
+                stream
+            );
+
+            #if 1
+
+            h_insertTemp.resize(numHashFunctions);
+            d_insertTemp.resize(numHashFunctions);
+
+            //create device views
+            for(int i = 0; i < numHashFunctions; i++){
+                new (&h_insertTemp[i]) GpuTable::DeviceTableInsertView(gpuHashTables[firstHashfunction + i]->makeDeviceInsertView());
+            }
+            //transfer to device
+            CUDACHECK(cudaMemcpyAsync(
+                d_insertTemp.data(),
+                h_insertTemp.data(),
+                sizeof(GpuTable::DeviceTableInsertView) * numHashFunctions,
+                H2D,
+                stream
+            ));
+
+            callInsertKernel(
+                d_insertTemp.data(),
+                numHashFunctions,
+                d_signatures_transposed.data(),
+                d_isValid_transposed.data(),
+                numSequences,
+                d_readIds,
+                stream
+            );
+
+            #else
+
+            for(int i = 0; i < numHashFunctions; i++){
                 gpuHashTables[firstHashfunction + i]->insert(
                     d_signatures_transposed.data() + i * numSequences,
                     d_readIds,
@@ -253,15 +518,19 @@ namespace gpu{
                     stream
                 );
             }
+
+            #endif
+
+            #endif
         }
 
         int checkInsertionErrors(
             int firstHashfunction,
-            int numHashfunctions,
+            int numHashFunctions,
             cudaStream_t stream        
         ) override{
             int count = 0;
-            for(int i = 0; i < numHashfunctions; i++){
+            for(int i = 0; i < numHashFunctions; i++){
                 auto status = gpuHashTables[firstHashfunction + i]->pop_status(stream);
                 CUDACHECK(cudaStreamSynchronize(stream));
 
@@ -459,15 +728,15 @@ namespace gpu{
             rmm::mr::device_memory_resource* mr
         ) const {
 
-            const int numHashfunctions = gpuHashTables.size();
-            const std::size_t signaturesRowPitchElements = numHashfunctions;
+            const int numHashFunctions = gpuHashTables.size();
+            const std::size_t signaturesRowPitchElements = numHashFunctions;
 
             void* persistent_allocations[3]{};
             std::size_t persistent_allocation_sizes[3]{};
 
-            persistent_allocation_sizes[0] = sizeof(kmer_type) * numHashfunctions * numSequences; // d_sig_trans
-            persistent_allocation_sizes[1] = sizeof(int) * numSequences * numHashfunctions; // d_numValuesPerSequencePerHash
-            persistent_allocation_sizes[2] = sizeof(int) * numSequences * numHashfunctions; // d_numValuesPerSequencePerHashExclPSVert
+            persistent_allocation_sizes[0] = sizeof(kmer_type) * numHashFunctions * numSequences; // d_sig_trans
+            persistent_allocation_sizes[1] = sizeof(int) * numSequences * numHashFunctions; // d_numValuesPerSequencePerHash
+            persistent_allocation_sizes[2] = sizeof(int) * numSequences * numHashFunctions; // d_numValuesPerSequencePerHashExclPSVert
 
             CUDACHECK(cub::AliasTemporaries(
                 persistent_storage,
@@ -484,14 +753,14 @@ namespace gpu{
             int* const d_numValuesPerSequencePerHash = static_cast<int*>(persistent_allocations[1]);
             int* const d_numValuesPerSequencePerHashExclPSVert = static_cast<int*>(persistent_allocations[2]);
 
-            rmm::device_uvector<int> d_hashFunctionNumbers(numHashfunctions, stream, mr);
+            rmm::device_uvector<int> d_hashFunctionNumbers(numHashFunctions, stream, mr);
 
             DeviceSwitcher ds(deviceId);
 
             CUDACHECK(cudaMemcpyAsync(
                 d_hashFunctionNumbers.data(),
                 h_currentHashFunctionNumbers.data(), 
-                sizeof(int) * numHashfunctions, 
+                sizeof(int) * numHashFunctions, 
                 H2D, 
                 stream
             ));           
@@ -519,7 +788,7 @@ namespace gpu{
                 stream
             );
 
-            fixKeysForGpuHashTable(d_signatures_transposed, numSequences * numHashfunctions, stream);
+            fixKeysForGpuHashTable<Key, Value>(d_signatures_transposed, numSequences * numHashFunctions, stream);
 
             //determine number of values per hashfunction per sequence
             #if 1
@@ -532,11 +801,11 @@ namespace gpu{
 
             dim3 block(256, 1, 1);
             const int numBlocksPerTable = SDIV(numSequences, (block.x / cgsize));
-            dim3 grid(numBlocksPerTable, std::min(65535, numHashfunctions), 1);
+            dim3 grid(numBlocksPerTable, std::min(65535, numHashFunctions), 1);
 
             gpuhashtablekernels::numValuesPerKeyCompactMultiTableKernel<<<grid, block, 0, stream>>>(
                 d_deviceAccessibleTableViews.data(),
-                numHashfunctions,
+                numHashFunctions,
                 resultsPerMapThreshold,
                 d_signatures_transposed,
                 signaturesPitchInElements,
@@ -549,7 +818,7 @@ namespace gpu{
             #else
 
             
-            for(int i = 0; i < numHashfunctions; i++){
+            for(int i = 0; i < numHashFunctions; i++){
                 gpuHashTables[i]->numValuesPerKeyCompact(
                     d_signatures_transposed + i * numSequences,
                     numSequences,
@@ -573,11 +842,11 @@ namespace gpu{
 
                     for(int i = tid; i < numSequences; i += stride){
                         int vertPS = 0;
-                        for(int k = 0; k < numHashfunctions; k++){
+                        for(int k = 0; k < numHashFunctions; k++){
                             const int num = d_numValuesPerSequencePerHash[k * numSequences + i];
 
                             vertPS += num;
-                            if(k < numHashfunctions - 1){
+                            if(k < numHashFunctions - 1){
                                 d_numValuesPerSequencePerHashExclPSVert[(k+1) * numSequences + i] = vertPS;
                             }else{
                                 d_numValuesPerSequence[i] = vertPS;
@@ -623,14 +892,14 @@ namespace gpu{
 
             assert(persistentbufferFromNumValues != nullptr);
 
-            const int numHashfunctions = gpuHashTables.size();
+            const int numHashFunctions = gpuHashTables.size();
 
             void* persistent_allocations[3]{};
             std::size_t persistent_allocation_sizes[3]{};
 
-            persistent_allocation_sizes[0] = sizeof(kmer_type) * numHashfunctions * numSequences; // d_sig_trans
-            persistent_allocation_sizes[1] = sizeof(int) * numSequences * numHashfunctions; // d_numValuesPerSequencePerHash
-            persistent_allocation_sizes[2] = sizeof(int) * numSequences * numHashfunctions; // d_numValuesPerSequencePerHashExclPSVert
+            persistent_allocation_sizes[0] = sizeof(kmer_type) * numHashFunctions * numSequences; // d_sig_trans
+            persistent_allocation_sizes[1] = sizeof(int) * numSequences * numHashFunctions; // d_numValuesPerSequencePerHash
+            persistent_allocation_sizes[2] = sizeof(int) * numSequences * numHashFunctions; // d_numValuesPerSequencePerHashExclPSVert
 
             CUDACHECK(cub::AliasTemporaries(
                 persistentbufferFromNumValues,
@@ -645,7 +914,7 @@ namespace gpu{
             int* const d_numValuesPerSequencePerHash = static_cast<int*>(persistent_allocations[1]);
             int* const d_numValuesPerSequencePerHashExclPSVert = static_cast<int*>(persistent_allocations[2]);
 
-            rmm::device_uvector<int> d_queryOffsetsPerSequencePerHash(numSequences * numHashfunctions, stream, mr);
+            rmm::device_uvector<int> d_queryOffsetsPerSequencePerHash(numSequences * numHashFunctions, stream, mr);
 
 
             //calculate global offsets for each sequence in output array
@@ -666,7 +935,7 @@ namespace gpu{
                     d_queryOffsetsPerSequencePerHash = d_queryOffsetsPerSequencePerHash.data(),
                     d_numValuesPerSequencePerHashExclPSVert,
                     numSequences,
-                    numHashfunctions,
+                    numHashFunctions,
                     d_offsets
                 ] __device__ (){
                     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -679,7 +948,7 @@ namespace gpu{
                         //k == 0 is a copy from d_offsets
                         d_queryOffsetsPerSequencePerHash[0 * numSequences + i] = base;
 
-                        for(int k = 1; k < numHashfunctions; k++){
+                        for(int k = 1; k < numHashFunctions; k++){
                             d_queryOffsetsPerSequencePerHash[k * numSequences + i] = base + d_numValuesPerSequencePerHashExclPSVert[k * numSequences + i];
                         }
                     }
@@ -697,11 +966,11 @@ namespace gpu{
 
             dim3 block(256, 1, 1);
             const int numBlocksPerTable = SDIV(numSequences, (block.x / cgsize));
-            dim3 grid(numBlocksPerTable, std::min(65535, numHashfunctions), 1);
+            dim3 grid(numBlocksPerTable, std::min(65535, numHashFunctions), 1);
 
             gpuhashtablekernels::retrieveCompactKernel<<<grid, block, 0, stream>>>(
                 d_deviceAccessibleTableViews.data(),
-                numHashfunctions,
+                numHashFunctions,
                 d_signatures_transposed,
                 signaturesPitchInElements,
                 d_queryOffsetsPerSequencePerHash.data(),
@@ -715,7 +984,7 @@ namespace gpu{
             }
             #else
 
-            for(int i = 0; i < numHashfunctions; i++){
+            for(int i = 0; i < numHashFunctions; i++){
                 gpuHashTables[i]->retrieveCompact(
                     d_signatures_transposed + i * numSequences,
                     d_queryOffsetsPerSequencePerHash.data()  + i * numSequences,
@@ -765,6 +1034,9 @@ namespace gpu{
             ));
 
             CUDACHECK(cudaStreamSynchronize(stream));
+
+            h_insertTemp.destroy();
+            d_insertTemp.destroy();
         }
 
         void writeToStream(std::ostream& /*os*/) const override{
@@ -792,13 +1064,114 @@ private:
         }
 
         constexpr float getLoad() const noexcept{
-            return 0.8f;
+            return loadfactor;
         }
 
         QueryData* getQueryDataFromHandle(const MinhasherHandle& queryHandle) const{
             std::shared_lock<SharedMutex> lock(sharedmutex);
 
             return tempdataVector[queryHandle.getId()].get();
+        }
+
+        void callInsertKernel(
+            GpuTable::DeviceTableInsertView* d_insertViews,
+            int numHashFunctions,
+            const kmer_type* d_signatures_transposed,
+            const bool* d_isValid_transposed,
+            int numSequences,
+            const read_number* d_readIds,
+            cudaStream_t stream
+        ){
+            auto insertkernel = sgpuminhasherkernels::insertIntoTablesKernel<GpuTable::DeviceTableInsertView, Key, Value>;
+
+            constexpr int blocksize = 512;
+            int deviceId = 0;
+            int numSMs = 0;
+            int maxBlocksPerSM = 0;
+            CUDACHECK(cudaGetDevice(&deviceId));
+            CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &maxBlocksPerSM,
+                insertkernel,
+                blocksize, 
+                0
+            ));
+        
+            const int maxBlocks = maxBlocksPerSM * numSMs;  
+        
+            dim3 block(blocksize, 1, 1);
+
+            constexpr int groupsize = GpuTable::DeviceTableInsertView::cg_size();
+            constexpr int warpsize = 32;
+            constexpr int groupsPerWarp = warpsize / groupsize;
+            const int warpsPerTable = SDIV(numSequences, groupsPerWarp);
+
+            const int numBlocks = SDIV(numHashFunctions * warpsPerTable, blocksize / warpsize);
+            dim3 grid(std::min(numBlocks, maxBlocks), 1, 1);
+
+            insertkernel<<<grid, block, 0, stream>>>(
+                d_insertViews,
+                numHashFunctions,
+                d_signatures_transposed,
+                d_isValid_transposed,
+                numSequences,
+                d_readIds
+            );
+            CUDACHECKASYNC;
+        }
+
+        void callHashAndInsertKernel(
+            GpuTable::DeviceTableInsertView* d_insertViews,
+            const int numTables,
+            const unsigned int* d_sequences2Bit,
+            std::size_t encodedSequencePitchInInts,
+            const int numSequences,
+            const int* d_sequenceLengths,
+            const read_number* d_readIds,
+            int k,
+            const int* d_hashFunctionNumbers,
+            cudaStream_t stream
+        ){
+            auto hashAndInsertkernel = sgpuminhasherkernels::hashAndFixAndInsertIntoTablesKernel<GpuTable::DeviceTableInsertView, Key>;
+
+            constexpr int blocksize = 512;
+            int deviceId = 0;
+            int numSMs = 0;
+            int maxBlocksPerSM = 0;
+            CUDACHECK(cudaGetDevice(&deviceId));
+            CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &maxBlocksPerSM,
+                hashAndInsertkernel,
+                blocksize, 
+                0
+            ));
+        
+            const int maxBlocks = maxBlocksPerSM * numSMs;  
+        
+            constexpr int groupsize = GpuTable::DeviceTableInsertView::cg_size();
+            constexpr int warpsize = 32;
+            constexpr int groupsPerWarp = warpsize / groupsize;
+            const int warpsPerTable = SDIV(numSequences, groupsPerWarp);
+
+            const int numBlocks = SDIV(numTables * warpsPerTable, blocksize / warpsize);
+            dim3 block(blocksize, 1, 1);
+            dim3 grid(std::min(numBlocks, maxBlocks), 1, 1);
+            // dim3 block(32,1,1);
+            // dim3 grid(1, 1, 1);
+
+            hashAndInsertkernel<<<grid, block, 0, stream>>>(
+                d_insertViews,
+                numTables,
+                d_sequences2Bit,
+                encodedSequencePitchInInts,
+                numSequences,
+                d_sequenceLengths,
+                d_readIds,
+                k,
+                d_hashFunctionNumbers
+            );
+            CUDACHECKASYNC;
         }
 
         mutable int counter = 0;
@@ -809,8 +1182,11 @@ private:
         int maxNumKeys{};
         int kmerSize{};
         int resultsPerMapThreshold{};
+        float loadfactor{};
         HostBuffer<int> h_currentHashFunctionNumbers{};
         std::vector<std::unique_ptr<GpuTable>> gpuHashTables{};
+        helpers::SimpleAllocationPinnedHost<GpuTable::DeviceTableInsertView> h_insertTemp{};
+        helpers::SimpleAllocationDevice<GpuTable::DeviceTableInsertView> d_insertTemp{};
         helpers::SimpleAllocationDevice<GpuTable::DeviceTableView, 0> d_deviceAccessibleTableViews{};
         mutable std::vector<std::unique_ptr<QueryData>> tempdataVector{};
     };

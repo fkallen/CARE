@@ -5,8 +5,7 @@
 
 #include <warpcore/single_value_hash_table.cuh>
 #include <warpcore/multi_value_hash_table.cuh>
-
-#include <thrust/iterator/discard_iterator.h>
+#include <warpcore/multi_bucket_hash_table.cuh>
 
 #include <hpc_helpers.cuh>
 #include <cpuhashtable.hpp>
@@ -22,6 +21,10 @@
 
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
+
+#include <thrust/execution_policy.h>
+#include <thrust/sequence.h>
+#include <thrust/iterator/discard_iterator.h>
 
 namespace cg = cooperative_groups;
 
@@ -60,6 +63,80 @@ namespace gpu{
             }
         }
 
+        //insert (key[i], firstValue + i)
+        template<class Core, class Key, class Value>
+        __global__
+        void insertIotaValuesKernel(
+            Core table,
+            const Key* __restrict__ keys,
+            Value firstValue,
+            int numKeys
+        ){
+            const int tid = threadIdx.x + blockDim.x * blockIdx.x;
+            const int stride = blockDim.x * gridDim.x;
+
+            constexpr int tilesize = Core::cg_size();
+
+            auto tile = cg::tiled_partition<tilesize>(cg::this_thread_block());
+            const int tileId = tid / tilesize;
+            const int numTiles = stride / tilesize;
+
+            for(int k = tileId; k < numKeys; k += numTiles){
+                const Key key = keys[k];
+                const Value value = firstValue + static_cast<Value>(k);
+
+                constexpr auto probing_length = warpcore::defaults::probing_length();
+
+                const auto status =
+                    table.insert(key, value, tile, probing_length);
+
+                //ignore status
+                (void)status;
+            }
+        }
+
+        template<class Core, class Key, class Value>
+        void callInsertIotaValuesKernel(
+            Core table,
+            const Key* d_keys,
+            Value firstValue,
+            int num,
+            cudaStream_t stream
+        ){
+            auto kernel = insertIotaValuesKernel<Core, Key, Value>;
+
+            constexpr int blocksize = 512;
+            int deviceId = 0;
+            int numSMs = 0;
+            int maxBlocksPerSM = 0;
+            CUDACHECK(cudaGetDevice(&deviceId));
+            CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+            CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &maxBlocksPerSM,
+                kernel,
+                blocksize, 
+                0
+            ));
+        
+            const int maxBlocks = maxBlocksPerSM * numSMs;  
+        
+            dim3 block(blocksize, 1, 1);
+
+            constexpr int groupsize = Core::cg_size();
+
+
+            const int numBlocks = SDIV(num, blocksize / groupsize);
+            dim3 grid(std::min(numBlocks, maxBlocks), 1, 1);
+
+            insertIotaValuesKernel<<<grid, block, 0, stream>>>(
+                table, 
+                d_keys,
+                firstValue,
+                num
+            );
+            CUDACHECKASYNC;
+        }
+
         template<class DeviceTableView, class Key, class Value, class Offset>
         __global__
         void retrieveCompactKernel(
@@ -67,7 +144,7 @@ namespace gpu{
             const Key* __restrict__ querykeys,
             const Offset* __restrict__ beginOffsets,
             const int* __restrict__ numValuesPerKey,
-            const int maxValuesPerKey,
+            const int /*maxValuesPerKey*/,
             const int numKeys,
             Value* __restrict__ outValues
         ){
@@ -120,6 +197,7 @@ namespace gpu{
                 const int num = table.numValues(tile, key);
                 if(tile.thread_rank() == 0){
                     numValuesPerKey[k] = num > maxValuesPerKey ? 0 : num;
+                    //numValuesPerKey[k] = num;
                 }    
             }
         }
@@ -139,7 +217,7 @@ namespace gpu{
             const int beginOffsetsPitchInElements,
             const int* __restrict__ numValuesPerKey,
             const int numValuesPerKeyPitchInElements,
-            const int maxValuesPerKey,
+            const int /*maxValuesPerKey*/,
             const int numKeys,
             Value* __restrict__ outValues
         ){
@@ -211,6 +289,7 @@ namespace gpu{
                     const int num = table.numValues(tile, key);
                     if(tile.thread_rank() == 0){
                         myNumValuesPerKey[k] = num > maxValuesPerKey ? 0 : num;
+                        //myNumValuesPerKey[k] = num;
                     }    
                 }
             }
@@ -232,11 +311,21 @@ namespace gpu{
                 warpcore::defaults::probing_scheme_t<Key, 8>,
                 warpcore::defaults::table_storage_t<Key, Value>,
                 warpcore::defaults::temp_memory_bytes()>;
+        // using MultiValueHashTable =  warpcore::MultiBucketHashTable<
+        //         Key,
+        //         Value,
+        //         warpcore::defaults::empty_key<Key>(),
+        //         warpcore::defaults::tombstone_key<Key>(),
+        //         warpcore::defaults::empty_key<Value>(),
+        //         warpcore::defaults::probing_scheme_t<Key, 8>,
+        //         warpcore::defaults::table_storage_t<Key, warpcore::ArrayBucket<Value,2>>,
+        //         warpcore::defaults::temp_memory_bytes()>;
 
         using StatusHandler = warpcore::status_handlers::ReturnStatus;
 
         using Index = typename MultiValueHashTable::index_type;
 
+        //TODO this will break if there are more than int_max keys
         using CompactKeyIndexTable = warpcore::SingleValueHashTable<
                 Key,
                 int,
@@ -246,6 +335,91 @@ namespace gpu{
                 warpcore::defaults::table_storage_t<Key, int>,
                 warpcore::defaults::temp_memory_bytes()>;
 
+        struct DeviceTableInsertView{
+            MultiValueHashTable core;
+
+            __host__ __device__
+            DeviceTableInsertView(MultiValueHashTable& core_) : core(core_){}
+            __host__ __device__
+            DeviceTableInsertView(const DeviceTableInsertView& rhs) : core(rhs.core){}
+            __host__ __device__
+            DeviceTableInsertView(const DeviceTableInsertView&& rhs) : core(std::move(rhs.core)){}
+            __host__ __device__
+            DeviceTableInsertView& operator=(DeviceTableInsertView& rhs){
+                MultiValueHashTable (&core) (rhs.core);
+                return *this;
+            }
+
+            __device__
+            void insert(
+                Key key_in,
+                const Value& value_in,
+                const cg::thread_block_tile<MultiValueHashTable::cg_size()>& group
+            ) noexcept{
+                constexpr auto probing_length = warpcore::defaults::probing_length();
+
+                const auto status =
+                    core.insert(key_in, value_in, group, probing_length);
+
+                //ignore status
+                (void)status;
+                // if(status != warpcore::Status::none() && status != warpcore::Status::max_values_for_key_reached()){
+                //     printf("status error\n");
+                // }
+
+                // if(!status.has_all(warpcore::Status::duplicate_key() +
+                //                      warpcore::Status::max_values_for_key_reached())){
+                //     // if(status.has_any_errors()){
+                //     //     printf("has_any_errors\n");
+                //     // }
+                //     // if(status.has_any_warnings()){
+                //     //     printf("has_any_warnings\n");
+                //     // }
+
+                //     if(status.has_unknown_error()){
+                //         printf("has_unknown_error\n");
+                //     }
+                //     if(status.has_probing_length_exceeded()){
+                //         printf("has_probing_length_exceeded\n");
+                //     }
+                //     if(status.has_invalid_configuration()){
+                //         printf("has_invalid_configuration\n");
+                //     }
+                //     if(status.has_invalid_key()){
+                //         printf("has_invalid_key\n");
+                //     }                    
+                //     if(status.has_key_not_found()){
+                //         printf("has_key_not_found\n");
+                //     }
+                //     if(status.has_index_overflow()){
+                //         printf("has_index_overflow\n");
+                //     }
+                //     if(status.has_out_of_memory()){
+                //         printf("has_out_of_memory\n");
+                //     }
+                //     if(status.has_not_initialized()){
+                //         printf("has_not_initialized\n");
+                //     }
+                //     if(status.has_dry_run()){
+                //         printf("has_dry_run\n");
+                //     }
+                //     if(status.has_invalid_phase_overlap()){
+                //         printf("has_invalid_phase_overlap\n");
+                //     }
+                    
+                //     if(status.has_invalid_value()){
+                //         printf("has_invalid_value\n");
+                //     }
+                // }
+            }
+
+            __host__ __device__
+            static constexpr int cg_size() noexcept{
+                return MultiValueHashTable::cg_size();
+            }
+        };
+
+        //TODO this will break if there are more than int_max keys
         struct DeviceTableView{
             CompactKeyIndexTable core;
             const int* offsets;
@@ -259,10 +433,6 @@ namespace gpu{
                 return *this;
             }
 
-            DEVICEQUALIFIER
-            constexpr int numValuesFromOffsets(int beginOffset, int endOffset) const{
-                return endOffset  - beginOffset;
-            }
 
             DEVICEQUALIFIER
             int retrieve(
@@ -278,12 +448,12 @@ namespace gpu{
                     group
                 );
                 
-                const int beginOffset = offsets[keyIndex];
-                const int endOffset = offsets[keyIndex + 1];
-                const int num = numValuesFromOffsets(beginOffset, endOffset);
+                const int begin = offsets[keyIndex];
+                const int end = offsets[keyIndex+1];
+                const int num = end - begin;
 
                 for(int p = group.thread_rank(); p < num; p += group.size()){
-                    outValues[p] = values[beginOffset + p];
+                    outValues[p] = values[begin + p];
                 }
 
                 return num;
@@ -301,10 +471,12 @@ namespace gpu{
                     keyIndex,
                     group
                 );
+                
+                const int begin = offsets[keyIndex];
+                const int end = offsets[keyIndex+1];
+                const int num = end - begin;
 
-                const int beginOffset = offsets[keyIndex];
-                const int endOffset = offsets[keyIndex + 1];
-                return numValuesFromOffsets(beginOffset, endOffset);
+                return num;
             }
         
             HOSTDEVICEQUALIFIER
@@ -316,6 +488,12 @@ namespace gpu{
         DeviceTableView makeDeviceView() const noexcept{
             return DeviceTableView{*gpuKeyIndexTable, d_compactOffsets.data(), d_compactValues.data()};
         }
+
+        DeviceTableInsertView makeDeviceInsertView() const noexcept{
+            return DeviceTableInsertView{*gpuMvTable};
+        }
+
+        
 
         // constexpr Key empty_key() noexcept{
         //     return MultiValueHashTable::empty_key();
@@ -338,9 +516,8 @@ namespace gpu{
 
             const std::size_t capacity = maxPairs / load;
             gpuMvTable = std::move(
-                //use maxValuesPerKey + 1 for hashtable. when querying, remove all values of keys with numValues == (maxValuesPerKey + 1)
                 std::make_unique<MultiValueHashTable>(
-                    capacity, warpcore::defaults::seed<Key>(), (maxValuesPerKey + 1)
+                    capacity, warpcore::defaults::seed<Key>(), maxValuesPerKey + 1
                 )
             );
 
@@ -517,9 +694,8 @@ namespace gpu{
                 result.device[deviceId] = sizeof(Key) * capacity;
                 result.device[deviceId] += sizeof(Value) * capacity;
             }else{
-                result.device[deviceId] = (sizeof(Key) + sizeof(int)) * warpcore::detail::get_valid_capacity((numKeys / load), CompactKeyIndexTable::cg_size());
+                result.device[deviceId] = (sizeof(Key) + sizeof(int)) * warpcore::detail::get_valid_capacity((numKeys / load), CompactKeyIndexTable::cg_size()); //singlevalue hashtable
                 result.device[deviceId] += sizeof(int) * numKeys; //offsets
-                //result.device[deviceId] += sizeof(int) * numKeys; //value counts
                 result.device[deviceId] += sizeof(Value) * numValues; //values
             }
 
@@ -593,16 +769,15 @@ namespace gpu{
             );
             cubTempStorageBytes = std::max(cubTempStorageBytes, cubbytes1);
 
-            void* temp_allocations[7];
-            std::size_t temp_allocation_sizes[7];
+            void* temp_allocations[6];
+            std::size_t temp_allocation_sizes[6];
             
             temp_allocation_sizes[0] = sizeof(Key) * numUniqueKeys; // h_uniqueKeys
             temp_allocation_sizes[1] = sizeof(Index) * (numUniqueKeys+1); // h_compactOffsetTmp
-            temp_allocation_sizes[2] = sizeof(int) * batchsize; // h_ids
-            temp_allocation_sizes[3] = sizeof(Value) * numValuesInTable; // h_compactValues
-            temp_allocation_sizes[4] = sizeof(bool) * numValuesInTable; // value flags
-            temp_allocation_sizes[5] = sizeof(int); // reduction sum
-            temp_allocation_sizes[6] = cubTempStorageBytes;            
+            temp_allocation_sizes[2] = sizeof(Value) * numValuesInTable; // h_compactValues
+            temp_allocation_sizes[3] = sizeof(bool) * numValuesInTable; // value flags
+            temp_allocation_sizes[4] = sizeof(int); // reduction sum
+            temp_allocation_sizes[5] = cubTempStorageBytes;            
             
             std::size_t requiredbytes = d_temp == nullptr ? 0 : temp_bytes;
             cudaError_t cubstatus = cub::AliasTemporaries(
@@ -624,11 +799,10 @@ namespace gpu{
 
             Key* const d_tmp_uniqueKeys = static_cast<Key*>(temp_allocations[0]);
             Index* const d_tmp_compactOffset = static_cast<Index*>(temp_allocations[1]);
-            int* const d_tmp_ids = static_cast<int*>(temp_allocations[2]);
-            Value* const d_tmp_compactValues = static_cast<Value*>(temp_allocations[3]);
-            bool* const d_tmp_valueflags = static_cast<bool*>(temp_allocations[4]);
-            int* const d_reductionsum = static_cast<int*>(temp_allocations[5]);
-            void* const d_cubTempStorage = static_cast<void*>(temp_allocations[6]);
+            Value* const d_tmp_compactValues = static_cast<Value*>(temp_allocations[2]);
+            bool* const d_tmp_valueflags = static_cast<bool*>(temp_allocations[3]);
+            int* const d_reductionsum = static_cast<int*>(temp_allocations[4]);
+            void* const d_cubTempStorage = static_cast<void*>(temp_allocations[5]);
    
             gpuMvTable->retrieve_all_keys(
                 d_tmp_uniqueKeys,
@@ -734,34 +908,13 @@ namespace gpu{
 
             CUDACHECK(cudaMemsetAsync(d_compactOffsets.data(), 0, sizeof(int), stream));
 
-            for(std::size_t i = 0; i < iters; i++){
-                const std::size_t begin = i * batchsize;
-                const std::size_t end = std::min((i+1) * batchsize, numUniqueKeys);
-                const std::size_t num = end - begin;
-
-                //iota kernel
-                helpers::lambda_kernel<<<SDIV(batchsize, 256), 256, 0, stream>>>(
-                    [
-                        begin, num, d_tmp_ids
-                    ]__device__(){
-                        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-
-                        if(tid < num){
-                            d_tmp_ids[tid] = begin + tid;
-                        }
-                    }
-                );
-                CUDACHECKASYNC;
-
-                gpuKeyIndexTable->insert(
-                    d_tmp_uniqueKeys + begin,
-                    d_tmp_ids,
-                    num,
-                    stream,
-                    warpcore::defaults::probing_length(),
-                    nullptr
-                );                
-            }
+            gpuhashtablekernels::callInsertIotaValuesKernel(
+                *gpuKeyIndexTable,
+                d_tmp_uniqueKeys,
+                0,
+                numUniqueKeys,
+                stream
+            );
 
             numKeys = numUniqueKeys;
             numValues = numRemainingValuesInTable;
@@ -874,15 +1027,15 @@ namespace gpu{
         helpers::SimpleAllocationDevice<Value, 0> d_compactValues;
     };
 
-    template<class T>
+    template<class Key, class Value>
     struct GpuHashtableKeyCheck{
         __host__ __device__
-        bool operator()(T key) const{
-            return GpuHashtable<T, int>::isValidKey(key);
+        bool operator()(Key key) const{
+            return GpuHashtable<Key, Value>::isValidKey(key);
         }
     };
 
-    template<class Key>
+    template<class Key, class Value>
     void fixKeysForGpuHashTable(
         Key* d_keys,
         int numKeys,
@@ -891,7 +1044,7 @@ namespace gpu{
         dim3 block(128);
         dim3 grid(SDIV(numKeys, block.x));
 
-        GpuHashtableKeyCheck<Key> isValidKey;
+        GpuHashtableKeyCheck<Key, Value> isValidKey;
 
         gpuhashtablekernels::fixTableKeysKernel<<<grid, block, 0, stream>>>(d_keys, numKeys, isValidKey); CUDACHECKASYNC;
     }

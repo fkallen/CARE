@@ -5,12 +5,17 @@
 #include <gpu/fakegpuminhasher.cuh>
 #include <gpu/singlegpuminhasher.cuh>
 #include <gpu/multigpuminhasher.cuh>
+#include <gpu/global_cuda_stream_pool.cuh>
 #include <minhasherlimit.hpp>
 
 #include <options.hpp>
 
+#include <array>
+#include <vector>
 #include <memory>
 #include <utility>
+
+#include <thrust/sequence.h>
 
 
 namespace care{
@@ -48,8 +53,7 @@ namespace gpu{
     
             const read_number numReads = readStorage.getNumberOfReads();
             const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
-    
-            auto sequencehandle = gpuReadStorage.makeHandle();
+
             const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
     
             rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
@@ -82,15 +86,27 @@ namespace gpu{
     
             
             std::vector<int> usedHashFunctionNumbers;
-    
-            cudaStream_t stream = cudaStreamPerThread;
-            
-            rmm::device_uvector<unsigned int> d_sequenceData(encodedSequencePitchInInts * parallelReads, stream, mr);
-            rmm::device_uvector<int> d_lengths(parallelReads, stream, mr);
-            rmm::device_uvector<read_number> d_indices(parallelReads, stream, mr);
-            
-            helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
-    
+
+            constexpr int numStreams = 2;
+
+            rmm::cuda_stream_pool* streamPool = streampool::get_current_device_pool();
+
+            std::vector<ReadStorageHandle> sequenceHandles(numStreams);
+            std::vector<cudaStream_t> streams(numStreams);
+            std::vector<std::vector<read_number>> vec_h_indices(numStreams, std::vector<read_number>(parallelReads));
+
+            std::vector<rmm::device_uvector<unsigned int>> vec_d_sequenceData;
+            std::vector<rmm::device_uvector<int>> vec_d_lengths;
+            std::vector<rmm::device_uvector<read_number>> vec_d_indices;
+
+            for(int i = 0; i < numStreams; i++){
+                sequenceHandles[i] = gpuReadStorage.makeHandle();
+                streams[i] = streamPool->get_stream();
+
+                vec_d_sequenceData.emplace_back(encodedSequencePitchInInts * parallelReads, streams[i], mr);
+                vec_d_lengths.emplace_back(parallelReads, streams[i], mr);
+                vec_d_indices.emplace_back(parallelReads, streams[i], mr);
+            }    
             
             ThreadPool tpForHashing(programOptions.threads);
             ThreadPool tpForCompacting(std::min(2,programOptions.threads));
@@ -129,7 +145,8 @@ namespace gpu{
                     }
                 }
 
-                int addedHashFunctions = gpuMinhasher->addHashTables(remainingHashFunctions,h_hashfunctionNumbers.data(), stream);
+                int addedHashFunctions = gpuMinhasher->addHashTables(remainingHashFunctions,h_hashfunctionNumbers.data(), streams[0]);
+                CUDACHECK(cudaStreamSynchronize(streams[0]));
 
                 for(std::size_t i = 0; i < programOptions.deviceIds.size(); i++){
                     cub::SwitchDevice sd{programOptions.deviceIds[i]};
@@ -149,62 +166,68 @@ namespace gpu{
     
                 usedHashFunctionNumbers.insert(usedHashFunctionNumbers.end(), h_hashfunctionNumbers.begin(), h_hashfunctionNumbers.begin() + addedHashFunctions);
     
-                for (int iter = 0; iter < numIters; iter++){
+                for (int iter = 0, streamIndex = 0; iter < numIters; iter++, streamIndex = (streamIndex + 1) % numStreams){
                     read_number readIdBegin = iter * parallelReads;
                     read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
     
                     const std::size_t curBatchsize = readIdEnd - readIdBegin;
-    
-                    std::iota(h_indices.get(), h_indices.get() + curBatchsize, readIdBegin);
-    
-                    CUDACHECK(cudaMemcpyAsync(d_indices.data(), h_indices, sizeof(read_number) * curBatchsize, H2D, stream));
-    
-                    gpuReadStorage.gatherSequences(
-                        sequencehandle,
-                        d_sequenceData.data(),
-                        encodedSequencePitchInInts,
-                        makeAsyncConstBufferWrapper(h_indices.data()),
-                        d_indices.data(),
-                        curBatchsize,
-                        stream,
-                        mr
+
+                    thrust::sequence(
+                        rmm::exec_policy_nosync(streams[streamIndex], mr),
+                        vec_d_indices[streamIndex].begin(),
+                        vec_d_indices[streamIndex].end(),
+                        readIdBegin
                     );
-                
+
                     gpuReadStorage.gatherSequenceLengths(
-                        sequencehandle,
-                        d_lengths.data(),
-                        d_indices.data(),
+                        sequenceHandles[streamIndex],
+                        vec_d_lengths[streamIndex].data(),
+                        vec_d_indices[streamIndex].data(),
                         curBatchsize,
-                        stream
+                        streams[streamIndex]
+                    );
+    
+                    std::iota(vec_h_indices[streamIndex].begin(), vec_h_indices[streamIndex].begin() + curBatchsize, readIdBegin);
+
+                    gpuReadStorage.gatherContiguousSequences(
+                        sequenceHandles[streamIndex],
+                        vec_d_sequenceData[streamIndex].data(),
+                        encodedSequencePitchInInts,
+                        readIdBegin,
+                        curBatchsize,
+                        streams[streamIndex],
+                        mr
                     );
     
                     gpuMinhasher->insert(
-                        d_sequenceData.data(),
+                        vec_d_sequenceData[streamIndex].data(),
                         curBatchsize,
-                        d_lengths.data(),
+                        vec_d_lengths[streamIndex].data(),
                         encodedSequencePitchInInts,
-                        d_indices.data(),
-                        h_indices,
+                        vec_d_indices[streamIndex].data(),
+                        vec_h_indices[streamIndex].data(),
                         alreadyExistingHashFunctions,
                         addedHashFunctions,
                         h_hashfunctionNumbers.data(),
-                        stream,
+                        streams[streamIndex],
                         mr
-                    );                   
-
-                    int errorcount = gpuMinhasher->checkInsertionErrors(
-                        alreadyExistingHashFunctions,
-                        addedHashFunctions,
-                        stream
                     );
-                    if(errorcount > 0){
-                        throw std::runtime_error("An error occurred during hash table construction.");
-                    }
+                }
 
-                    CUDACHECK(cudaStreamSynchronize(stream));
+                for(int i = 0; i < numStreams; i++){
+                    CUDACHECK(cudaStreamSynchronize(streams[i]));
+                }
+
+                int errorcount = gpuMinhasher->checkInsertionErrors(
+                    alreadyExistingHashFunctions,
+                    addedHashFunctions,
+                    streams[0]
+                );
+                if(errorcount > 0){
+                    throw std::runtime_error("An error occurred during hash table construction.");
                 }
     
-                CUDACHECK(cudaStreamSynchronize(stream));
+                CUDACHECK(cudaStreamSynchronize(streams[0]));
     
                 std::cerr << "Compacting\n";
                 if(tpForCompacting.getConcurrency() > 1){
@@ -213,18 +236,20 @@ namespace gpu{
                     gpuMinhasher->setThreadPool(nullptr);
                 }
                 
-                gpuMinhasher->compact(stream);
-                CUDACHECK(cudaStreamSynchronize(stream));
+                gpuMinhasher->compact(streams[0]);
+                CUDACHECK(cudaStreamSynchronize(streams[0]));
     
                 remainingHashFunctions -= addedHashFunctions;
             }
     
             gpuMinhasher->setThreadPool(nullptr); 
             
-            gpuReadStorage.destroyHandle(sequencehandle);
+            for(int i = 0; i < numStreams; i++){
+                gpuReadStorage.destroyHandle(sequenceHandles[i]);
+            }
     
-            gpuMinhasher->constructionIsFinished(stream);
-            CUDACHECK(cudaStreamSynchronize(stream));
+            gpuMinhasher->constructionIsFinished(streams[0]);
+            CUDACHECK(cudaStreamSynchronize(streams[0]));
         }
     
     
@@ -252,7 +277,8 @@ namespace gpu{
                 gpuMinhasher = std::make_unique<SingleGpuMinhasher>(
                     gpuReadStorage.getNumberOfReads(), 
                     calculateResultsPerMapThreshold(programOptions.estimatedCoverage), 
-                    programOptions.kmerlength
+                    programOptions.kmerlength,
+                    programOptions.hashtableLoadfactor
                 );
 
                 gpuMinhasherType = GpuMinhasherType::Single;
@@ -264,6 +290,7 @@ namespace gpu{
                     gpuReadStorage.getNumberOfReads(), 
                     calculateResultsPerMapThreshold(programOptions.estimatedCoverage), 
                     programOptions.kmerlength,
+                    programOptions.hashtableLoadfactor,
                     programOptions.deviceIds
                 );
 
