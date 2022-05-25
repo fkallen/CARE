@@ -98,13 +98,16 @@ GZipWriter::GZipWriter(const std::string& filename, FileFormat format)
     if(isFastq){
         delimHeader = '@';
     }
+
+    charbuffer.reserve(2*1024*1024);
 }
 
 GZipWriter::~GZipWriter(){
-    if(numBufferedReads > 0){
-        writeBufferedReads();
-    }
-    numBufferedReads = 0;
+    // if(numBufferedReads > 0){
+    //     writeBufferedReads();
+    // }
+    // numBufferedReads = 0;
+    flush();
     gzclose(fp);
 }
 
@@ -113,41 +116,25 @@ void GZipWriter::writeReadImpl(const std::string& header, const std::string& seq
 }
 
 void GZipWriter::writeReadImpl(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality){
-    bufferRead(name, comment, sequence, quality);
-
-    if(numBufferedReads > maxBufferedReads){
-        writeBufferedReads();
+    write({&delimHeader, 1});
+    write(name);
+    if(comment.size() > 0){
+        write(" ");
+        write(comment);
     }
-
-// #if 1
-//     std::stringstream ss;
-//     ss << delimHeader << name << ' ' << comment << '\n'
-//         << sequence << '\n';
-//     if(format == FileFormat::FASTQGZ){
-//         ss << '+' << '\n'
-//             << quality << '\n';
-//     }
-//
-//     auto string = ss.str();
-//     gzwrite(fp, string.c_str(), string.size());
-// #else
-//     gzputc(fp, delimHeader);
-//     gzwrite(fp, name.c_str(), name.size());
-//     gzputc(fp, ' ');
-//     gzwrite(fp, comment.c_str(), comment.size());
-//     gzputc(fp, '\n');
-//     gzwrite(fp, sequence.c_str(), sequence.size());
-//     gzputc(fp, '\n');
-//     if(format == FileFormat::FASTQGZ){
-//         gzwrite(fp, "+\n", 2);
-//         gzwrite(fp, quality.c_str(), quality.size());
-//         gzputc(fp, '\n');
-//     }
-// #endif
+    write("\n");
+    write(sequence);
+    write("\n");
+    if(isFastq){
+        write("+");
+        write("\n");
+        write(quality);
+        write("\n");
+    }
 }
 
 void GZipWriter::writeImpl(const std::string& data){
-    gzwrite(fp, data.c_str(), data.size());
+    write(data);
 }
 
 

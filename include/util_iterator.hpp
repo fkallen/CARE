@@ -39,6 +39,7 @@ IteratorMultiplier<Iter> make_iterator_multiplier(Iter data, int factor){
 template<class Iter>
 struct StridedIterator{
     using value_type = typename std::iterator_traits<Iter>::value_type;
+    using reference = typename std::iterator_traits<Iter>::reference;
 
     Iter data;
     int stride;
@@ -49,12 +50,12 @@ struct StridedIterator{
     }
 
     HOSTDEVICEQUALIFIER
-    value_type& operator*(){
+    reference operator*(){
         return *data;
     }
-
+    
     HOSTDEVICEQUALIFIER
-    const value_type& operator*() const{
+    const reference operator*() const{
         return *data;
     }
 

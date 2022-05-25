@@ -182,7 +182,7 @@ namespace gpu{
         const bool* __restrict__ d_isPairedCandidate,
         const char* __restrict__ anchorQualities,
         const char* __restrict__ candidateQualities,
-        const int* __restrict__ d_numAnchors,
+        int numAnchors,
         float desiredAlignmentMaxErrorRate,
         bool canUseQualityScores,
         int encodedSequencePitchInInts,
@@ -198,8 +198,6 @@ namespace gpu{
 
         auto tbGroup = cg::this_thread_block();
 
-        const int n_anchors = *d_numAnchors;
-
         typename BlockReduceInt::TempStorage* const cubTempStorage = (typename BlockReduceInt::TempStorage*)sharedmem;
 
         float* const shared_weights = sharedmem;
@@ -207,7 +205,7 @@ namespace gpu{
         int* const shared_coverages = (int*)(shared_counts + 4 * multiMSA.columnPitchInElements);
 
 
-        for(int anchorIndex = blockIdx.x; anchorIndex < n_anchors; anchorIndex += gridDim.x){
+        for(int anchorIndex = blockIdx.x; anchorIndex < numAnchors; anchorIndex += gridDim.x){
             const int myNumGoodCandidates = indices_per_anchor[anchorIndex];
 
             //if(myNumGoodCandidates > 0){
@@ -303,32 +301,8 @@ namespace gpu{
                     desiredAlignmentMaxErrorRate,
                     anchorIndex
                 );
-
-                tbGroup.sync();
-        
+       
                 msa.checkAfterBuild(tbGroup, anchorIndex);
-
-                // bool mychecksuccess = msa.checkCoverages(tbGroup);
-                // int numchecksuccess = BlockReduceInt(*cubTempStorage).Sum(mychecksuccess ? 1 : 0);
-                // tbGroup.sync();
-                // bool checksuccess = numchecksuccess == tbGroup.size();
-                // if(tbGroup.thread_rank() == 0){
-                //     if(!checksuccess){
-                //         printf("numchecksuccess %d\n ", numchecksuccess);
-
-                //         const int firstColumnIncl = msa.columnProperties->firstColumn_incl;
-                //         const int lastColumnExcl = msa.columnProperties->lastColumn_excl;
-
-                //         printf("firstColumnIncl %d, lastColumnExcl %d\n", firstColumnIncl, lastColumnExcl);
-                //         printf("coverages:\n");
-                //         for(int x = 0; x < msa.columnPitchInElements; x++){
-                //             printf("%d, ", msa.coverages[x]);
-                //         }
-                //         printf("\n");
-                //     }
-                //     assert(checksuccess);
-                // }
-                // tbGroup.sync();
 
                 msa.findConsensus(
                     tbGroup,
@@ -383,7 +357,7 @@ namespace gpu{
         const char* __restrict__ candidateQualities,
         bool* __restrict__ d_shouldBeKept,
         const int* __restrict__ d_candidates_per_anchor_prefixsum,
-        const int* __restrict__ d_numAnchors,
+        int numAnchors,
         float desiredAlignmentMaxErrorRate,
         bool canUseQualityScores,
         size_t encodedSequencePitchInInts,
@@ -415,11 +389,9 @@ namespace gpu{
         int* const shared_counts = (int*)(shared_weights + 4 * multiMSA.columnPitchInElements);
         int* const shared_coverages = (int*)(shared_counts + 4 * multiMSA.columnPitchInElements);
 
-        const int n_anchors = *d_numAnchors;
-
         auto tbGroup = cg::this_thread_block();
 
-        for(int anchorIndex = blockIdx.x; anchorIndex < n_anchors; anchorIndex += gridDim.x){
+        for(int anchorIndex = blockIdx.x; anchorIndex < numAnchors; anchorIndex += gridDim.x){
             const bool myAnchorIsFinished = d_anchorIsFinished[anchorIndex];
             const int myNumIndices = d_indices_per_anchor[anchorIndex];
 
@@ -671,7 +643,7 @@ namespace gpu{
         const char* __restrict__ candidateQualities,
         bool* __restrict__ d_shouldBeKept,
         const int* __restrict__ d_candidates_per_anchor_prefixsum,
-        const int* __restrict__ d_numAnchors,
+        int numAnchors,
         float desiredAlignmentMaxErrorRate,
         bool canUseQualityScores,
         size_t encodedSequencePitchInInts,
@@ -679,8 +651,7 @@ namespace gpu{
         int* __restrict__ d_indices,
         int* __restrict__ d_indices_per_anchor,
         int dataset_coverage,
-        int numRefinementIterations,
-        const read_number* __restrict__ anchorReadIds = nullptr
+        int numRefinementIterations
     ){
 
         constexpr bool useSmemMSA = (memoryType == MemoryType::Shared);
@@ -704,9 +675,7 @@ namespace gpu{
         int* const shared_counts = (int*)(shared_weights + 4 * multiMSA.columnPitchInElements);
         int* const shared_coverages = (int*)(shared_counts + 4 * multiMSA.columnPitchInElements);            
 
-        const int n_anchors = *d_numAnchors;
-
-        for(int anchorIndex = blockIdx.x; anchorIndex < n_anchors; anchorIndex += gridDim.x){
+        for(int anchorIndex = blockIdx.x; anchorIndex < numAnchors; anchorIndex += gridDim.x){
             int myNumIndices = d_indices_per_anchor[anchorIndex];
 
             if(myNumIndices > 0){
@@ -717,9 +686,6 @@ namespace gpu{
                     shared_columnProperties = *(multiMSA.getColumnPropertiesOfMSA(anchorIndex));
                 }
                 tbGroup.sync();
-
-                const read_number anchorReadId = anchorReadIds == nullptr ? 0 : anchorReadIds[anchorIndex];
-                constexpr read_number debugreadid = 42;
 
                 const int globalOffset = d_candidates_per_anchor_prefixsum[anchorIndex];
                 int* const myIndices = d_indices + globalOffset;
@@ -733,8 +699,6 @@ namespace gpu{
 
                 GpuSingleMSA msa = multiMSA.getSingleMSA(anchorIndex);
                 msa.columnProperties = &shared_columnProperties;
-
-                msa.debugflag = anchorReadId == debugreadid;
 
                 if(useSmemMSA){
                     msa.counts = shared_counts;
@@ -875,19 +839,6 @@ namespace gpu{
                     int* const destNumIndices = (refinementIteration % 2 == 0) ?
                         myNewNumIndicesPerAnchorPtr : myNumIndicesPerAnchorPtr;
 
-                    //debug check
-                    {
-                        const int myMaxNumCandidates = d_candidates_per_anchor_prefixsum[anchorIndex + 1] - d_candidates_per_anchor_prefixsum[anchorIndex];
-                        for(int c = tbGroup.thread_rank(); c < *srcNumIndices; c += tbGroup.size()){
-                            assert(srcIndices[c] != - 1);
-                            assert(srcIndices[c] < myMaxNumCandidates);
-                        }
-
-                        for(int c = tbGroup.thread_rank(); c < *srcNumIndices; c += tbGroup.size()){
-                            destIndices[c] = -1;
-                        }
-                    }
-
                     tbGroup.sync();
 
                     auto groupReduceBool = [&](bool b, auto comp){
@@ -899,9 +850,7 @@ namespace gpu{
                         b = BlockReduceInt2(temp_storage.int2reduce).Reduce(b, comp);
                         return b;
                     };
-                    
-                    long long int t1 = clock64();
-
+ 
                     msa.flagCandidatesOfDifferentRegion(
                         tbGroup,
                         groupReduceBool,
@@ -925,23 +874,6 @@ namespace gpu{
                         dataset_coverage
                     );
 
-                    tbGroup.sync();
-
-                    //debug check
-                    {
-                        const int myMaxNumCandidates = d_candidates_per_anchor_prefixsum[anchorIndex + 1] - d_candidates_per_anchor_prefixsum[anchorIndex];
-                        for(int c = tbGroup.thread_rank(); c < *destNumIndices; c += tbGroup.size()){
-                            assert(destIndices[c] != - 1);
-                            assert(destIndices[c] < myMaxNumCandidates);
-                        }
-                    }
-
-                    long long int t2 = clock64();
-
-                    if(anchorIndex == 0 && tbGroup.thread_rank() == 0){
-                        //printf("duration flag: %lu\n", t2-t1);
-                    }
-
                     const int myNewNumIndices = *destNumIndices;
                     
                     assert(myNewNumIndices <= myNumIndices);
@@ -950,43 +882,7 @@ namespace gpu{
                             return !myShouldBeKept[i];
                         };
 
-                        long long int t3 = clock64();
-
-                        // bool mychecksuccess = msa.checkCoverages(tbGroup);
-                        // bool checksuccess = groupReduceBool(mychecksuccess, [](auto l, auto r){
-                        //     return l && r;
-                        // });
-                        // tbGroup.sync();
-                        // if(tbGroup.thread_rank() == 0){
-                        //     if(!checksuccess){
-                        //         const int firstColumnIncl = msa.columnProperties->firstColumn_incl;
-                        //         const int lastColumnExcl = msa.columnProperties->lastColumn_excl;
-
-                        //         printf("firstColumnIncl %d, lastColumnExcl %d\n", firstColumnIncl, lastColumnExcl);
-                        //         printf("coverages:\n");
-                        //         for(int x = 0; x < msa.columnPitchInElements; x++){
-                        //             printf("%d, ", msa.coverages[x]);
-                        //         }
-                        //         printf("\n");
-                        //         assert(checksuccess);
-                        //     }
-                        // }
-                        // tbGroup.sync();
-
-
-                        // if(tbGroup.thread_rank() == 0 && anchorReadId == debugreadid && refinementIteration >= 0){
-                        //     printf("counts before remove in iteration %d\n", refinementIteration);
-                        //     msa.printCounts(275,285);
-                        //     printf("weights before remove in iteration %d\n", refinementIteration);
-                        //     msa.printWeights(275,285);
-                        // }
-                        // tbGroup.sync();
-
-                        msa.checkAfterBuild(tbGroup, anchorIndex, __LINE__, anchorReadId);
-                        tbGroup.sync();
-
                         msa.removeCandidates(
-                        //msa.removeCandidates_verticalthreads(
                             tbGroup,
                             selector,
                             myShifts,
@@ -1005,69 +901,15 @@ namespace gpu{
                             desiredAlignmentMaxErrorRate
                         );
 
-                        tbGroup.sync();
-
                         msa.setWeightsToZeroIfCountIsZero(tbGroup);
-                        tbGroup.sync();
-
-                        // mychecksuccess = msa.checkCoverages(tbGroup);
-                        // checksuccess = groupReduceBool(mychecksuccess, [](auto l, auto r){
-                        //     return l && r;
-                        // });
-                        // tbGroup.sync();
-                        // if(tbGroup.thread_rank() == 0){
-                        //     if(!checksuccess){
-                        //         const int firstColumnIncl = msa.columnProperties->firstColumn_incl;
-                        //         const int lastColumnExcl = msa.columnProperties->lastColumn_excl;
-
-                        //         printf("firstColumnIncl %d, lastColumnExcl %d\n", firstColumnIncl, lastColumnExcl);
-                        //         printf("coverages:\n");
-                        //         for(int x = 0; x < msa.columnPitchInElements; x++){
-                        //             printf("%d, ", msa.coverages[x]);
-                        //         }
-                        //         printf("\n");
-                        //         assert(checksuccess);
-                        //     }
-                        // }
-                        // tbGroup.sync();
-
-                        long long int t4 = clock64();
-
-                        if(anchorIndex == 0 && tbGroup.thread_rank() == 0){
-                            //printf("duration removal: %lu. candidates before %d, after %d\n", t4-t3, myNumIndices, myNewNumIndices);
-                        }
 
                         bool error = msa.updateColumnProperties(tbGroup);
-
-                        tbGroup.sync();
-
-                        // if(tbGroup.thread_rank() == 0 && anchorReadId == debugreadid && refinementIteration >= 0){
-                        //     printf("counts after remove in iteration %d\n", refinementIteration);
-                        //     msa.printCounts(275,285);
-                        //     printf("weights after remove in iteration %d\n", refinementIteration);
-                        //     msa.printWeights(275,285);
-                        // }
-                        // tbGroup.sync();
-
-
-                        msa.checkAfterBuild(tbGroup, anchorIndex, __LINE__, anchorReadId);
-                        tbGroup.sync();
-
-                        // if(error){
-                        //     if(tbGroup.thread_rank() == 0){
-                        //         printf("error updateColumnProperties\n");
-                        //         printf("shifts")
-                        //     }
-                        // }
-                        // tbGroup.sync();
                         assert(!error);
 
-                        //msa.checkAfterBuild(tbGroup, anchorIndex);
+                        msa.checkAfterBuild(tbGroup, anchorIndex, __LINE__, 0);
 
                         assert(shared_columnProperties.firstColumn_incl != -1);
                         assert(shared_columnProperties.lastColumn_excl != -1);
-
-                        long long int t5 = clock64();
 
                         msa.findConsensus(
                             tbGroup,
@@ -1081,12 +923,6 @@ namespace gpu{
                         }
 
                         tbGroup.sync();
-
-                        long long int t6 = clock64();
-
-                        if(anchorIndex == 0 && tbGroup.thread_rank() == 0){
-                            //printf("duration consensus: %lu\n", t6-t5);
-                        }
 
                         myNumIndices = myNewNumIndices;
 
@@ -1219,10 +1055,8 @@ namespace gpu{
         const char* d_candidateQualities,
         bool* d_shouldBeKept,
         const int* d_candidates_per_anchor_prefixsum,
-        const int* d_numAnchors,
         float desiredAlignmentMaxErrorRate,
-        int /*maxNumAnchors*/,
-        int /*maxNumCandidates*/,
+        int numAnchors,
         bool canUseQualityScores,
         size_t encodedSequencePitchInInts,
         size_t qualityPitchInBytes,
@@ -1230,8 +1064,7 @@ namespace gpu{
         int* d_indices_per_anchor,
         int dataset_coverage,
         int numIterations,
-        cudaStream_t stream,
-        const read_number* d_anchorReadIds
+        cudaStream_t stream
     ){
 
         helpers::call_fill_kernel_async(
@@ -1270,9 +1103,7 @@ namespace gpu{
         const int maxBlocks = maxBlocksPerSM * numSMs;
 
         dim3 block(blocksize, 1, 1);
-        //dim3 grid(maxNumAnchors, 1, 1);
-        dim3 grid(maxBlocks, 1, 1);
-
+        dim3 grid(std::min(maxBlocks, numAnchors), 1, 1);
 
         msaCandidateRefinement_multiiter_kernel<blocksize, memoryType>
                 <<<grid, block, smem, stream>>>(
@@ -1293,7 +1124,7 @@ namespace gpu{
             d_candidateQualities,
             d_shouldBeKept,
             d_candidates_per_anchor_prefixsum,
-            d_numAnchors,
+            numAnchors,
             desiredAlignmentMaxErrorRate,
             canUseQualityScores,
             encodedSequencePitchInInts,
@@ -1301,8 +1132,7 @@ namespace gpu{
             d_indices,
             d_indices_per_anchor,
             dataset_coverage,
-            numIterations,
-            d_anchorReadIds
+            numIterations
         );
 
         CUDACHECKASYNC;
@@ -1330,10 +1160,8 @@ namespace gpu{
         const char* d_candidateQualities,
         bool* d_shouldBeKept,
         const int* d_candidates_per_anchor_prefixsum,
-        const int* d_numAnchors,
         float desiredAlignmentMaxErrorRate,
-        int /*maxNumAnchors*/,
-        int /*maxNumCandidates*/,
+        int numAnchors,
         bool canUseQualityScores,
         size_t encodedSequencePitchInInts,
         size_t qualityPitchInBytes,
@@ -1381,8 +1209,7 @@ namespace gpu{
         const int maxBlocks = maxBlocksPerSM * numSMs;
 
         dim3 block(blocksize, 1, 1);
-        //dim3 grid(maxNumAnchors, 1, 1);
-        dim3 grid(maxBlocks, 1, 1);
+        dim3 grid(std::min(maxBlocks, numAnchors), 1, 1);
 
         msaCandidateRefinement_singleiter_kernel<blocksize, memoryType><<<grid, block, smem, stream>>>(
             d_newIndices,
@@ -1402,7 +1229,7 @@ namespace gpu{
             d_candidateQualities,
             d_shouldBeKept,
             d_candidates_per_anchor_prefixsum,
-            d_numAnchors,
+            numAnchors,
             desiredAlignmentMaxErrorRate,
             canUseQualityScores,
             encodedSequencePitchInInts,
@@ -1421,30 +1248,29 @@ namespace gpu{
 
 
 
-    void callConstructMultipleSequenceAlignmentsKernel_async(
-        GPUMultiMSA multiMSA,
-        const int* d_overlaps,
-        const int* d_shifts,
-        const int* d_nOps,
-        const AlignmentOrientation* d_bestAlignmentFlags,
-        const int* d_anchorLengths,
-        const int* d_candidateLengths,
-        const int* d_indices,
-        const int* d_indices_per_anchor,
-        const int* d_candidatesPerAnchorPrefixSum,            
-        const unsigned int* d_anchorSequencesData,
-        const unsigned int* d_candidateSequencesData,
-        const bool* d_isPairedCandidate,
-        const char* d_anchorQualities,
-        const char* d_candidateQualities,
-        const int* d_numAnchors,
-        float desiredAlignmentMaxErrorRate,
-        int /*maxNumAnchors*/,
-        int /*maxNumCandidates*/,
-        bool canUseQualityScores,
-        int encodedSequencePitchInInts,
-        size_t qualityPitchInBytes,
-        cudaStream_t stream){
+void callConstructMultipleSequenceAlignmentsKernel_async(
+    GPUMultiMSA multiMSA,
+    const int* d_overlaps,
+    const int* d_shifts,
+    const int* d_nOps,
+    const AlignmentOrientation* d_bestAlignmentFlags,
+    const int* d_anchorLengths,
+    const int* d_candidateLengths,
+    const int* d_indices,
+    const int* d_indices_per_anchor,
+    const int* d_candidatesPerAnchorPrefixSum,            
+    const unsigned int* d_anchorSequencesData,
+    const unsigned int* d_candidateSequencesData,
+    const bool* d_isPairedCandidate,
+    const char* d_anchorQualities,
+    const char* d_candidateQualities,
+    float desiredAlignmentMaxErrorRate,
+    int numAnchors,
+    bool canUseQualityScores,
+    int encodedSequencePitchInInts,
+    size_t qualityPitchInBytes,
+    cudaStream_t stream
+){
             
 
     constexpr MemoryType memoryType = MemoryType::Shared;
@@ -1478,8 +1304,7 @@ namespace gpu{
     const int maxBlocks = maxBlocksPerSM * numSMs;
 
     dim3 block(BLOCKSIZE, 1, 1);
-    //dim3 grid(maxNumAnchors, 1, 1);
-    dim3 grid(maxBlocks, 1, 1);
+    dim3 grid(std::min(maxBlocks, numAnchors), 1, 1);
     
     constructMultipleSequenceAlignmentsKernel<BLOCKSIZE, memoryType><<<grid, block, smem, stream>>>(
         multiMSA,         
@@ -1497,14 +1322,12 @@ namespace gpu{
         d_isPairedCandidate,
         d_anchorQualities,
         d_candidateQualities,
-        d_numAnchors,
+        numAnchors,
         desiredAlignmentMaxErrorRate,
         canUseQualityScores,
         encodedSequencePitchInInts,
         qualityPitchInBytes
     ); CUDACHECKASYNC;
-
-
 
 }
 

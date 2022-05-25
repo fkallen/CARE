@@ -29,6 +29,11 @@ struct GpuForest {
 
     using Features = anchor_extractor::features_t;
 
+    union IndexOrProb{
+        uint32_t idx;
+        float prob; 
+    };
+
     struct Node {
         uint8_t att;
         uint8_t flag;
@@ -47,15 +52,15 @@ struct GpuForest {
 
         template<class Iter>
         HOSTDEVICEQUALIFIER
-        float decide(Iter features, const Node* tree, size_t i = 0) const {
+        float decideTree(Iter features, const Node* tree, size_t i = 0) const {
             if (*(features + tree[i].att) <= tree[i].split) {
                 if (tree[i].flag / 2)
                     return tree[i].lhs.prob;
-                return decide(features, tree, tree[i].lhs.idx);
+                return decideTree(features, tree, tree[i].lhs.idx);
             } else {
                 if (tree[i].flag % 2)
                     return tree[i].rhs.prob;
-                return decide(features, tree, tree[i].rhs.idx);
+                return decideTree(features, tree, tree[i].rhs.idx);
             }
         }
 
@@ -64,9 +69,12 @@ struct GpuForest {
         bool decide(Iter features, float thresh) const {
             float prob = 0.f;
             for(int t = 0; t < numTrees; t++){
-                prob += decide(features, data[t]);
+                prob += decideTree(features, data[t]);
+                if(prob / numTrees >= thresh){
+                    return true;
+                }
             }
-            return prob / numTrees >= thresh;
+            return false;
         }
 
         //use group to parallelize over trees. one thread per tree
@@ -74,12 +82,30 @@ struct GpuForest {
         template<class Group, class Iter, class GroupReduceFloatSum>
         DEVICEQUALIFIER
         float decide(Group& g, Iter features, float thresh, GroupReduceFloatSum reduce) const{
+            #if 1
+            const int limit = SDIV(numTrees, g.size()) * g.size();
+            float accumulatedProb = 0.f;
+
+            for(int t = g.thread_rank(); t < limit; t += g.size()){
+                float currentProb = 0.0;
+                if(t < numTrees){
+                    currentProb += decideTree(features, data[t]);
+                }
+                accumulatedProb += reduce(currentProb);
+                if(accumulatedProb / numTrees >= thresh){
+                    return true;
+                }
+            }
+            return false;
+            #else
+
             float prob = 0.f;
             for(int t = g.thread_rank(); t < numTrees; t += g.size()){
-                prob += decide(features, data[t]);
+                prob += decideTree(features, data[t]);
             }
             prob = reduce(prob);
             return prob / numTrees >= thresh;
+            #endif
         }
         
     };
@@ -156,6 +182,7 @@ public:
         deviceId = std::exchange(rhs.deviceId, 0);
         numTrees = std::exchange(rhs.numTrees, 0);
         d_data = std::exchange(rhs.d_data, nullptr);
+        numNodesPerTree = std::exchange(rhs.numNodesPerTree, std::vector<uint64_t>{});
     }
 
     GpuForest(const GpuForest& rhs) = delete;
@@ -164,6 +191,7 @@ public:
         deviceId = std::exchange(rhs.deviceId, 0);
         numTrees = std::exchange(rhs.numTrees, 0);
         d_data = std::exchange(rhs.d_data, nullptr);
+        numNodesPerTree = std::exchange(rhs.numNodesPerTree, std::vector<uint64_t>{});
         return *this;
     }
 

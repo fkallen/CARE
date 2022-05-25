@@ -14,7 +14,7 @@ namespace care{
 
     enum class CpuMinhasherType{
         Ordinary,
-        OrdinarySingleHash,
+        //OrdinarySingleHash,
         None
     };
 

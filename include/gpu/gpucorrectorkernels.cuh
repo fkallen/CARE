@@ -167,7 +167,7 @@ namespace gpucorrectorkernels{
             const int numEdits = d_numEditsPerSequence[c];
 
             if(numEdits == doNotUseEditsValue){
-                const int outputOffset = d_outputOffsets[c];
+                const int outputOffset = c == 0 ? 0 : d_outputOffsets[c];
 
                 char* outputPtr = d_outputCorrectedSequences + outputOffset;
                 const char* inputPtr = d_inputCorrectedSequences + indexOfCorrectedSequence * decodedSequencePitchInBytes;

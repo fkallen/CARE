@@ -16,6 +16,8 @@
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
 
+#include <thrust/iterator/counting_iterator.h>
+
 namespace cg = cooperative_groups;
 
 
@@ -23,9 +25,9 @@ namespace cg = cooperative_groups;
 
 namespace Gpu2dArrayManagedKernels{
 
-    template<class T, class IndexGenerator>
+    template<class T, class IndexIterator>
     __global__
-    void scatterkernel(TwoDimensionalArray<T> array, const T* __restrict__ src, size_t srcRowPitchInBytes, IndexGenerator indices, const size_t* __restrict__ d_numIndices){
+    void scatterkernel(TwoDimensionalArray<T> array, const T* __restrict__ src, size_t srcRowPitchInBytes, IndexIterator indices, const size_t* __restrict__ d_numIndices){
         auto gridGroup = cg::this_grid();
 
         const size_t numIndices = *d_numIndices;
@@ -35,9 +37,9 @@ namespace Gpu2dArrayManagedKernels{
         array.scatter(gridGroup, src, srcRowPitchInBytes, indices, numIndices);
     }
 
-    template<class T, class IndexGenerator>
+    template<class T, class IndexIterator>
     __global__
-    void scatterkernel(TwoDimensionalArray<T> array, const T* __restrict__ src, size_t srcRowPitchInBytes, IndexGenerator indices, size_t numIndices){
+    void scatterkernel(TwoDimensionalArray<T> array, const T* __restrict__ src, size_t srcRowPitchInBytes, IndexIterator indices, size_t numIndices){
         auto gridGroup = cg::this_grid();
 
         if(numIndices == 0) return;
@@ -45,9 +47,9 @@ namespace Gpu2dArrayManagedKernels{
         array.scatter(gridGroup, src, srcRowPitchInBytes, indices, numIndices);
     }
 
-    template<class T, class IndexGenerator>
+    template<class T, class IndexIterator>
     __global__
-    void gatherkernel(TwoDimensionalArray<T> array, T* __restrict__ dest, size_t destRowPitchInBytes, IndexGenerator indices, const size_t* __restrict__ d_numIndices){
+    void gatherkernel(TwoDimensionalArray<T> array, T* __restrict__ dest, size_t destRowPitchInBytes, IndexIterator indices, const size_t* __restrict__ d_numIndices){
         auto gridGroup = cg::this_grid();
 
         const size_t numIndices = *d_numIndices;
@@ -57,9 +59,9 @@ namespace Gpu2dArrayManagedKernels{
         array.gather(gridGroup, dest, destRowPitchInBytes, indices, numIndices);
     }
 
-    template<class T, class IndexGenerator>
+    template<class T, class IndexIterator>
     __global__
-    void gatherkernel(TwoDimensionalArray<T> array, T* __restrict__ dest, size_t destRowPitchInBytes, IndexGenerator indices, size_t numIndices){
+    void gatherkernel(TwoDimensionalArray<T> array, T* __restrict__ dest, size_t destRowPitchInBytes, IndexIterator indices, size_t numIndices){
         auto gridGroup = cg::this_grid();
 
         if(numIndices == 0) return;
@@ -195,7 +197,7 @@ public:
     void print() const{
         T* tmp;
         CUDACHECK(cudaMallocHost(&tmp, numRows * numColumns));
-        gather(tmp, numColumns * sizeof(T), [=]__device__(auto i){return i;}, numRows);
+        gather(tmp, numColumns * sizeof(T), thrust::make_counting_iterator<std::size_t>(0), numRows);
         CUDACHECK(cudaDeviceSynchronize());
 
         for(size_t i = 0; i < numRows; i++){
@@ -208,8 +210,8 @@ public:
         CUDACHECK(cudaFreeHost(tmp));
     }
 
-    template<class IndexGenerator>
-    void gather(T* d_dest, size_t destRowPitchInBytes, IndexGenerator d_indices, size_t numIndices, cudaStream_t stream = 0) const{
+    template<class IndexIterator>
+    void gather(T* d_dest, size_t destRowPitchInBytes, IndexIterator d_indices, size_t numIndices, cudaStream_t stream = 0) const{
         if(numIndices == 0) return;
         if(getNumRows() == 0) return;
 
@@ -229,8 +231,8 @@ public:
         CUDACHECKASYNC;
     }
 
-    template<class IndexGenerator>
-    void gather(T* d_dest, size_t destRowPitchInBytes, IndexGenerator d_indices, const size_t* d_numIndices, size_t maxNumIndices, cudaStream_t stream = 0) const{
+    template<class IndexIterator>
+    void gather(T* d_dest, size_t destRowPitchInBytes, IndexIterator d_indices, const size_t* d_numIndices, size_t maxNumIndices, cudaStream_t stream = 0) const{
         if(maxNumIndices == 0) return;
         if(getNumRows() == 0) return;
 
@@ -250,35 +252,65 @@ public:
         CUDACHECKASYNC;
     }
 
-    void gather(T* d_dest, size_t destRowPitchInBytes, size_t rowBegin, size_t rowEnd, cudaStream_t stream = 0) const{
-        const size_t rows = rowEnd - rowBegin;
-
-        if(rows == 0) return;
+    void gatherContiguous(T* d_dest, size_t destRowPitchInBytes, size_t rowBegin, size_t numRowsToGather, cudaStream_t stream = 0) const{
+        assert(rowBegin + numRowsToGather <= getNumRows());
+        if(numRowsToGather == 0) return;
         if(getNumRows() == 0) return;
 
-        dim3 block(128, 1, 1);
-        dim3 grid(SDIV(rows * numColumns, block.x), 1, 1);
+        if(destRowPitchInBytes == getPitch()){
+            CUDACHECK(cudaMemcpyAsync(
+                d_dest, 
+                ((char*)getGpuData()) + getPitch() * rowBegin, 
+                getPitch() * numRowsToGather, 
+                D2D, 
+                stream
+            ));
+        }else{
+            CUDACHECK(cudaMemcpy2DAsync(
+                d_dest, 
+                destRowPitchInBytes, 
+                ((char*)getGpuData()) + getPitch() * rowBegin, 
+                getPitch(), 
+                getNumColumns() * sizeof(T), 
+                numRowsToGather, 
+                D2D, 
+                stream
+            ));
+        }
+    }
 
-        TwoDimensionalArray<T> array = wrapper();
+    //d_dest and stream are on device destDeviceId
+    void gatherContiguousPeer(int destDeviceId, T* d_dest, size_t destRowPitchInBytes, size_t rowBegin, size_t numRowsToGather, cudaStream_t stream = 0) const{
+        assert(rowBegin + numRowsToGather <= getNumRows());
+        if(numRowsToGather == 0) return;
+        if(getNumRows() == 0) return;
 
-        auto indexgenerator = [rowBegin] __device__ (auto i){
-            return rowBegin + i;
-        };
+        if(destRowPitchInBytes == getPitch()){
+            peercopy(
+                d_dest, 
+                destDeviceId, 
+                ((char*)getGpuData()) + getPitch() * rowBegin, 
+                deviceId,
+                getPitch() * numRowsToGather, 
+                stream
+            );
+        }else{
+            cudaMemcpy3DPeerParms p;
+            std::memset(&p, 0, sizeof(cudaMemcpy3DPeerParms));
 
-        Gpu2dArrayManagedKernels::gatherkernel<<<grid, block, 0, stream>>>(
-            array, 
-            d_dest, 
-            destRowPitchInBytes, 
-            indexgenerator, 
-            rows
-        );
+            p.dstPtr = make_cudaPitchedPtr((void*)d_dest, destRowPitchInBytes, getNumColumns() * sizeof(T), numRowsToGather);
+            p.dstDevice = destDeviceId;
+            p.srcPtr = make_cudaPitchedPtr(((char*)getGpuData()) + getPitch() * rowBegin, getPitch(), getNumColumns() * sizeof(T), getNumRows() - rowBegin);
+            p.srcDevice = deviceId;
+            p.extent = make_cudaExtent(getNumColumns() * sizeof(T), numRowsToGather, 1);
 
-        CUDACHECKASYNC;
+            CUDACHECK(cudaMemcpy3DPeerAsync(&p, stream));
+        }
     }
 
 
-    template<class IndexGenerator>
-    void scatter(const T* d_src, size_t srcRowPitchInBytes, IndexGenerator d_indices, size_t numIndices, cudaStream_t stream = 0) const{
+    template<class IndexIterator>
+    void scatter(const T* d_src, size_t srcRowPitchInBytes, IndexIterator d_indices, size_t numIndices, cudaStream_t stream = 0) const{
         if(numIndices == 0) return;
         if(getNumRows() == 0) return;
 
@@ -298,8 +330,8 @@ public:
         CUDACHECKASYNC;
     }
 
-    template<class IndexGenerator>
-    void scatter(const T* d_src, size_t srcRowPitchInBytes, IndexGenerator d_indices, const size_t* d_numIndices, size_t maxNumIndices, cudaStream_t stream = 0) const{
+    template<class IndexIterator>
+    void scatter(const T* d_src, size_t srcRowPitchInBytes, IndexIterator d_indices, const size_t* d_numIndices, size_t maxNumIndices, cudaStream_t stream = 0) const{
         if(maxNumIndices == 0) return;
         if(getNumRows() == 0) return;
 
@@ -319,30 +351,63 @@ public:
         CUDACHECKASYNC;
     }
 
-    void scatter(const T* d_src, size_t srcRowPitchInBytes, size_t rowBegin, size_t rowEnd, cudaStream_t stream = 0) const{
-        const size_t rows = rowEnd - rowBegin;
-        if(rows == 0) return;
+    void scatterContiguous(const T* d_src, size_t srcRowPitchInBytes, size_t rowBegin, size_t numRowsToScatter, cudaStream_t stream = 0) const{
+        assert(rowBegin + numRowsToScatter <= getNumRows());
+        if(numRowsToScatter == 0) return;
         if(getNumRows() == 0) return;
 
-        dim3 block(128, 1, 1);
-        dim3 grid(SDIV(rows * numColumns, block.x), 1, 1);
-
-        TwoDimensionalArray<T> array = wrapper();
-
-        auto indexgenerator = [rowBegin] __device__ (auto i){
-            return rowBegin + i;
-        };
-
-        Gpu2dArrayManagedKernels::scatterkernel<<<grid, block, 0, stream>>>(
-            array, 
-            d_src, 
-            srcRowPitchInBytes, 
-            indexgenerator, 
-            rows
-        );
-
-        CUDACHECKASYNC;
+        if(srcRowPitchInBytes == getPitch()){
+            CUDACHECK(cudaMemcpyAsync(
+                ((char*)getGpuData()) + getPitch() * rowBegin, 
+                d_src, 
+                getPitch() * numRowsToScatter, 
+                D2D, 
+                stream
+            ));
+        }else{
+            CUDACHECK(cudaMemcpy2DAsync(
+                ((char*)getGpuData()) + getPitch() * rowBegin, 
+                getPitch(), 
+                d_src,
+                srcRowPitchInBytes, 
+                getNumColumns() * sizeof(T), 
+                numRowsToScatter, 
+                D2D, 
+                stream
+            ));
+        }
     }
+
+    //d_src and stream are on device sourceDeviceId
+    void scatterContiguousPeer(int sourceDeviceId, const T* d_src, size_t srcRowPitchInBytes, size_t rowBegin, size_t numRowsToScatter, cudaStream_t stream = 0) const{
+        assert(rowBegin + numRowsToScatter <= getNumRows());
+        if(numRowsToScatter == 0) return;
+        if(getNumRows() == 0) return;
+
+        if(srcRowPitchInBytes == getPitch()){
+            peercopy(
+                ((char*)getGpuData()) + getPitch() * rowBegin, 
+                deviceId,
+                d_src, 
+                sourceDeviceId, 
+                getPitch() * numRowsToScatter, 
+                stream
+            );
+        }else{
+            cudaMemcpy3DPeerParms p;
+            std::memset(&p, 0, sizeof(cudaMemcpy3DPeerParms));
+
+            p.dstDevice = deviceId;
+            p.dstPtr = make_cudaPitchedPtr(((char*)getGpuData()) + getPitch() * rowBegin, getPitch(), getNumColumns() * sizeof(T), getNumRows() - rowBegin);
+            p.srcDevice = sourceDeviceId;
+            p.srcPtr = make_cudaPitchedPtr((void*)d_src, srcRowPitchInBytes, getNumColumns() * sizeof(T), numRowsToScatter);
+            p.extent = make_cudaExtent(getNumColumns() * sizeof(T), numRowsToScatter, 1);
+
+            CUDACHECK(cudaMemcpy3DPeerAsync(&p, stream));
+        }
+    }
+
+
 
     int getDeviceId() const noexcept{
         return deviceId;
@@ -378,6 +443,26 @@ public:
     }
 
 private:
+    void peercopy(
+        void* dst, 
+        int dstDevice, 
+        const void* src, 
+        int srcDevice, 
+        size_t count, 
+        cudaStream_t stream = 0
+    ) const{
+        cudaError_t status = cudaMemcpyPeerAsync(dst, dstDevice, src, srcDevice, count, stream);
+        if(status != cudaSuccess){
+            cudaGetLastError();
+            std::cerr << "dst=" << dst << ", "
+            << "dstDevice=" << dstDevice << ", "
+            << "src=" << src << ", "
+            << "srcDevice=" << srcDevice << ", "
+            << "count=" << count << "\n";
+        }
+        CUDACHECK(status);
+    }
+
     int deviceId{};
     size_t numRows{};
     size_t numColumns{};

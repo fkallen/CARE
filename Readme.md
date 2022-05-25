@@ -6,6 +6,10 @@
 * Zlib
 * GNU Make
 * Python 3.8 (optional. See section 'Forests for CARE 2.0')
+<<<<<<< HEAD
+=======
+
+>>>>>>> development
 ## Additional prerequisites for GPU version
 * CUDA Toolkit 11 or newer
 * A CUDA-capable graphics card with Pascal architecture (e.g. Nvidia GTX 1080) or newer.
@@ -53,7 +57,7 @@ The outputfile named correctedreads.fastq will be placed in the directory output
 Input files must be in fasta or fastq format, and may be gzip'ed. Specifying both fasta files and fastq files together is not allowed.
 If the input files are unpaired, the setting `--pairmode SE` must be used, which selects the single-end correction path.
 If the input files are paired instead, either `--pairmode SE` or `--pairmode PE` may be used.
-Output files will be uncompressed. The order of reads will be preserved. Read headers and quality scores (if fastq) remain unchanged.
+Output files will be uncompressed by default. The order of reads will be preserved. Read headers and quality scores (if fastq) remain unchanged. Compressed output can be enabled with `--gzoutput`. (This can be really slow).
 
 A more advanced usage could look like the following command. It enables progress counter `-p` and uses quality scores `-q` which are stored in a lossy compressed 2-bit format `--qualityScoreBits 2`. The program should use 16 threads `-t 16` with a memory limit of 22 gigabyte `-m 22G`. Sequences which contain other letters than A,C,G,T, e.g. N, will be skipped `--excludeAmbiguous`. `-k` and `-h` specify the parameters of the hashing, namely the k-mer size and the number of hash tables. With `--candidateCorrection`, additional sequence corrections may be computed per read which are then used to either accept or reject the primary correction. This can improve correction quality (reduces FP, but also TP) at the expense of greater memory usage to store the additional corrections.
 

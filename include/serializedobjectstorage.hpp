@@ -85,6 +85,40 @@ public:
     std::size_t offsetBytes() const noexcept{
         return sizeof(std::size_t) * offsetbuffer->size();
     }
+
+
+    void saveToStream(std::ostream& out) const{
+        std::size_t dbytes = dataBytes();
+        std::size_t obytes = offsetBytes();
+        std::size_t delemns = databuffer->size();
+        std::size_t oelemns = offsetbuffer->size();
+
+        out.write(reinterpret_cast<const char*>(&dbytes), sizeof(std::size_t));
+        out.write(reinterpret_cast<const char*>(&obytes), sizeof(std::size_t));
+        out.write(reinterpret_cast<const char*>(&delemns), sizeof(std::size_t));
+        out.write(reinterpret_cast<const char*>(&oelemns), sizeof(std::size_t));
+
+        out.write(reinterpret_cast<const char*>(getDataBuffer()), dbytes);
+        out.write(reinterpret_cast<const char*>(getOffsetBuffer()), obytes);
+    }
+
+    void loadFromStream(std::istream& in){
+        std::size_t dbytes = 0;
+        std::size_t obytes = 0;
+        std::size_t delemns = 0;
+        std::size_t oelemns = 0;
+
+        in.read(reinterpret_cast<char*>(&dbytes), sizeof(std::size_t));
+        in.read(reinterpret_cast<char*>(&obytes), sizeof(std::size_t));
+        in.read(reinterpret_cast<char*>(&delemns), sizeof(std::size_t));
+        in.read(reinterpret_cast<char*>(&oelemns), sizeof(std::size_t));
+
+        databuffer->resize(delemns);
+        offsetbuffer->resize(oelemns);
+
+        in.read(reinterpret_cast<char*>(getDataBuffer()), dbytes);
+        in.read(reinterpret_cast<char*>(getOffsetBuffer()), obytes);
+    }
 };
 
 

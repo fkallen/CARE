@@ -1,10 +1,12 @@
 
-all: arteval artevalsmallercorrected
+all: arteval artevalsmallercorrected artevalrework
 
-arteval:
+arteval: arteval.cpp
 	g++ -I../include/kseqpp/ -O3 arteval.cpp -lz -lpthread -o arteval
-artevalsmallercorrected:
+artevalsmallercorrected: artevalsmallercorrected.cpp
 	g++ -I../include/kseqpp/ -O3 artevalsmallercorrected.cpp -lz -lpthread -o artevalsmallercorrected
+artevalrework: artevalrework.cpp
+	g++ -I../include/kseqpp/ -O3 artevalrework.cpp -lz -lpthread -o artevalrework
 
 
 SEQAN3PATH=/git/seqan3
@@ -23,4 +25,4 @@ findmissingkmers: findmissingkmers.cpp
 	g++ -std=c++17 -O3 -g findmissingkmers.cpp -o findmissingkmers
 
 clean:
-	rm -f arteval artevalsmallercorrected findkmersingenome findmissingkmers
+	rm -f arteval artevalsmallercorrected artevalrework findkmersingenome findmissingkmers

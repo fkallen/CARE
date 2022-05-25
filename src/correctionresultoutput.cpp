@@ -35,40 +35,28 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
     const std::vector<std::string>& outputfiles,
     Combiner combineResultsWithRead, /* combineResultsWithRead(std::vector<ResultType>& in, ReadWithId& in_out) */
     ProgressFunction addProgress,
+    bool outputCorrectionQualityLabels,
     SequencePairType pairType
 ){
     assert(outputfiles.size() == 1 || originalReadFiles.size() == outputfiles.size());
 
     if(partialResults.getNumElements() == 0){
         if(outputfiles.size() == 1){
+            if(pairType == SequencePairType::SingleEnd 
+                || (pairType == SequencePairType::PairedEnd && originalReadFiles.size() == 1)){
+                auto filewriter = makeSequenceWriter(outputfiles[0], outputFormat);
 
-            if(pairType == SequencePairType::SingleEnd){
-                std::ofstream outstream(outputfiles[0], std::ios::binary);
-                if(!bool(outstream)){
-                    throw std::runtime_error("Cannot open output file " + outputfiles[0]);
-                }
-                for(const auto& ifname : originalReadFiles){
-                    std::ifstream instream(ifname, std::ios::binary);
-                    if(bool(instream) && instream.rdbuf()->in_avail() > 0){
-                        outstream << instream.rdbuf();
-                    }
+                MultiInputReader reader(originalReadFiles);
+                while(reader.next() >= 0){
+                    ReadWithId& readWithId = reader.getCurrent();
+                    filewriter->writeRead(readWithId.read);
                 }
             }else{
                 assert(pairType == SequencePairType::PairedEnd);
                 assert(originalReadFiles.size() == 2);
-
-                //no gz output
-                auto format = outputFormat;
-
-                if(format == FileFormat::FASTQGZ)
-                    format = FileFormat::FASTQ;
-                if(format == FileFormat::FASTAGZ)
-                    format = FileFormat::FASTA;
-
-                auto filewriter = makeSequenceWriter(outputfiles[0], format);
+                auto filewriter = makeSequenceWriter(outputfiles[0], outputFormat);
 
                 //merged output
-
                 forEachReadInPairedFiles(originalReadFiles[0], originalReadFiles[1], 
                     [&](auto /*readnumber*/, const auto& read){
                         filewriter->writeRead(read);
@@ -78,15 +66,13 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
         }else{
             const int numFiles = outputfiles.size();
             for(int i = 0; i < numFiles; i++){
-                std::ofstream outstream(outputfiles[i], std::ios::binary);
-                if(!bool(outstream)){
-                    throw std::runtime_error("Cannot open output file " + outputfiles[0]);
-                }
+                auto filewriter = makeSequenceWriter(outputfiles[i], outputFormat);
 
-                std::ifstream instream(originalReadFiles[i], std::ios::binary);
-                if(bool(instream) && instream.rdbuf()->in_avail() > 0){
-                    outstream << instream.rdbuf();
-                }
+                forEachReadInFile(originalReadFiles[i], 
+                    [&](auto /*readnumber*/, const auto& read){
+                        filewriter->writeRead(read);
+                    }
+                );
             }
         }
 
@@ -239,7 +225,6 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
         // std::chrono::duration<double> adelta{0};
 
         while(multiInputReader.next() >= 0){
-
             ReadBatch* batch = freeReadBatches.pop();
 
             // abegin = std::chrono::system_clock::now();
@@ -265,7 +250,6 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
         }
 
         unprocessedInputreadBatches.push(nullptr);
-
         // std::cout << "# elapsed time ("<< "inputparsing without queues" <<"): " << adelta.count()  << " s" << std::endl;
 
         // TIMERSTOPCPU(inputparsing);
@@ -284,20 +268,12 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
 
     auto outputWriterFuture = std::async(std::launch::async,
         [&](){
-            //no gz output
-            auto format = outputFormat;
-
-            if(format == FileFormat::FASTQGZ)
-                format = FileFormat::FASTQ;
-            if(format == FileFormat::FASTAGZ)
-                format = FileFormat::FASTA;
-
             std::vector<std::unique_ptr<SequenceFileWriter>> writerVector;
 
             assert(originalReadFiles.size() == outputfiles.size() || outputfiles.size() == 1);
 
             for(const auto& outputfile : outputfiles){
-                writerVector.emplace_back(makeSequenceWriter(outputfile, format));
+                writerVector.emplace_back(makeSequenceWriter(outputfile, outputFormat));
             }
 
             const int numOutputfiles = outputfiles.size();
@@ -423,7 +399,20 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
                         }
                     }
 
-                    combineResultsWithRead(buffer, readWithId);  
+                    const auto combineStatus = combineResultsWithRead(buffer, readWithId); 
+                    if(outputCorrectionQualityLabels){
+                        if(combineStatus.corrected){
+                            if(combineStatus.lqCorrectionOnlyAnchor){
+                                readWithId.read.header += " care:q=1"; 
+                            }else if(combineStatus.lqCorrectionWithCandidates){
+                                readWithId.read.header += " care:q=2";  
+                            }else if(combineStatus.hqCorrection){
+                                readWithId.read.header += " care:q=3";  
+                            }
+                        }else{
+                            readWithId.read.header += " care:q=0";
+                        }
+                    }
 
                     ++first1;
                 }
@@ -748,6 +737,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
         return result;
     }
 
+    #ifndef NDEBUG
     const bool sameId = std::all_of(
         tmpresults.begin(),
         tmpresults.end(),
@@ -756,6 +746,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
         }
     );
     assert(sameId);
+    #endif
 
     constexpr bool outputHQ = true;
     constexpr bool outputLQWithCandidates = true;
@@ -892,6 +883,48 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
                                                             return isEqualSequence(tmpresults[0], tcs);
                                                         });
 
+                // int numEqual = 0;
+                // int numUnequal = 0;
+                // std::for_each(
+                //     tmpresults.begin()+1,
+                //     tmpresults.end(),
+                //     [&](const auto& tcs){
+                //         if(isEqualSequence(tmpresults[0], tcs)){
+                //             numEqual++;
+                //         }else{
+                //             numUnequal++;
+                //         }
+                //     }
+                // );
+
+                // const bool sameCorrections = float(numEqual) / (float(numUnequal + numEqual)) >= 0.6f;
+
+                // std::sort(tmpresults.begin() + 1, tmpresults.end(),
+                //     [](const auto& l, const auto& r){
+                //         if(l.useEdits != r.useEdits){
+                //             return !l.useEdits;
+                //         }else{
+                //             if(l.useEdits){
+                //                 if(l.edits.size() != r.edits.size()){
+                //                     return l.edits.size() < r.edits.size();
+                //                 }else{
+                //                     for(std::size_t i = 0; i < l.edits.size(); i++){
+                //                         const auto& ledit = l.edits[i];
+                //                         const auto& redit = r.edits[i];
+                //                         if(ledit.pos() != redit.pos()){
+                //                             return ledit.pos() < redit.pos();
+                //                         }else{
+                //                             return ledit.base() < redit.base();
+                //                         }
+                //                     }
+                //                 }
+                //             }else{
+                //                 return l.sequence < r.sequence;
+                //             }
+                //         }
+                //     }
+                // );
+
                 //assert(sameCorrections == sameCorrections2);                
 
                 if(sameCorrections && sizelimitok){
@@ -1017,6 +1050,7 @@ void constructOutputFileFromCorrectionResults(
         outputfiles,
         combineMultipleCorrectionResults1_rawtcs2,
         addProgress,
+        programOptions.outputCorrectionQualityLabels,
         programOptions.pairType
     );
 

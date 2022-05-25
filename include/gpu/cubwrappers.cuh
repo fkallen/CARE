@@ -23,7 +23,7 @@ namespace care{
         }
 
         template<typename InputIteratorT , typename OutputIteratorT >
-        void cubExclusiveSum(
+        cudaError_t cubExclusiveSum(
             InputIteratorT d_in,
             OutputIteratorT d_out,
             int num_items,
@@ -56,10 +56,12 @@ namespace care{
                 debug_synchronous
             );
             assert(status == cudaSuccess);
+
+            return status;
         }
 
         template<typename InputIteratorT , typename OutputIteratorT >
-        void cubInclusiveSum(
+        cudaError_t cubInclusiveSum(
             InputIteratorT d_in,
             OutputIteratorT d_out,
             int num_items,
@@ -92,10 +94,12 @@ namespace care{
                 debug_synchronous
             );
             assert(status == cudaSuccess);
+
+            return status;
         }
 
         template<typename InputIteratorT , typename OutputIteratorT , typename ScanOpT >
-        void cubInclusiveScan(
+        cudaError_t cubInclusiveScan(
             InputIteratorT d_in,
             OutputIteratorT d_out,
             ScanOpT scan_op,
@@ -131,10 +135,12 @@ namespace care{
                 debug_synchronous
             );
             assert(status == cudaSuccess);
+
+            return status;
         }
 
         template<typename InputIteratorT , typename OutputIteratorT >
-        void cubReduceSum(
+        cudaError_t cubReduceSum(
             InputIteratorT d_in,
             OutputIteratorT d_out,
             int num_items,
@@ -167,10 +173,12 @@ namespace care{
                 debug_synchronous
             );
             assert(status == cudaSuccess);
+
+            return status;
         }
 
         template<typename InputIteratorT , typename OutputIteratorT >
-        void cubReduceMax(
+        cudaError_t cubReduceMax(
             InputIteratorT d_in,
             OutputIteratorT d_out,
             int num_items,
@@ -203,10 +211,12 @@ namespace care{
                 debug_synchronous
             );
             assert(status == cudaSuccess);
+
+            return status;
         }
 
         template<typename InputIteratorT , typename FlagIterator , typename OutputIteratorT , typename NumSelectedIteratorT >
-        void cubSelectFlagged(
+        cudaError_t cubSelectFlagged(
             InputIteratorT d_in,
             FlagIterator d_flags,
             OutputIteratorT d_out,
@@ -245,10 +255,12 @@ namespace care{
                 debug_synchronous
             );
             assert(status == cudaSuccess);
+
+            return status;
         }
 
         template<typename InputIteratorT , typename OutputIteratorT , typename OffsetIteratorT >
-        void cubSegmentedReduceSum(
+        cudaError_t cubSegmentedReduceSum(
             InputIteratorT d_in,
             OutputIteratorT d_out,
             int num_segments,
@@ -287,10 +299,12 @@ namespace care{
                 debug_synchronous
             );
             assert(status == cudaSuccess);
+
+            return status;
         }
 
         template<typename KeysInputIteratorT, typename UniqueOutputIteratorT, typename ValuesInputIteratorT, typename AggregatesOutputIteratorT, typename NumRunsOutputIteratorT, typename ReductionOpT>
-        void cubReduceByKey(
+        cudaError_t cubReduceByKey(
             KeysInputIteratorT d_keys_in,
             UniqueOutputIteratorT d_unique_out,
             ValuesInputIteratorT d_values_in,
@@ -335,6 +349,8 @@ namespace care{
                 debug_synchronous
             );
             assert(status == cudaSuccess);
+
+            return status;
         }
     };
 

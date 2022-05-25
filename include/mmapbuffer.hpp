@@ -141,9 +141,10 @@ private:
             throw std::runtime_error("remapWithFile failed");
         }
 
+        #ifndef NDEBUG
         const std::size_t pagesize = getpagesize();
-
         assert(newcapacity % pagesize == 0);
+        #endif
 
         //get new virtual adress range of size newcapacity with anonymous mapping
         void* newptr = remap(newcapacity);
@@ -156,8 +157,11 @@ private:
 
         memoryCapacity = std::min(newcapacity, memoryLimit);
         fileCapacity = newcapacity - memoryCapacity;
+
+        #ifndef NDEBUG
         assert(memoryCapacity % pagesize == 0);
         assert(fileCapacity % pagesize == 0);
+        #endif
 
         if(fileCapacity > 0){
             //update file size

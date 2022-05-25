@@ -5,8 +5,8 @@ HOSTLINKER=g++
 
 PREFIX = /usr/local
 
-CUB_INCDIR = ./dependencies/cub-cuda-11.2
-THRUST_INCDIR = ./dependencies/thrust-cuda-11.2
+CUB_INCDIR = ./dependencies/cub-1.16.0
+THRUST_INCDIR = ./dependencies/thrust-1.16.0
 WARPCORE_INCDIR = ./dependencies/warpcore/include
 RMM_INCDIR = ./dependencies/rmm/include
 SPDLOG_INCDIR = ./dependencies/spdlog/include
@@ -24,8 +24,8 @@ CFLAGS_DEBUG_BASIC = $(COMPILER_WARNINGS) $(COMPILER_DISABLED_WARNING) -fopenmp 
 CFLAGS_CPU = $(CFLAGS_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_OMP
 CFLAGS_CPU_DEBUG = $(CFLAGS_DEBUG_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_OMP
 
-NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_FLAGS) -I$(RMM_INCDIR) -I$(SPDLOG_INCDIR)
-NVCCFLAGS_DEBUG = -x cu -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_FLAGS) -I$(RMM_INCDIR) -I$(SPDLOG_INCDIR)
+NVCCFLAGS = -x cu -lineinfo --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_FLAGS) -I$(RMM_INCDIR) -I$(SPDLOG_INCDIR)
+NVCCFLAGS_DEBUG = -x cu --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_FLAGS) -I$(RMM_INCDIR) -I$(SPDLOG_INCDIR)
 
 LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt -lz -ldl
 LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -lz -ldl
@@ -50,18 +50,16 @@ SOURCES_CORRECT_GPU = \
     src/readlibraryio.cpp \
     src/threadpool.cpp \
     src/gpu/alignmentkernels.cu \
+	src/gpu/anchorcorrectionkernels.cu \
+	src/gpu/candidatecorrectionkernels.cu \
     src/gpu/correct_gpu.cu \
     src/gpu/correctionkernels.cu \
     src/gpu/dispatch_care_correct_gpu.cu \
-    src/gpu/fakegpuminhasherconstruction.cu \
     src/gpu/gpucorrectorkernels.cu \
     src/gpu/gpuminhasherconstruction.cu \
     src/gpu/main_correct_gpu.cu \
     src/gpu/msakernels.cu \
-    src/gpu/multigpuminhasherconstruction.cu \
-    src/gpu/sequenceconversionkernels.cu \
-    src/gpu/singlegpuminhasherconstruction.cu
-
+    src/gpu/sequenceconversionkernels.cu
 
 EXECUTABLE_CORRECT_CPU = care-cpu
 EXECUTABLE_CORRECT_GPU = care-gpu
@@ -90,7 +88,7 @@ correct_cpu_release:
 	@$(MAKE) correct_cpu_release_dummy DIR=$(BUILDDIR_CORRECT_CPU) CXXFLAGS="-std=c++17"
 
 correct_gpu_release: gpuarchs.txt
-	@$(MAKE) correct_gpu_release_dummy DIR=$(BUILDDIR_CORRECT_GPU) CXXFLAGS="-std=c++17" CUDA_ARCH=$(shell cat gpuarchs.txt)
+	@$(MAKE) correct_gpu_release_dummy DIR=$(BUILDDIR_CORRECT_GPU) CXXFLAGS="-std=c++17" CUDA_ARCH="$(shell cat gpuarchs.txt)"
 
 correct_cpu_release_dummy: $(BUILDDIR_CORRECT_CPU) $(OBJECTS_CORRECT_CPU) 
 	@echo Linking $(EXECUTABLE_CORRECT_CPU)
@@ -170,6 +168,12 @@ $(DIR)/threadpool.o : src/threadpool.cpp
 $(DIR)/alignmentkernels.o : src/gpu/alignmentkernels.cu
 	$(CUDA_COMPILE)
 
+$(DIR)/anchorcorrectionkernels.o : src/gpu/anchorcorrectionkernels.cu
+	$(CUDA_COMPILE)
+
+$(DIR)/candidatecorrectionkernels.o : src/gpu/candidatecorrectionkernels.cu
+	$(CUDA_COMPILE)
+
 $(DIR)/correct_gpu.o : src/gpu/correct_gpu.cu
 	$(CUDA_COMPILE)
 
@@ -177,9 +181,6 @@ $(DIR)/correctionkernels.o : src/gpu/correctionkernels.cu
 	$(CUDA_COMPILE)
 
 $(DIR)/dispatch_care_correct_gpu.o : src/gpu/dispatch_care_correct_gpu.cu
-	$(CUDA_COMPILE)
-
-$(DIR)/fakegpuminhasherconstruction.o : src/gpu/fakegpuminhasherconstruction.cu
 	$(CUDA_COMPILE)
 
 $(DIR)/gpucorrectorkernels.o : src/gpu/gpucorrectorkernels.cu
@@ -194,16 +195,10 @@ $(DIR)/main_correct_gpu.o : src/gpu/main_correct_gpu.cu
 $(DIR)/msakernels.o : src/gpu/msakernels.cu
 	$(CUDA_COMPILE)
 
-$(DIR)/multigpuminhasherconstruction.o : src/gpu/multigpuminhasherconstruction.cu
-	$(CUDA_COMPILE)
-
 $(DIR)/readextension_gpu.o : src/gpu/readextension_gpu.cu
 	$(CUDA_COMPILE)
 
 $(DIR)/sequenceconversionkernels.o : src/gpu/sequenceconversionkernels.cu
-	$(CUDA_COMPILE)
-
-$(DIR)/singlegpuminhasherconstruction.o : src/gpu/singlegpuminhasherconstruction.cu
 	$(CUDA_COMPILE)
 
 

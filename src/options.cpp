@@ -54,6 +54,10 @@ namespace care{
     ProgramOptions::ProgramOptions(const cxxopts::ParseResult& pr){
         ProgramOptions& result = *this;
 
+        if(pr.count("correctionQualityLabels")){
+            result.outputCorrectionQualityLabels = pr["correctionQualityLabels"].as<bool>();
+        }
+
         if(pr.count("minalignmentoverlap")){
             result.min_overlap = pr["minalignmentoverlap"].as<int>();
         }
@@ -84,6 +88,10 @@ namespace care{
 
         if(pr.count("useQualityScores")){
             result.useQualityScores = pr["useQualityScores"].as<bool>();
+        }
+
+        if(pr.count("gzoutput")){
+            result.gzoutput = pr["gzoutput"].as<bool>();
         }
 
         if(pr.count("enforceHashmapCount")){
@@ -624,12 +632,14 @@ namespace care{
         stream << "Maximum memory total: " << memoryTotalLimit << "\n";
         stream << "Hashtable load factor: " << hashtableLoadfactor << "\n";
         stream << "Fixed number of reads: " << fixedNumberOfReads << "\n";
+        stream << "GZ compressed output: " << gzoutput << "\n";
         //stream << "singlehash: " << singlehash << "\n";
     
     }
 
     void ProgramOptions::printAdditionalOptionsCorrect(std::ostream& stream) const{
         stream << "Correct candidate reads: " << correctCandidates << "\n";
+        stream << "Output correction quality labels: " << outputCorrectionQualityLabels << "\n";
 	    stream << "Max shift for candidate correction: " << new_columns_to_correct << "\n";
         stream << "Correction type (anchor): " << int(correctionType) 
 		    << " (" << to_string(correctionType) << ")\n";
@@ -812,11 +822,16 @@ namespace care{
             ("hashloadfactor", "Load factor of hashtables. 0.0 < hashloadfactor < 1.0. Smaller values can improve the runtime at the expense of greater memory usage."
                 "Default: " + std::to_string(ProgramOptions{}.hashtableLoadfactor), cxxopts::value<float>())
             ("fixedNumberOfReads", "Process only the first n reads. Default: " + tostring(ProgramOptions{}.fixedNumberOfReads), cxxopts::value<std::size_t>())
-            ("singlehash", "Use 1 hashtables with h smallest unique hashes. Default: " + tostring(ProgramOptions{}.singlehash), cxxopts::value<bool>());
+            ("singlehash", "Use 1 hashtables with h smallest unique hashes. Default: " + tostring(ProgramOptions{}.singlehash), cxxopts::value<bool>())
+            ("gzoutput", "gz compressed output (very slow). Default: " + tostring(ProgramOptions{}.gzoutput), cxxopts::value<bool>());
+            
     }
 
     void addAdditionalOptionsCorrect(cxxopts::Options& commandLineOptions){
         commandLineOptions.add_options("Additional")
+            ("correctionQualityLabels", "If set, correction quality label will be appended to output read headers. "
+                "Default: " + tostring(ProgramOptions{}.outputCorrectionQualityLabels),
+            cxxopts::value<bool>()->implicit_value("true"))
             ("candidateCorrection", "If set, candidate reads will be corrected,too. "
                 "Default: " + tostring(ProgramOptions{}.correctCandidates),
             cxxopts::value<bool>()->implicit_value("true"))

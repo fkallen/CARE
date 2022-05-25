@@ -50,54 +50,6 @@ namespace care{
 
     void performCorrection(ProgramOptions programOptions){
 
-        // {
-        //     DoublePassMultiValueHashTable<int, char> table(0, 0.8f);
-        //     std::vector<int> keys{0,1,0,1,2,2,3};
-        //     std::vector<char> values{'0', '1', '0', '1', '2', '2', '3'};
-        //     table.firstPassInsert(keys.data(), values.data(), keys.size());
-        //     table.firstPassDone(1);
-        //     table.secondPassInsert(keys.data(), values.data(), keys.size());
-        //     table.secondPassDone();
-
-        //     std::vector<int> uniquekeys{0,1,2,3};
-        //     auto q0 = table.query(0);
-        //     std::cerr << "0: ";
-        //     for(int i = 0; i < q0.numValues; i++){
-        //         std::cerr << q0.valuesBegin[i] << ", ";
-        //     }
-        //     std::cerr << "\n";
-
-        //     auto q1 = table.query(1);
-        //     std::cerr << "1: ";
-        //     for(int i = 0; i < q1.numValues; i++){
-        //         std::cerr << q1.valuesBegin[i] << ", ";
-        //     }
-        //     std::cerr << "\n";
-
-        //     auto q2 = table.query(2);
-        //     std::cerr << "2: ";
-        //     for(int i = 0; i < q2.numValues; i++){
-        //         std::cerr << q2.valuesBegin[i] << ", ";
-        //     }
-        //     std::cerr << "\n";
-
-        //     auto q3 = table.query(3);
-        //     std::cerr << "3: ";
-        //     for(int i = 0; i < q3.numValues; i++){
-        //         std::cerr << q3.valuesBegin[i] << ", ";
-        //     }
-        //     std::cerr << "\n";
-        // }
-
-
-
-
-
-
-
-
-
-
         std::cout << "Running CARE CPU" << std::endl;
 
         helpers::CpuTimer step1Timer("STEP1");
@@ -224,60 +176,71 @@ namespace care{
         cpuMinhasher = nullptr;        
         cpuReadStorage.reset();
 
-        //Merge corrected reads with input file to generate output file
+        if(programOptions.correctionType != CorrectionType::Print && programOptions.correctionTypeCands != CorrectionType::Print){
 
-        const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
-        const auto partialResultMemUsage = partialResults.getMemoryInfo();
+            //Merge corrected reads with input file to generate output file
 
-        // std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
-        // std::cerr << "memoryLimitOption = " << programOptions.memoryTotalLimit << "\n";
-        // std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
+            const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
+            const auto partialResultMemUsage = partialResults.getMemoryInfo();
 
-        std::size_t memoryForSorting = std::min(
-            availableMemoryInBytes,
-            programOptions.memoryTotalLimit - partialResultMemUsage.host
-        );
+            // std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
+            // std::cerr << "memoryLimitOption = " << programOptions.memoryTotalLimit << "\n";
+            // std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
 
-        if(memoryForSorting > 1*(std::size_t(1) << 30)){
-            memoryForSorting = memoryForSorting - 1*(std::size_t(1) << 30);
+            std::size_t memoryForSorting = std::min(
+                availableMemoryInBytes,
+                programOptions.memoryTotalLimit - partialResultMemUsage.host
+            );
+
+            if(memoryForSorting > 1*(std::size_t(1) << 30)){
+                memoryForSorting = memoryForSorting - 1*(std::size_t(1) << 30);
+            }
+            //std::cerr << "memoryForSorting = " << memoryForSorting << "\n"; 
+
+            std::cout << "STEP 3: Constructing output file(s)" << std::endl;
+
+            helpers::CpuTimer step3Timer("STEP3");
+
+            helpers::CpuTimer sorttimer("sort_results_by_read_id");
+
+            sortSerializedResultsByReadIdAscending<EncodedTempCorrectedSequence>(
+                partialResults,
+                memoryForSorting
+            );
+
+            sorttimer.print();
+            
+            std::vector<FileFormat> formats;
+            for(const auto& inputfile : programOptions.inputfiles){
+                formats.emplace_back(getFileFormat(inputfile));
+            }
+            std::vector<std::string> outputfiles;
+            for(const auto& outputfilename : programOptions.outputfilenames){
+                outputfiles.emplace_back(programOptions.outputdirectory + "/" + outputfilename);
+            }
+            FileFormat outputFormat = formats[0];
+            if(programOptions.gzoutput){
+                if(outputFormat == FileFormat::FASTQ){
+                    outputFormat = FileFormat::FASTQGZ;
+                }else if(outputFormat == FileFormat::FASTA){
+                    outputFormat = FileFormat::FASTAGZ;
+                }
+            }
+            constructOutputFileFromCorrectionResults(
+                programOptions.inputfiles, 
+                partialResults, 
+                outputFormat,
+                outputfiles,
+                programOptions.showProgress,
+                programOptions
+            );
+
+            step3Timer.print();
+
+            //compareMaxRssToLimit(programOptions.memoryTotalLimit, "Error memorylimit after output construction");
+
+            std::cout << "Construction of output file(s) finished." << std::endl;
         }
-        //std::cerr << "memoryForSorting = " << memoryForSorting << "\n"; 
-
-        std::cout << "STEP 3: Constructing output file(s)" << std::endl;
-
-        helpers::CpuTimer step3Timer("STEP3");
-
-        helpers::CpuTimer sorttimer("sort_results_by_read_id");
-
-        sortSerializedResultsByReadIdAscending<EncodedTempCorrectedSequence>(
-            partialResults,
-            memoryForSorting
-        );
-
-        sorttimer.print();
-
-        std::vector<FileFormat> formats;
-        for(const auto& inputfile : programOptions.inputfiles){
-            formats.emplace_back(getFileFormat(inputfile));
-        }
-        std::vector<std::string> outputfiles;
-        for(const auto& outputfilename : programOptions.outputfilenames){
-            outputfiles.emplace_back(programOptions.outputdirectory + "/" + outputfilename);
-        }
-        constructOutputFileFromCorrectionResults(
-            programOptions.inputfiles, 
-            partialResults, 
-            formats[0],
-            outputfiles,
-            programOptions.showProgress,
-            programOptions
-        );
-
-        step3Timer.print();
-
-        //compareMaxRssToLimit(programOptions.memoryTotalLimit, "Error memorylimit after output construction");
-
-        std::cout << "Construction of output file(s) finished." << std::endl;
 
     }
 

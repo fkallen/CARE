@@ -313,7 +313,6 @@ namespace care{
             target.encodedflags |= (std::uint32_t(useEdits) << 30);
             target.encodedflags |= (std::uint32_t(int(type)) << 29);
 
-            constexpr std::uint32_t maxNumBytes = (std::uint32_t(1) << 29)-1;
 
             std::uint32_t numBytes = 0;
             if(useEdits){
@@ -331,7 +330,12 @@ namespace care{
                 numBytes += sizeof(int);
             }
 
+            #ifndef NDEBUG
+            //flags use 3 bits, remainings bit can be used for encoding
+            constexpr std::uint32_t maxNumBytes = (std::uint32_t(1) << 29)-1;
             assert(numBytes <= maxNumBytes);
+            #endif
+
             target.encodedflags |= numBytes;
 
             if(numBytes > oldNumBytes){

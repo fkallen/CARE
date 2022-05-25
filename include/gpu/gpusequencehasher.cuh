@@ -225,7 +225,7 @@ namespace gpusequencehasher{
     }
 
 
-    template<class HashValueType, class ConstBeginOffsetsIter>
+    template<bool debug, class HashValueType, class ConstBeginOffsetsIter>
     __global__
     void getKmerHashes(
         HashValueType* __restrict__ kmerhashesoutput,
@@ -234,8 +234,7 @@ namespace gpusequencehasher{
         std::size_t sequenceRowPitchElements,
         int numSequences,
         const int* __restrict__ sequenceLengths,
-        int k,
-        bool debug
+        int k
     ){
         assert(sizeof(kmer_type) * 8 / 2 >= k);
 
@@ -253,7 +252,7 @@ namespace gpusequencehasher{
 
             const int numKmers = (myLength >= k) ? (myLength - k + 1) : 0;
 
-            if(debug){
+            if constexpr (debug){
                 printf("gpu s = %d\n", s);
             }
 
@@ -267,7 +266,7 @@ namespace gpusequencehasher{
                 //     printf("s = %d, kmer %lu, rckmer %lu, smallestkmer %lu, hash: %lu\n", s, kmer, rc_kmer, smallest, kmerhashesoutput[outputOffset + i]);
                 // }
 
-                if(debug){
+                if constexpr (debug){
                     //printf("(%lu, %lu), %lu , %lu , %lu : %lu\n", kmer, rc_kmer, kmer & kmer_mask, rc_kmer & kmer_mask, smallest, (hasher::hash(smallest) & kmer_mask));
                     printf("%lu , %lu , %lu : %lu\n", kmer & kmer_mask, rc_kmer & kmer_mask, smallest, (hasher::hash(smallest) & kmer_mask));
                 }
@@ -429,18 +428,30 @@ struct GPUSequenceHasher{
 
         rmm::device_uvector<HashValueType> d_hashes(totalNumKmers, stream);
 
-        gpusequencehasher::getKmerHashes<<<numSequences, 128, 0, stream>>>(
-        //gpusequencehasher::getKmerHashes<<<1, 1, 0, stream>>>(
-            d_hashes.data(),
-            d_offsets.data(),
-            d_sequences2Bit,
-            sequenceRowPitchElements,
-            numSequences,
-            d_sequenceLengths,
-            k,
-            debug
-        );
-        CUDACHECKASYNC;
+        if(debug){
+            gpusequencehasher::getKmerHashes<true><<<numSequences, 128, 0, stream>>>(
+                d_hashes.data(),
+                d_offsets.data(),
+                d_sequences2Bit,
+                sequenceRowPitchElements,
+                numSequences,
+                d_sequenceLengths,
+                k
+            );
+            CUDACHECKASYNC;
+        }else{
+            gpusequencehasher::getKmerHashes<false><<<numSequences, 128, 0, stream>>>(
+                d_hashes.data(),
+                d_offsets.data(),
+                d_sequences2Bit,
+                sequenceRowPitchElements,
+                numSequences,
+                d_sequenceLengths,
+                k
+            );
+            CUDACHECKASYNC;
+        }
+        
 
         //make kmer hashes unique per sequence
 

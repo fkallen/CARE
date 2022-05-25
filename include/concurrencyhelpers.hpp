@@ -209,7 +209,7 @@ struct SingleProducerSingleConsumerQueue{
 
     //wait until queue is not empty, then remove first element from queue and return it
     T pop(){
-        T item;
+        T item{};
         queue.wait_dequeue(item);
         return item;
     }
