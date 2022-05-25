@@ -4,6 +4,7 @@
 #include <config.hpp>
 #include <memorymanagement.hpp>
 #include <threadpool.hpp>
+#include <util.hpp>
 #include <hostdevicefunctions.cuh>
 
 #include <map>

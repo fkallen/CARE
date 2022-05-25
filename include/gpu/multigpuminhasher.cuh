@@ -10,7 +10,6 @@
 #include <gpu/gpureadstorage.cuh>
 #include <gpu/cuda_unique.cuh>
 #include <gpu/singlegpuminhasher.cuh>
-#include <gpu/kernels.hpp>
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/cudaerrorcheck.cuh>
 #include <gpu/cubwrappers.cuh>
@@ -245,12 +244,12 @@ namespace gpu{
 
     public: 
 
-        MultiGpuMinhasher(Layout layout_, int maxNumKeys_, int maxValuesPerKey, int k, std::vector<int> deviceIds_)
-            : layout(layout_), maxNumKeys(maxNumKeys_), kmerSize(k), resultsPerMapThreshold(maxValuesPerKey), deviceIds(deviceIds_)
+        MultiGpuMinhasher(Layout layout_, int maxNumKeys_, int maxValuesPerKey, int k, float loadfactor_, std::vector<int> deviceIds_)
+            : layout(layout_), maxNumKeys(maxNumKeys_), kmerSize(k), resultsPerMapThreshold(maxValuesPerKey), loadfactor(loadfactor_), deviceIds(deviceIds_)
         {
             for(auto deviceId : deviceIds){
                 cub::SwitchDevice sd{deviceId};
-                auto mh = std::make_unique<SingleGpuMinhasher>(maxNumKeys, resultsPerMapThreshold, k);
+                auto mh = std::make_unique<SingleGpuMinhasher>(maxNumKeys, resultsPerMapThreshold, k, loadfactor_);
                 sgpuMinhashers.emplace_back(std::move(mh));
 
                 hashFunctionIdsPerGpu.emplace_back();
@@ -1069,6 +1068,7 @@ private:
         int maxNumKeys{};
         int kmerSize{};
         int resultsPerMapThreshold{};
+        float loadfactor{};
         std::vector<int> deviceIds;
         std::vector<std::unique_ptr<SingleGpuMinhasher>> sgpuMinhashers{};
         mutable std::vector<std::unique_ptr<QueryData>> tempdataVector{};
