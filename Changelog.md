@@ -2,6 +2,7 @@
 # CARE 2.1
 * .gz output
 * Avoid some non-deterministic floating-point operations in gpu version
+* Faster hash table construction in gpu version
 * Improve multi-gpu performance
 * Update dependencies
 * Bugfixes
