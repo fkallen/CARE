@@ -14,9 +14,28 @@
 
 #ifdef __NVCC__
 #include <thrust/device_vector.h>
+#include <gpu/gpuhashtable.cuh>
 #include <cooperative_groups.h>
 #include <cub/cub.cuh>
+
+#include <gpu/cudaerrorcheck.cuh>
+
+#include <rmm/mr/device/device_memory_resource.hpp>
+#include <rmm/mr/device/per_device_resource.hpp>
+#include <rmm/mr/device/cuda_memory_resource.hpp>
+#include <rmm/mr/device/managed_memory_resource.hpp>
+#include <rmm/mr/device/limiting_resource_adaptor.hpp>
+#include <rmm/device_uvector.hpp>
+#include <gpu/rmm_utilities.cuh>
 #endif
+
+
+#ifdef CARE_HAS_WARPCORE
+
+#include <warpcore/multi_value_hash_table.cuh>
+
+#endif
+
 
 #include <vector>
 #include <cassert>
@@ -133,9 +152,9 @@ namespace care{
                 valuesPerKey_begin
             );
 
-            if(histogramEndIterators.first != uniqueKeys.data() + nUniqueKeys) 
+            if(histogramEndIterators.first != uniqueKeys.data() + nUniqueKeys)
                 throw std::runtime_error("Error hashtable compaction");
-            if(histogramEndIterators.second != valuesPerKey.data() + nUniqueKeys) 
+            if(histogramEndIterators.second != valuesPerKey.data() + nUniqueKeys)
                 throw std::runtime_error("Error hashtable compaction");
 
             keys.swap(uniqueKeys);
@@ -299,34 +318,57 @@ namespace care{
                 vec.swap(tmp);
             };
 
+            rmm::mr::device_memory_resource* currentResource = rmm::mr::get_current_device_resource();
+            rmm::mr::limiting_resource_adaptor limitedCurrentResource(currentResource, 0);
+            rmm::mr::managed_memory_resource managedMemoryResource;
+            rmm::mr::FallbackResourceAdapter fallbackResource(currentResource, &managedMemoryResource);
+            rmm::mr::device_memory_resource* mr = &fallbackResource;
+
+            cudaStream_t stream = 0;
+
             deallocVector(offsets); //don't need offsets at the moment
 
             const std::size_t size = keys.size();
 
-            ThrustAlloc<char> allocator;
-            auto allocatorPolicy = thrust::cuda::par(allocator);
+            auto thrustPolicy = rmm::exec_policy_nosync(stream, mr);
 
-            thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_keys(size);
-            thrust::device_vector<Value_t, ThrustAlloc<Value_t>> d_values(size);
+            rmm::device_uvector<Key_t> d_keys(size, stream, mr);
+            rmm::device_uvector<Value_t> d_values(size, stream, mr);
 
-            thrust::copy(keys.begin(), keys.end(), d_keys.begin());
-            thrust::copy(values.begin(), values.end(), d_values.begin());
+            CUDACHECK(cudaMemcpyAsync(
+                d_keys.data(),
+                keys.data(),
+                sizeof(Key_t) * size,
+                H2D,
+                stream
+            ));
+
+            //no need to transfer iota values. generate them on the device
+            thrust::sequence(
+                thrustPolicy,
+                d_values.begin(),
+                d_values.end(),
+                Value_t(0)
+            );
 
             if(valuesOfSameKeyMustBeSorted){
-                thrust::stable_sort_by_key(allocatorPolicy, d_keys.begin(), d_keys.end(), d_values.begin());
+                thrust::stable_sort_by_key(thrustPolicy, d_keys.begin(), d_keys.end(), d_values.begin());
             }else{
-                auto kb = keys.data();
-                auto ke = keys.data() + size;
-                auto vb = values.data();
-
-                thrust::sort_by_key(allocatorPolicy, d_keys.begin(), d_keys.end(), d_values.begin());
+                thrust::sort_by_key(thrustPolicy, d_keys.begin(), d_keys.end(), d_values.begin());
             }
 
-            thrust::copy(d_values.begin(), d_values.end(), values.begin());
-            deallocVector(d_values);
+            CUDACHECK(cudaMemcpyAsync(
+                values.data(),
+                d_values.data(),
+                sizeof(Value_t) * size,
+                D2H,
+                stream
+            ));
+
+            ::destroy(d_values, stream);
 
             const Offset_t nUniqueKeys = thrust::inner_product(
-                allocatorPolicy,
+                thrustPolicy,
                 d_keys.begin(),
                 d_keys.end() - 1,
                 d_keys.begin() + 1,
@@ -337,12 +379,12 @@ namespace care{
 
             //std::cout << "unique keys " << nUniqueKeys << ". ";
 
-            thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_uniqueKeys(nUniqueKeys);
-            thrust::device_vector<Offset_t, ThrustAlloc<Offset_t>> d_valuesPerKey(nUniqueKeys);
+            rmm::device_uvector<Key_t> d_uniqueKeys(nUniqueKeys, stream, mr);
+            rmm::device_uvector<Offset_t> d_valuesPerKey(nUniqueKeys, stream, mr);
 
             //make histogram
             auto histogramEndIterators = thrust::reduce_by_key(
-                allocatorPolicy,
+                thrustPolicy,
                 d_keys.begin(),
                 d_keys.end(),
                 thrust::constant_iterator<Offset_t>(1),
@@ -350,34 +392,58 @@ namespace care{
                 d_valuesPerKey.begin()
             );
 
-            if(histogramEndIterators.first != d_uniqueKeys.begin() + nUniqueKeys) 
+            ::destroy(d_keys, stream);
+
+            if(histogramEndIterators.first != d_uniqueKeys.begin() + nUniqueKeys)
                 throw std::runtime_error("Error hashtable compaction");
-            if(histogramEndIterators.second != d_valuesPerKey.begin() + nUniqueKeys) 
+            if(histogramEndIterators.second != d_valuesPerKey.begin() + nUniqueKeys)
                 throw std::runtime_error("Error hashtable compaction");
 
             deallocVector(keys);
             keys.resize(nUniqueKeys);
-            thrust::copy(d_uniqueKeys.begin(), d_uniqueKeys.end(), keys.begin());
-            deallocVector(d_keys);
-            deallocVector(d_uniqueKeys);
 
-            thrust::device_vector<Offset_t, ThrustAlloc<Offset_t>> d_offsets(nUniqueKeys + 1, 0);
+            CUDACHECK(cudaMemcpyAsync(
+                keys.data(),
+                d_uniqueKeys.data(),
+                sizeof(Key_t) * nUniqueKeys,
+                D2H,
+                stream
+            ));
+            
+            ::destroy(d_uniqueKeys, stream);
+
+            rmm::device_uvector<Offset_t> d_offsets(nUniqueKeys + 1, stream, mr);
+
+            CUDACHECK(cudaMemsetAsync(
+                d_offsets.data(),
+                0,
+                sizeof(Offset_t),
+                stream
+            ));
 
             thrust::inclusive_scan(
-                allocatorPolicy,
+                thrustPolicy,
                 d_valuesPerKey.begin(),
                 d_valuesPerKey.end(),
                 d_offsets.begin() + 1
             );
+            
+            rmm::device_uvector<char> d_removeflags(size, stream, mr);
+            CUDACHECK(cudaMemsetAsync(
+                d_removeflags.data(),
+                0,
+                sizeof(char) * size,
+                stream
+            ));
 
-            thrust::device_vector<char, ThrustAlloc<char>> d_removeflags(size, false);
+
             auto d_removeflags_begin = d_removeflags.data();
             auto d_offsets_begin = d_offsets.data();
             auto d_valuesPerKey_begin = d_valuesPerKey.data();
             auto maxValuesPerKey_copy = maxValuesPerKey;
             auto minValuesPerKey_copy = minValuesPerKey;
             thrust::for_each(
-                allocatorPolicy,
+                thrustPolicy,
                 thrust::counting_iterator<Offset_t>(0),
                 thrust::counting_iterator<Offset_t>(0) + nUniqueKeys,
                 [=] __device__ (Offset_t index){
@@ -395,20 +461,27 @@ namespace care{
                 }
             );
 
-            deallocVector(d_offsets);    
+            ::destroy(d_offsets, stream);
 
             Offset_t numValuesToRemove = thrust::reduce(
-                allocatorPolicy,
+                thrustPolicy,
                 d_removeflags.begin(),
                 d_removeflags.end(),
                 Offset_t(0)
             );
 
-            thrust::device_vector<Value_t, ThrustAlloc<Value_t>> d_values_tmp(size - numValuesToRemove);
-            d_values.resize(values.size());
-            thrust::copy(values.begin(), values.end(), d_values.begin());
+            rmm::device_uvector<Value_t> d_values_tmp(size - numValuesToRemove, stream, mr);
+            d_values.resize(values.size(), stream);
+            CUDACHECK(cudaMemcpyAsync(
+                d_values.data(),
+                values.data(),
+                sizeof(Value_t) * size,
+                H2D,
+                stream
+            ));
 
             thrust::copy_if(
+                thrustPolicy,
                 d_values.begin(),
                 d_values.end(),
                 d_removeflags.begin(),
@@ -418,28 +491,46 @@ namespace care{
                 }
             );
 
-            deallocVector(d_removeflags);
+            ::destroy(d_removeflags, stream);
+            ::destroy(d_values, stream);
             deallocVector(values);
-            deallocVector(d_values);
             values.resize(size - numValuesToRemove);
-            thrust::copy(d_values_tmp.begin(), d_values_tmp.end(), values.begin());
+
+            CUDACHECK(cudaMemcpyAsync(
+                values.data(),
+                d_values_tmp.data(),
+                sizeof(Value_t) * d_values_tmp.size(),
+                D2H,
+                stream
+            ));
 
             offsets.resize(nUniqueKeys+1);               
-            d_offsets.resize(nUniqueKeys);
+            d_offsets.resize(nUniqueKeys, stream);
 
             thrust::inclusive_scan(
-                allocatorPolicy,
+                thrustPolicy,
                 d_valuesPerKey.begin(),
                 d_valuesPerKey.end(),
                 d_offsets.begin()
             );
 
-            thrust::copy(d_offsets.begin(), d_offsets.end(), offsets.begin() + 1);
+            CUDACHECK(cudaMemcpyAsync(
+                offsets.data() + 1,
+                d_offsets.data(),
+                sizeof(Offset_t) * nUniqueKeys,
+                D2H,
+                stream
+            ));
+
             offsets[0] = 0;
+
+            CUDACHECK(cudaStreamSynchronize(stream));
         }
     };
-
+     
     #endif //#ifdef __NVCC__
+
+
 }
 
 

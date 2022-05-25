@@ -104,7 +104,7 @@ void erase(rmm::device_uvector<T>& vec, T* first, T* last, rmm::cuda_stream_view
             first,
             last,
             sizeof(T) * elementsAfterRangeToErase,
-            D2D,
+            cudaMemcpyDeviceToDevice,
             stream.value()
         ));
 
@@ -372,6 +372,96 @@ private:
     std::pair<std::size_t, std::size_t> do_get_mem_info(cuda_stream_view /*stream*/) const override {
         return {0,0};
     }
+};
+
+
+class FallbackResourceAdapter final : public device_memory_resource {
+public:
+    FallbackResourceAdapter(device_memory_resource* upstream, device_memory_resource* fallback) 
+        : upstream_(upstream), fallback_(fallback){}
+
+    FallbackResourceAdapter()                            = default;
+    ~FallbackResourceAdapter() override = default;
+    FallbackResourceAdapter(FallbackResourceAdapter const&) = default;
+    FallbackResourceAdapter(FallbackResourceAdapter&&)      = default;
+    FallbackResourceAdapter& operator=(FallbackResourceAdapter const&) = default;
+    FallbackResourceAdapter& operator=(FallbackResourceAdapter&&) = default;
+
+    bool supports_streams() const noexcept override
+    {
+        return upstream_->supports_streams() && fallback_->supports_streams();
+    }
+
+    bool supports_get_mem_info() const noexcept override
+    {
+        return upstream_->supports_get_mem_info() && fallback_->supports_get_mem_info();
+    }
+
+    device_memory_resource* get_upstream() const noexcept{
+        return upstream_;
+    }
+
+    device_memory_resource* get_fallback() const noexcept{
+        return fallback_;
+    }
+
+private:
+    struct FallbackPayload{
+        void* ptr;
+        std::size_t bytes;
+
+        bool operator<(const FallbackPayload& rhs) const{
+            if(ptr < rhs.ptr) return true;
+            if(ptr > rhs.ptr) return false;
+            return bytes < rhs.bytes;
+        }
+    };
+
+    void trackFallback(void* ptr, std::size_t bytes){
+        FallbackPayload p{ptr, bytes};
+        std::lock_guard<std::mutex> lg(mutex);
+        fallbackallocations.insert(p);
+    }
+
+    void* do_allocate(std::size_t bytes, cuda_stream_view stream) override{
+        void* retval = nullptr;
+        try{
+            retval = upstream_->allocate(bytes, stream);
+        }catch(rmm::bad_alloc& e){
+            retval = fallback_->allocate(bytes, stream);
+            trackFallback(retval, bytes);
+        }
+        return retval;
+    }
+
+    void do_deallocate(void* ptr, std::size_t bytes, cuda_stream_view stream) override{
+        FallbackPayload p{ptr, bytes};
+        std::lock_guard<std::mutex> lg(mutex);
+        auto founditer = fallbackallocations.find(p);
+        if(founditer == fallbackallocations.end()){
+            upstream_->deallocate(ptr, bytes, stream);
+        }else{
+            fallback_->deallocate(ptr, bytes, stream);
+        }
+    }
+
+    bool do_is_equal(device_memory_resource const& other) const noexcept override{
+        if (this == &other) { return true; }
+        auto const* cast = dynamic_cast<FallbackResourceAdapter const*>(&other);
+        if (cast != nullptr) { return upstream_->is_equal(*cast->get_upstream()); }
+        return upstream_->is_equal(other);
+    }
+
+    std::pair<std::size_t, std::size_t> do_get_mem_info(cuda_stream_view stream) const override {
+        auto [a1,a2] = upstream_->get_mem_info(stream);
+        auto [b1,b2] = fallback_->get_mem_info(stream);
+        return std::make_pair(a1+b1, a2+b2);
+    }
+
+    device_memory_resource* upstream_;
+    device_memory_resource* fallback_;
+    std::mutex mutex;
+    std::set<FallbackPayload> fallbackallocations;
 };
 
 
