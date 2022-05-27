@@ -1829,41 +1829,33 @@ SerializedObjectStorage correct_gpu_impl(
             }
         }else{
 
-            for(int i = 0; i < numDevices; i++){ 
+            const int maxThreadsPerDevice = SDIV(availableThreads, numDevices);
+            for(int i = 0; i < numDevices; i++){
                 if(availableThreads > 0){
                     const int deviceId = deviceIds[i];
-
-                    int threadsForDevice = std::max(1,std::min(availableThreads, requiredNumThreadsForComplex));
-
+                    int threadsForDevice = std::min(maxThreadsPerDevice, std::min(availableThreads, requiredNumThreadsForComplex));
                     if(threadsForDevice > 3){
-
                         typename ComplexGpuCorrectionPipeline<Minhasher>::Config pipelineConfig;
                         #if 1
                         pipelineConfig.numOutputConstructors = 0; //always 0
-
                         pipelineConfig.numCorrectors = 1;
-                        threadsForDevice -= pipelineConfig.numCorrectors;
-                        
+                        threadsForDevice -= pipelineConfig.numCorrectors;                        
                         pipelineConfig.numHashers = std::max(1, std::min(threadsForDevice, numHashersPerCorrectorByTime));
                         threadsForDevice -= pipelineConfig.numHashers;
-
                         if(threadsForDevice > 0){
                             pipelineConfig.numCorrectors++;
                             threadsForDevice--;
                         }
-
                         pipelineConfig.numHashers += threadsForDevice;
-                        threadsForDevice = 0;
                         #else
                         pipelineConfig.numOutputConstructors = 0; //always 0
                         pipelineConfig.numCorrectors = 2;
-                        pipelineConfig.numHashers = 8;
+                        pipelineConfig.numHashers = 14;
                         #endif
 
                         std::cerr << "\nWill use " << pipelineConfig.numHashers << " hasher(s), "
                         << pipelineConfig.numCorrectors << " corrector(s) "
-                        << "on device " << deviceId << "\n";                
-
+                        << "on device " << deviceId << "\n";
                         futures.emplace_back(
                             std::async(
                                 std::launch::async,
@@ -1873,7 +1865,6 @@ SerializedObjectStorage correct_gpu_impl(
                                 &candidateForests[i]
                             )
                         );
-
                         availableThreads -= pipelineConfig.numOutputConstructors;
                         availableThreads -= pipelineConfig.numCorrectors;
                         availableThreads -= pipelineConfig.numHashers;
@@ -1894,6 +1885,7 @@ SerializedObjectStorage correct_gpu_impl(
                     }
                 }
             }
+
         }
 
         for(auto& f : futures){
