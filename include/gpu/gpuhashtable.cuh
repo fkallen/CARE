@@ -803,12 +803,19 @@ namespace gpu{
             bool* const d_tmp_valueflags = static_cast<bool*>(temp_allocations[3]);
             int* const d_reductionsum = static_cast<int*>(temp_allocations[4]);
             void* const d_cubTempStorage = static_cast<void*>(temp_allocations[5]);
+
+            Index numUniqueKeys2 = 0;
    
             gpuMvTable->retrieve_all_keys(
                 d_tmp_uniqueKeys,
-                numUniqueKeys,
+                numUniqueKeys2,
                 stream
             ); CUDACHECKASYNC;
+
+            if(numUniqueKeys != numUniqueKeys2){
+                throw std::runtime_error("bug during hashtable construction. Expected " + std::to_string(numUniqueKeys) 
+                    + " keys, got " + std::to_string(numUniqueKeys2));
+            }
 
             retrieve(
                 d_tmp_uniqueKeys,
