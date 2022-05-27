@@ -86,6 +86,8 @@ namespace gpu{
                     DeviceTableInsertView table = tables[tableIndex];
                     table.insert(keys[keyIndex], values[valueIndex], tile);
                 }
+                //ensure that different groups in the same warp do not operate on different hashtables (warpcore issue)
+                warp.sync();
             }
         }
 
@@ -481,7 +483,8 @@ namespace gpu{
             );
 
             #if 1
-
+            auto& h_insertTemp = h_insertTempMap[stream];
+            auto& d_insertTemp = d_insertTempMap[stream];
             h_insertTemp.resize(numHashFunctions);
             d_insertTemp.resize(numHashFunctions);
 
@@ -1035,8 +1038,8 @@ namespace gpu{
 
             CUDACHECK(cudaStreamSynchronize(stream));
 
-            h_insertTemp.destroy();
-            d_insertTemp.destroy();
+            h_insertTempMap.clear();
+            d_insertTempMap.clear();
         }
 
         void writeToStream(std::ostream& /*os*/) const override{
@@ -1185,8 +1188,8 @@ private:
         float loadfactor{};
         HostBuffer<int> h_currentHashFunctionNumbers{};
         std::vector<std::unique_ptr<GpuTable>> gpuHashTables{};
-        helpers::SimpleAllocationPinnedHost<GpuTable::DeviceTableInsertView> h_insertTemp{};
-        helpers::SimpleAllocationDevice<GpuTable::DeviceTableInsertView> d_insertTemp{};
+        std::map<cudaStream_t, helpers::SimpleAllocationPinnedHost<GpuTable::DeviceTableInsertView>> h_insertTempMap{};
+        std::map<cudaStream_t, helpers::SimpleAllocationDevice<GpuTable::DeviceTableInsertView>> d_insertTempMap{};
         helpers::SimpleAllocationDevice<GpuTable::DeviceTableView, 0> d_deviceAccessibleTableViews{};
         mutable std::vector<std::unique_ptr<QueryData>> tempdataVector{};
     };
