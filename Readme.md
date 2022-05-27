@@ -6,10 +6,7 @@
 * Zlib
 * GNU Make
 * Python 3.8 (optional. See section 'Forests for CARE 2.0')
-<<<<<<< HEAD
-=======
 
->>>>>>> development
 ## Additional prerequisites for GPU version
 * CUDA Toolkit 11 or newer
 * A CUDA-capable graphics card with Pascal architecture (e.g. Nvidia GTX 1080) or newer.
