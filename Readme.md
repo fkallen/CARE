@@ -126,11 +126,10 @@ This information indicates the confidence of correction for each read.
 care:q=1 --- Low confidence
 care:q=2 --- Medium confidence
 care:q=3 --- High confidence
-care:q=0 --- All other reads (e.g. unprocessed / uncorrected)
+care:q=0 --- All other reads
 ```
 
 Note: A value of q > 0 does not imply that the read has been altered.
-
 ## Forests for CARE 2.0
 CARE 2.0 introduces a Random-Forest-based error correction mode. To use this mode, trained random forest classifiers need to be supplied using the program parameters
 `--correctionType 1 --ml-forestfile anchorforest.rf ` and `--correctionTypeCands 1 --ml-cands-forestfile candsforest.rf` for anchor correction and candidate correction, respectively.
