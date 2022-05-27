@@ -84,6 +84,7 @@ Two consecutive reads form a read pair. Use `-i reads_interleaved` .
 Read number N in file 1 and read number N in file 2 form a read pair. Use `-i reads_1 -i reads_2`.
 
 # Available program parameters
+## General
 Please execute `./care-cpu --help` or `./care-gpu --help` to print a list of available parameters. Both versions share a common subset of parameters.
 
 The following list is a selection of usefull options.
@@ -118,6 +119,17 @@ For example, to specify three single-end input files the following options are e
 -i file1 -i file2 -i file3
 -i file1 -i file2,file3
 ```
+## Confidence of corrections
+When the option `--correctionQualityLabels` is specified, CARE will append additional information to the read headers in the output file.
+This information indicates the confidence of correction for each read.
+```
+care:q=1 --- Low confidence
+care:q=2 --- Medium confidence
+care:q=3 --- High confidence
+care:q=0 --- All other reads (e.g. unprocessed / uncorrected)
+```
+
+Note: A value of q > 0 does not imply that the read has been altered.
 
 ## Forests for CARE 2.0
 CARE 2.0 introduces a Random-Forest-based error correction mode. To use this mode, trained random forest classifiers need to be supplied using the program parameters
