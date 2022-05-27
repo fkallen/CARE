@@ -1,4 +1,4 @@
-# CARE 2.0: Context-Aware Read Error correction for Illumina reads.
+# CARE 2.1: Context-Aware Read Error correction for Illumina reads.
 
 ## Prerequisites
 * C++17 
