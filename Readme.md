@@ -131,9 +131,11 @@ For more information about training the random forests please see the descriptio
 
 # Algorithm
 
-This work is presented in the following paper.
+This work is presented in the following papers.
 
 Felix Kallenborn, Andreas Hildebrandt, Bertil Schmidt, CARE: Context-Aware Sequencing Read Error Correction, Bioinformatics, , btaa738, [https://doi.org/10.1093/bioinformatics/btaa738](https://doi.org/10.1093/bioinformatics/btaa738)
+
+Kallenborn, F., Cascitti, J. & Schmidt, B. CARE 2.0: reducing false-positive sequencing error corrections using machine learning. BMC Bioinformatics 23, 227 (2022).  [https://doi.org/10.1186/s12859-022-04754-3](https://doi.org/10.1186/s12859-022-04754-3)
 
 
 
