@@ -102,65 +102,6 @@ void callRightShiftedHammingDistanceKernel(
     cudaStream_t stream
 );
 
-
-void call_popcount_shifted_hamming_distance_kernel_async(
-            int* d_alignment_overlaps,
-            int* d_alignment_shifts,
-            int* d_alignment_nOps,
-            bool* d_alignment_isValid,
-            AlignmentOrientation* d_alignment_best_alignment_flags,
-            const unsigned int* d_anchorSequencesData,
-            const unsigned int* d_candidateSequencesData,
-            const int* d_anchorSequencesLength,
-            const int* d_candidateSequencesLength,
-            const int* d_candidates_per_anchor_prefixsum,
-            const int* d_candidates_per_anchor,
-            const int* d_anchorIndicesOfCandidates,
-            int numAnchors,
-            int numCandidates,
-            const bool* d_anchorContainsN,
-            bool removeAmbiguousAnchors,
-            const bool* d_candidateContainsN,
-            bool removeAmbiguousCandidates,
-            int maximumSequenceLength,
-            int encodedSequencePitchInInts2Bit,
-            int min_overlap,
-            float maxErrorRate,
-            float min_overlap_ratio,
-            float estimatedNucleotideErrorRate,
-            cudaStream_t stream,
-            rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource());
-
-
-void call_popcount_rightshifted_hamming_distance_kernel_async(
-            int* d_alignment_overlaps,
-            int* d_alignment_shifts,
-            int* d_alignment_nOps,
-            bool* d_alignment_isValid,
-            AlignmentOrientation* d_alignment_best_alignment_flags,
-            const unsigned int* d_anchorSequencesData,
-            const unsigned int* d_candidateSequencesData,
-            const int* d_anchorSequencesLength,
-            const int* d_candidateSequencesLength,
-            const int* d_candidates_per_anchor_prefixsum,
-            const int* d_candidates_per_anchor,
-            const int* d_anchorIndicesOfCandidates,
-            int numAnchors,
-            int numCandidates,
-            const bool* d_anchorContainsN,
-            bool removeAmbiguousAnchors,
-            const bool* d_candidateContainsN,
-            bool removeAmbiguousCandidates,
-            int maximumSequenceLength,
-            int encodedSequencePitchInInts2Bit,
-            int min_overlap,
-            float maxErrorRate,
-            float min_overlap_ratio,
-            float estimatedNucleotideErrorRate,
-            cudaStream_t stream,
-            rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource());
-
-
 void callSelectIndicesOfGoodCandidatesKernelAsync(
             int* d_indicesOfGoodCandidates,
             int* d_numIndicesPerAnchor,
