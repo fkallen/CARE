@@ -1989,37 +1989,29 @@ namespace gpu{
                     stream
                 );
             }else{
-                helpers::lambda_kernel<<<currentNumAnchors, 128, 0, stream>>>(
+                helpers::lambda_kernel<<<SDIV(currentNumCandidates, 128), 128, 0, stream>>>(
                     [
                         bestAlignmentFlags = d_alignment_best_alignment_flags.data(),
                         nOps = d_alignment_nOps.data(),
                         overlaps = d_alignment_overlaps.data(),
-                        d_candidates_per_anchor_prefixsum = d_candidates_per_anchor_prefixsum.data(),
-                        n_anchors = currentNumAnchors,
+                        currentNumCandidates = currentNumCandidates,
                         d_isPairedCandidate = d_isPairedCandidate.data(),
                         pairedFilterThreshold = programOptions->pairedFilterThreshold
                     ] __device__(){
-                        for(int anchorindex = blockIdx.x; anchorindex < n_anchors; anchorindex += gridDim.x) {
+                        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                        const int stride = blockDim.x * gridDim.x;
 
-                            const int candidatesForAnchor = d_candidates_per_anchor_prefixsum[anchorindex+1]
-                                                            - d_candidates_per_anchor_prefixsum[anchorindex];
+                        for(int candidate_index = tid; candidate_index < currentNumCandidates; candidate_index += stride){
+                            if(!d_isPairedCandidate[candidate_index]){
+                                if(bestAlignmentFlags[candidate_index] != AlignmentOrientation::None) {
 
-                            const int firstIndex = d_candidates_per_anchor_prefixsum[anchorindex];
+                                    const int alignment_overlap = overlaps[candidate_index];
+                                    const int alignment_nops = nOps[candidate_index];
 
-                            for(int index = threadIdx.x; index < candidatesForAnchor; index += blockDim.x) {
+                                    const float mismatchratio = float(alignment_nops) / alignment_overlap;
 
-                                const int candidate_index = firstIndex + index;
-                                if(!d_isPairedCandidate[candidate_index]){
-                                    if(bestAlignmentFlags[candidate_index] != AlignmentOrientation::None) {
-
-                                        const int alignment_overlap = overlaps[candidate_index];
-                                        const int alignment_nops = nOps[candidate_index];
-
-                                        const float mismatchratio = float(alignment_nops) / alignment_overlap;
-
-                                        if(mismatchratio >= pairedFilterThreshold) {
-                                            bestAlignmentFlags[candidate_index] = AlignmentOrientation::None;
-                                        }
+                                    if(mismatchratio >= pairedFilterThreshold) {
+                                        bestAlignmentFlags[candidate_index] = AlignmentOrientation::None;
                                     }
                                 }
                             }
