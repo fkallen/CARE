@@ -2874,16 +2874,16 @@ struct GpuReadExtender{
         ::resizeUninitialized(d_alignment_nOps, initialNumCandidates, stream);
         ::resizeUninitialized(d_alignment_best_alignment_flags, initialNumCandidates, stream);
 
-        rmm::device_uvector<bool> d_alignment_isValid(initialNumCandidates, stream, mr);
-
         h_numAnchors[0] = tasks->size();
+
+        CUDACHECK(cudaEventSynchronizeWrapper(h_numCandidatesEvent));
 
         const bool* const d_anchorContainsN = nullptr;
         const bool* const d_candidateContainsN = nullptr;
         const bool removeAmbiguousAnchors = false;
         const bool removeAmbiguousCandidates = false;
         const int currentNumAnchors = tasks->size();
-        const int currentNumCandidates = initialNumCandidates; //this does not need to be exact, but it must be >= d_numCandidatesPerAnchorPrefixSum[tasks->size()]
+        const int currentNumCandidates = *h_numCandidates; //this does not need to be exact, but it must be >= d_numCandidatesPerAnchorPrefixSum[tasks->size()]
         const int maximumSequenceLength = encodedSequencePitchInInts * 16;
         const int encodedSequencePitchInInts2Bit = encodedSequencePitchInInts;
         const int min_overlap = programOptions->min_overlap;
@@ -2891,33 +2891,31 @@ struct GpuReadExtender{
         const float min_overlap_ratio = programOptions->min_overlap_ratio;
         const float estimatedNucleotideErrorRate = programOptions->estimatedErrorrate;
 
-        call_popcount_rightshifted_hamming_distance_kernel_async(
+        callRightShiftedHammingDistanceKernel(
             d_alignment_overlaps.data(),
             d_alignment_shifts.data(),
             d_alignment_nOps.data(),
-            d_alignment_isValid.data(),
             d_alignment_best_alignment_flags.data(),
             d_anchorSequencesData.data(),
             d_candidateSequencesData.data(),
             d_anchorSequencesLength.data(),
             d_candidateSequencesLength.data(),
-            d_numCandidatesPerAnchorPrefixSum.data(),
-            d_numCandidatesPerAnchor.data(),
             d_segmentIdsOfCandidates.data(),
             currentNumAnchors,
             currentNumCandidates,
             d_anchorContainsN,
             removeAmbiguousAnchors,
             d_candidateContainsN,
-            removeAmbiguousCandidates,            
+            removeAmbiguousCandidates,
             maximumSequenceLength,
+            maximumSequenceLength,
+            encodedSequencePitchInInts2Bit,
             encodedSequencePitchInInts2Bit,
             min_overlap,
             maxErrorRate,
             min_overlap_ratio,
             estimatedNucleotideErrorRate,
-            stream,
-            mr
+            stream
         );
 
         setState(GpuReadExtender::State::BeforeAlignmentFilter);

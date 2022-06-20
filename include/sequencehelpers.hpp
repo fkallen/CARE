@@ -9,7 +9,7 @@
 #include <string>
 #include <type_traits>
 
-namespace care{
+
 
     template<class T>
     struct EncodedReverseComplement2Bit{
@@ -133,7 +133,7 @@ namespace care{
         }
 
         HOSTDEVICEQUALIFIER INLINEQUALIFIER
-        static constexpr char encodeBase(char c) noexcept{
+        static constexpr std::uint8_t encodeBase(char c) noexcept{
             switch(c){
             case 'A': return encodedbaseA();
             case 'C': return encodedbaseC();
@@ -366,6 +366,70 @@ namespace care{
                 }
             }
 
+            #endif
+        }
+
+        template<class Group>
+        DEVICEQUALIFIER
+        static void encodeSingleSequenceTo2Bit(
+            Group& group,
+            unsigned int* out,
+            const char* in,
+            int length
+        ){
+            #ifdef __CUDA_ARCH__
+            if(length > 0){
+                const int nInts = SequenceHelpers::getEncodedNumInts2Bit(length);
+                constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
+
+                for(int i = group.thread_rank(); i < nInts; i += group.size()){
+                    unsigned int data = 0;
+
+                    auto encodeNuc = [&](char nuc){
+                        switch(nuc) {
+                        case 'A':
+                            data = (data << 2) | SequenceHelpers::encodedbaseA();
+                            break;
+                        case 'C':
+                            data = (data << 2) | SequenceHelpers::encodedbaseC();
+                            break;
+                        case 'G':
+                            data = (data << 2) | SequenceHelpers::encodedbaseG();
+                            break;
+                        case 'T':
+                            data = (data << 2) | SequenceHelpers::encodedbaseT();
+                            break;
+                        default:
+                            data = (data << 2) | SequenceHelpers::encodedbaseA();
+                            break;
+                        }
+                    };
+
+                    if(i < nInts - 1){
+                        //not last iteration. int encodes 16 chars
+                        __align__(16) char nucs[16];
+                        ((int4*)nucs)[0] = *((const int4*)&in[i * 16]);
+
+                        #pragma unroll
+                        for(int p = 0; p < 16; p++){
+                            encodeNuc(nucs[p]);
+                        }
+                    }else{        
+                        for(int nucIndex = i * basesPerInt; nucIndex < length; nucIndex++){
+                            encodeNuc(in[nucIndex]);
+                        }
+
+                        //pack bits of last integer into higher order bits
+                        int leftoverbits = 2 * (nInts * basesPerInt - length);
+                        if(leftoverbits > 0){
+                            data <<= leftoverbits;
+                        }
+
+                    }
+
+                    out[i] = data;
+                }
+            }
             #endif
         }
 
@@ -632,53 +696,12 @@ namespace care{
             convert2BitTo2BitHiLo(out, in, length, identity, identity);
         }
 
-        
-        HOSTDEVICEQUALIFIER INLINEQUALIFIER
-        static constexpr std::uint8_t convertDNACharToIntNoIf(unsigned char input){
-            // 'A' -> 0
-            // 'C' -> 1
-            // 'G' -> 2
-            // 'T' -> 3
-            // 'a' -> 0
-            // 'c' -> 1
-            // 'g' -> 2
-            // 't' -> 3
-
-            constexpr float a = 167.f/100776.f;
-            constexpr float b = -1845.f/33592.f;
-            //constexpr float c = 30395.f/50388.f;
-            constexpr float c2 = 30395.f/50387.f;
-            constexpr float d = 0.f;
-
-            const float x = (input & 0xDf)-(unsigned char)(65);
-
-            //return a*x*x*x + b*x*x + c*x + d;
-            return std::uint8_t(((((a * x) + b) * x) + c2) * x + d);
-        }
-
-        HOSTDEVICEQUALIFIER INLINEQUALIFIER
-        static constexpr char convertIntToDNACharNoIf(std::uint8_t input){
-            // 0 -> 'A'
-            // 1 -> 'C'
-            // 2 -> 'G'
-            // 3 -> 'T'
-
-            constexpr float a = 7.f / 6.f;
-            constexpr float b = -5.f / 2.f;
-            constexpr float c = 10.f / 3.f;
-            constexpr float d = 65.f;
-
-            const float x = input;
-
-            return char(((((a * x) + b) * x) + c) * x + d);
-        }
-
         //get kmer of length k which starts at position pos of the decoded sequence
         HOSTDEVICEQUALIFIER
         static constexpr std::uint64_t getEncodedKmerFromEncodedSequence(const unsigned int* encodedSequence, int k, int pos){
             assert(k > 0);
 
-            constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
+            constexpr int maximum_kmer_length = care::max_k<std::uint64_t>::value;
             const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - k) * 2);
 
             assert(k <= maximum_kmer_length);
@@ -708,7 +731,7 @@ namespace care{
 
             assert(k > 0);
 
-            constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
+            constexpr int maximum_kmer_length = care::max_k<std::uint64_t>::value;
             const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - k) * 2);
 
             assert(k <= maximum_kmer_length);
@@ -745,7 +768,7 @@ namespace care{
 
             assert(k > 0);
 
-            constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
+            constexpr int maximum_kmer_length = care::max_k<std::uint64_t>::value;
             const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - k) * 2);
 
             assert(k <= maximum_kmer_length);
@@ -827,7 +850,7 @@ namespace care{
 
             assert(k > 0);
 
-            constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
+            constexpr int maximum_kmer_length = care::max_k<std::uint64_t>::value;
             const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - k) * 2);
             const int rcshiftamount = (maximum_kmer_length - k) * 2;
 
@@ -1114,20 +1137,5 @@ namespace care{
         #endif
     };
 
-    static_assert(SequenceHelpers::convertDNACharToIntNoIf('A') == 0,"");
-    static_assert(SequenceHelpers::convertDNACharToIntNoIf('C') == 1,"");
-    static_assert(SequenceHelpers::convertDNACharToIntNoIf('G') == 2,"");
-    static_assert(SequenceHelpers::convertDNACharToIntNoIf('T') == 3,"");
-    static_assert(SequenceHelpers::convertDNACharToIntNoIf('a') == 0,"");
-    static_assert(SequenceHelpers::convertDNACharToIntNoIf('c') == 1,"");
-    static_assert(SequenceHelpers::convertDNACharToIntNoIf('g') == 2,"");
-    static_assert(SequenceHelpers::convertDNACharToIntNoIf('t') == 3,"");
 
-    static_assert(SequenceHelpers::convertIntToDNACharNoIf(0) == 'A',"");
-    static_assert(SequenceHelpers::convertIntToDNACharNoIf(1) == 'C',"");
-    static_assert(SequenceHelpers::convertIntToDNACharNoIf(2) == 'G',"");
-    static_assert(SequenceHelpers::convertIntToDNACharNoIf(3) == 'T',"");
-
-
-}
 #endif

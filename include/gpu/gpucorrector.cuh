@@ -44,6 +44,7 @@
 #include <thrust/gather.h>
 #include <thrust/scan.h>
 #include <thrust/unique.h>
+#include <thrust/equal.h>
 
 #include <rmm/mr/device/per_device_resource.hpp>
 #include <rmm/mr/device/cuda_async_memory_resource.hpp>
@@ -1943,24 +1944,18 @@ namespace gpu{
 
         void getCandidateAlignments(cudaStream_t stream){
 
-
             const bool removeAmbiguousAnchors = programOptions->excludeAmbiguousReads;
             const bool removeAmbiguousCandidates = programOptions->excludeAmbiguousReads;
-            
-            rmm::device_uvector<bool> d_alignment_isValid(currentNumCandidates, stream, mr);
-
-            call_popcount_shifted_hamming_distance_kernel_async(
+   
+            callShiftedHammingDistanceKernel(
                 d_alignment_overlaps.data(),
                 d_alignment_shifts.data(),
                 d_alignment_nOps.data(),
-                d_alignment_isValid.data(),
                 d_alignment_best_alignment_flags.data(),
                 d_anchor_sequences_data.data(),
                 d_candidate_sequences_data.data(),
                 d_anchor_sequences_lengths.data(),
                 d_candidate_sequences_lengths.data(),
-                d_candidates_per_anchor_prefixsum.data(),
-                d_candidates_per_anchor.data(),
                 d_anchorIndicesOfCandidates.data(),
                 currentNumAnchors,
                 currentNumCandidates,
@@ -1969,13 +1964,14 @@ namespace gpu{
                 d_candidateContainsN.data(),
                 removeAmbiguousCandidates,
                 gpuReadStorage->getSequenceLengthUpperBound(),
+                gpuReadStorage->getSequenceLengthUpperBound(),
+                encodedSequencePitchInInts,
                 encodedSequencePitchInInts,
                 programOptions->min_overlap,
                 programOptions->maxErrorRate,
                 programOptions->min_overlap_ratio,
                 programOptions->estimatedErrorrate,
-                stream,
-                mr
+                stream
             );
 
             #if 1
@@ -2060,18 +2056,6 @@ namespace gpu{
                 currentNumCandidates,
                 stream
             );
-
-            void callSelectIndicesOfGoodCandidatesKernelAsync(
-                int* d_indicesOfGoodCandidates,
-                int* d_numIndicesPerAnchor,
-                int* d_totalNumIndices,
-                const AlignmentOrientation* d_alignmentFlags,
-                const int* d_candidates_per_anchor,
-                const int* d_candidates_per_anchor_prefixsum,
-                const int* d_anchorIndicesOfCandidates,
-                int numAnchors,
-                int numCandidates,
-                cudaStream_t stream);
 
             CUDACHECK(cudaMemcpyAsync(
                 h_numRemainingCandidatesAfterAlignment.data(),

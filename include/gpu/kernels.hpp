@@ -11,6 +11,7 @@
 #include <gpu/forest_gpu.cuh>
 
 #include <config.hpp>
+#include <gpu/sequenceconversionkernels.cuh>
 
 #include <map>
 
@@ -47,10 +48,59 @@ struct IsHqAnchor{
 
 
 
+void callShiftedHammingDistanceKernel(
+    int* d_alignment_overlaps,
+    int* d_alignment_shifts,
+    int* d_alignment_nOps,
+    AlignmentOrientation* d_alignment_best_alignment_flags,
+    const unsigned int* d_anchorSequencesData,
+    const unsigned int* d_candidateSequencesData,
+    const int* d_anchorSequencesLength,
+    const int* d_candidateSequencesLength,
+    const int* d_anchorIndicesOfCandidates,
+    int numAnchors,
+    int numCandidates,
+    const bool* d_anchorContainsN,
+    bool removeAmbiguousAnchors,
+    const bool* d_candidateContainsN,
+    bool removeAmbiguousCandidates,
+    int maximumSequenceLengthAnchor,
+    int maximumSequenceLengthCandidate,
+    std::size_t encodedSequencePitchInInts2BitAnchor,
+    std::size_t encodedSequencePitchInInts2BitCandidate,
+    int min_overlap,
+    float maxErrorRate,
+    float min_overlap_ratio,
+    float estimatedNucleotideErrorRate,
+    cudaStream_t stream
+);
 
-
-
-
+void callRightShiftedHammingDistanceKernel(
+    int* d_alignment_overlaps,
+    int* d_alignment_shifts,
+    int* d_alignment_nOps,
+    AlignmentOrientation* d_alignment_best_alignment_flags,
+    const unsigned int* d_anchorSequencesData,
+    const unsigned int* d_candidateSequencesData,
+    const int* d_anchorSequencesLength,
+    const int* d_candidateSequencesLength,
+    const int* d_anchorIndicesOfCandidates,
+    int numAnchors,
+    int numCandidates,
+    const bool* d_anchorContainsN,
+    bool removeAmbiguousAnchors,
+    const bool* d_candidateContainsN,
+    bool removeAmbiguousCandidates,
+    int maximumSequenceLengthAnchor,
+    int maximumSequenceLengthCandidate,
+    std::size_t encodedSequencePitchInInts2BitAnchor,
+    std::size_t encodedSequencePitchInInts2BitCandidate,
+    int min_overlap,
+    float maxErrorRate,
+    float min_overlap_ratio,
+    float estimatedNucleotideErrorRate,
+    cudaStream_t stream
+);
 
 
 void call_popcount_shifted_hamming_distance_kernel_async(
@@ -421,54 +471,6 @@ void callConstructSequenceCorrectionResultsKernel(
 );
 
 
-void callConversionKernel2BitTo2BitHiLoNN(
-            const unsigned int* d_inputdata,
-            size_t inputpitchInInts,
-            unsigned int* d_outputdata,
-            size_t outputpitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            cudaStream_t stream);
-
-void callConversionKernel2BitTo2BitHiLoNT(
-            const unsigned int* d_inputdata,
-            size_t inputpitchInInts,
-            unsigned int* d_outputdata,
-            size_t outputpitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            cudaStream_t stream);
-
-void callConversionKernel2BitTo2BitHiLoTT(
-            const unsigned int* d_inputdata,
-            size_t inputpitchInInts,
-            unsigned int* d_outputdata,
-            size_t outputpitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            cudaStream_t stream);            
-
-void callEncodeSequencesTo2BitKernel(
-    unsigned int* d_encodedSequences,
-    const char* d_decodedSequences,
-    const int* d_sequenceLengths,
-    size_t decodedSequencePitchInBytes,
-    size_t encodedSequencePitchInInts,
-    int numSequences,
-    int groupsize,
-    cudaStream_t stream
-);
-
-void callDecodeSequencesFrom2BitKernel(
-    char* d_decodedSequences,
-    const unsigned int* d_encodedSequences,
-    const int* d_sequenceLengths,
-    size_t decodedSequencePitchInBytes,
-    size_t encodedSequencePitchInInts,
-    int numSequences,
-    int groupsize,
-    cudaStream_t stream
-);
 
 /*
     If toFind[s] exists in segment s, remove it from this segment s 
