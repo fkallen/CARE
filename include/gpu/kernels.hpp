@@ -160,6 +160,36 @@ void callComputeMsaSizesKernel(
     cudaStream_t stream
 );
 
+void callConstructAndRefineMultipleSequenceAlignmentsKernel(
+    int* __restrict__ d_newIndices,
+    int* __restrict__ d_newNumIndicesPerAnchor,
+    int* __restrict__ d_newNumIndices,
+    GPUMultiMSA multiMSA,
+    const int* __restrict__ overlaps,
+    const int* __restrict__ shifts,
+    const int* __restrict__ nOps,
+    const AlignmentOrientation* __restrict__ bestAlignmentFlags,
+    const int* __restrict__ anchorLengths,
+    const int* __restrict__ candidateLengths,
+    int* __restrict__ indices,
+    int* __restrict__ indices_per_anchor,
+    const int* __restrict__ candidatesPerAnchorPrefixSum,            
+    const unsigned int* __restrict__ anchorSequencesData,
+    const unsigned int* __restrict__ candidateSequencesData,
+    const bool* __restrict__ d_isPairedCandidate,
+    const char* __restrict__ anchorQualities,
+    const char* __restrict__ candidateQualities,
+    bool* __restrict__ d_shouldBeKept,
+    int numAnchors,
+    float desiredAlignmentMaxErrorRate,
+    bool canUseQualityScores,
+    int encodedSequencePitchInInts,
+    size_t qualityPitchInBytes,
+    int dataset_coverage,
+    int numRefinementIterations,
+    cudaStream_t stream
+);
+
 void callConstructMultipleSequenceAlignmentsKernel_async(
     GPUMultiMSA multiMSA,
     const int* d_overlaps,

@@ -150,8 +150,8 @@ namespace gpu{
                 }
 
                 if(sumOfWeights == 0){
-                    //printf("s %d c %d\n", anchorIndex, column);
-                    assert(sumOfWeights != 0);
+                    //printf("anchorIndex %d, column %d, codeline %d\n", anchorIndex, column, line);
+                    assert(false);
                 }
 
                 const int cov = coverages[column];
@@ -399,15 +399,6 @@ namespace gpu{
 
             bool error = false;
 
-            __shared__ int leftCount;
-            __shared__ int rightCount;
-
-            if(group.thread_rank() == 0){
-                leftCount = 0;
-                rightCount = 0;
-            }
-            group.sync();
-
             for(int i = group.thread_rank(); i < numColumnsToCheck-1; i += group.size()){
                 const int column = firstColumn_incl + i;
 
@@ -416,44 +407,16 @@ namespace gpu{
 
                 if(thisCoverage < 0 || nextCoverage < 0){
                     error = true;
-                    //printf("column %d, thisCoverage %d, nextCoverage %d\n", column, thisCoverage, nextCoverage);
-                    // assert(thisCoverage >= 0);
-                    // assert(nextCoverage >= 0);
                 }
 
                 if(thisCoverage == 0 && nextCoverage > 0){
                     newFirstColumn_incl = column+1;
-                    atomicAdd(&leftCount, 1);
                 }
 
                 if(thisCoverage > 0 && nextCoverage == 0){
                     newLastColumn_excl = column+1;
-                    atomicAdd(&rightCount, 1);
                 }
             }
-
-            group.sync();
-            // if(group.thread_rank() == 0){
-            //     if(leftCount > 1 || rightCount > 1){
-            //         printf("leftCount %d rightCount %d\n", leftCount, rightCount);
-            //     }
-            // }
-
-            __shared__ bool smemerror[128];
-            assert(group.size() <= 128);
-            smemerror[group.thread_rank()] = error;
-            group.sync();
-            if(group.thread_rank() == 0){
-                error = false;
-                for(int i = 0; i < group.size(); i++){
-                    if(smemerror[i]){
-                        error = true;
-                    }
-                }
-               
-                smemerror[0] = error;                
-            }
-            group.sync();
 
             //there can be at most one thread for which this is true
             if(newFirstColumn_incl != -1){
@@ -466,7 +429,7 @@ namespace gpu{
             
             group.sync();
 
-            return smemerror[0];
+            return error;
         }
 
         template<bool doAdd, class ThreadGroup>

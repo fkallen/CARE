@@ -2717,6 +2717,73 @@ namespace gpu{
 
             managedgpumsa = std::make_unique<ManagedGPUMultiMSA>(stream, mr, h_managedmsa_tmp.data());
 
+            #if 0
+
+            if(useMsaRefinement()){
+                rmm::device_uvector<int> d_indices_tmp(currentNumCandidates+1, stream, mr);
+                rmm::device_uvector<int> d_indices_per_anchor_tmp(maxAnchors+1, stream, mr);
+                rmm::device_uvector<int> d_num_indices_tmp(1, stream, mr);
+     
+                managedgpumsa->constructAndRefine(
+                    d_indices_tmp.data(),
+                    d_indices_per_anchor_tmp.data(),
+                    d_num_indices_tmp.data(),
+                    d_alignment_overlaps.data(),
+                    d_alignment_shifts.data(),
+                    d_alignment_nOps.data(),
+                    d_alignment_best_alignment_flags.data(),
+                    d_anchor_sequences_lengths.data(),
+                    d_candidate_sequences_lengths.data(),
+                    d_indices.data(),
+                    d_indices_per_anchor.data(),
+                    d_candidates_per_anchor_prefixsum.data(),
+                    d_anchor_sequences_data.data(),
+                    d_candidate_sequences_data.data(),
+                    d_isPairedCandidate.data(),
+                    d_anchor_qual,
+                    d_cand_qual,
+                    currentNumAnchors,
+                    currentNumCandidates,
+                    programOptions->maxErrorRate,
+                    programOptions->useQualityScores,
+                    encodedSequencePitchInInts,
+                    qualityPitchInBytes,
+                    programOptions->estimatedCoverage,
+                    getNumRefinementIterations(),
+                    MSAColumnCount{static_cast<int>(msaColumnPitchInElements)},
+                    stream
+                );
+                std::swap(d_indices_tmp, d_indices);
+                std::swap(d_indices_per_anchor_tmp, d_indices_per_anchor);
+                std::swap(d_num_indices_tmp, d_num_indices);
+            }else{
+                managedgpumsa->construct(
+                    d_alignment_overlaps.data(),
+                    d_alignment_shifts.data(),
+                    d_alignment_nOps.data(),
+                    d_alignment_best_alignment_flags.data(),
+                    d_indices.data(),
+                    d_indices_per_anchor.data(),
+                    d_candidates_per_anchor_prefixsum.data(),
+                    d_anchor_sequences_lengths.data(),
+                    d_anchor_sequences_data.data(),
+                    d_anchor_qual,
+                    currentNumAnchors,
+                    d_candidate_sequences_lengths.data(),
+                    d_candidate_sequences_data.data(),
+                    d_cand_qual,
+                    d_isPairedCandidate.data(),
+                    encodedSequencePitchInInts,
+                    qualityPitchInBytes,
+                    programOptions->useQualityScores,
+                    programOptions->maxErrorRate,
+                    MSAColumnCount{static_cast<int>(msaColumnPitchInElements)},
+                    stream
+                );
+            }
+
+            #else
+
             managedgpumsa->construct(
                 d_alignment_overlaps.data(),
                 d_alignment_shifts.data(),
@@ -2781,6 +2848,8 @@ namespace gpu{
                 std::swap(d_num_indices_tmp, d_num_indices);
 
             }
+
+            #endif
 
             if(programOptions->useQualityScores){
                 mr->deallocate(d_anchor_qual, currentNumAnchors * qualityPitchInBytes, stream);
