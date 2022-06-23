@@ -1,4 +1,4 @@
-// #define NDEBUG
+#define NDEBUG
 
 #include <gpu/kernels.hpp>
 #include <hostdevicefunctions.cuh>
@@ -458,12 +458,11 @@ namespace gpu{
                         return b;
                     };
 
-                    msa.flagCandidatesOfDifferentRegion(
+                    int myNewNumIndices = msa.flagCandidatesOfDifferentRegion(
                         tbGroup,
                         groupReduceBool,
                         groupReduceInt2,
                         destIndices,
-                        destNumIndices,
                         myAnchorSequenceData,
                         anchorLength,
                         myCandidateSequencesData,
@@ -481,9 +480,9 @@ namespace gpu{
                         dataset_coverage
                     );
 
-                    tbGroup.sync();
-
-                    const int myNewNumIndices = *destNumIndices;
+                    if(threadIdx.x == 0){
+                        *destNumIndices = myNewNumIndices;
+                    }
 
                     if(tbGroup.thread_rank()== 0){
                         atomicAdd(d_newNumIndices, myNewNumIndices);
@@ -855,12 +854,11 @@ namespace gpu{
                         return b;
                     };
  
-                    msa.flagCandidatesOfDifferentRegion(
+                    const int myNewNumIndices = msa.flagCandidatesOfDifferentRegion(
                         tbGroup,
                         groupReduceBool,
                         groupReduceInt2,
                         destIndices,
-                        destNumIndices,
                         myAnchorSequenceData,
                         anchorLength,
                         myCandidateSequencesData,
@@ -878,7 +876,9 @@ namespace gpu{
                         dataset_coverage
                     );
 
-                    const int myNewNumIndices = *destNumIndices;
+                    if(threadIdx.x == 0){
+                        *destNumIndices = myNewNumIndices;
+                    }
                     
                     assert(myNewNumIndices <= myNumIndices);
                     if(myNewNumIndices > 0 && myNewNumIndices < myNumIndices){
@@ -1214,12 +1214,11 @@ namespace gpu{
                                 return b;
                             };
 
-                            msa.flagCandidatesOfDifferentRegion(
+                            const int myNewNumIndices = msa.flagCandidatesOfDifferentRegion(
                                 tbGroup,
                                 groupReduceBool,
                                 groupReduceInt2,
                                 destIndices,
-                                destNumIndices,
                                 myAnchorSequenceData,
                                 anchorLength,
                                 myCandidateSequencesData,
@@ -1237,7 +1236,9 @@ namespace gpu{
                                 dataset_coverage
                             );
 
-                            const int myNewNumIndices = *destNumIndices;
+                            if(threadIdx.x == 0){
+                                *destNumIndices = myNewNumIndices;
+                            }
                             
                             assert(myNewNumIndices <= myNumGoodCandidates);
                             if(myNewNumIndices > 0 && myNewNumIndices < myNumGoodCandidates){

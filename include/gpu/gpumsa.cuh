@@ -957,12 +957,11 @@ namespace gpu{
             class GroupReduceInt2
         >
         __device__ __forceinline__
-        void flagCandidatesOfDifferentRegion(
+        int flagCandidatesOfDifferentRegion(
             ThreadGroup& group,
             GroupReduceBool& groupReduceBool,
             GroupReduceInt2& groupReduceInt2,
             int* __restrict__ myNewIndicesPtr,
-            int* __restrict__ myNewNumIndicesPerAnchorPtr,
             const unsigned int* __restrict__ myAnchorSequenceData,
             const int anchorLength,
             const unsigned int* __restrict__ myCandidateSequencesData,
@@ -1206,12 +1205,9 @@ namespace gpu{
                             }
                         }
 
-                        if(group.thread_rank() == 0){
-                            *myNewNumIndicesPerAnchorPtr = smemcounts[0];
-                        }
-
                         group.sync();
 
+                        return smemcounts[0];
                     };
 
                     //compare found base to original base
@@ -1219,22 +1215,26 @@ namespace gpu{
 
                     if(originalbase == foundBase){
                         //discard all candidates whose base in column col differs from foundBase
-                        discard_rows(true);
+                        return discard_rows(true);
                     }else{
                         //discard all candidates whose base in column col matches foundBase
-                        discard_rows(false);
+                        return discard_rows(false);
                     }
 
                 }else{
                     //did not find a significant columns
 
+                    for(int k = group.thread_rank(); k < myNumIndices; k += group.size()){
+                        myShouldBeKept[k] = true;
+                    }
+
                     //remove no candidate
                     for(int k = group.thread_rank(); k < myNumIndices; k += group.size()){
                         myNewIndicesPtr[k] = myIndices[k];
                     }
-                    if(group.thread_rank() == 0){
-                        *myNewNumIndicesPerAnchorPtr = myNumIndices;
-                    }
+                    group.sync();
+
+                    return myNumIndices;
                 }
 
             }else{
@@ -1248,12 +1248,10 @@ namespace gpu{
                 for(int k = group.thread_rank(); k < myNumIndices; k += group.size()){
                     myNewIndicesPtr[k] = myIndices[k];
                 }
-                if(group.thread_rank() == 0){
-                    *myNewNumIndicesPerAnchorPtr = myNumIndices;
-                }
-            }
+                group.sync();
 
-            group.sync();
+                return myNumIndices;
+            }
         }
 
         __device__ __forceinline__
