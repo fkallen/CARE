@@ -214,38 +214,6 @@ void callConstructMultipleSequenceAlignmentsKernel_async(
     cudaStream_t stream
 );
 
-void callMsaCandidateRefinementKernel_singleiter_async(
-    int* d_newIndices,
-    int* d_newNumIndicesPerAnchor,
-    int* d_newNumIndices,
-    GPUMultiMSA multiMSA,
-    const AlignmentOrientation* d_bestAlignmentFlags,
-    const int* d_shifts,
-    const int* d_nOps,
-    const int* d_overlaps,
-    const unsigned int* d_anchorSequencesData,
-    const unsigned int* d_candidateSequencesData,
-    const bool* d_isPairedCandidate,
-    const int* d_anchorSequencesLength,
-    const int* d_candidateSequencesLength,
-    const char* d_anchorQualities,
-    const char* d_candidateQualities,
-    bool* d_shouldBeKept,
-    const int* d_candidates_per_anchor_prefixsum,
-    float desiredAlignmentMaxErrorRate,
-    int numAnchors,
-    bool canUseQualityScores,
-    size_t encodedSequencePitchInInts,
-    size_t qualityPitchInBytes,
-    const int* d_indices,
-    const int* d_indices_per_anchor,
-    int dataset_coverage,
-    int iteration,
-    bool* d_anchorIsFinished,
-    cudaStream_t stream
-);
-
-
 void callMsaCandidateRefinementKernel_multiiter_async(
     int* d_newIndices,
     int* d_newNumIndicesPerAnchor,
