@@ -1,4 +1,4 @@
-#define NDEBUG
+//#define NDEBUG
 
 #include <gpu/kernels.hpp>
 #include <hostdevicefunctions.cuh>
@@ -851,10 +851,10 @@ namespace gpu{
                     //     );
                     // }
 
-                    const int columnsToCheck = shared_columnProperties.lastColumn_excl;
+                    //const int columnsToCheck = shared_columnProperties.lastColumn_excl;
                     //printf("got %d, max %d\n", columnsToCheck, msa.columnPitchInElements);
 
-                    assert(columnsToCheck <= msa.columnPitchInElements);
+                    assert(shared_columnProperties.lastColumn_excl <= msa.columnPitchInElements);
 
                     msa.constructFromSequences(
                         tbGroup,
