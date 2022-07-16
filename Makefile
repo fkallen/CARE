@@ -5,8 +5,8 @@ HOSTLINKER=g++
 
 PREFIX = /usr/local
 
-CUB_INCDIR = ./dependencies/cub-1.16.0
-THRUST_INCDIR = ./dependencies/thrust-1.16.0
+CUB_INCDIR = ./dependencies/cub-1.17.0
+THRUST_INCDIR = ./dependencies/thrust-1.17.0
 WARPCORE_INCDIR = ./dependencies/warpcore/include
 RMM_INCDIR = ./dependencies/rmm/include
 SPDLOG_INCDIR = ./dependencies/spdlog/include
