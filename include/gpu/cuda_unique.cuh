@@ -5,6 +5,7 @@
 #include <memorymanagement.hpp>
 
 #include <gpu/cuda_block_select.cuh>
+#include <gpu/cuda_block_unique.cuh>
 #include <gpu/cudaerrorcheck.cuh>
 
 
@@ -17,66 +18,28 @@
 #include <rmm/device_uvector.hpp>
 #include <gpu/rmm_utilities.cuh>
 
+#include <thrust/for_each.h>
+#include <thrust/gather.h>
 
-//#define CARE_CUDA_UNIQUE_CHECK_UNIQUENESS
-
-#ifdef __NVCC__
 
 namespace care{
 namespace gpu{
-
-
 namespace cudauniquekernels{
 
-    template<class T, class OffsetIterator>
-    __global__
-    void checkUniquenessKernel(
-        const T* __restrict__ elements_before_unique,
-        const T* __restrict__ unique_elements,
-        const int* __restrict__ unique_lengths, 
-        int numSegments,
-        OffsetIterator begin_offsets, //segment i begins at input[d_begin_offsets[i]]
-        OffsetIterator end_offsets //segment i ends at input[d_end_offsets[i]] (exclusive)      
-    ){
-        
-        for(int segmentId = blockIdx.x; segmentId < numSegments; segmentId += gridDim.x){
-    
-            const int segmentBegin = begin_offsets[segmentId];
-            const int segmentEnd = end_offsets[segmentId];
-            const int sizeOfRange = segmentEnd - segmentBegin;
-            const int uniqueSize = unique_lengths[segmentId];
-
-            for(int p = threadIdx.x; p < sizeOfRange; p += blockDim.x){
-                
-                const T element = elements_before_unique[segmentBegin + p];
-
-                int count = 0;
-
-                for(int i = 0; i < uniqueSize; i++){
-                    if(element == unique_elements[segmentBegin + i]){
-                        count++;
-                    }
-                }
-
-                if(count != 1){
-                    printf("error segment %d, element %u at original position %d appears %d times,"
-                            "sizeOfRange %d, uniqueSize %d\n",
-                        segmentId, element, segmentBegin + p, count, sizeOfRange, uniqueSize);
-                    assert(false);
-                }
-            }            
-        }    
-    }
 
     template<int blocksize, int elemsPerThread, class T, class OffsetIterator>
+    __launch_bounds__(blocksize)
     __global__
     void makeUniqueRangeWithRegSortKernel(
         T* __restrict__ output,
         int* __restrict__ unique_lengths, 
         const T* __restrict__ input,
+        const int* __restrict__ segmentIds,
         int numSegments,
-        OffsetIterator begin_offsets, //segment i begins at input[d_begin_offsets[i]]
-        OffsetIterator end_offsets, //segment i ends at input[d_end_offsets[i]] (exclusive)
+        int minimumSegmentSize, //only process segments which are at least of size minimumSegmentSize 
+        int maximumSegmentSize, //only process segments which are at most of size maximumSegmentSize 
+        OffsetIterator begin_offsets,
+        OffsetIterator end_offsets,
         int begin_bit = 0,
         int end_bit = sizeof(T) * 8        
     ){
@@ -84,17 +47,21 @@ namespace cudauniquekernels{
         using BlockRadixSort = cub::BlockRadixSort<T, blocksize, elemsPerThread>;
         using BlockLoad = cub::BlockLoad<T, blocksize, elemsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
         using BlockDiscontinuity = cub::BlockDiscontinuity<T, blocksize>;
-        using MyBlockSelect = BlockSelect<T, blocksize>;
+        using MyBlockUnique = BlockUnique<T, blocksize, elemsPerThread>;
     
         __shared__ union{
             typename BlockRadixSort::TempStorage sort;
             typename BlockLoad::TempStorage load;
             typename BlockDiscontinuity::TempStorage discontinuity;
-            typename MyBlockSelect::TempStorage select;
-        } temp_storage;
+            T elements[elemsPerThread * blocksize];
+        } temp_storage1;
+
+        __shared__ union{
+            typename MyBlockUnique::TempStorage unique;
+        } temp_storage2;
     
-        for(int segmentId = blockIdx.x; segmentId < numSegments; segmentId += gridDim.x){
-    
+        for(int x = blockIdx.x; x < numSegments; x += gridDim.x){
+            const int segmentId = segmentIds[x];
             T tempregs[elemsPerThread];   
     
             #pragma unroll
@@ -104,55 +71,49 @@ namespace cudauniquekernels{
     
             const int segmentBegin = begin_offsets[segmentId];
             const int segmentEnd = end_offsets[segmentId];
-            const int sizeOfRange = segmentEnd - segmentBegin;
+            const int segmentSize = segmentEnd - segmentBegin;
 
-            if(sizeOfRange > elemsPerThread * blocksize){
-                //range too large to sort / to make unique. skip
+            if(segmentSize < minimumSegmentSize || segmentSize > maximumSegmentSize){
+                //segment size not in specified range. skip
+                continue;
+            }
+            if(segmentSize == 0){
+                if(threadIdx.x == 0){
+                    unique_lengths[segmentId] = 0;
+                }
                 continue;
             }
 
-            if(sizeOfRange > 0){
+            if(segmentSize > 0){
                 
-                //assert(sizeOfRange <= elemsPerThread * blocksize);            
+                //assert(segmentSize <= elemsPerThread * blocksize);            
     
-                BlockLoad(temp_storage.load).Load(
+                BlockLoad(temp_storage1.load).Load(
                     input + segmentBegin, 
                     tempregs, 
-                    sizeOfRange
+                    segmentSize
                 );
        
                 __syncthreads();
     
-                BlockRadixSort(temp_storage.sort).Sort(tempregs, begin_bit, end_bit);
+                BlockRadixSort(temp_storage1.sort).Sort(tempregs, begin_bit, end_bit);
     
                 __syncthreads();
-    
-                int head_flags[elemsPerThread];
-    
-                BlockDiscontinuity(temp_storage.discontinuity).FlagHeads(
-                    head_flags, 
+
+                const int numUnique = MyBlockUnique(temp_storage2.unique).execute(
                     tempregs, 
-                    cub::Inequality()
+                    segmentSize, 
+                    &temp_storage1.elements[0]
+                    //output + segmentBegin
                 );
     
-                __syncthreads();            
-    
-                //disable out-of-segment elements
-                #pragma unroll
-                for(int i = 0; i < elemsPerThread; i++){
-                    if(threadIdx.x * elemsPerThread + i >= sizeOfRange){
-                        head_flags[i] = 0;
-                    }
+                __syncthreads();
+                for(int i = threadIdx.x; i < numUnique; i += blocksize){
+                    output[segmentBegin + i] = temp_storage1.elements[i];
                 }
 
-                const int numSelected = MyBlockSelect(temp_storage.select).ForEachFlagged(tempregs, head_flags, sizeOfRange,
-                    [&](const T& item, const int& pos){
-                        output[segmentBegin + pos] = item;
-                    }
-                );
-
                 if(threadIdx.x == 0){
-                    unique_lengths[segmentId] = numSelected;
+                    unique_lengths[segmentId] = numUnique;
                 }
 
                 __syncthreads();
@@ -161,14 +122,65 @@ namespace cudauniquekernels{
     
     }
 
+    template<int blocksize, int elemsPerThread, class T, class OffsetIterator>
+    void callMakeUniqueRangeWithRegSortKernel(
+        T* d_output,
+        int* d_unique_lengths, 
+        const T* d_input,
+        const int* d_segmentIds,
+        int numSegments,
+        int minimumSegmentSize, //only process segments which are at least of size minimumSegmentSize 
+        int maximumSegmentSize, //only process segments which are at most of size maximumSegmentSize 
+        OffsetIterator begin_offsets,
+        OffsetIterator end_offsets,
+        int begin_bit,
+        int end_bit,
+        cudaStream_t stream
+    ){
+        auto kernel = makeUniqueRangeWithRegSortKernel<blocksize, elemsPerThread, T, OffsetIterator>;
 
+        int deviceId = 0;
+        int numSMs = 0;
+        int maxBlocksPerSM = 0;
+        CUDACHECK(cudaGetDevice(&deviceId));
+        CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSM,
+            kernel,
+            blocksize, 
+            0
+        ));
+    
+        const int maxBlocks = maxBlocksPerSM * numSMs;  
+    
+        dim3 block(blocksize, 1, 1);
+        const int numBlocks = numSegments;
+        dim3 grid(std::min(numBlocks, maxBlocks), 1, 1);
+
+        kernel<<<grid, block, 0, stream>>>(
+            d_output,
+            d_unique_lengths, 
+            d_input,
+            d_segmentIds,
+            numSegments,
+            minimumSegmentSize,
+            maximumSegmentSize,
+            begin_offsets,
+            end_offsets,
+            begin_bit,
+            end_bit     
+        );
+        CUDACHECKASYNC;
+    }
 
     template<int blocksize, int elemsPerThread, class T, class OffsetIterator>
+    __launch_bounds__(blocksize)
     __global__
     void makeUniqueRangeFromSortedRangeKernel(
         T* __restrict__ output,
         int* __restrict__ unique_lengths, 
         const T* __restrict__ input, // each segment must be sorted
+        const int* __restrict__ segmentIds,
         int numSegments,
         OffsetIterator begin_offsets, //segment i begins at input[d_begin_offsets[i]]
         OffsetIterator end_offsets //segment i ends at input[d_end_offsets[i]] (exclusive)  
@@ -182,11 +194,13 @@ namespace cudauniquekernels{
             typename BlockLoad::TempStorage load;
             typename BlockDiscontinuity::TempStorage discontinuity;
             typename BlockScan::TempStorage scan;
+            T elements[blocksize * elemsPerThread];
         } temp_storage;
 
         __shared__ T shared_tile_predeccessor_item;
     
-        for(int segmentId = blockIdx.x; segmentId < numSegments; segmentId += gridDim.x){
+        for(int x = blockIdx.x; x < numSegments; x += gridDim.x){
+            const int segmentId = segmentIds[x];
     
             T tempregs[elemsPerThread];   
     
@@ -197,20 +211,20 @@ namespace cudauniquekernels{
     
             const int segmentBegin = begin_offsets[segmentId];
             const int segmentEnd = end_offsets[segmentId];
-            const int sizeOfRange = segmentEnd - segmentBegin;
+            const int segmentSize = segmentEnd - segmentBegin;
 
-            if(sizeOfRange > 0){
+            if(segmentSize > 0){
 
                 constexpr int elemsPerBlock = elemsPerThread * blocksize;
 
                 const T* const segmentInput = input + segmentBegin;
                 T* const segmentOutput = output + segmentBegin;
 
-                int remainingElementsToProcess = sizeOfRange;
+                int remainingElementsToProcess = segmentSize;
 
                 int uniqueLengthOfSegment = 0;
 
-                const int numIters = SDIV(sizeOfRange, elemsPerBlock);
+                const int numIters = SDIV(segmentSize, elemsPerBlock);
                 
                 for(int iter = 0; iter < numIters; iter++){      
                     
@@ -242,7 +256,7 @@ namespace cudauniquekernels{
                     //disable out-of-segment elements
                     #pragma unroll
                     for(int i = 0; i < elemsPerThread; i++){
-                        if(threadElementsOffset + i >= sizeOfRange){
+                        if(threadElementsOffset + i >= segmentSize){
                             head_flags[i] = 0;
                         }
                     }
@@ -256,11 +270,18 @@ namespace cudauniquekernels{
         
                     #pragma unroll
                     for(int i = 0; i < elemsPerThread; i++){
-                        if(threadElementsOffset + i < sizeOfRange && head_flags[i] == 1){
-                            segmentOutput[uniqueLengthOfSegment + prefixsum[i]] = tempregs[i];
+                        if(threadElementsOffset + i < segmentSize && head_flags[i] == 1){
+                            temp_storage.elements[prefixsum[i]] = tempregs[i];
+                            //segmentOutput[uniqueLengthOfSegment + prefixsum[i]] = tempregs[i];
                         }
                     }
                    
+                    __syncthreads();
+
+                    for(int i = threadIdx.x; i < numberOfSetHeadFlags; i += blocksize){
+                        segmentOutput[uniqueLengthOfSegment + i] = temp_storage.elements[i];
+                    }
+
                     //set shared_tile_predeccessor_item for next iteration
                     const int threadOfLastItem = (min(remainingElementsToProcess, elemsPerBlock)-1) / elemsPerThread;
                     const int elemIndex = (min(remainingElementsToProcess, elemsPerBlock)-1) % elemsPerThread;
@@ -268,6 +289,7 @@ namespace cudauniquekernels{
                     if(threadOfLastItem == threadIdx.x){
                         shared_tile_predeccessor_item = tempregs[elemIndex];
                     }
+
 
                     uniqueLengthOfSegment += numberOfSetHeadFlags;
                     remainingElementsToProcess -= elemsPerBlock;
@@ -277,454 +299,241 @@ namespace cudauniquekernels{
                 if(threadIdx.x == 0){
                     unique_lengths[segmentId] = uniqueLengthOfSegment;
                 }
+            }else{
+                if(threadIdx.x == 0){
+                    unique_lengths[segmentId] = 0;
+                }
             }
         }
     
     }
 
-
-    //set end offset to begin offset for each segment smaller than minimumSegmentSize
-    template<class OffsetIterator>
-    __global__
-    void setSmallSegmentSizesToZeroKernel(
-        int* __restrict__ output_end_offsets,
-        int numSegments,
-        OffsetIterator input_begin_offsets,
-        OffsetIterator input_end_offsets,
-        int minimumSegmentSize
-    ){
-        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-        const int stride = blockDim.x * gridDim.x;
-
-        for(int i = tid; i < numSegments; i += stride){
-            const int begin = input_begin_offsets[i];
-            const int end = input_end_offsets[i];
-            const int segmentSize = end - begin;
-
-            if(segmentSize < minimumSegmentSize){
-                output_end_offsets[i] = 0;
-            }else{
-                output_end_offsets[i] = end;
-            }
-        }
-    }
-
-
-
-}
-
-
-
-struct GpuSegmentedUnique{
-
-    // removes duplicates in each segment, writes results to d_unique_items. d_items may be modified
-    template<class T>
-    static void unique(
-        void* d_temp_storage,
-        std::size_t& temp_storage_bytes,
-        T* d_items,
-        int numItems,
-        T* d_unique_items,
-        int* d_unique_lengths,
-        int numSegments,
-        int sizeOfLargestSegment,
-        int* d_begin_offsets,
-        int* d_end_offsets,
-        int begin_bit = 0,
-        int end_bit = sizeof(T) * 8,
-        cudaStream_t stream = 0
-    ){
-
-        constexpr int maximumSegmentSizeForRegSort = 128 * 32;
-
-        void* temp_allocations[2]{};
-        std::size_t temp_allocation_sizes[2]{0,0};
-        
-        temp_allocation_sizes[0] = sizeof(int) * numSegments; // d_end_offsets_tmp
-
-        if(sizeOfLargestSegment > maximumSegmentSizeForRegSort){
-
-            makeUniqueRangeWithGmemSort(
-                nullptr,
-                temp_allocation_sizes[1], //d_gmemsorttmp
-                d_unique_items,
-                d_unique_lengths, 
-                d_items,
-                numItems,
-                numSegments,
-                d_begin_offsets, 
-                (int*)nullptr, 
-                begin_bit,
-                end_bit,
-                stream
-            );
-
-        }
-        
-        cudaError_t cubstatus = cub::AliasTemporaries(
-            d_temp_storage,
-            temp_storage_bytes,
-            temp_allocations,
-            temp_allocation_sizes
-        );
-        assert(cubstatus == cudaSuccess);
-
-        if(d_temp_storage == nullptr){
-            return;
-        }
-
-        cudaMemsetAsync(d_unique_lengths, 0, sizeof(int) * numSegments, stream);
-
-        if(sizeOfLargestSegment <= maximumSegmentSizeForRegSort){
-            //can perform everything in a single pass in registers
-            makeUniqueRangeWithRegSort(
-                d_unique_items,
-                d_unique_lengths, 
-                d_items,
-                numSegments,
-                d_begin_offsets, 
-                d_end_offsets, 
-                sizeOfLargestSegment,
-                begin_bit,
-                end_bit,
-                stream
-            );
-        }else{
-
-            //regsort must be called before gmemsort to get correct results!
-            
-            makeUniqueRangeWithRegSort(
-                d_unique_items,
-                d_unique_lengths, 
-                d_items,
-                numSegments,
-                d_begin_offsets, 
-                d_end_offsets, 
-                sizeOfLargestSegment,
-                begin_bit,
-                end_bit,
-                stream
-            );
-            
-            //at least one segment cannot be processed in registers
-
-            int* const d_end_offsets_tmp = static_cast<int*>(temp_allocations[0]);
-            void* const d_gmemsorttmp = static_cast<void*>(temp_allocations[1]);
-
-            //Set d_end_offsets_tmp[i] to d_begin_offsets[i] for small segments such thath gmemsort will skip those segments
-            cudauniquekernels::setSmallSegmentSizesToZeroKernel<<<SDIV(numSegments, 128), 128, 0, stream>>>(
-                d_end_offsets_tmp,
-                numSegments,
-                d_begin_offsets,
-                d_end_offsets,
-                maximumSegmentSizeForRegSort+1
-            ); CUDACHECKASYNC;
-
-            makeUniqueRangeWithGmemSort(
-                d_gmemsorttmp,
-                temp_allocation_sizes[1],
-                d_unique_items,
-                d_unique_lengths, 
-                d_items,
-                numItems,
-                numSegments,
-                d_begin_offsets, 
-                d_end_offsets_tmp, 
-                begin_bit,
-                end_bit,
-                stream
-            );
-        }    
-    }
-
-    //uses cudaMallocAsync for temp storage
-    template<class T>
-    static void unique(
-        T* d_items,
-        int numItems,
-        T* d_unique_items,
-        int* d_unique_lengths,
-        int numSegments,
-        int* d_begin_offsets,
-        int* d_end_offsets,
-        int* h_begin_offsets,
-        int* h_end_offsets,
-        int begin_bit = 0,
-        int end_bit = sizeof(T) * 8,
-        cudaStream_t stream = 0,
-        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
-    ){
-
-        int sizeOfLargestSegment = 0;
-        for(int i = 0; i < numSegments; i++){
-            const int segmentSize = h_end_offsets[i] - h_begin_offsets[i];
-            sizeOfLargestSegment = std::max(segmentSize, sizeOfLargestSegment);
-        }
-
-        if(sizeOfLargestSegment == 0){
-            return;
-        }
-
-        std::size_t requiredTempBytes = 0;
-
-        unique(
-            nullptr,
-            requiredTempBytes,
-            d_items,
-            numItems,
-            d_unique_items,
-            d_unique_lengths,
-            numSegments,
-            sizeOfLargestSegment,
-            d_begin_offsets,
-            d_end_offsets,
-            begin_bit,
-            end_bit,
-            stream
-        );
-
-        rmm::device_uvector<char> d_temp_storage(requiredTempBytes, stream, mr);
-
-        unique(
-            d_temp_storage.data(),
-            requiredTempBytes,
-            d_items,
-            numItems,
-            d_unique_items,
-            d_unique_lengths,
-            numSegments,
-            sizeOfLargestSegment,
-            d_begin_offsets,
-            d_end_offsets,
-            begin_bit,
-            end_bit,
-            stream
-        );
-    }
-
-    //uses cudaMallocAsync for temp storage
-    template<class T>
-    static void unique(
-        T* d_items,
-        int numItems,
-        T* d_unique_items,
-        int* d_unique_lengths,
-        int numSegments,
-        int sizeOfLargestSegment,
-        int* d_begin_offsets,
-        int* d_end_offsets,
-        int begin_bit = 0,
-        int end_bit = sizeof(T) * 8,
-        cudaStream_t stream = 0,
-        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
-    ){
-
-        std::size_t requiredTempBytes = 0;
-
-        unique(
-            nullptr,
-            requiredTempBytes,
-            d_items,
-            numItems,
-            d_unique_items,
-            d_unique_lengths,
-            numSegments,
-            sizeOfLargestSegment,
-            d_begin_offsets,
-            d_end_offsets,
-            begin_bit,
-            end_bit,
-            stream
-        );
-
-        rmm::device_uvector<char> d_temp_storage(requiredTempBytes, stream, mr);
-
-        unique(
-            d_temp_storage.data(),
-            requiredTempBytes,
-            d_items,
-            numItems,
-            d_unique_items,
-            d_unique_lengths,
-            numSegments,
-            sizeOfLargestSegment,
-            d_begin_offsets,
-            d_end_offsets,
-            begin_bit,
-            end_bit,
-            stream
-        );
-    }
-
-    //segments of size larger than 128 * 64 are not processed
-    template<class T, class OffsetIterator>
-    static void makeUniqueRangeWithRegSort(
+    template<int blocksize, int elemsPerThread, class T, class OffsetIterator>
+    void callMakeUniqueRangeFromSortedRangeKernel(
         T* d_output,
         int* d_unique_lengths, 
         const T* d_input,
+        const int* d_segmentIds,
         int numSegments,
-        OffsetIterator d_begin_offsets, //segment i begins at input[d_begin_offsets[i]]
-        OffsetIterator d_end_offsets, //segment i ends at input[d_end_offsets[i]] (exclusive)
-        int sizeOfLargestSegment,
-        int begin_bit = 0,
-        int end_bit = sizeof(T) * 8,
-        cudaStream_t stream = 0
+        OffsetIterator begin_offsets,
+        OffsetIterator end_offsets,
+        cudaStream_t stream
     ){
-        #define processData(blocksize, elemsPerThread) \
-            cudauniquekernels::makeUniqueRangeWithRegSortKernel<(blocksize), (elemsPerThread)> \
-                <<<numSegments, (blocksize), 0, stream>>>( \
-                d_output,  \
-                d_unique_lengths, \
-                d_input,  \
-                numSegments, \
-                d_begin_offsets, \
-                d_end_offsets, \
-                begin_bit, \
-                end_bit \
-            ); CUDACHECKASYNC;
+        auto kernel = makeUniqueRangeFromSortedRangeKernel<blocksize, elemsPerThread, T, OffsetIterator>;
 
-        if(sizeOfLargestSegment <= 32){
-            constexpr int blocksize = 32;
-            constexpr int elemsPerThread = 1;
-            assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
+        int deviceId = 0;
+        int numSMs = 0;
+        int maxBlocksPerSM = 0;
+        CUDACHECK(cudaGetDevice(&deviceId));
+        CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSM,
+            kernel,
+            blocksize, 
+            0
+        ));
+    
+        const int maxBlocks = maxBlocksPerSM * numSMs;  
+    
+        dim3 block(blocksize, 1, 1);
+        const int numBlocks = numSegments;
+        dim3 grid(std::min(numBlocks, maxBlocks), 1, 1);
 
-            processData(blocksize, elemsPerThread);
-        }else if(sizeOfLargestSegment <= 64){
-            constexpr int blocksize = 64;
-            constexpr int elemsPerThread = 1;
-            assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
-
-            processData(blocksize, elemsPerThread);
-        }else if(sizeOfLargestSegment <= 96){
-            constexpr int blocksize = 96;
-            constexpr int elemsPerThread = 1;
-            assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
-
-            processData(blocksize, elemsPerThread);
-        }else if(sizeOfLargestSegment <= 128){
-            constexpr int blocksize = 128;
-            constexpr int elemsPerThread = 1;
-            assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
-
-            processData(blocksize, elemsPerThread);
-        }else if(sizeOfLargestSegment <= 256){
-            constexpr int blocksize = 128;
-            constexpr int elemsPerThread = 2;
-            assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
-
-            processData(blocksize, elemsPerThread);
-        }else if(sizeOfLargestSegment <= 512){
-            constexpr int blocksize = 128;
-            constexpr int elemsPerThread = 4;
-            assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
-
-            processData(blocksize, elemsPerThread);
-        }else if(sizeOfLargestSegment <= 1024){
-            constexpr int blocksize = 128;
-            constexpr int elemsPerThread = 8;
-            assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
-
-            processData(blocksize, elemsPerThread);
-        }else if(sizeOfLargestSegment <= 2048){
-            constexpr int blocksize = 128;
-            constexpr int elemsPerThread = 16;
-            assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
-
-            processData(blocksize, elemsPerThread);
-        //}else if(sizeOfLargestSegment <= 4096){
-        }else{
-            constexpr int blocksize = 128;
-            constexpr int elemsPerThread = 32;
-            //assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
-
-            processData(blocksize, elemsPerThread);
-        }
-        // else if(sizeOfLargestSegment <= 4096){
-        //     assert(sizeOfLargestSegment <= blocksize * elemsPerThread);
-
-        //     processData(blocksize, elemsPerThread);
-        // }
-        // else{
-        //     constexpr int blocksize = 128;
-        //     constexpr int elemsPerThread = 64;
-            
-        //     processData(blocksize, elemsPerThread);
-        // }
+        kernel<<<grid, block, 0, stream>>>(
+            d_output,
+            d_unique_lengths, 
+            d_input,
+            d_segmentIds,
+            numSegments,
+            begin_offsets,
+            end_offsets
+        );
+        CUDACHECKASYNC;
     }
 
-    template<class T, class OffsetIterator>
-    static void makeUniqueRangeWithGmemSort(
-        void* d_temp_storage,
-        std::size_t& temp_storage_bytes,
-        T* d_output,
-        int* d_unique_lengths, 
-        T* d_input,
+
+} //namespace cudauniquekernels
+
+struct GpuSegmentedUnique{
+
+    template<class T>
+    static void unique(
+        T* d_items,
         int numItems,
+        T* d_unique_items,
+        int* d_unique_lengths,
         int numSegments,
-        OffsetIterator d_begin_offsets, //segment i begins at input[d_begin_offsets[i]]
-        OffsetIterator d_end_offsets, //segment i ends at input[d_end_offsets[i]] (exclusive)
-        int begin_bit = 0,
-        int end_bit = sizeof(T) * 8,
-        cudaStream_t stream = 0
+        int* d_begin_offsets,
+        int* d_end_offsets,
+        cudaStream_t stream = 0,
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
     ){
+        auto thrustpolicy = rmm::exec_policy_nosync(stream, mr);
 
-        cub::DoubleBuffer<T> d_values_dblbuf(d_input, d_output);
-        
-        std::size_t requiredCubTempStorageSize = 0;
-        cub::DeviceSegmentedRadixSort::SortKeys(
-            nullptr,
-            requiredCubTempStorageSize,
-            d_values_dblbuf,
-            numItems,
-            numSegments,
-            d_begin_offsets,
-            d_end_offsets,
-            begin_bit,
-            end_bit,
-            stream
+        rmm::device_uvector<int> d_segmentLengths(numSegments, stream, mr);
+        thrust::for_each(
+            thrustpolicy,
+            thrust::make_counting_iterator(0),
+            thrust::make_counting_iterator(0) + numSegments,
+            [
+                d_begin_offsets,
+                d_end_offsets,
+                d_segmentLengths = d_segmentLengths.data()
+            ] __device__ (int index){
+                d_segmentLengths[index] = d_end_offsets[index] - d_begin_offsets[index];
+            }
         );
 
-        std::size_t requiredTempStorageSize = requiredCubTempStorageSize;
-
-        if(d_temp_storage == nullptr){
-            temp_storage_bytes = requiredTempStorageSize;
-            return;
-        }
-
-        assert(temp_storage_bytes >= requiredTempStorageSize);
+        const int numSegmentsRounded = SDIV(numSegments, 128) * 128;
+        constexpr int numPartitions = 6;
+        constexpr int boundaries[numPartitions]{128,256,512,1024,2048, std::numeric_limits<int>::max()};
+        // constexpr int numPartitions = 2;
+        // constexpr int boundaries[numPartitions]{2048, std::numeric_limits<int>::max()};
         
-        cudaError_t cubstatus = cub::DeviceSegmentedRadixSort::SortKeys(
-            d_temp_storage,
-            temp_storage_bytes,
-            d_values_dblbuf,
-            numItems,
-            numSegments,
-            d_begin_offsets,
-            d_end_offsets,
-            begin_bit,
-            end_bit,
-            stream
+
+        rmm::device_uvector<int> d_allSegmentIds(numSegmentsRounded * numPartitions, stream, mr);
+        rmm::device_uvector<int> d_partitionSizes(numPartitions, stream, mr);
+        CUDACHECK(cudaMemsetAsync(d_partitionSizes.data(), 0, sizeof(int) * numPartitions, stream));
+
+        thrust::for_each(
+            thrustpolicy,
+            thrust::make_counting_iterator(0),
+            thrust::make_counting_iterator(0) + numSegments,
+            [
+                numSegmentsRounded = numSegmentsRounded,
+                d_allSegmentIds = d_allSegmentIds.data(),
+                d_partitionSizes = d_partitionSizes.data(),
+                d_segmentLengths = d_segmentLengths.data()
+            ] __device__ (int index){
+                //constexpr int boundaries[numPartitions]{128,256,512,1024,2048, std::numeric_limits<int>::max()};
+                const int length = d_segmentLengths[index];
+                for(int i = 0; i < numPartitions; i++){
+                    if(length <= boundaries[i]){
+                        const int pos = atomicAdd(d_partitionSizes + i, 1);
+                        d_allSegmentIds[i * numSegmentsRounded + pos] = index;
+                        break;
+                    }
+                }
+            }
         );
-        assert(cubstatus == cudaSuccess);
 
-        constexpr int blocksize = 128;
-        constexpr int elemsPerThread = 4;
+        std::vector<int> h_partitionSizes(numPartitions);
+        CUDACHECK(cudaMemcpyAsync(
+            h_partitionSizes.data(),
+            d_partitionSizes.data(),
+            sizeof(int) * numPartitions,
+            D2H,
+            stream
+        ));
+        CUDACHECK(cudaStreamSynchronize(stream));
+        // for(int i = 0; i < numPartitions; i++){
+        //     std::cerr << h_partitionSizes[i] << " ";
+        // }
+        // std::cerr << "\n";
 
-        cudauniquekernels::makeUniqueRangeFromSortedRangeKernel<blocksize, elemsPerThread>
-                <<<numSegments, blocksize, 0, stream>>>(
-            d_values_dblbuf.Alternate(), //output
-            d_unique_lengths, 
-            d_values_dblbuf.Current(), //input
-            numSegments,
-            d_begin_offsets,
-            d_end_offsets 
-        ); CUDACHECKASYNC;
+        cub::DoubleBuffer<T> d_items_dblbuf{d_items, d_unique_items};
 
-        if(d_values_dblbuf.Alternate() == d_input){
-            CUDACHECK(cudaMemcpyAsync(d_output, d_input, sizeof(T) * numItems, D2D, stream));
+        if(h_partitionSizes[numPartitions - 1] > 0){
+            const int numLargestSegments = h_partitionSizes[numPartitions - 1];
+            const int* d_largestSegmentIds = d_allSegmentIds.data() + numSegmentsRounded * (numPartitions - 1);
+            rmm::device_uvector<int> d_largeSegmentLengths(numLargestSegments, stream, mr);
+            rmm::device_uvector<int> d_largeSegmentBeginOffsets(numLargestSegments + 1, stream, mr);
+            auto d_largeSegmentEndOffsets = thrust::make_transform_iterator(
+                thrust::make_counting_iterator(0),
+                [
+                    d_largeSegmentLengths = d_largeSegmentLengths.data(),
+                    d_largeSegmentBeginOffsets = d_largeSegmentBeginOffsets.data()
+                ] __device__ (int index){
+                    return d_largeSegmentLengths[index] + d_largeSegmentBeginOffsets[index];
+                }
+            );
+
+            thrust::gather(
+                thrustpolicy,
+                d_largestSegmentIds,
+                d_largestSegmentIds + numLargestSegments,
+                d_segmentLengths.begin(),
+                d_largeSegmentLengths.begin()
+            );
+            thrust::gather(
+                thrustpolicy,
+                d_largestSegmentIds,
+                d_largestSegmentIds + numLargestSegments,
+                d_begin_offsets,
+                d_largeSegmentBeginOffsets.begin()
+            );
+
+            std::size_t cubTempSize = 0;
+            CUDACHECK(cub::DeviceSegmentedSort::SortKeys(
+                nullptr,
+                cubTempSize,
+                d_items_dblbuf,
+                numItems,
+                numLargestSegments,
+                d_largeSegmentBeginOffsets.begin(),
+                d_largeSegmentEndOffsets,
+                stream
+            ));
+
+            rmm::device_uvector<char> d_cubtemp(cubTempSize, stream, mr);
+
+            CUDACHECK(cub::DeviceSegmentedSort::SortKeys(
+                d_cubtemp.data(),
+                cubTempSize,
+                d_items_dblbuf,
+                numItems,
+                numLargestSegments,
+                d_largeSegmentBeginOffsets.begin(),
+                d_largeSegmentEndOffsets,
+                stream
+            ));
+
+            T* const output = d_unique_items; //if Current() == d_unique_items, operations will be inplace
+
+            cudauniquekernels::callMakeUniqueRangeFromSortedRangeKernel<128, 8>(
+                output,
+                d_unique_lengths, 
+                d_items_dblbuf.Current(), //input
+                d_largestSegmentIds,
+                numLargestSegments,
+                d_begin_offsets,
+                d_end_offsets,
+                stream
+            );
         }
 
-        CUDACHECKASYNC;
+        #define runSmallSegment(partitionIndex, blocksize_, itemsPerThread_) { \
+            const std::string rangename = "small segments <= " + std::to_string(boundaries[partitionIndex]); \
+            nvtx::push_range(rangename, 1); \
+            if(h_partitionSizes[partitionIndex] > 0){ \
+                constexpr int blocksize = blocksize_; \
+                constexpr int itemsPerThread = itemsPerThread_; \
+                static_assert(itemsPerThread > 0); \
+                cudauniquekernels::callMakeUniqueRangeWithRegSortKernel<blocksize,itemsPerThread>( \
+                    d_unique_items, \
+                    d_unique_lengths,  \
+                    d_items, \
+                    d_allSegmentIds.data() + numSegmentsRounded * partitionIndex, \
+                    h_partitionSizes[partitionIndex], \
+                    partitionIndex == 0 ? 0 : boundaries[partitionIndex-1] + 1, \
+                    boundaries[partitionIndex], \
+                    d_begin_offsets, \
+                    d_end_offsets, \
+                    0, \
+                    sizeof(T) * 8, \
+                    stream \
+                ); \
+            } \
+            nvtx::pop_range(); \
+        }
+
+        runSmallSegment(0, 128, 1)
+        runSmallSegment(1, 128, 2)
+        runSmallSegment(2, 128, 4)
+        runSmallSegment(3, 128, 8)
+        runSmallSegment(4, 128, 16)
+
+        #undef runSmallSegment
     }
 
 };
@@ -735,9 +544,5 @@ struct GpuSegmentedUnique{
 
 }
 }
-
-
-#endif // __NVCC__
-
 
 #endif

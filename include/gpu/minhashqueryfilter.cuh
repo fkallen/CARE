@@ -31,73 +31,17 @@ namespace gpu{
             if(numItems <= 0) return;
             if(numSegments <= 0) return;
 
-            CubCallWrapper(mr).cubReduceMax(
-                d_numItemsPerSegment.Current(),
-                d_numItemsPerSegment.Alternate(),
-                numSegments,
-                stream
-            );
-
-            int sizeOfLargestSegment = 0;
-            CUDACHECK(cudaMemcpyAsync(
-                &sizeOfLargestSegment,
-                d_numItemsPerSegment.Alternate(),
-                sizeof(int),
-                D2H,
-                stream
-            ));
-            CUDACHECK(cudaStreamSynchronize(stream));
-
-            // helpers::lambda_kernel<<<1,1,0, stream>>>([
-            //     d_global_begin_offsets = d_numItemsPerSegmentPrefixSum.Current(),
-            //     numSegments
-            // ] __device__ (){
-            //     printf("d_global_begin_offsets before unique\n");
-            //     for(int i = 0; i < numSegments+1; i++){
-            //         printf("%d ", d_global_begin_offsets[i]);
-            //     }
-            //     printf("\n");
-            // }); CUDACHECKASYNC;
-            // CUDACHECK(cudaDeviceSynchronize());
-
-            // // helpers::lambda_kernel<<<1,1,0, stream>>>([
-            // //     d_numValuesPerSequence = d_numItemsPerSegment.Current(),
-            // //     numSegments
-            // // ] __device__ (){
-            // //     printf("numValuesPerSequence before unique\n");
-            // //     for(int i = 0; i < numSegments; i++){
-            // //         printf("%d ", d_numValuesPerSequence[i]);
-            // //     }
-            // //     printf("\n");
-            // // }); CUDACHECKASYNC;
-            // // CUDACHECK(cudaDeviceSynchronize());
-            
             GpuSegmentedUnique::unique(
                 d_items.Current(),
                 numItems,
                 d_items.Alternate(),
                 d_numItemsPerSegment.Alternate(),
                 numSegments,
-                sizeOfLargestSegment,
                 d_numItemsPerSegmentPrefixSum.Current(),
                 d_numItemsPerSegmentPrefixSum.Current() + 1,
-                0,
-                sizeof(read_number) * 8,
                 stream,
                 mr
             );
-
-            // helpers::lambda_kernel<<<1,1,0, stream>>>([
-            //     d_numValuesPerSequence = d_numItemsPerSegment.Alternate(),
-            //     numSegments
-            // ] __device__ (){
-            //     printf("numValuesPerSequence after unique\n");
-            //     for(int i = 0; i < numSegments; i++){
-            //         printf("%d ", d_numValuesPerSequence[i]);
-            //     }
-            //     printf("\n");
-            // }); CUDACHECKASYNC;
-            // CUDACHECK(cudaDeviceSynchronize());
 
             if(d_dontMatchPerSegment != nullptr){
                 //remove self read ids (inplace)
