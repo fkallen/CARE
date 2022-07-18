@@ -8,7 +8,7 @@ PREFIX = /usr/local
 CUB_INCDIR = ./dependencies/cub-1.17.0
 THRUST_INCDIR = ./dependencies/thrust-1.17.0
 WARPCORE_INCDIR = ./dependencies/warpcore/include
-RMM_INCDIR = ./dependencies/rmm/include
+RMM_INCDIR = ./dependencies/rmm-22.06.01/include
 SPDLOG_INCDIR = ./dependencies/spdlog/include
 
 WARPCORE_FLAGS = -DCARE_HAS_WARPCORE -I$(WARPCORE_INCDIR)
