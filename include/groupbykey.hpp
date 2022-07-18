@@ -27,6 +27,8 @@
 #include <rmm/mr/device/limiting_resource_adaptor.hpp>
 #include <rmm/device_uvector.hpp>
 #include <gpu/rmm_utilities.cuh>
+#include <rmm/mr/device/cuda_async_memory_resource.hpp>
+#include <rmm/mr/device/failure_callback_resource_adaptor.hpp>
 #endif
 
 
@@ -319,9 +321,31 @@ namespace care{
             };
 
             rmm::mr::device_memory_resource* currentResource = rmm::mr::get_current_device_resource();
-            rmm::mr::limiting_resource_adaptor limitedCurrentResource(currentResource, 0);
+            rmm::mr::cuda_async_memory_resource* asyncmr = dynamic_cast<rmm::mr::cuda_async_memory_resource*>(currentResource);
+            assert(asyncmr != nullptr);
+
+            using FailureCallbackMR = rmm::mr::failure_callback_resource_adaptor<rmm::mr::cuda_async_memory_resource>;
+
+            struct CallbackData{
+                rmm::mr::cuda_async_memory_resource* asyncmr;
+            };
+
+            auto clearAsyncMrCallback = [](size_t /*bytes*/, void* args){
+                CallbackData* callbackData = static_cast<CallbackData*>(args);
+                CUDACHECK(cudaDeviceSynchronize());
+                CUDACHECK(cudaMemPoolTrimTo(callbackData->asyncmr->pool_handle(), 0));
+                return false; //re-throw the exception
+            };
+
+            CallbackData callbackData;
+            callbackData.asyncmr = asyncmr;
+
+            FailureCallbackMR failureCallbackMR(asyncmr, clearAsyncMrCallback, (void*)&callbackData);
+
             rmm::mr::managed_memory_resource managedMemoryResource;
-            rmm::mr::FallbackResourceAdapter fallbackResource(currentResource, &managedMemoryResource);
+
+            rmm::mr::FallbackResourceAdapter fallbackResource(&failureCallbackMR, &managedMemoryResource);
+
             rmm::mr::device_memory_resource* mr = &fallbackResource;
 
             cudaStream_t stream = 0;
