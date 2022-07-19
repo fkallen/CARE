@@ -29,6 +29,11 @@ namespace care{
     static_assert(maximum_number_of_maps > 0, "");
 
 
+    #define MINHASHER_CLEAR_OVEROCCUPIED_BUCKETS
+    #define MINHASHER_CLEAR_UNDEROCCUPIED_BUCKETS
+    constexpr int MINHASHER_MIN_VALUES_PER_KEY = 2;
+
+
     //At least gpuReadStorageHeadroomPerGPU bytes per GPU will not be used by gpuReadStorage
     constexpr std::size_t gpuReadStorageHeadroomPerGPU = std::size_t(1) << 30;
 

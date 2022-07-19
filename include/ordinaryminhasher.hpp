@@ -228,7 +228,7 @@ namespace care{
                 const int maxValuesPerKey = getNumResultsPerMapThreshold();
 
                 //if only 1 value exists, it belongs to the anchor read itself and does not need to be stored.
-                const int minValuesPerKey = 2;
+                constexpr int minValuesPerKey = MINHASHER_MIN_VALUES_PER_KEY;
 
                 care::GroupByKeyCpu<Key_t, Value_t, read_number> groupByKey(valuesOfSameKeyMustBeSorted, maxValuesPerKey, minValuesPerKey);
                 groupByKey.execute(keys, values, countsPrefixSum);
