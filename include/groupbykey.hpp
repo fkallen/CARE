@@ -11,6 +11,7 @@
 #include <thrust/copy.h>
 #include <thrust/sort.h>
 #include <thrust/equal.h>
+#include <thrust/logical.h>
 
 #ifdef __NVCC__
 #include <thrust/device_vector.h>
@@ -176,20 +177,42 @@ namespace care{
 
             thrust::for_each(
                 policy,
-                thrust::counting_iterator<Offset_t>(0),
-                thrust::counting_iterator<Offset_t>(0) + nUniqueKeys,
-                [&](Offset_t index){
-                    const auto begin = offsets[index];
-                    const auto end = offsets[index+1];
-                    const auto num = end - begin;
+                thrust::counting_iterator<std::size_t>(0),
+                thrust::counting_iterator<std::size_t>(0) + nUniqueKeys,
+                [&] (std::size_t index){
+                    const std::size_t upperLimit = std::min(BucketSize(maxValuesPerKey), std::numeric_limits<BucketSize>::max());
+                    const std::size_t begin = offsets[index];
+                    const std::size_t end = offsets[index+1];
+                    const std::size_t num = end - begin;
 
-                    if(num > Offset_t(maxValuesPerKey) || num < Offset_t(minValuesPerKey)){
+                    auto checkUpperBound = [&](){
+                        if(num > upperLimit){
+                            int beginOfRemove = std::min(upperLimit, num);
+                            int endOfRemove = num;
+
+                            #ifdef MINHASHER_CLEAR_OVEROCCUPIED_BUCKETS
+                            beginOfRemove = 0;
+                            #endif
+                            valuesPerKey_begin[index] = num - (endOfRemove - beginOfRemove);
+                            for(std::size_t k = begin + beginOfRemove; k < begin + endOfRemove; k++){
+                                removeflags[k] = true;
+                            }
+                        }
+                    };
+
+                    #ifdef MINHASHER_CLEAR_UNDEROCCUPIED_BUCKETS
+                    const std::size_t lowerLimit = std::max(BucketSize(minValuesPerKey),BucketSize(1));
+                    if(num < lowerLimit){
                         valuesPerKey_begin[index] = 0;
-
-                        for(Offset_t k = begin; k < end; k++){
+                        for(std::size_t k = begin; k < end; k++){
                             removeflags[k] = true;
                         }
+                    }else{
+                        checkUpperBound();
                     }
+                    #else
+                    checkUpperBound();
+                    #endif
                 }
             );
 
@@ -468,20 +491,42 @@ namespace care{
             auto minValuesPerKey_copy = minValuesPerKey;
             thrust::for_each(
                 thrustPolicy,
-                thrust::counting_iterator<Offset_t>(0),
-                thrust::counting_iterator<Offset_t>(0) + nUniqueKeys,
-                [=] __device__ (Offset_t index){
-                    const auto begin = d_offsets_begin[index];
-                    const auto end = d_offsets_begin[index+1];
-                    const auto num = end - begin;
+                thrust::counting_iterator<std::size_t>(0),
+                thrust::counting_iterator<std::size_t>(0) + nUniqueKeys,
+                [=] __device__ (std::size_t index){
+                    const std::size_t upperLimit = std::min(BucketSize(maxValuesPerKey_copy), std::numeric_limits<BucketSize>::max());
+                    const std::size_t begin = d_offsets_begin[index];
+                    const std::size_t end = d_offsets_begin[index+1];
+                    const std::size_t num = end - begin;
 
-                    if(num > Offset_t(maxValuesPerKey_copy) || num < Offset_t(minValuesPerKey_copy)){
+                    auto checkUpperBound = [&](){
+                        if(num > upperLimit){
+                            int beginOfRemove = std::min(upperLimit, num);
+                            int endOfRemove = num;
+
+                            #ifdef MINHASHER_CLEAR_OVEROCCUPIED_BUCKETS
+                            beginOfRemove = 0;
+                            #endif
+                            d_valuesPerKey_begin[index] = num - (endOfRemove - beginOfRemove);
+                            for(std::size_t k = begin + beginOfRemove; k < begin + endOfRemove; k++){
+                                d_removeflags_begin[k] = true;
+                            }
+                        }
+                    };
+
+                    #ifdef MINHASHER_CLEAR_UNDEROCCUPIED_BUCKETS
+                    const std::size_t lowerLimit = std::max(BucketSize(minValuesPerKey_copy),BucketSize(1));
+                    if(num < lowerLimit){
                         d_valuesPerKey_begin[index] = 0;
-
-                        for(Offset_t k = begin; k < end; k++){
+                        for(std::size_t k = begin; k < end; k++){
                             d_removeflags_begin[k] = true;
                         }
+                    }else{
+                        checkUpperBound();
                     }
+                    #else
+                    checkUpperBound();
+                    #endif
                 }
             );
 
