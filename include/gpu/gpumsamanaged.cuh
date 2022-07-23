@@ -66,6 +66,80 @@ namespace gpu{
             }
         }
 
+        void constructAndRefine(
+            int* d_newIndices,
+            int* d_newNumIndicesPerAnchor,
+            int* d_newNumIndices,
+            const int* d_overlaps,
+            const int* d_shifts,
+            const int* d_nOps,
+            const AlignmentOrientation* d_bestAlignmentFlags,
+            const int* d_anchorLengths,
+            const int* d_candidateLengths,
+            int* d_candidatePositionsInSegments,
+            int* d_numCandidatePositionsInSegments,
+            const int* d_segmentBeginOffsets,            
+            const unsigned int* d_anchorSequencesData,
+            const unsigned int* d_candidateSequencesData,
+            const bool* d_isPairedCandidate,
+            const char* d_anchorQualities,
+            const char* d_candidateQualities,
+            int numAnchors,
+            int maxNumCandidates,
+            float desiredAlignmentMaxErrorRate,
+            bool canUseQualityScores,
+            int encodedSequencePitchInInts,
+            size_t qualityPitchInBytes,
+            int dataset_coverage,
+            int numRefinementIterations,
+            MSAColumnCount maximumMsaWidth, // upper bound for number of columns in a single msa. must be large enough to actually fit the data.
+            cudaStream_t stream
+        ){
+            initializeBuffers(
+                maximumMsaWidth, 
+                numAnchors, 
+                d_shifts,
+                d_anchorLengths,
+                d_candidateLengths,
+                d_candidatePositionsInSegments,
+                d_numCandidatePositionsInSegments,
+                d_segmentBeginOffsets,
+                stream
+            );
+
+            rmm::device_uvector<bool> d_temp(maxNumCandidates, stream, mr);
+
+            callConstructAndRefineMultipleSequenceAlignmentsKernel(
+                d_newIndices,
+                d_newNumIndicesPerAnchor,
+                d_newNumIndices,
+                multiMSA,
+                d_overlaps,
+                d_shifts,
+                d_nOps,
+                d_bestAlignmentFlags,
+                d_anchorLengths,
+                d_candidateLengths,
+                d_candidatePositionsInSegments,
+                d_numCandidatePositionsInSegments,
+                d_segmentBeginOffsets,            
+                d_anchorSequencesData,
+                d_candidateSequencesData,
+                d_isPairedCandidate,
+                d_anchorQualities,
+                d_candidateQualities,
+                d_temp.data(),
+                numAnchors,
+                desiredAlignmentMaxErrorRate,
+                canUseQualityScores,
+                encodedSequencePitchInInts,
+                qualityPitchInBytes,
+                dataset_coverage,
+                numRefinementIterations,
+                stream
+            );
+        }
+
         void construct(
             const int* d_alignment_overlaps,
             const int* d_alignment_shifts,

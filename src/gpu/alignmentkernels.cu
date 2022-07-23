@@ -164,1398 +164,6 @@ namespace alignmentdetail{
 
 
 
-
-    /*
-
-        For each candidate, compute the alignment of anchor|candidate and anchor|revc-candidate
-        Compares both alignments and keeps the better one
-
-        Sequences are stored in dynamic sized shared memory.
-        To reduce shared memory usage, the candidates belonging to the same anchor
-        are processed by a set of tiles. Each tile only computes alignments for a single anchor.
-        This anchor is stored in shared memory and shared by all threads within a tile
-    */
-
-    template<int tilesize>
-    __global__
-    void
-    popcount_shifted_hamming_distance_smem_kernel(
-        const unsigned int* __restrict__ anchorDataHiLo,
-        const unsigned int* __restrict__ candidateDataHiLoTransposed,
-        int* __restrict__ d_alignment_overlaps,
-        int* __restrict__ d_alignment_shifts,
-        int* __restrict__ d_alignment_nOps,
-        bool* __restrict__ d_alignment_isValid,
-        AlignmentOrientation* __restrict__ d_alignment_best_alignment_flags,
-        const int* __restrict__ anchorSequencesLength,
-        const int* __restrict__ candidateSequencesLength,
-        const int* __restrict__ candidates_per_anchor_prefixsum,
-        const int* __restrict__ tiles_per_anchor_prefixsum,
-        int numAnchors,
-        int numCandidates,
-        const bool* __restrict__ anchorContainsN,
-        bool removeAmbiguousAnchors,
-        const bool* __restrict__ candidateContainsN,
-        bool removeAmbiguousCandidates,
-        int encodedSequencePitchInInts2BitHiLo,
-        int min_overlap,
-        float maxErrorRate,
-        float min_overlap_ratio,
-        float estimatedNucleotideErrorRate
-    ){
-
-        const int n_anchors = numAnchors;
-        const int n_candidates = numCandidates;
-
-        auto no_bank_conflict_index = [](int logical_index) -> int {
-            return logical_index * blockDim.x;
-        };
-
-        auto identity = [](auto logical_index){
-            return logical_index;
-        };
-
-        auto popcount = [](auto i){return __popc(i);};
-
-        auto hammingDistanceWithShift = [&](bool doShift, int overlapsize, int max_errors,
-                                    unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
-                                    int shiftptr_size,
-                                    const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
-                                    auto transfunc2){
-
-            if(doShift){
-                shiftBitArrayLeftBy<1>(shiftptr_hi, shiftptr_size / 2, transfunc1);
-                shiftBitArrayLeftBy<1>(shiftptr_lo, shiftptr_size / 2, transfunc1);
-            }
-
-            const int score = hammingdistanceHiLo(shiftptr_hi,
-                                                shiftptr_lo,
-                                                otherptr_hi,
-                                                otherptr_lo,
-                                                overlapsize,
-                                                overlapsize,
-                                                max_errors,
-                                                transfunc1,
-                                                transfunc2,
-                                                popcount);
-
-            return score;
-        };
-
-
-        auto alignmentComparator = [&] (int fwd_alignment_overlap,
-            int revc_alignment_overlap,
-            int fwd_alignment_nops,
-            int revc_alignment_nops,
-            bool fwd_alignment_isvalid,
-            bool revc_alignment_isvalid,
-            int anchorlength,
-            int querylength)->AlignmentOrientation{
-
-            return chooseBestAlignmentOrientation(
-                fwd_alignment_overlap,
-                revc_alignment_overlap,
-                fwd_alignment_nops,
-                revc_alignment_nops,
-                fwd_alignment_isvalid,
-                revc_alignment_isvalid,
-                anchorlength,
-                querylength,
-                min_overlap_ratio,
-                min_overlap,
-                estimatedNucleotideErrorRate * 4.0f
-            );
-        };
-
-        // sizeof(char) * (max_sequence_bytes * num_tiles   // tiles share the anchor
-        //                    + max_sequence_bytes * num_threads // each thread works with its own candidate
-        //                    + max_sequence_bytes * num_threads) // each thread needs memory to shift a sequence
-        extern __shared__ unsigned int sharedmemory[];
-
-        //set up shared memory pointers
-
-        const int tiles = (blockDim.x * gridDim.x) / tilesize;
-        const int globalTileId = (blockDim.x * blockIdx.x + threadIdx.x) / tilesize;
-        const int localTileId = (threadIdx.x) / tilesize;
-        const int tilesPerBlock = blockDim.x / tilesize;
-        const int laneInTile = threadIdx.x % tilesize;
-        const int requiredTiles = tiles_per_anchor_prefixsum[n_anchors];
-
-        unsigned int* const anchorBackupsBegin = sharedmemory; // per tile shared memory to store anchor
-        unsigned int* const queryBackupsBegin = anchorBackupsBegin + encodedSequencePitchInInts2BitHiLo * tilesPerBlock; // per thread shared memory to store query
-        unsigned int* const mySequencesBegin = queryBackupsBegin + encodedSequencePitchInInts2BitHiLo * blockDim.x; // per thread shared memory to store shifted sequence
-
-        unsigned int* const anchorBackup = anchorBackupsBegin + encodedSequencePitchInInts2BitHiLo * localTileId; // accesed via identity
-        unsigned int* const queryBackup = queryBackupsBegin + threadIdx.x; // accesed via no_bank_conflict_index
-        unsigned int* const mySequence = mySequencesBegin + threadIdx.x; // accesed via no_bank_conflict_index
-
-        for(int logicalTileId = globalTileId; logicalTileId < requiredTiles ; logicalTileId += tiles){
-
-            const int anchorIndex = thrust::distance(tiles_per_anchor_prefixsum,
-                                                    thrust::lower_bound(
-                                                        thrust::seq,
-                                                        tiles_per_anchor_prefixsum,
-                                                        tiles_per_anchor_prefixsum + n_anchors + 1,
-                                                        logicalTileId + 1))-1;
-
-            const int candidatesBeforeThisAnchor = candidates_per_anchor_prefixsum[anchorIndex];
-            const int maxCandidateIndex_excl = candidates_per_anchor_prefixsum[anchorIndex+1];
-            //const int tilesForThisAnchor = tiles_per_anchor_prefixsum[anchorIndex + 1] - tiles_per_anchor_prefixsum[anchorIndex];
-            const int tileForThisAnchor = logicalTileId - tiles_per_anchor_prefixsum[anchorIndex];
-            const int candidateIndex = candidatesBeforeThisAnchor + tileForThisAnchor * tilesize + laneInTile;
-
-            const int anchorbases = anchorSequencesLength[anchorIndex];
-            const int anchorints = SequenceHelpers::getEncodedNumInts2BitHiLo(anchorbases);
-            const unsigned int* anchorptr = anchorDataHiLo + std::size_t(anchorIndex) * encodedSequencePitchInInts2BitHiLo;
-
-            //save anchor in shared memory (in parallel, per tile)
-            for(int lane = laneInTile; lane < encodedSequencePitchInInts2BitHiLo; lane += tilesize) {
-                anchorBackup[identity(lane)] = anchorptr[lane];
-                //transposed
-                //anchorBackup[identity(lane)] = ((unsigned int*)(anchorptr))[lane * n_anchors];
-            }
-
-            cg::tiled_partition<tilesize>(cg::this_thread_block()).sync();
-
-
-            if(candidateIndex < maxCandidateIndex_excl){
-                if(!(removeAmbiguousAnchors && anchorContainsN[anchorIndex]) && !(removeAmbiguousCandidates && candidateContainsN[candidateIndex])){
-                    const int querybases = candidateSequencesLength[candidateIndex];
-                    const int queryints = SequenceHelpers::getEncodedNumInts2BitHiLo(querybases);
-                    const int totalbases = anchorbases + querybases;
-                    const int minoverlap = max(min_overlap, int(float(anchorbases) * min_overlap_ratio));
-
-                    const unsigned int* candidateptr = candidateDataHiLoTransposed + std::size_t(candidateIndex);
-
-                    //save query in shared memory
-                    for(int i = 0; i < encodedSequencePitchInInts2BitHiLo; i += 1) {
-                        //queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i];
-                        //transposed
-                        queryBackup[no_bank_conflict_index(i)] = candidateptr[i * n_candidates];
-                    }
-
-                    const unsigned int* const anchorBackup_hi = anchorBackup;
-                    const unsigned int* const anchorBackup_lo = anchorBackup + identity(anchorints/2);
-                    const unsigned int* const queryBackup_hi = queryBackup;
-                    const unsigned int* const queryBackup_lo = queryBackup + no_bank_conflict_index(queryints/2);
-
-                    int bestScore[2];
-                    int bestShift[2];
-                    int overlapsize[2];
-                    int opnr[2];
-
-                    #pragma unroll
-                    for(int orientation = 0; orientation < 2; orientation++){
-                        const bool isReverseComplement = orientation == 1;
-
-                        if(isReverseComplement) {
-                            SequenceHelpers::reverseComplementSequenceInplace2BitHiLo(queryBackup, querybases, no_bank_conflict_index);
-                        }
-
-                        //begin SHD algorithm
-
-                        bestScore[orientation] = totalbases;     // score is number of mismatches
-                        bestShift[orientation] = -querybases;    // shift of query relative to anchor. shift < 0 if query begins before anchor
-
-                        auto handle_shift = [&](int shift, int overlapsize,
-                                                    unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
-                                                    int shiftptr_size,
-                                                    const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
-                                                    auto transfunc2){
-
-                            //const int max_errors = int(float(overlapsize) * maxErrorRate);
-                            const int max_errors_excl = min(int(float(overlapsize) * maxErrorRate),
-                            bestScore[orientation] - totalbases + 2*overlapsize);
-
-                            if(max_errors_excl > 0){
-
-                                int score = hammingDistanceWithShift(shift != 0, overlapsize, max_errors_excl,
-                                                    shiftptr_hi,shiftptr_lo, transfunc1,
-                                                    shiftptr_size,
-                                                    otherptr_hi, otherptr_lo, transfunc2);
-
-                                
-
-                                // printf("%d, %d %d %d --- ", queryIndex, shift, overlapsize, score);
-
-                                // printf("%d %d %d %d | %d %d %d %d --- ", 
-                                //     shiftptr_hi[transfunc1(0)], shiftptr_hi[transfunc1(1)], shiftptr_hi[transfunc1(2)], shiftptr_hi[transfunc1(3)],
-                                //     shiftptr_lo[transfunc1(0)], shiftptr_lo[transfunc1(1)], shiftptr_lo[transfunc1(2)], shiftptr_lo[transfunc1(3)]);
-
-                                // printf("%d %d %d %d | %d %d %d %d\n", 
-                                //     otherptr_hi[transfunc2(0)], otherptr_hi[transfunc2(1)], otherptr_hi[transfunc2(2)], otherptr_hi[transfunc2(3)],
-                                //     otherptr_lo[transfunc2(0)], otherptr_lo[transfunc2(1)], otherptr_lo[transfunc2(2)], otherptr_lo[transfunc2(3)]);
-
-                                score = (score < max_errors_excl ?
-                                        score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
-                                        : std::numeric_limits<int>::max()); // too many errors, discard
-
-                                if(score < bestScore[orientation]){
-                                    bestScore[orientation] = score;
-                                    bestShift[orientation] = shift;
-                                }
-
-                                return true;
-                            }else{
-                                //printf("%d, %d %d %d max_errors_excl\n", queryIndex, shift, overlapsize, max_errors_excl);
-                                return false;
-                            }
-                        };
-
-                        //initialize threadlocal smem array with anchor
-                        for(int i = 0; i < encodedSequencePitchInInts2BitHiLo; i += 1) {
-                            mySequence[no_bank_conflict_index(i)] = anchorBackup[identity(i)];
-                        }
-
-                        unsigned int* mySequence_hi = mySequence;
-                        unsigned int* mySequence_lo = mySequence + no_bank_conflict_index(anchorints / 2);
-
-                        for(int shift = 0; shift < anchorbases - minoverlap + 1; shift += 1) {
-                            const int overlapsize = min(anchorbases - shift, querybases);
-
-                            bool b = handle_shift(shift, overlapsize,
-                                            mySequence_hi, mySequence_lo, no_bank_conflict_index,
-                                            anchorints,
-                                            queryBackup_hi, queryBackup_lo, no_bank_conflict_index);
-                            if(!b){
-                                break;
-                            }
-                        }
-
-                        //initialize threadlocal smem array with query
-                        for(int i = 0; i < encodedSequencePitchInInts2BitHiLo; i += 1) {
-                            mySequence[no_bank_conflict_index(i)] = queryBackup[no_bank_conflict_index(i)];
-                        }
-
-                        mySequence_hi = mySequence;
-                        mySequence_lo = mySequence + no_bank_conflict_index(queryints / 2);
-
-                        for(int shift = -1; shift >= -querybases + minoverlap; shift -= 1) {
-                            const int overlapsize = min(anchorbases, querybases + shift);
-
-                            bool b = handle_shift(shift, overlapsize,
-                                            mySequence_hi, mySequence_lo, no_bank_conflict_index,
-                                            queryints,
-                                            anchorBackup_hi, anchorBackup_lo, identity);
-                            if(!b){
-                                break;
-                            }
-                        }
-
-                        const int queryoverlapbegin_incl = max(-bestShift[orientation], 0);
-                        const int queryoverlapend_excl = min(querybases, anchorbases - bestShift[orientation]);
-                        overlapsize[orientation] = queryoverlapend_excl - queryoverlapbegin_incl;
-                        opnr[orientation] = bestScore[orientation] - totalbases + 2*overlapsize[orientation];
-                    }
-
-                    const AlignmentOrientation flag = alignmentComparator(
-                        overlapsize[0],
-                        overlapsize[1],
-                        opnr[0],
-                        opnr[1],
-                        bestShift[0] != -querybases,
-                        bestShift[1] != -querybases,
-                        anchorbases,
-                        querybases
-                    );
-
-                    d_alignment_best_alignment_flags[candidateIndex] = flag;
-                    d_alignment_overlaps[candidateIndex] = flag == AlignmentOrientation::Forward ? overlapsize[0] : overlapsize[1];
-                    d_alignment_shifts[candidateIndex] = flag == AlignmentOrientation::Forward ? bestShift[0] : bestShift[1];
-                    d_alignment_nOps[candidateIndex] = flag == AlignmentOrientation::Forward ? opnr[0] : opnr[1];
-                    d_alignment_isValid[candidateIndex] = flag == AlignmentOrientation::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
-                }else{
-                    d_alignment_best_alignment_flags[candidateIndex] = AlignmentOrientation::None;
-                    d_alignment_isValid[candidateIndex] = false;
-                }
-            }
-        }
-    }
-
-    template<int tilesize>
-    __global__
-    void
-    popcount_rightshifted_hamming_distance_smem_kernel(
-        const unsigned int* __restrict__ anchorDataHiLo,
-        const unsigned int* __restrict__ candidateDataHiLoTransposed,
-        int* __restrict__ d_alignment_overlaps,
-        int* __restrict__ d_alignment_shifts,
-        int* __restrict__ d_alignment_nOps,
-        bool* __restrict__ d_alignment_isValid,
-        AlignmentOrientation* __restrict__ d_alignment_best_alignment_flags,
-        const int* __restrict__ anchorSequencesLength,
-        const int* __restrict__ candidateSequencesLength,
-        const int* __restrict__ candidates_per_anchor_prefixsum,
-        const int* __restrict__ tiles_per_anchor_prefixsum,
-        int numAnchors,
-        int numCandidates,
-        const bool* __restrict__ anchorContainsN,
-        bool removeAmbiguousAnchors,
-        const bool* __restrict__ candidateContainsN,
-        bool removeAmbiguousCandidates,
-        int encodedSequencePitchInInts2BitHiLo,
-        int min_overlap,
-        float maxErrorRate,
-        float min_overlap_ratio,
-        float estimatedNucleotideErrorRate
-    ){
-
-        const int n_anchors = numAnchors;
-        const int n_candidates = numCandidates;
-
-        auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
-            SequenceHelpers::reverseComplementSequenceInplace2BitHiLo((unsigned int*)sequence, sequencelength, indextrafo);
-        };
-
-        auto no_bank_conflict_index = [](int logical_index) -> int {
-            return logical_index * blockDim.x;
-        };
-
-        auto identity = [](auto logical_index){
-            return logical_index;
-        };
-
-        auto popcount = [](auto i){return __popc(i);};
-
-        auto hammingDistanceWithShift = [&](bool doShift, int overlapsize, int max_errors,
-                                    unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
-                                    int shiftptr_size,
-                                    const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
-                                    auto transfunc2){
-
-            if(doShift){
-                shiftBitArrayLeftBy<1>(shiftptr_hi, shiftptr_size / 2, transfunc1);
-                shiftBitArrayLeftBy<1>(shiftptr_lo, shiftptr_size / 2, transfunc1);
-            }
-
-            const int score = hammingdistanceHiLo(shiftptr_hi,
-                                                shiftptr_lo,
-                                                otherptr_hi,
-                                                otherptr_lo,
-                                                overlapsize,
-                                                overlapsize,
-                                                max_errors,
-                                                transfunc1,
-                                                transfunc2,
-                                                popcount);
-
-            return score;
-        };
-
-
-        auto alignmentComparator = [&] (int fwd_alignment_overlap,
-            int revc_alignment_overlap,
-            int fwd_alignment_nops,
-            int revc_alignment_nops,
-            bool fwd_alignment_isvalid,
-            bool revc_alignment_isvalid,
-            int anchorlength,
-            int querylength)->AlignmentOrientation{
-
-            return chooseBestAlignmentOrientation(
-                fwd_alignment_overlap,
-                revc_alignment_overlap,
-                fwd_alignment_nops,
-                revc_alignment_nops,
-                fwd_alignment_isvalid,
-                revc_alignment_isvalid,
-                anchorlength,
-                querylength,
-                min_overlap_ratio,
-                min_overlap,
-                estimatedNucleotideErrorRate * 4.0f
-            );
-        };
-
-        // sizeof(char) * (max_sequence_bytes * num_tiles   // tiles share the anchor
-        //                    + max_sequence_bytes * num_threads // each thread works with its own candidate
-        //                    + max_sequence_bytes * num_threads) // each thread needs memory to shift a sequence
-        extern __shared__ unsigned int sharedmemory[];
-
-        //set up shared memory pointers
-
-        const int tiles = (blockDim.x * gridDim.x) / tilesize;
-        const int globalTileId = (blockDim.x * blockIdx.x + threadIdx.x) / tilesize;
-        const int localTileId = (threadIdx.x) / tilesize;
-        const int tilesPerBlock = blockDim.x / tilesize;
-        const int laneInTile = threadIdx.x % tilesize;
-        const int requiredTiles = tiles_per_anchor_prefixsum[n_anchors];
-
-        unsigned int* const anchorBackupsBegin = sharedmemory; // per tile shared memory to store anchor
-        unsigned int* const queryBackupsBegin = anchorBackupsBegin + encodedSequencePitchInInts2BitHiLo * tilesPerBlock; // per thread shared memory to store query
-        unsigned int* const mySequencesBegin = queryBackupsBegin + encodedSequencePitchInInts2BitHiLo * blockDim.x; // per thread shared memory to store shifted sequence
-
-        unsigned int* const anchorBackup = anchorBackupsBegin + encodedSequencePitchInInts2BitHiLo * localTileId; // accesed via identity
-        unsigned int* const queryBackup = queryBackupsBegin + threadIdx.x; // accesed via no_bank_conflict_index
-        unsigned int* const mySequence = mySequencesBegin + threadIdx.x; // accesed via no_bank_conflict_index
-
-        for(int logicalTileId = globalTileId; logicalTileId < requiredTiles ; logicalTileId += tiles){
-
-            const int anchorIndex = thrust::distance(tiles_per_anchor_prefixsum,
-                                                    thrust::lower_bound(
-                                                        thrust::seq,
-                                                        tiles_per_anchor_prefixsum,
-                                                        tiles_per_anchor_prefixsum + n_anchors + 1,
-                                                        logicalTileId + 1))-1;
-
-            const int candidatesBeforeThisAnchor = candidates_per_anchor_prefixsum[anchorIndex];
-            const int maxCandidateIndex_excl = candidates_per_anchor_prefixsum[anchorIndex+1];
-            //const int tilesForThisAnchor = tiles_per_anchor_prefixsum[anchorIndex + 1] - tiles_per_anchor_prefixsum[anchorIndex];
-            const int tileForThisAnchor = logicalTileId - tiles_per_anchor_prefixsum[anchorIndex];
-            const int candidateIndex = candidatesBeforeThisAnchor + tileForThisAnchor * tilesize + laneInTile;
-
-            const int anchorbases = anchorSequencesLength[anchorIndex];
-            const int anchorints = SequenceHelpers::getEncodedNumInts2BitHiLo(anchorbases);
-            const unsigned int* anchorptr = anchorDataHiLo + std::size_t(anchorIndex) * encodedSequencePitchInInts2BitHiLo;
-
-            //save anchor in shared memory (in parallel, per tile)
-            for(int lane = laneInTile; lane < encodedSequencePitchInInts2BitHiLo; lane += tilesize) {
-                anchorBackup[identity(lane)] = anchorptr[lane];
-                //transposed
-                //anchorBackup[identity(lane)] = ((unsigned int*)(anchorptr))[lane * n_anchors];
-            }
-
-            cg::tiled_partition<tilesize>(cg::this_thread_block()).sync();
-
-
-            if(candidateIndex < maxCandidateIndex_excl){
-                if(!(removeAmbiguousAnchors && anchorContainsN[anchorIndex]) && !(removeAmbiguousCandidates && candidateContainsN[candidateIndex])){
-                    const int querybases = candidateSequencesLength[candidateIndex];
-                    const int queryints = SequenceHelpers::getEncodedNumInts2BitHiLo(querybases);
-                    const int totalbases = anchorbases + querybases;
-                    const int minoverlap = max(min_overlap, int(float(anchorbases) * min_overlap_ratio));
-
-                    const unsigned int* candidateptr = candidateDataHiLoTransposed + std::size_t(candidateIndex);
-
-                    //save query in shared memory
-                    for(int i = 0; i < encodedSequencePitchInInts2BitHiLo; i += 1) {
-                        //queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i];
-                        //transposed
-                        queryBackup[no_bank_conflict_index(i)] = candidateptr[i * n_candidates];
-                    }
-
-                    const unsigned int* const queryBackup_hi = queryBackup;
-                    const unsigned int* const queryBackup_lo = queryBackup + no_bank_conflict_index(queryints/2);
-
-                    int bestScore[2];
-                    int bestShift[2];
-                    int overlapsize[2];
-                    int opnr[2];
-
-                    #pragma unroll
-                    for(int orientation = 0; orientation < 2; orientation++){
-                        const bool isReverseComplement = orientation == 1;
-
-                        if(isReverseComplement) {
-                            make_reverse_complement_inplace(queryBackup, querybases, no_bank_conflict_index);
-                        }
-
-                        //begin SHD algorithm
-
-                        bestScore[orientation] = totalbases;     // score is number of mismatches
-                        bestShift[orientation] = -querybases;    // shift of query relative to anchor. shift < 0 if query begins before anchor
-
-                        auto handle_shift = [&](int shift, int overlapsize,
-                                                    unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
-                                                    int shiftptr_size,
-                                                    const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
-                                                    auto transfunc2){
-
-                            //const int max_errors = int(float(overlapsize) * maxErrorRate);
-                            const int max_errors_excl = min(int(float(overlapsize) * maxErrorRate),
-                            bestScore[orientation] - totalbases + 2*overlapsize);
-
-                            if(max_errors_excl > 0){
-
-                                int score = hammingDistanceWithShift(shift != 0, overlapsize, max_errors_excl,
-                                                    shiftptr_hi,shiftptr_lo, transfunc1,
-                                                    shiftptr_size,
-                                                    otherptr_hi, otherptr_lo, transfunc2);
-
-                                
-
-                                // printf("%d, %d %d %d --- ", queryIndex, shift, overlapsize, score);
-
-                                // printf("%d %d %d %d | %d %d %d %d --- ", 
-                                //     shiftptr_hi[transfunc1(0)], shiftptr_hi[transfunc1(1)], shiftptr_hi[transfunc1(2)], shiftptr_hi[transfunc1(3)],
-                                //     shiftptr_lo[transfunc1(0)], shiftptr_lo[transfunc1(1)], shiftptr_lo[transfunc1(2)], shiftptr_lo[transfunc1(3)]);
-
-                                // printf("%d %d %d %d | %d %d %d %d\n", 
-                                //     otherptr_hi[transfunc2(0)], otherptr_hi[transfunc2(1)], otherptr_hi[transfunc2(2)], otherptr_hi[transfunc2(3)],
-                                //     otherptr_lo[transfunc2(0)], otherptr_lo[transfunc2(1)], otherptr_lo[transfunc2(2)], otherptr_lo[transfunc2(3)]);
-
-                                score = (score < max_errors_excl ?
-                                        score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
-                                        : std::numeric_limits<int>::max()); // too many errors, discard
-
-                                if(score < bestScore[orientation]){
-                                    bestScore[orientation] = score;
-                                    bestShift[orientation] = shift;
-                                }
-
-                                return true;
-                            }else{
-                                //printf("%d, %d %d %d max_errors_excl\n", queryIndex, shift, overlapsize, max_errors_excl);
-                                return false;
-                            }
-                        };
-
-                        //initialize threadlocal smem array with anchor
-                        for(int i = 0; i < encodedSequencePitchInInts2BitHiLo; i += 1) {
-                            mySequence[no_bank_conflict_index(i)] = anchorBackup[identity(i)];
-                        }
-
-                        unsigned int* mySequence_hi = mySequence;
-                        unsigned int* mySequence_lo = mySequence + no_bank_conflict_index(anchorints / 2);
-
-                        for(int shift = 0; shift < anchorbases - minoverlap + 1; shift += 1) {
-                            const int overlapsize = min(anchorbases - shift, querybases);
-
-                            bool b = handle_shift(shift, overlapsize,
-                                            mySequence_hi, mySequence_lo, no_bank_conflict_index,
-                                            anchorints,
-                                            queryBackup_hi, queryBackup_lo, no_bank_conflict_index);
-                            if(!b){
-                                break;
-                            }
-                        }
-
-                        const int queryoverlapbegin_incl = max(-bestShift[orientation], 0);
-                        const int queryoverlapend_excl = min(querybases, anchorbases - bestShift[orientation]);
-                        overlapsize[orientation] = queryoverlapend_excl - queryoverlapbegin_incl;
-                        opnr[orientation] = bestScore[orientation] - totalbases + 2*overlapsize[orientation];
-                    }
-
-                    const AlignmentOrientation flag = alignmentComparator(
-                        overlapsize[0],
-                        overlapsize[1],
-                        opnr[0],
-                        opnr[1],
-                        bestShift[0] != -querybases,
-                        bestShift[1] != -querybases,
-                        anchorbases,
-                        querybases
-                    );
-
-                    d_alignment_best_alignment_flags[candidateIndex] = flag;
-                    d_alignment_overlaps[candidateIndex] = flag == AlignmentOrientation::Forward ? overlapsize[0] : overlapsize[1];
-                    d_alignment_shifts[candidateIndex] = flag == AlignmentOrientation::Forward ? bestShift[0] : bestShift[1];
-                    d_alignment_nOps[candidateIndex] = flag == AlignmentOrientation::Forward ? opnr[0] : opnr[1];
-                    d_alignment_isValid[candidateIndex] = flag == AlignmentOrientation::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
-                }else{
-                    d_alignment_best_alignment_flags[candidateIndex] = AlignmentOrientation::None;
-                    d_alignment_isValid[candidateIndex] = false;
-                }
-            }
-        }
-    }
-
-
-    /*
-        Uses 1 thread per candidate to compute the alignment of anchor|candidate and anchor|revc-candidate
-        Compares both alignments and keeps the better one
-
-        Sequences are stored in registers
-    */
-
-    template<int blocksize, int maxValidIntsPerSequence>
-    __global__
-    void
-    popcount_shifted_hamming_distance_reg_kernel(
-        const unsigned int* __restrict__ anchorDataHiLoTransposed,
-        const unsigned int* __restrict__ candidateDataHiLoTransposed,
-        const int* __restrict__ anchorSequencesLength,
-        const int* __restrict__ candidateSequencesLength,
-        AlignmentOrientation* __restrict__ bestAlignmentFlags,
-        int* __restrict__ alignment_overlaps,
-        int* __restrict__ alignment_shifts,
-        int* __restrict__ alignment_nOps,
-        bool* __restrict__ alignment_isValid,
-        const int* __restrict__ d_anchorIndicesOfCandidates,
-        int numAnchors,
-        int numCandidates,
-        const bool* __restrict__ anchorContainsN,
-        bool removeAmbiguousAnchors,
-        const bool* __restrict__ candidateContainsN,
-        bool removeAmbiguousCandidates,
-        size_t encodedSequencePitchInInts2BitHiLo,
-        int min_overlap,
-        float maxErrorRate,
-        float min_overlap_ratio,
-        float estimatedNucleotideErrorRate
-    ){
-
-        static_assert(maxValidIntsPerSequence % 2 == 0, ""); //2bithilo has even number of ints
-
-
-        const int n_anchors = numAnchors;
-        const int n_candidates = numCandidates;
-
-        auto popcount = [](auto i){return __popc(i);};
-
-        auto hammingdistanceHiLoReg = [&](
-                            const auto& lhi,
-                            const auto& llo,
-                            const auto& rhi,
-                            const auto& rlo,
-                            int lhi_bitcount,
-                            int rhi_bitcount,
-                            int max_errors){
-
-            constexpr int N = maxValidIntsPerSequence / 2;
-
-            const int overlap_bitcount = std::min(lhi_bitcount, rhi_bitcount);
-
-            if(overlap_bitcount == 0)
-                return max_errors+1;
-
-            const int partitions = SDIV(overlap_bitcount, (8 * sizeof(unsigned int)));
-            const int remaining_bitcount = partitions * sizeof(unsigned int) * 8 - overlap_bitcount;
-
-            int result = 0;
-
-            #pragma unroll 
-            for(int i = 0; i < N - 1; i++){
-                if(i < partitions - 1 && result < max_errors){
-                    const unsigned int hixor = lhi[i] ^ rhi[i];
-                    const unsigned int loxor = llo[i] ^ rlo[i];
-                    const unsigned int bits = hixor | loxor;
-                    result += popcount(bits);
-                }
-            }
-
-            if(result >= max_errors)
-                return result;
-
-            // i == partitions - 1
-
-            #pragma unroll 
-            for(int i = N-1; i >= 0; i--){
-                if(partitions - 1 == i){
-                    const unsigned int mask = remaining_bitcount == 0 ? 0xFFFFFFFF : 0xFFFFFFFF << (remaining_bitcount);
-                    const unsigned int hixor = lhi[i] ^ rhi[i];
-                    const unsigned int loxor = llo[i] ^ rlo[i];
-                    const unsigned int bits = hixor | loxor;
-                    result += popcount(bits & mask);
-                }
-            }
-
-            return result;
-        };
-
-        auto maskBitArray = [](auto& uintarrayHi, auto& uintarrayLo, int keeplength){
-            //only keep the first keeplength bits, set remaining bits to 0
-            constexpr int N = maxValidIntsPerSequence / 2;
-
-            const int unusedInts = N - SDIV(keeplength, 32);
-            if(unusedInts > 0){
-                #pragma unroll
-                for(int i = 0; i < N; ++i){
-                    if(i >= N-unusedInts){
-                        uintarrayHi[i] = 0;
-                        uintarrayLo[i] = 0;
-                    }
-                }
-            }
-
-            const int unusedBitsInt = SDIV(keeplength, 32) * 32 - keeplength;
-
-            if(unusedBitsInt != 0){
-                #pragma unroll
-                for(int i = 0; i < N - 1; ++i){
-                    if(i == N-unusedInts-1){
-                        unsigned int mask = ~((1u << unusedBitsInt)-1);
-                        uintarrayHi[i] &= mask;
-                        uintarrayLo[i] &= mask;
-                        break;
-                    }
-                }
-            }
-        };
-
-        auto shiftBitArrayLeftBy1 = [](auto& uintarray){
-            constexpr int shift = 1;
-            static_assert(shift < 32, "");
-
-            constexpr int N = maxValidIntsPerSequence / 2;    
-            #pragma unroll
-            for(int i = 0; i < N - 1; i += 1) {
-                const unsigned int a = uintarray[i];
-                const unsigned int b = uintarray[i+1];
-    
-                uintarray[i] = (a << shift) | (b >> (8 * sizeof(unsigned int) - shift));
-            }
-    
-            uintarray[N-1] <<= shift;
-        };
-
-        auto hammingDistanceWithShift = [&](bool doShift, int overlapsize, int max_errors,
-                                    auto& shiftptr_hi, auto& shiftptr_lo,
-                                    const auto& otherptr_hi, const auto& otherptr_lo
-                                    ){
-
-            if(doShift){
-                shiftBitArrayLeftBy1(shiftptr_hi);
-                shiftBitArrayLeftBy1(shiftptr_lo);
-            }
-
-            const int score = hammingdistanceHiLoReg(shiftptr_hi,
-                                                shiftptr_lo,
-                                                otherptr_hi,
-                                                otherptr_lo,
-                                                overlapsize,
-                                                overlapsize,
-                                                max_errors);
-
-            return score;
-        };
-
-        auto alignmentComparator = [&] (int fwd_alignment_overlap,
-            int revc_alignment_overlap,
-            int fwd_alignment_nops,
-            int revc_alignment_nops,
-            bool fwd_alignment_isvalid,
-            bool revc_alignment_isvalid,
-            int anchorlength,
-            int querylength)->AlignmentOrientation{
-
-            return chooseBestAlignmentOrientation(
-                fwd_alignment_overlap,
-                revc_alignment_overlap,
-                fwd_alignment_nops,
-                revc_alignment_nops,
-                fwd_alignment_isvalid,
-                revc_alignment_isvalid,
-                anchorlength,
-                querylength,
-                min_overlap_ratio,
-                min_overlap,
-                estimatedNucleotideErrorRate * 4.0f
-            );
-        };
-
-
-        unsigned int anchorBackupHi[maxValidIntsPerSequence / 2];
-        unsigned int anchorBackupLo[maxValidIntsPerSequence / 2];
-        unsigned int queryBackupHi[maxValidIntsPerSequence / 2];
-        unsigned int queryBackupLo[maxValidIntsPerSequence / 2];
-        unsigned int mySequenceHi[maxValidIntsPerSequence / 2];
-        unsigned int mySequenceLo[maxValidIntsPerSequence / 2];
-
-        auto reverseComplementQuery = [&](int querylength, int validInts){
-
-            constexpr int N = maxValidIntsPerSequence / 2;
-
-            #pragma unroll
-            for(int i = 0; i < N/2; ++i){
-                const unsigned int hifront = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupHi[i]);
-                const unsigned int hiback = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupHi[N - 1 - i]);
-                queryBackupHi[i] = hiback;
-                queryBackupHi[N - 1 - i] = hifront;
-    
-                const unsigned int lofront = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupLo[i]);
-                const unsigned int loback = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupLo[N - 1 - i]);
-                queryBackupLo[i] = loback;
-                queryBackupLo[N - 1 - i] = lofront;
-            }
-
-            if(N % 2 == 1){
-                constexpr int middleindex = N/2;
-                queryBackupHi[middleindex] = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupHi[middleindex]);
-                queryBackupLo[middleindex] = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupLo[middleindex]);
-            }
-
-            //fix unused data
-
-            const int unusedInts = N - SequenceHelpers::getEncodedNumInts2BitHiLo(querylength) / 2;
-            if(unusedInts > 0){
-                for(int iter = 0; iter < unusedInts; iter++){
-                    #pragma unroll
-                    for(int i = 0; i < N-1; ++i){
-                        queryBackupHi[i] = queryBackupHi[i+1];
-                        queryBackupLo[i] = queryBackupLo[i+1];
-                    }
-                }
-            }
-
-            const int unusedBitsInt = SDIV(querylength, 8 * sizeof(unsigned int)) * 8 * sizeof(unsigned int) - querylength;
-
-            if(unusedBitsInt != 0){
-                #pragma unroll
-                for(int i = 0; i < N - 1; ++i){
-                    queryBackupHi[i] = (queryBackupHi[i] << unusedBitsInt) | (queryBackupHi[i+1] >> (8 * sizeof(unsigned int) - unusedBitsInt));
-                    queryBackupLo[i] = (queryBackupLo[i] << unusedBitsInt) | (queryBackupLo[i+1] >> (8 * sizeof(unsigned int) - unusedBitsInt));
-                }
-    
-                queryBackupHi[N-1] <<= unusedBitsInt;
-                queryBackupLo[N-1] <<= unusedBitsInt;
-            }
-        };
-
-        for(int candidateIndex = threadIdx.x + blocksize * blockIdx.x; candidateIndex < n_candidates; candidateIndex += blocksize * gridDim.x){
-
-            if(!(removeAmbiguousCandidates && candidateContainsN[candidateIndex])){
-
-                const int anchorIndex = d_anchorIndicesOfCandidates[candidateIndex];  
-
-                if(!(removeAmbiguousAnchors && anchorContainsN[anchorIndex])){
-
-                    const int anchorbases = anchorSequencesLength[anchorIndex];
-                    const int querybases = candidateSequencesLength[candidateIndex];
-
-                    const int hilointsAnchor = SequenceHelpers::getEncodedNumInts2BitHiLo(anchorbases);
-                    const int hilointsCand = SequenceHelpers::getEncodedNumInts2BitHiLo(querybases);
-
-                    const unsigned int* anchorptr = anchorDataHiLoTransposed + std::size_t(anchorIndex);
-
-                    #pragma unroll 
-                    for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
-                        anchorBackupHi[i] = anchorptr[(i) * n_anchors];
-                        anchorBackupLo[i] = anchorptr[(i + hilointsAnchor / 2) * n_anchors];
-                    }
-
-                    maskBitArray(anchorBackupHi, anchorBackupLo, anchorbases);
-
-                    const unsigned int* candidateptr = candidateDataHiLoTransposed + std::size_t(candidateIndex);
-
-                    //save query in reg
-
-                    #pragma unroll 
-                    for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
-                        queryBackupHi[i] = candidateptr[i * n_candidates];
-                        queryBackupLo[i] = candidateptr[(i + hilointsCand / 2) * n_candidates];
-                    }
-
-                    maskBitArray(queryBackupHi, queryBackupLo, querybases);
-
-                    //begin SHD algorithm
-
-                    const int anchorints = SequenceHelpers::getEncodedNumInts2BitHiLo(anchorbases);
-                    const int queryints = SequenceHelpers::getEncodedNumInts2BitHiLo(querybases);
-                    const int totalbases = anchorbases + querybases;
-                    const int minoverlap = max(min_overlap, int(float(anchorbases) * min_overlap_ratio));
-
-                    int bestScore[2];
-                    int bestShift[2];
-                    int overlapsize[2];
-                    int opnr[2];
-
-                    #pragma unroll
-                    for(int orientation = 0; orientation < 2; orientation++){
-                        const bool isReverseComplement = orientation == 1;
-
-                        if(isReverseComplement){
-                            reverseComplementQuery(querybases, queryints);
-                        }
-
-                        bestScore[orientation] = totalbases;     // score is number of mismatches
-                        bestShift[orientation] = -querybases;    // shift of query relative to anchor. shift < 0 if query begins before anchor
-
-                        auto handle_shift = [&](int shift, int overlapsize,
-                                                auto& shiftptr_hi, auto& shiftptr_lo,
-                                                const auto& otherptr_hi, const auto& otherptr_lo){
-
-                            //const int max_errors = int(float(overlapsize) * maxErrorRate);
-                            const int max_errors_excl = min(int(float(overlapsize) * maxErrorRate),
-                                                            bestScore[orientation] - totalbases + 2*overlapsize);
-
-                            if(max_errors_excl > 0){
-
-                                int score = hammingDistanceWithShift(shift != 0, overlapsize, max_errors_excl,
-                                                    shiftptr_hi, shiftptr_lo,
-                                                    otherptr_hi, otherptr_lo);
-                                
-                                score = (score < max_errors_excl ?
-                                        score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
-                                        : std::numeric_limits<int>::max()); // too many errors, discard
-
-                                if(score < bestScore[orientation]){
-                                    bestScore[orientation] = score;
-                                    bestShift[orientation] = shift;
-                                }
-
-                                return true;
-                            }else{
-                                //printf("%d, %d %d %d max_errors_excl\n", queryIndex, shift, overlapsize, max_errors_excl);
-
-                                return false;
-                            }
-                        };
-
-                        #pragma unroll 
-                        for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
-                            mySequenceHi[i] = anchorBackupHi[i];
-                            mySequenceLo[i] = anchorBackupLo[i];
-                        }
-
-                        for(int shift = 0; shift < anchorbases - minoverlap + 1; shift += 1) {
-                            const int overlapsize = min(anchorbases - shift, querybases);
-
-                            bool b = handle_shift(
-                                shift, overlapsize,
-                                mySequenceHi, mySequenceLo,
-                                queryBackupHi, queryBackupLo
-                            );
-                            if(!b){
-                                break;
-                            }
-                        }
-
-                        //to compute negative shifts, shift query instead of anchor
-                        #pragma unroll 
-                        for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
-                            mySequenceHi[i] = queryBackupHi[i];
-                            mySequenceLo[i] = queryBackupLo[i];
-                        }
-
-                        for(int shift = -1; shift >= -querybases + minoverlap; shift -= 1) {
-                            const int overlapsize = min(anchorbases, querybases + shift);
-
-                            bool b = handle_shift(
-                                shift, overlapsize,
-                                mySequenceHi, mySequenceLo,
-                                anchorBackupHi, anchorBackupLo
-                            );
-                            if(!b){
-                                break;
-                            }
-                        }
-
-                        const int queryoverlapbegin_incl = max(-bestShift[orientation], 0);
-                        const int queryoverlapend_excl = min(querybases, anchorbases - bestShift[orientation]);
-                        overlapsize[orientation] = queryoverlapend_excl - queryoverlapbegin_incl;
-                        opnr[orientation] = bestScore[orientation] - totalbases + 2*overlapsize[orientation];
-                    }
-
-                    const AlignmentOrientation flag = alignmentComparator(
-                        overlapsize[0],
-                        overlapsize[1],
-                        opnr[0],
-                        opnr[1],
-                        bestShift[0] != -querybases,
-                        bestShift[1] != -querybases,
-                        anchorbases,
-                        querybases
-                    );
-
-                    bestAlignmentFlags[candidateIndex] = flag;
-                    alignment_overlaps[candidateIndex] = flag == AlignmentOrientation::Forward ? overlapsize[0] : overlapsize[1];
-                    alignment_shifts[candidateIndex] = flag == AlignmentOrientation::Forward ? bestShift[0] : bestShift[1];
-                    alignment_nOps[candidateIndex] = flag == AlignmentOrientation::Forward ? opnr[0] : opnr[1];
-                    alignment_isValid[candidateIndex] = flag == AlignmentOrientation::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
-                }else{
-                    bestAlignmentFlags[candidateIndex] = AlignmentOrientation::None;
-                    alignment_isValid[candidateIndex] = false;
-                }
-            }else{
-                bestAlignmentFlags[candidateIndex] = AlignmentOrientation::None;
-                alignment_isValid[candidateIndex] = false;
-            }
-        }
-    }
-
-
-
-
-
-
-
-
-
-
-    template<int blocksize, int maxValidIntsPerSequence>
-    __global__
-    void
-    popcount_rightshifted_hamming_distance_reg_kernel(
-        const unsigned int* __restrict__ anchorDataHiLoTransposed,
-        const unsigned int* __restrict__ candidateDataHiLoTransposed,
-        const int* __restrict__ anchorSequencesLength,
-        const int* __restrict__ candidateSequencesLength,
-        AlignmentOrientation* __restrict__ bestAlignmentFlags,
-        int* __restrict__ alignment_overlaps,
-        int* __restrict__ alignment_shifts,
-        int* __restrict__ alignment_nOps,
-        bool* __restrict__ alignment_isValid,
-        const int* __restrict__ d_anchorIndicesOfCandidates,
-        int numAnchors,
-        int numCandidates,
-        const bool* __restrict__ anchorContainsN,
-        bool removeAmbiguousAnchors,
-        const bool* __restrict__ candidateContainsN,
-        bool removeAmbiguousCandidates,
-        size_t encodedSequencePitchInInts2BitHiLo,
-        int min_overlap,
-        float maxErrorRate,
-        float min_overlap_ratio,
-        float estimatedNucleotideErrorRate
-    ){
-
-        static_assert(maxValidIntsPerSequence % 2 == 0, ""); //2bithilo has even number of ints
-
-
-        const int n_anchors = numAnchors;
-        const int n_candidates = numCandidates;
-
-        auto popcount = [](auto i){return __popc(i);};
-
-        auto hammingdistanceHiLoReg = [&](
-                            const auto& lhi,
-                            const auto& llo,
-                            const auto& rhi,
-                            const auto& rlo,
-                            int lhi_bitcount,
-                            int rhi_bitcount,
-                            int max_errors){
-
-            constexpr int N = maxValidIntsPerSequence / 2;
-
-            const int overlap_bitcount = std::min(lhi_bitcount, rhi_bitcount);
-
-            if(overlap_bitcount == 0)
-                return max_errors+1;
-
-            const int partitions = SDIV(overlap_bitcount, (8 * sizeof(unsigned int)));
-            const int remaining_bitcount = partitions * sizeof(unsigned int) * 8 - overlap_bitcount;
-
-            int result = 0;
-
-            #pragma unroll 
-            for(int i = 0; i < N - 1; i++){
-                if(i < partitions - 1 && result < max_errors){
-                    const unsigned int hixor = lhi[i] ^ rhi[i];
-                    const unsigned int loxor = llo[i] ^ rlo[i];
-                    const unsigned int bits = hixor | loxor;
-                    result += popcount(bits);
-                }
-            }
-
-            if(result >= max_errors)
-                return result;
-
-            // i == partitions - 1
-
-            #pragma unroll 
-            for(int i = N-1; i >= 0; i--){
-                if(partitions - 1 == i){
-                    const unsigned int mask = remaining_bitcount == 0 ? 0xFFFFFFFF : 0xFFFFFFFF << (remaining_bitcount);
-                    const unsigned int hixor = lhi[i] ^ rhi[i];
-                    const unsigned int loxor = llo[i] ^ rlo[i];
-                    const unsigned int bits = hixor | loxor;
-                    result += popcount(bits & mask);
-                }
-            }
-
-            return result;
-        };
-
-        auto maskBitArray = [](auto& uintarrayHi, auto& uintarrayLo, int keeplength){
-            //only keep the first keeplength bits, set remaining bits to 0
-            constexpr int N = maxValidIntsPerSequence / 2;
-
-            const int unusedInts = N - SDIV(keeplength, 32);
-            if(unusedInts > 0){
-                #pragma unroll
-                for(int i = 0; i < N; ++i){
-                    if(i >= N-unusedInts){
-                        uintarrayHi[i] = 0;
-                        uintarrayLo[i] = 0;
-                    }
-                }
-            }
-
-            const int unusedBitsInt = SDIV(keeplength, 32) * 32 - keeplength;
-
-            if(unusedBitsInt != 0){
-                #pragma unroll
-                for(int i = 0; i < N - 1; ++i){
-                    if(i == N-unusedInts-1){
-                        unsigned int mask = ~((1u << unusedBitsInt)-1);
-                        uintarrayHi[i] &= mask;
-                        uintarrayLo[i] &= mask;
-                        break;
-                    }
-                }
-            }
-        };
-
-        auto shiftBitArrayLeftBy1 = [](auto& uintarray){
-            constexpr int shift = 1;
-            static_assert(shift < 32, "");
-
-            constexpr int N = maxValidIntsPerSequence / 2;    
-            #pragma unroll
-            for(int i = 0; i < N - 1; i += 1) {
-                const unsigned int a = uintarray[i];
-                const unsigned int b = uintarray[i+1];
-    
-                uintarray[i] = (a << shift) | (b >> (8 * sizeof(unsigned int) - shift));
-            }
-    
-            uintarray[N-1] <<= shift;
-        };
-
-        auto hammingDistanceWithShift = [&](bool doShift, int overlapsize, int max_errors,
-                                    auto& shiftptr_hi, auto& shiftptr_lo,
-                                    const auto& otherptr_hi, const auto& otherptr_lo
-                                    ){
-
-            if(doShift){
-                shiftBitArrayLeftBy1(shiftptr_hi);
-                shiftBitArrayLeftBy1(shiftptr_lo);
-            }
-
-            const int score = hammingdistanceHiLoReg(shiftptr_hi,
-                                                shiftptr_lo,
-                                                otherptr_hi,
-                                                otherptr_lo,
-                                                overlapsize,
-                                                overlapsize,
-                                                max_errors);
-
-            return score;
-        };
-
-        auto alignmentComparator = [&] (int fwd_alignment_overlap,
-            int revc_alignment_overlap,
-            int fwd_alignment_nops,
-            int revc_alignment_nops,
-            bool fwd_alignment_isvalid,
-            bool revc_alignment_isvalid,
-            int anchorlength,
-            int querylength)->AlignmentOrientation{
-
-            return chooseBestAlignmentOrientation(
-                fwd_alignment_overlap,
-                revc_alignment_overlap,
-                fwd_alignment_nops,
-                revc_alignment_nops,
-                fwd_alignment_isvalid,
-                revc_alignment_isvalid,
-                anchorlength,
-                querylength,
-                min_overlap_ratio,
-                min_overlap,
-                estimatedNucleotideErrorRate * 4.0f
-            );
-        };
-
-
-        unsigned int anchorBackupHi[maxValidIntsPerSequence / 2];
-        unsigned int anchorBackupLo[maxValidIntsPerSequence / 2];
-        unsigned int queryBackupHi[maxValidIntsPerSequence / 2];
-        unsigned int queryBackupLo[maxValidIntsPerSequence / 2];
-        unsigned int mySequenceHi[maxValidIntsPerSequence / 2];
-        unsigned int mySequenceLo[maxValidIntsPerSequence / 2];
-
-        auto reverseComplementQuery = [&](int querylength, int validInts){
-
-            constexpr int N = maxValidIntsPerSequence / 2;
-
-            #pragma unroll
-            for(int i = 0; i < N/2; ++i){
-                const unsigned int hifront = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupHi[i]);
-                const unsigned int hiback = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupHi[N - 1 - i]);
-                queryBackupHi[i] = hiback;
-                queryBackupHi[N - 1 - i] = hifront;
-    
-                const unsigned int lofront = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupLo[i]);
-                const unsigned int loback = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupLo[N - 1 - i]);
-                queryBackupLo[i] = loback;
-                queryBackupLo[N - 1 - i] = lofront;
-            }
-
-            if(N % 2 == 1){
-                constexpr int middleindex = N/2;
-                queryBackupHi[middleindex] = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupHi[middleindex]);
-                queryBackupLo[middleindex] = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupLo[middleindex]);
-            }
-
-            //fix unused data
-
-            const int unusedInts = N - SequenceHelpers::getEncodedNumInts2BitHiLo(querylength) / 2;
-            if(unusedInts > 0){
-                for(int iter = 0; iter < unusedInts; iter++){
-                    #pragma unroll
-                    for(int i = 0; i < N-1; ++i){
-                        queryBackupHi[i] = queryBackupHi[i+1];
-                        queryBackupLo[i] = queryBackupLo[i+1];
-                    }
-                }
-            }
-
-            const int unusedBitsInt = SDIV(querylength, 8 * sizeof(unsigned int)) * 8 * sizeof(unsigned int) - querylength;
-
-            if(unusedBitsInt != 0){
-                #pragma unroll
-                for(int i = 0; i < N - 1; ++i){
-                    queryBackupHi[i] = (queryBackupHi[i] << unusedBitsInt) | (queryBackupHi[i+1] >> (8 * sizeof(unsigned int) - unusedBitsInt));
-                    queryBackupLo[i] = (queryBackupLo[i] << unusedBitsInt) | (queryBackupLo[i+1] >> (8 * sizeof(unsigned int) - unusedBitsInt));
-                }
-    
-                queryBackupHi[N-1] <<= unusedBitsInt;
-                queryBackupLo[N-1] <<= unusedBitsInt;
-            }
-        };
-
-        for(int candidateIndex = threadIdx.x + blocksize * blockIdx.x; candidateIndex < n_candidates; candidateIndex += blocksize * gridDim.x){
-
-            if(!(removeAmbiguousCandidates && candidateContainsN[candidateIndex])){
-
-                const int anchorIndex = d_anchorIndicesOfCandidates[candidateIndex];  
-
-                if(!(removeAmbiguousAnchors && anchorContainsN[anchorIndex])){
-
-                    const int anchorbases = anchorSequencesLength[anchorIndex];
-                    const int querybases = candidateSequencesLength[candidateIndex];
-                    const int hilointsAnchor = SequenceHelpers::getEncodedNumInts2BitHiLo(anchorbases);
-                    const int hilointsCand = SequenceHelpers::getEncodedNumInts2BitHiLo(querybases);
-
-                    const unsigned int* anchorptr = anchorDataHiLoTransposed + std::size_t(anchorIndex);
-
-                    #pragma unroll 
-                    for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
-                        anchorBackupHi[i] = anchorptr[(i) * n_anchors];
-                        anchorBackupLo[i] = anchorptr[(i + hilointsAnchor / 2) * n_anchors];
-                    }
-
-                    maskBitArray(anchorBackupHi, anchorBackupLo, anchorbases);
-
-                    const unsigned int* candidateptr = candidateDataHiLoTransposed + std::size_t(candidateIndex);
-
-                    //save query in reg
-
-                    #pragma unroll 
-                    for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
-                        queryBackupHi[i] = candidateptr[i * n_candidates];
-                        queryBackupLo[i] = candidateptr[(i + hilointsCand / 2) * n_candidates];
-                    }
-
-                    maskBitArray(queryBackupHi, queryBackupLo, querybases);
-
-                    //begin SHD algorithm
-                    const int totalbases = anchorbases + querybases;
-                    const int minoverlap = max(min_overlap, int(float(anchorbases) * min_overlap_ratio));
-
-                    int bestScore[2];
-                    int bestShift[2];
-                    int overlapsize[2];
-                    int opnr[2];
-
-                    #pragma unroll
-                    for(int orientation = 0; orientation < 2; orientation++){
-                        const bool isReverseComplement = orientation == 1;
-
-                        if(isReverseComplement){
-                            reverseComplementQuery(querybases, hilointsCand);
-                        }
-
-                        bestScore[orientation] = totalbases;     // score is number of mismatches
-                        bestShift[orientation] = -querybases;    // shift of query relative to anchor. shift < 0 if query begins before anchor
-
-                        auto handle_shift = [&](int shift, int overlapsize,
-                                                auto& shiftptr_hi, auto& shiftptr_lo,
-                                                const auto& otherptr_hi, const auto& otherptr_lo){
-
-                            //const int max_errors = int(float(overlapsize) * maxErrorRate);
-                            const int max_errors_excl = min(int(float(overlapsize) * maxErrorRate),
-                                                            bestScore[orientation] - totalbases + 2*overlapsize);
-
-                            if(max_errors_excl > 0){
-
-                                int score = hammingDistanceWithShift(shift != 0, overlapsize, max_errors_excl,
-                                                    shiftptr_hi, shiftptr_lo,
-                                                    otherptr_hi, otherptr_lo);
-
-                                
-                                // printf("%d, %d %d %d --- ", queryIndex, shift, overlapsize, score);
-
-                                // printf("%d %d %d %d | %d %d %d %d --- ", 
-                                //     shiftptr_hi[0], shiftptr_hi[1], shiftptr_hi[2], shiftptr_hi[3],
-                                //     shiftptr_lo[0], shiftptr_lo[1], shiftptr_lo[2], shiftptr_lo[3]);
-
-                                // printf("%d %d %d %d | %d %d %d %d\n", 
-                                //     otherptr_hi[0], otherptr_hi[1], otherptr_hi[2], otherptr_hi[3],
-                                //     otherptr_lo[0], otherptr_lo[1], otherptr_lo[2], otherptr_lo[3]);
-
-                                score = (score < max_errors_excl ?
-                                        score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
-                                        : std::numeric_limits<int>::max()); // too many errors, discard
-
-                                if(score < bestScore[orientation]){
-                                    bestScore[orientation] = score;
-                                    bestShift[orientation] = shift;
-                                }
-
-                                return true;
-                            }else{
-                                //printf("%d, %d %d %d max_errors_excl\n", queryIndex, shift, overlapsize, max_errors_excl);
-
-                                return false;
-                            }
-                        };
-
-                        #pragma unroll 
-                        for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
-                            mySequenceHi[i] = anchorBackupHi[i];
-                            mySequenceLo[i] = anchorBackupLo[i];
-                        }
-
-                        for(int shift = 0; shift < anchorbases - minoverlap + 1; shift += 1) {
-                            const int overlapsize = min(anchorbases - shift, querybases);
-
-                            bool b = handle_shift(
-                                shift, overlapsize,
-                                mySequenceHi, mySequenceLo,
-                                queryBackupHi, queryBackupLo
-                            );
-                            if(!b){
-                                break;
-                            }
-                        }
-
-                        const int queryoverlapbegin_incl = max(-bestShift[orientation], 0);
-                        const int queryoverlapend_excl = min(querybases, anchorbases - bestShift[orientation]);
-                        overlapsize[orientation] = queryoverlapend_excl - queryoverlapbegin_incl;
-                        opnr[orientation] = bestScore[orientation] - totalbases + 2*overlapsize[orientation];
-                    }
-
-                    // if(candidateIndex == 8){
-                    //     printf("(%d, %d, %d, %d) (%d, %d, %d, %d)", 
-                    //         overlapsize[0], bestShift[0], opnr[0], bestShift[0] != -querybases,
-                    //         overlapsize[1], bestShift[1], opnr[1], bestShift[1] != -querybases);
-                    // }
-
-                    const AlignmentOrientation flag = alignmentComparator(
-                        overlapsize[0],
-                        overlapsize[1],
-                        opnr[0],
-                        opnr[1],
-                        bestShift[0] != -querybases,
-                        bestShift[1] != -querybases,
-                        anchorbases,
-                        querybases
-                    );
-
-                    bestAlignmentFlags[candidateIndex] = flag;
-                    alignment_overlaps[candidateIndex] = flag == AlignmentOrientation::Forward ? overlapsize[0] : overlapsize[1];
-                    alignment_shifts[candidateIndex] = flag == AlignmentOrientation::Forward ? bestShift[0] : bestShift[1];
-                    alignment_nOps[candidateIndex] = flag == AlignmentOrientation::Forward ? opnr[0] : opnr[1];
-                    alignment_isValid[candidateIndex] = flag == AlignmentOrientation::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
-                }else{
-                    bestAlignmentFlags[candidateIndex] = AlignmentOrientation::None;
-                    alignment_isValid[candidateIndex] = false;
-                }
-            }else{
-                bestAlignmentFlags[candidateIndex] = AlignmentOrientation::None;
-                alignment_isValid[candidateIndex] = false;
-            }
-        }
-    }
-
-
-
-
-
     template<int BLOCKSIZE>
     __global__
     void cuda_filter_alignments_by_mismatchratio_kernel(
@@ -1665,862 +273,364 @@ namespace alignmentdetail{
 
 
 
+    //compute hamming distance. lhi and llo will be shifted to the left by shift bits
+    template<class IndexTransformation1,
+                class IndexTransformation2,
+                class PopcountFunc>
+    __device__
+    int hammingdistanceHiLoWithShift(
+        const unsigned int* lhi_begin,
+        const unsigned int* llo_begin,
+        const unsigned int* rhi,
+        const unsigned int* rlo,
+        int lhi_bitcount,
+        int rhi_bitcount,
+        int numIntsL,
+        int numIntsR,
+        int shiftamount,
+        int max_errors_excl,
+        IndexTransformation1 indextrafoL,
+        IndexTransformation2 indextrafoR,
+        PopcountFunc popcount
+    ){
 
+        const int overlap_bitcount = std::min(std::max(0, lhi_bitcount - shiftamount), rhi_bitcount);
+
+        if(overlap_bitcount == 0)
+            return max_errors_excl+1;
+
+        const int partitions = SDIV(overlap_bitcount, (8 * sizeof(unsigned int)));
+        const int remaining_bitcount = partitions * sizeof(unsigned int) * 8 - overlap_bitcount;
+        const int completeShiftInts = shiftamount / (8 * sizeof(unsigned int));
+        const int remainingShift = shiftamount - completeShiftInts * 8 * sizeof(unsigned int);
+
+        #if 0
+        auto myfunnelshift = [](unsigned int a, unsigned int b, int shift){
+            return (a << shift) | (b >> (8 * sizeof(unsigned int) - shift));
+        };
+        #else
+        auto myfunnelshift = [](unsigned int a, unsigned int b, int shift){
+            return __funnelshift_l(b, a, shift);
+        };
+        #endif
+
+        int result = 0;
+
+        for(int i = 0; i < partitions - 1 && result < max_errors_excl; i += 1) {
+            //compute the shifted values of l
+            const unsigned int aaa = lhi_begin[indextrafoL(completeShiftInts + i)];
+            const unsigned int aab = lhi_begin[indextrafoL(completeShiftInts + i + 1)];
+            const unsigned int a = myfunnelshift(aaa, aab, remainingShift);
+            const unsigned int baa = llo_begin[indextrafoL(completeShiftInts + i)];
+            const unsigned int bab = llo_begin[indextrafoL(completeShiftInts + i + 1)];
+            const unsigned int b = myfunnelshift(baa, bab, remainingShift);
+            const unsigned int hixor = a ^ rhi[indextrafoR(i)];
+            const unsigned int loxor = b ^ rlo[indextrafoR(i)];
+            const unsigned int bits = hixor | loxor;
+            result += popcount(bits);
+            // if(debug){
+            //     printf("i %d, %u %u %u %u %d\n",
+            //         i, a, rhi[indextrafoR(i)], b, rlo[indextrafoR(i)], result);
+            // }
+        }
+
+        if(result >= max_errors_excl)
+            return result;
+
+        const unsigned int mask = remaining_bitcount == 0 ? 0xFFFFFFFF : 0xFFFFFFFF << (remaining_bitcount);
+        
+        unsigned int a = 0;
+        unsigned int b = 0;
+        if(completeShiftInts + partitions - 1 < numIntsL - 1){
+            unsigned int aaa = lhi_begin[indextrafoL(completeShiftInts + partitions - 1)];
+            unsigned int aab = lhi_begin[indextrafoL(completeShiftInts + partitions - 1 + 1)];
+            a = myfunnelshift(aaa, aab, remainingShift);
+            unsigned int baa = llo_begin[indextrafoL(completeShiftInts + partitions - 1)];
+            unsigned int bab = llo_begin[indextrafoL(completeShiftInts + partitions - 1 + 1)];
+            b = myfunnelshift(baa, bab, remainingShift);
+        }else{
+            a = (lhi_begin[indextrafoL(completeShiftInts + partitions - 1)]) << remainingShift;
+            b = (llo_begin[indextrafoL(completeShiftInts + partitions - 1)]) << remainingShift;
+        }
+        const unsigned int hixor = a ^ rhi[indextrafoR(partitions - 1)];
+        const unsigned int loxor = b ^ rlo[indextrafoR(partitions - 1)];
+        const unsigned int bits = hixor | loxor;
+        result += popcount(bits & mask);
+
+        // if(debug){
+        //     printf("i %d, %u %u %u %u %d\n",
+        //     partitions - 1, a & mask, rhi[indextrafoR(partitions - 1)] & mask, b & mask, rlo[indextrafoR(partitions - 1)] & mask, result);
+        // }
+
+        return result;
+    }
+
+
+    /*
+
+        read-to-read shifted hamming distance
+
+        uses 1 thread per alignment
+    */
+
+    template<int blocksize, int encoderGroupSize, bool usePositiveShifts, bool useNegativeShifts>
+    __global__
+    void shiftedHammingDistanceKernelSmem1(
+        int* __restrict__ d_alignment_overlaps,
+        int* __restrict__ d_alignment_shifts,
+        int* __restrict__ d_alignment_nOps,
+        AlignmentOrientation* __restrict__ d_bestOrientations,
+        const unsigned int* __restrict__ anchorData,
+        const int* __restrict__ anchorSequencesLength,
+        size_t encodedSequencePitchInInts2BitAnchor,
+        const unsigned int* __restrict__ candidateData,
+        const int* __restrict__ candidateSequencesLength,
+        size_t encodedSequencePitchInInts2BitCandidate,
+        const int* __restrict__ anchorIndicesOfCandidates,
+        size_t smemEncodedSequencePitchInInts2BitHiloAnchor,
+        size_t smemEncodedSequencePitchInInts2BitHiloCandidate,
+        const bool* __restrict__ anchorContainsN,
+        bool removeAmbiguousAnchors,
+        const bool* __restrict__ candidateContainsN,
+        bool removeAmbiguousCandidates,
+        int numCandidates,
+        int min_overlap,
+        float maxErrorRate, //allow only less than (anchorLength * maxErrorRate) mismatches
+        float min_overlap_ratio, //require at least overlap of (anchorLength * minOverlapReate)
+        float estimatedNucleotideErrorRate
+    ){
+
+        auto block_transposed_index = [](int logical_index) -> int {
+            return logical_index * blocksize;
+        };
+
+        auto alignmentComparator = [&] (int fwd_alignment_overlap,
+            int revc_alignment_overlap,
+            int fwd_alignment_nops,
+            int revc_alignment_nops,
+            bool fwd_alignment_isvalid,
+            bool revc_alignment_isvalid,
+            int anchorlength,
+            int querylength)->AlignmentOrientation{
+
+            return chooseBestAlignmentOrientation(
+                fwd_alignment_overlap,
+                revc_alignment_overlap,
+                fwd_alignment_nops,
+                revc_alignment_nops,
+                fwd_alignment_isvalid,
+                revc_alignment_isvalid,
+                anchorlength,
+                querylength,
+                min_overlap_ratio,
+                min_overlap,
+                estimatedNucleotideErrorRate * 4.0f
+            );
+        };
+
+        // each thread stores anchor and candidate
+        // sizeof(unsigned int) * encodedSequencePitchInInts2BitHiLoCandidate * blocksize
+        //  + sizeof(unsigned int) * encodedSequencePitchInInts2BitHiLoCandidate * blocksize 
+        extern __shared__ unsigned int sharedmemory[];
+
+        //set up shared memory pointers
+        //data is stored block-transposed to avoid bank conflicts
+        unsigned int* const sharedAnchors = sharedmemory;
+        unsigned int* const mySharedAnchor = sharedAnchors + threadIdx.x;
+        unsigned int* const sharedCandidates = sharedAnchors + smemEncodedSequencePitchInInts2BitHiloAnchor * blocksize;
+        unsigned int* const mySharedCandidate = sharedCandidates + threadIdx.x;
+
+        constexpr int numEncoderGroupsPerBlock = blocksize / encoderGroupSize;
+        auto encoderGroup = cg::tiled_partition<encoderGroupSize>(cg::this_thread_block());
+
+        const int numBlockIters = SDIV(numCandidates, blocksize);
+
+        for(int blockIter = blockIdx.x; blockIter < numBlockIters; blockIter += gridDim.x){
+            const int candidateBlockOffset = blockIter * blocksize;
+            const int numCandidatesInBlockIteration = min(numCandidates - candidateBlockOffset, blocksize);
+
+            //convert the candidate sequences to HiLo format and store in shared memory
+            for(int s = encoderGroup.meta_group_rank(); s < numCandidatesInBlockIteration; s += numEncoderGroupsPerBlock){
+                const int candidateIndex = candidateBlockOffset + s;
+                const int length = candidateSequencesLength[candidateIndex];
+                unsigned int* const out = sharedCandidates + s;
+                const unsigned int* const in = candidateData + encodedSequencePitchInInts2BitCandidate * candidateIndex;
+                auto inindextrafo = [](auto i){return i;};
+                auto outindextrafo = block_transposed_index;
+                convert2BitTo2BitHiLo(
+                    encoderGroup,
+                    out,
+                    in,
+                    length,
+                    inindextrafo,
+                    outindextrafo
+                );
+            }
+
+            //convert the anchor sequences to HiLo format and store in shared memory
+            for(int s = encoderGroup.meta_group_rank(); s < numCandidatesInBlockIteration; s += numEncoderGroupsPerBlock){
+                const int anchorIndex = (anchorIndicesOfCandidates == nullptr ? 
+                    candidateBlockOffset + s
+                    : anchorIndicesOfCandidates[candidateBlockOffset + s]);
+                const int length = anchorSequencesLength[anchorIndex];
+                unsigned int* const out = sharedAnchors + s;
+                const unsigned int* const in = anchorData + encodedSequencePitchInInts2BitAnchor * anchorIndex;
+                auto inindextrafo = [](auto i){return i;};
+                auto outindextrafo = block_transposed_index;
+                convert2BitTo2BitHiLo(
+                    encoderGroup,
+                    out,
+                    in,
+                    length,
+                    inindextrafo,
+                    outindextrafo
+                );
+            }
+
+            __syncthreads();
+
+            const int candidateIndex = candidateBlockOffset + threadIdx.x;
+            if(candidateIndex < numCandidates){
+                const int anchorIndex = (anchorIndicesOfCandidates == nullptr ? 
+                    candidateIndex
+                    : anchorIndicesOfCandidates[candidateIndex]);
+
+                if(!(removeAmbiguousAnchors && anchorContainsN[anchorIndex]) && !(removeAmbiguousCandidates && candidateContainsN[candidateIndex])){
+
+                    const int anchorLength = anchorSequencesLength[anchorIndex];
+                    const int anchorints = SequenceHelpers::getEncodedNumInts2BitHiLo(anchorLength);
+                    assert(anchorints <= int(smemEncodedSequencePitchInInts2BitHiloAnchor));
+                    const int candidateLength = candidateSequencesLength[candidateIndex];
+                    const int candidateints = SequenceHelpers::getEncodedNumInts2BitHiLo(candidateLength);
+                    assert(candidateints <= int(smemEncodedSequencePitchInInts2BitHiloCandidate));
+
+                    const unsigned int* const anchor_hi = mySharedAnchor;
+                    const unsigned int* const anchor_lo = mySharedAnchor + block_transposed_index(anchorints / 2);
+                    const unsigned int* const candidate_hi = mySharedCandidate;
+                    const unsigned int* const candidate_lo = mySharedCandidate + block_transposed_index(candidateints / 2);
+
+                    const int minoverlap = max(min_overlap, int(float(anchorLength) * min_overlap_ratio));
+
+                    int bestScore[2]{std::numeric_limits<int>::max(), std::numeric_limits<int>::max()};
+                    int bestShift[2]{-candidateLength, -candidateLength};
+                    int bestOverlap[2]{0,0};                    
+
+                    for(int orientation = 0; orientation < 2; orientation++){
+                        const bool isReverseComplement = orientation == 1;
+
+                        if(isReverseComplement) {
+                            SequenceHelpers::reverseComplementSequenceInplace2BitHiLo(mySharedCandidate, candidateLength, block_transposed_index);
+                        }
+
+                        auto updateBest = [&](int shift, int overlapsize, int hammingDistance, int max_errors_excl){
+                            //treat non-overlapping positions as mismatches to prefer a greater overlap if hamming distance is equal for multiple shifts
+                            const int nonoverlapping = anchorLength + candidateLength - 2 * overlapsize;
+                            const int score = (hammingDistance < max_errors_excl ?
+                                hammingDistance + nonoverlapping // non-overlapping regions count as mismatches
+                                : std::numeric_limits<int>::max()); // too many errors, discard
+
+                            if(score < bestScore[orientation]){
+                                bestScore[orientation] = score;
+                                bestShift[orientation] = shift;
+                                bestOverlap[orientation] = overlapsize;
+                            }                
+                        };
+
+                        if constexpr (usePositiveShifts){
+                            //compute positive shifts ,i.e. shift anchor to the left
+
+                            for(int shift = 0; shift < anchorLength - minoverlap + 1; shift += 1) {
+                                const int overlapsize = min(anchorLength - shift, candidateLength);
+                                const int max_errors_excl = min(int(float(overlapsize) * maxErrorRate),
+                                    bestScore[orientation] - (anchorLength + candidateLength) + 2*overlapsize);
+                            
+                                if(max_errors_excl > 0){
+                                    const int hammingDistance = hammingdistanceHiLoWithShift(
+                                        anchor_hi,
+                                        anchor_lo,
+                                        candidate_hi,
+                                        candidate_lo,
+                                        anchorLength,
+                                        candidateLength,
+                                        anchorints / 2,
+                                        candidateints / 2,
+                                        shift,
+                                        max_errors_excl,
+                                        block_transposed_index,
+                                        block_transposed_index,
+                                        [](auto i){return __popc(i);}
+                                    );
+
+                                    updateBest(shift, overlapsize, hammingDistance, max_errors_excl);
+                                }
+                            }
+                        }
+
+                        if constexpr(useNegativeShifts){
+
+                            //compute negative shifts ,i.e. shift candidate to the left
+                            for(int shift = -1; shift >= - candidateLength + minoverlap; shift -= 1) {
+                                const int overlapsize = min(anchorLength, candidateLength + shift);
+                                const int max_errors_excl = min(int(float(overlapsize) * maxErrorRate),
+                                    bestScore[orientation] - (anchorLength + candidateLength) + 2*overlapsize);
+
+                                if(max_errors_excl > 0){
+                                    const int hammingDistance = hammingdistanceHiLoWithShift(
+                                        candidate_hi,
+                                        candidate_lo,
+                                        anchor_hi,
+                                        anchor_lo,
+                                        candidateLength,
+                                        anchorLength,
+                                        candidateints / 2,
+                                        anchorints / 2,
+                                        -shift,
+                                        max_errors_excl,
+                                        block_transposed_index,
+                                        block_transposed_index,
+                                        [](auto i){return __popc(i);}
+                                    );
+
+                                    updateBest(shift, overlapsize, hammingDistance, max_errors_excl); 
+                                }
+                            }
+                        }
+                    }
+
+
+                    //compare fwd alignment and revc alignment.
+                    const int hammingdistance0 = bestScore[0] - (anchorLength + candidateLength) + 2*bestOverlap[0];
+                    const int hammingdistance1 = bestScore[1] - (anchorLength + candidateLength) + 2*bestOverlap[1];
+
+                    const AlignmentOrientation flag = alignmentComparator(
+                        bestOverlap[0],
+                        bestOverlap[1],
+                        hammingdistance0,
+                        hammingdistance1,
+                        bestShift[0] != -candidateLength,
+                        bestShift[1] != -candidateLength,
+                        anchorLength,
+                        candidateLength
+                    );
+
+                    d_bestOrientations[candidateIndex] = flag;
+                    if(flag != AlignmentOrientation::None){
+                        d_alignment_overlaps[candidateIndex] = flag == AlignmentOrientation::Forward ? bestOverlap[0] : bestOverlap[1];
+                        d_alignment_shifts[candidateIndex] = flag == AlignmentOrientation::Forward ? bestShift[0] : bestShift[1];
+                        d_alignment_nOps[candidateIndex] = flag == AlignmentOrientation::Forward ? hammingdistance0 : hammingdistance1;
+                    }
+
+                }else{
+                    d_bestOrientations[candidateIndex] = AlignmentOrientation::None;
+                }
+            }
+            __syncthreads();
+        }
+    }
 
 
 
     //####################   KERNEL DISPATCH   ####################
-
-    template<int maxValidIntsPerSequence>
-    void call_popcount_shifted_hamming_distance_reg_kernel_async(
-        int* d_alignment_overlaps,
-        int* d_alignment_shifts,
-        int* d_alignment_nOps,
-        bool* d_alignment_isValid,
-        AlignmentOrientation* d_alignment_best_alignment_flags,
-        const unsigned int* d_anchorSequencesData,
-        const unsigned int* d_candidateSequencesData,
-        const int* d_anchorSequencesLength,
-        const int* d_candidateSequencesLength,
-        const int* /*d_candidates_per_anchor_prefixsum*/,
-        const int* /*d_candidates_per_anchor*/,
-        const int* d_anchorIndicesOfCandidates,
-        int numAnchors,
-        int numCandidates,
-        const bool* d_anchorContainsN,
-        bool removeAmbiguousAnchors,
-        const bool* d_candidateContainsN,
-        bool removeAmbiguousCandidates,
-        int maximumSequenceLength,
-        int encodedSequencePitchInInts2Bit,
-        int min_overlap,
-        float maxErrorRate,
-        float min_overlap_ratio,
-        float estimatedNucleotideErrorRate,
-        cudaStream_t stream,
-        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
-    ){
-
-        const int intsPerSequence2BitHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLength);
-        
-        
-        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * numCandidates, 512) * 512;
-        const std::size_t d_anchorDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * numAnchors, 512) * 512;        
-        const std::size_t requiredTempBytes = d_candidateDataHiLoTransposedBytes + d_anchorDataHiLoTransposedBytes;
-            
-        rmm::device_uvector<char> d_tmp(requiredTempBytes, stream, mr);
-        
-        //Alias temp storage 
-        unsigned int* const d_anchorDataHiLoTransposed = (unsigned int*)d_tmp.data();
-        unsigned int* const d_candidateDataHiLoTransposed = (unsigned int*)(((char*)d_anchorDataHiLoTransposed) + d_anchorDataHiLoTransposedBytes);
-       
-
-        callConversionKernel2BitTo2BitHiLoNT(
-            d_candidateSequencesData,
-            encodedSequencePitchInInts2Bit,
-            d_candidateDataHiLoTransposed,
-            intsPerSequence2BitHiLo,
-            d_candidateSequencesLength,
-            numCandidates,
-            stream
-        );
-
-        callConversionKernel2BitTo2BitHiLoNT(
-            d_anchorSequencesData,
-            encodedSequencePitchInInts2Bit,
-            d_anchorDataHiLoTransposed,
-            intsPerSequence2BitHiLo,
-            d_anchorSequencesLength,
-            numAnchors,
-            stream
-        );
-        
-
-        constexpr int blocksize = 128;
-
-        int deviceId = 0;
-        int numSMs = 0;
-        int maxBlocksPerSM = 0;
-        CUDACHECK(cudaGetDevice(&deviceId));
-        CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
-        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-            &maxBlocksPerSM,
-            popcount_shifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>,
-            blocksize, 
-            0
-        ));
-
-        const int maxBlocks = maxBlocksPerSM * numSMs;
-
-        dim3 block(blocksize, 1, 1);
-        const int numBlocks = SDIV(numCandidates, blocksize);
-        dim3 grid(std::min(numBlocks, maxBlocks), 1, 1);
-
-        popcount_shifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>
-            <<<grid, block, 0, stream>>>(
-                d_anchorDataHiLoTransposed,
-                d_candidateDataHiLoTransposed,
-                d_anchorSequencesLength,
-                d_candidateSequencesLength,
-                d_alignment_best_alignment_flags,
-                d_alignment_overlaps,
-                d_alignment_shifts,
-                d_alignment_nOps,
-                d_alignment_isValid,
-                d_anchorIndicesOfCandidates,
-                numAnchors,
-                numCandidates,
-                d_anchorContainsN,
-                removeAmbiguousAnchors,
-                d_candidateContainsN,
-                removeAmbiguousCandidates,
-                intsPerSequence2BitHiLo, 
-                min_overlap,
-                maxErrorRate,
-                min_overlap_ratio,
-                estimatedNucleotideErrorRate
-        ); CUDACHECKASYNC;
-
-    }
-
-    template<int maxValidIntsPerSequence>
-    void call_popcount_rightshifted_hamming_distance_reg_kernel_async(
-        int* d_alignment_overlaps,
-        int* d_alignment_shifts,
-        int* d_alignment_nOps,
-        bool* d_alignment_isValid,
-        AlignmentOrientation* d_alignment_best_alignment_flags,
-        const unsigned int* d_anchorSequencesData,
-        const unsigned int* d_candidateSequencesData,
-        const int* d_anchorSequencesLength,
-        const int* d_candidateSequencesLength,
-        const int* /*d_candidates_per_anchor_prefixsum*/,
-        const int* /*d_candidates_per_anchor*/,
-        const int* d_anchorIndicesOfCandidates,
-        int numAnchors,
-        int numCandidates,
-        const bool* d_anchorContainsN,
-        bool removeAmbiguousAnchors,
-        const bool* d_candidateContainsN,
-        bool removeAmbiguousCandidates,
-        int maximumSequenceLength,
-        int encodedSequencePitchInInts2Bit,
-        int min_overlap,
-        float maxErrorRate,
-        float min_overlap_ratio,
-        float estimatedNucleotideErrorRate,
-        cudaStream_t stream,
-        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
-    ){
-
-        const int intsPerSequence2BitHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLength);       
-        
-        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * numCandidates, 512) * 512;
-        const std::size_t d_anchorDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * numAnchors, 512) * 512;
-        const std::size_t requiredTempBytes 
-                = d_candidateDataHiLoTransposedBytes
-                    + d_anchorDataHiLoTransposedBytes;
-
-        rmm::device_uvector<char> d_tmp(requiredTempBytes, stream, mr);
-
-        //Alias temp storage 
-        unsigned int* const d_anchorDataHiLoTransposed = (unsigned int*)d_tmp.data();
-        unsigned int* const d_candidateDataHiLoTransposed 
-            = (unsigned int*)(((char*)d_anchorDataHiLoTransposed) 
-            + d_anchorDataHiLoTransposedBytes);
-       
-
-        callConversionKernel2BitTo2BitHiLoNT(
-            d_candidateSequencesData,
-            encodedSequencePitchInInts2Bit,
-            d_candidateDataHiLoTransposed,
-            intsPerSequence2BitHiLo,
-            d_candidateSequencesLength,
-            numCandidates,
-            stream
-        );
-
-        callConversionKernel2BitTo2BitHiLoNT(
-            d_anchorSequencesData,
-            encodedSequencePitchInInts2Bit,
-            d_anchorDataHiLoTransposed,
-            intsPerSequence2BitHiLo,
-            d_anchorSequencesLength,
-            numAnchors,
-            stream
-        );
-
-        constexpr int blocksize = 128;
-
-        int deviceId = 0;
-        int numSMs = 0;
-        int maxBlocksPerSM = 0;
-        CUDACHECK(cudaGetDevice(&deviceId));
-        CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
-        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-            &maxBlocksPerSM,
-            popcount_rightshifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>,
-            blocksize, 
-            0
-        ));
-
-        const int maxBlocks = maxBlocksPerSM * numSMs;  
-
-        dim3 block(blocksize, 1, 1);
-        const int numBlocks = SDIV(numCandidates, blocksize);
-        dim3 grid(std::min(numBlocks, maxBlocks), 1, 1);
-
-        popcount_rightshifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>
-            <<<grid, block, 0, stream>>>(
-                d_anchorDataHiLoTransposed,
-                d_candidateDataHiLoTransposed,
-                d_anchorSequencesLength,
-                d_candidateSequencesLength,
-                d_alignment_best_alignment_flags,
-                d_alignment_overlaps,
-                d_alignment_shifts,
-                d_alignment_nOps,
-                d_alignment_isValid,
-                d_anchorIndicesOfCandidates,
-                numAnchors,
-                numCandidates,
-                d_anchorContainsN,
-                removeAmbiguousAnchors,
-                d_candidateContainsN,
-                removeAmbiguousCandidates,
-                intsPerSequence2BitHiLo, 
-                min_overlap,
-                maxErrorRate,
-                min_overlap_ratio,
-                estimatedNucleotideErrorRate
-        ); CUDACHECKASYNC;
-
-    }
-
-
-    void call_popcount_shifted_hamming_distance_smem_kernel_async(
-        int* d_alignment_overlaps,
-        int* d_alignment_shifts,
-        int* d_alignment_nOps,
-        bool* d_alignment_isValid,
-        AlignmentOrientation* d_alignment_best_alignment_flags,
-        const unsigned int* d_anchorSequencesData,
-        const unsigned int* d_candidateSequencesData,
-        const int* d_anchorSequencesLength,
-        const int* d_candidateSequencesLength,
-        const int* d_candidates_per_anchor_prefixsum,
-        const int* d_candidates_per_anchor,
-        const int* /*d_anchorIndicesOfCandidates*/,
-        int numAnchors,
-        int numCandidates,
-        const bool* d_anchorContainsN,
-        bool removeAmbiguousAnchors,
-        const bool* d_candidateContainsN,
-        bool removeAmbiguousCandidates,
-        int maximumSequenceLength,
-        int encodedSequencePitchInInts2Bit,
-        int min_overlap,
-        float maxErrorRate,
-        float min_overlap_ratio,
-        float estimatedNucleotideErrorRate,
-        cudaStream_t stream,
-        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
-    ){
-        
-        constexpr int tilesize = 16;
-        
-        auto getTilesPerAnchor = [=] __device__ (int candidates_for_anchor){
-            return SDIV(candidates_for_anchor, tilesize);
-        };
-        
-        cub::TransformInputIterator<int,decltype(getTilesPerAnchor), const int*>
-            d_tiles_per_anchor(d_candidates_per_anchor,
-                            getTilesPerAnchor);
-
-        const int intsPerSequence2BitHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLength);
-        const int bytesPerSequence2BitHilo = intsPerSequence2BitHiLo * sizeof(unsigned int);
-        
-        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * numCandidates, 512) * 512;
-        const std::size_t d_anchorDataHiLoBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * numAnchors, 512) * 512;
-        const std::size_t d_tiles_per_anchor_prefixsumBytes = SDIV(sizeof(int) * (numAnchors+1), 512) * 512;
-
-        const std::size_t requiredTempBytes 
-                = d_candidateDataHiLoTransposedBytes
-                    + d_anchorDataHiLoBytes
-                    + d_tiles_per_anchor_prefixsumBytes;
-
-        rmm::device_uvector<char> d_tmp(requiredTempBytes, stream, mr);
-        
-        //Alias temp storage 
-        unsigned int* const d_candidateDataHiLoTransposed = (unsigned int*)d_tmp.data();
-        unsigned int* const d_anchorDataHiLo 
-            = (unsigned int*)(((char*)d_candidateDataHiLoTransposed) 
-                + d_candidateDataHiLoTransposedBytes);
-        int* const d_tiles_per_anchor_prefixsum
-            = (int*)(((char*)d_anchorDataHiLo) 
-                + d_anchorDataHiLoBytes);
-
-        callConversionKernel2BitTo2BitHiLoNT(
-            d_candidateSequencesData,
-            encodedSequencePitchInInts2Bit,
-            d_candidateDataHiLoTransposed,
-            intsPerSequence2BitHiLo,
-            d_candidateSequencesLength,
-            numCandidates,
-            stream
-        );
-
-        callConversionKernel2BitTo2BitHiLoNN(
-            d_anchorSequencesData,
-            encodedSequencePitchInInts2Bit,
-            d_anchorDataHiLo,
-            intsPerSequence2BitHiLo,
-            d_anchorSequencesLength,
-            numAnchors,
-            stream
-        );
-
-        //calculate d_tiles_per_anchor_prefixsum
-        alignmentdetail::inclusivePrefixSumLeadingZeroSingleBlockKernel<512, 4><<<1, 512, 0, stream>>>(
-            d_tiles_per_anchor_prefixsum,
-            d_tiles_per_anchor,
-            numAnchors
-        );
-        CUDACHECKASYNC;
-
-        constexpr int blocksize = 128;
-        constexpr int tilesPerBlock = blocksize / tilesize;
-
-        const std::size_t smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2);
-
-        int deviceId = 0;
-        int numSMs = 0;
-        int maxBlocksPerSM = 0;
-        CUDACHECK(cudaGetDevice(&deviceId));
-        CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
-        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-            &maxBlocksPerSM,
-            popcount_shifted_hamming_distance_smem_kernel<tilesize>,
-            blocksize, 
-            smem
-        ));
-
-        const int maxBlocks = maxBlocksPerSM * numSMs;
-
-        dim3 block(blocksize, 1, 1);
-        dim3 grid(maxBlocks, 1, 1);
-
-        popcount_shifted_hamming_distance_smem_kernel<tilesize><<<grid, block, smem, stream>>>(
-            d_anchorDataHiLo, 
-            d_candidateDataHiLoTransposed, 
-            d_alignment_overlaps, 
-            d_alignment_shifts, 
-            d_alignment_nOps, 
-            d_alignment_isValid, 
-            d_alignment_best_alignment_flags, 
-            d_anchorSequencesLength, 
-            d_candidateSequencesLength, 
-            d_candidates_per_anchor_prefixsum, 
-            d_tiles_per_anchor_prefixsum, 
-            numAnchors, 
-            numCandidates, 
-            d_anchorContainsN, 
-            removeAmbiguousAnchors, 
-            d_candidateContainsN, 
-            removeAmbiguousCandidates, 
-            intsPerSequence2BitHiLo, 
-            min_overlap, 
-            maxErrorRate, 
-            min_overlap_ratio, 
-            estimatedNucleotideErrorRate
-        ); 
-        CUDACHECKASYNC;
-    }
-
-    void call_popcount_rightshifted_hamming_distance_smem_kernel_async(
-            int* d_alignment_overlaps,
-            int* d_alignment_shifts,
-            int* d_alignment_nOps,
-            bool* d_alignment_isValid,
-            AlignmentOrientation* d_alignment_best_alignment_flags,
-            const unsigned int* d_anchorSequencesData,
-            const unsigned int* d_candidateSequencesData,
-            const int* d_anchorSequencesLength,
-            const int* d_candidateSequencesLength,
-            const int* d_candidates_per_anchor_prefixsum,
-            const int* d_candidates_per_anchor,
-            const int* /*d_anchorIndicesOfCandidates*/,
-            int numAnchors,
-            int numCandidates,
-            const bool* d_anchorContainsN,
-            bool removeAmbiguousAnchors,
-            const bool* d_candidateContainsN,
-            bool removeAmbiguousCandidates,
-            int maximumSequenceLength,
-            int encodedSequencePitchInInts2Bit,
-            int min_overlap,
-            float maxErrorRate,
-            float min_overlap_ratio,
-            float estimatedNucleotideErrorRate,
-            cudaStream_t stream,
-            rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
-        ){
-        
-        constexpr int tilesize = 16;
-        
-        auto getTilesPerAnchor = [=] __device__ (int candidates_for_anchor){
-            return SDIV(candidates_for_anchor, tilesize);
-        };
-        
-        cub::TransformInputIterator<int,decltype(getTilesPerAnchor), const int*>
-            d_tiles_per_anchor(d_candidates_per_anchor,
-                            getTilesPerAnchor);
-
-        const int intsPerSequence2BitHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLength);
-        const int bytesPerSequence2BitHilo = intsPerSequence2BitHiLo * sizeof(unsigned int);
-        
-        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * numCandidates, 512) * 512;
-        const std::size_t d_anchorDataHiLoBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * numAnchors, 512) * 512;
-        const std::size_t d_tiles_per_anchor_prefixsumBytes = SDIV(sizeof(int) * (numAnchors+1), 512) * 512;
-
-        const std::size_t requiredTempBytes 
-            = d_candidateDataHiLoTransposedBytes
-                + d_anchorDataHiLoBytes
-                + d_tiles_per_anchor_prefixsumBytes;
-
-        rmm::device_uvector<char> d_tmp(requiredTempBytes, stream, mr);
-        
-        //Alias temp storage 
-        unsigned int* const d_candidateDataHiLoTransposed = (unsigned int*)d_tmp.data();
-        unsigned int* const d_anchorDataHiLo 
-            = (unsigned int*)(((char*)d_candidateDataHiLoTransposed) 
-                + d_candidateDataHiLoTransposedBytes);
-        int* const d_tiles_per_anchor_prefixsum
-            = (int*)(((char*)d_anchorDataHiLo) 
-                + d_anchorDataHiLoBytes);
-
-        callConversionKernel2BitTo2BitHiLoNT(
-            d_candidateSequencesData,
-            encodedSequencePitchInInts2Bit,
-            d_candidateDataHiLoTransposed,
-            intsPerSequence2BitHiLo,
-            d_candidateSequencesLength,
-            numCandidates,
-            stream
-        );
-
-        callConversionKernel2BitTo2BitHiLoNN(
-            d_anchorSequencesData,
-            encodedSequencePitchInInts2Bit,
-            d_anchorDataHiLo,
-            intsPerSequence2BitHiLo,
-            d_anchorSequencesLength,
-            numAnchors,
-            stream
-        );
-
-        //calculate d_tiles_per_anchor_prefixsum
-        alignmentdetail::inclusivePrefixSumLeadingZeroSingleBlockKernel<512, 4><<<1, 512, 0, stream>>>(
-            d_tiles_per_anchor_prefixsum,
-            d_tiles_per_anchor,
-            numAnchors
-        );
-        CUDACHECKASYNC;
-
-        constexpr int blocksize = 128;
-        constexpr int tilesPerBlock = blocksize / tilesize;
-
-        const std::size_t smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2);
-
-        int deviceId = 0;
-        int numSMs = 0;
-        int maxBlocksPerSM = 0;
-        CUDACHECK(cudaGetDevice(&deviceId));
-        CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
-        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-            &maxBlocksPerSM,
-            popcount_rightshifted_hamming_distance_smem_kernel<tilesize>,
-            blocksize, 
-            smem
-        ));
-
-        const int maxBlocks = maxBlocksPerSM * numSMs;
-
-        dim3 block(blocksize, 1, 1);
-        //dim3 grid(std::min(requiredBlocks, maxBlocks), 1, 1);
-        dim3 grid(maxBlocks, 1, 1);
-
-        popcount_rightshifted_hamming_distance_smem_kernel<tilesize><<<grid, block, smem, stream>>>( 
-            d_anchorDataHiLo, 
-            d_candidateDataHiLoTransposed, 
-            d_alignment_overlaps, 
-            d_alignment_shifts, 
-            d_alignment_nOps, 
-            d_alignment_isValid, 
-            d_alignment_best_alignment_flags, 
-            d_anchorSequencesLength, 
-            d_candidateSequencesLength, 
-            d_candidates_per_anchor_prefixsum, 
-            d_tiles_per_anchor_prefixsum, 
-            numAnchors, 
-            numCandidates, 
-            d_anchorContainsN, 
-            removeAmbiguousAnchors, 
-            d_candidateContainsN, 
-            removeAmbiguousCandidates, 
-            intsPerSequence2BitHiLo, 
-            min_overlap, 
-            maxErrorRate, 
-            min_overlap_ratio, 
-            estimatedNucleotideErrorRate
-        ); 
-        CUDACHECKASYNC;
-
-    }
-
-
-    void call_popcount_shifted_hamming_distance_kernel_async(
-        int* d_alignment_overlaps,
-        int* d_alignment_shifts,
-        int* d_alignment_nOps,
-        bool* d_alignment_isValid,
-        AlignmentOrientation* d_alignment_best_alignment_flags,
-        const unsigned int* d_anchorSequencesData,
-        const unsigned int* d_candidateSequencesData,
-        const int* d_anchorSequencesLength,
-        const int* d_candidateSequencesLength,
-        const int* d_candidates_per_anchor_prefixsum,
-        const int* d_candidates_per_anchor,
-        const int* d_anchorIndicesOfCandidates,
-        int numAnchors,
-        int numCandidates,
-        const bool* d_anchorContainsN,
-        bool removeAmbiguousAnchors,
-        const bool* d_candidateContainsN,
-        bool removeAmbiguousCandidates,
-        int maximumSequenceLength,
-        int encodedSequencePitchInInts2Bit,
-        int min_overlap,
-        float maxErrorRate,
-        float min_overlap_ratio,
-        float estimatedNucleotideErrorRate,
-        cudaStream_t stream,
-        rmm::mr::device_memory_resource* mr
-    ){
-
-            #define regKernel(intsPerSequence){ \
-                call_popcount_shifted_hamming_distance_reg_kernel_async<intsPerSequence>( \
-                    d_alignment_overlaps, \
-                    d_alignment_shifts, \
-                    d_alignment_nOps, \
-                    d_alignment_isValid, \
-                    d_alignment_best_alignment_flags, \
-                    d_anchorSequencesData, \
-                    d_candidateSequencesData, \
-                    d_anchorSequencesLength, \
-                    d_candidateSequencesLength, \
-                    d_candidates_per_anchor_prefixsum, \
-                    d_candidates_per_anchor, \
-                    d_anchorIndicesOfCandidates, \
-                    numAnchors, \
-                    numCandidates, \
-                    d_anchorContainsN, \
-                    removeAmbiguousAnchors, \
-                    d_candidateContainsN, \
-                    removeAmbiguousCandidates, \
-                    maximumSequenceLength, \
-                    encodedSequencePitchInInts2Bit, \
-                    min_overlap, \
-                    maxErrorRate, \
-                    min_overlap_ratio, \
-                    estimatedNucleotideErrorRate, \
-                    stream, \
-                    mr \
-                ); \
-            };
-            
-            auto run = [&](){
-                #if 1
-                if(1 <= maximumSequenceLength && maximumSequenceLength <= 32){
-                    
-                    constexpr int maxValidIntsPerSequence = 2;
-                    regKernel(maxValidIntsPerSequence);
-                    
-                }else if(33 <= maximumSequenceLength && maximumSequenceLength <= 64){
-                    
-                    constexpr int maxValidIntsPerSequence = 4;
-                    regKernel(maxValidIntsPerSequence);
-                    
-                }else if(65 <= maximumSequenceLength && maximumSequenceLength <= 96){
-                    
-                    constexpr int maxValidIntsPerSequence = 6;
-                    regKernel(maxValidIntsPerSequence);
-                    
-                }else if(97 <= maximumSequenceLength && maximumSequenceLength <= 128){
-                    
-                    constexpr int maxValidIntsPerSequence = 8;
-                    regKernel(maxValidIntsPerSequence);
-                    
-                }else if(129 <= maximumSequenceLength && maximumSequenceLength <= 160){
-                    
-                    constexpr int maxValidIntsPerSequence = 10;
-                    regKernel(maxValidIntsPerSequence);
-                    
-                }else if(161 <= maximumSequenceLength && maximumSequenceLength <= 192){
-                    
-                    constexpr int maxValidIntsPerSequence = 12;
-                    regKernel(maxValidIntsPerSequence);
-                    
-                }else if(193 <= maximumSequenceLength && maximumSequenceLength <= 224){
-                    
-                    constexpr int maxValidIntsPerSequence = 14;
-                    regKernel(maxValidIntsPerSequence);
-                    
-                }else if(225 <= maximumSequenceLength && maximumSequenceLength <= 256){
-                    
-                    constexpr int maxValidIntsPerSequence = 16;
-                    regKernel(maxValidIntsPerSequence);
-                    
-                }else{
-                    call_popcount_shifted_hamming_distance_smem_kernel_async(
-                        d_alignment_overlaps,
-                        d_alignment_shifts,
-                        d_alignment_nOps,
-                        d_alignment_isValid,
-                        d_alignment_best_alignment_flags,
-                        d_anchorSequencesData,
-                        d_candidateSequencesData,
-                        d_anchorSequencesLength,
-                        d_candidateSequencesLength,
-                        d_candidates_per_anchor_prefixsum,
-                        d_candidates_per_anchor,
-                        d_anchorIndicesOfCandidates,
-                        numAnchors,
-                        numCandidates,
-                        d_anchorContainsN,
-                        removeAmbiguousAnchors,
-                        d_candidateContainsN,
-                        removeAmbiguousCandidates,                        
-                        maximumSequenceLength,
-                        encodedSequencePitchInInts2Bit,
-                        min_overlap,
-                        maxErrorRate,
-                        min_overlap_ratio,
-                        estimatedNucleotideErrorRate,
-                        stream,
-                        mr
-                    );
-                }
-
-                #else 
-
-                    call_popcount_shifted_hamming_distance_smem_kernel_async(
-                        d_alignment_overlaps,
-                        d_alignment_shifts,
-                        d_alignment_nOps,
-                        d_alignment_isValid,
-                        d_alignment_best_alignment_flags,
-                        d_anchorSequencesData,
-                        d_candidateSequencesData,
-                        d_anchorSequencesLength,
-                        d_candidateSequencesLength,
-                        d_candidates_per_anchor_prefixsum,
-                        d_candidates_per_anchor,
-                        d_anchorIndicesOfCandidates,
-                        numAnchors,
-                        numCandidates,
-                        d_anchorContainsN,
-                        removeAmbiguousAnchors,
-                        d_candidateContainsN,
-                        removeAmbiguousCandidates,
-                        maximumSequenceLength,
-                        encodedSequencePitchInInts2Bit,
-                        min_overlap,
-                        maxErrorRate,
-                        min_overlap_ratio,
-                        estimatedNucleotideErrorRate,
-                        stream,
-                        mr
-                    );
-                #endif
-            };
-                        
-            run();
-
-        #undef regKernel 
-    }
-
-
-
-    void call_popcount_rightshifted_hamming_distance_kernel_async(
-        int* d_alignment_overlaps,
-        int* d_alignment_shifts,
-        int* d_alignment_nOps,
-        bool* d_alignment_isValid,
-        AlignmentOrientation* d_alignment_best_alignment_flags,
-        const unsigned int* d_anchorSequencesData,
-        const unsigned int* d_candidateSequencesData,
-        const int* d_anchorSequencesLength,
-        const int* d_candidateSequencesLength,
-        const int* d_candidates_per_anchor_prefixsum,
-        const int* d_candidates_per_anchor,
-        const int* d_anchorIndicesOfCandidates,
-        int numAnchors,
-        int numCandidates,
-        const bool* d_anchorContainsN,
-        bool removeAmbiguousAnchors,
-        const bool* d_candidateContainsN,
-        bool removeAmbiguousCandidates,
-        int maximumSequenceLength,
-        int encodedSequencePitchInInts2Bit,
-        int min_overlap,
-        float maxErrorRate,
-        float min_overlap_ratio,
-        float estimatedNucleotideErrorRate,
-        cudaStream_t stream,
-        rmm::mr::device_memory_resource* mr
-    ){
-
-            #define regKernel(intsPerSequence){ \
-                call_popcount_rightshifted_hamming_distance_reg_kernel_async<intsPerSequence>( \
-                    d_alignment_overlaps, \
-                    d_alignment_shifts, \
-                    d_alignment_nOps, \
-                    d_alignment_isValid, \
-                    d_alignment_best_alignment_flags, \
-                    d_anchorSequencesData, \
-                    d_candidateSequencesData, \
-                    d_anchorSequencesLength, \
-                    d_candidateSequencesLength, \
-                    d_candidates_per_anchor_prefixsum, \
-                    d_candidates_per_anchor, \
-                    d_anchorIndicesOfCandidates, \
-                    numAnchors, \
-                    numCandidates, \
-                    d_anchorContainsN, \
-                    removeAmbiguousAnchors, \
-                    d_candidateContainsN, \
-                    removeAmbiguousCandidates, \
-                    maximumSequenceLength, \
-                    encodedSequencePitchInInts2Bit, \
-                    min_overlap, \
-                    maxErrorRate, \
-                    min_overlap_ratio, \
-                    estimatedNucleotideErrorRate, \
-                    stream, \
-                    mr \
-                ); \
-            };
-            
-            auto run = [&](){
-                #if 0
-                call_popcount_rightshifted_hamming_distance_smem_kernel_async(
-                    d_alignment_overlaps,
-                    d_alignment_shifts,
-                    d_alignment_nOps,
-                    d_alignment_isValid,
-                    d_alignment_best_alignment_flags,
-                    d_anchorSequencesData,
-                    d_candidateSequencesData,
-                    d_anchorSequencesLength,
-                    d_candidateSequencesLength,
-                    d_candidates_per_anchor_prefixsum,
-                    d_candidates_per_anchor,
-                    d_anchorIndicesOfCandidates,
-                    numAnchors,
-                    numCandidates,
-                    d_anchorContainsN,
-                    removeAmbiguousAnchors,
-                    d_candidateContainsN,
-                    removeAmbiguousCandidates,                    
-                    maximumSequenceLength,
-                    encodedSequencePitchInInts2Bit,
-                    min_overlap,
-                    maxErrorRate,
-                    min_overlap_ratio,
-                    estimatedNucleotideErrorRate,
-                    stream,
-                    mr
-                );
-                #else
-                if(1 <= maximumSequenceLength && maximumSequenceLength <= 32){
-                    
-                    constexpr int maxValidIntsPerSequence = 2;
-                    regKernel(maxValidIntsPerSequence);
-                    
-                }else if(33 <= maximumSequenceLength && maximumSequenceLength <= 64){
-                    
-                    constexpr int maxValidIntsPerSequence = 4;
-                    regKernel(maxValidIntsPerSequence);
-                    
-                }else if(65 <= maximumSequenceLength && maximumSequenceLength <= 96){
-                    
-                    constexpr int maxValidIntsPerSequence = 6;
-                    regKernel(maxValidIntsPerSequence);
-                    
-                }else if(97 <= maximumSequenceLength && maximumSequenceLength <= 128){
-                    
-                    constexpr int maxValidIntsPerSequence = 8;
-                    regKernel(maxValidIntsPerSequence);
-                    
-                }else if(129 <= maximumSequenceLength && maximumSequenceLength <= 160){
-                    
-                    constexpr int maxValidIntsPerSequence = 10;
-                    regKernel(maxValidIntsPerSequence);
-                    
-                }else if(161 <= maximumSequenceLength && maximumSequenceLength <= 192){
-                    
-                    constexpr int maxValidIntsPerSequence = 12;
-                    regKernel(maxValidIntsPerSequence);
-                    
-                }else if(193 <= maximumSequenceLength && maximumSequenceLength <= 224){
-                    
-                    constexpr int maxValidIntsPerSequence = 14;
-                    regKernel(maxValidIntsPerSequence);
-                    
-                }else if(225 <= maximumSequenceLength && maximumSequenceLength <= 256){
-                    
-                    constexpr int maxValidIntsPerSequence = 16;
-                    regKernel(maxValidIntsPerSequence);
-                    
-                }else{
-                    
-                    call_popcount_rightshifted_hamming_distance_smem_kernel_async(
-                        d_alignment_overlaps,
-                        d_alignment_shifts,
-                        d_alignment_nOps,
-                        d_alignment_isValid,
-                        d_alignment_best_alignment_flags,
-                        d_anchorSequencesData,
-                        d_candidateSequencesData,
-                        d_anchorSequencesLength,
-                        d_candidateSequencesLength,
-                        d_candidates_per_anchor_prefixsum,
-                        d_candidates_per_anchor,
-                        d_anchorIndicesOfCandidates,
-                        numAnchors,
-                        numCandidates,
-                        d_anchorContainsN,
-                        removeAmbiguousAnchors,
-                        d_candidateContainsN,
-                        removeAmbiguousCandidates,
-                        maximumSequenceLength,
-                        encodedSequencePitchInInts2Bit,
-                        min_overlap,
-                        maxErrorRate,
-                        min_overlap_ratio,
-                        estimatedNucleotideErrorRate,
-                        stream,
-                        mr
-                    );
-                }
-                #endif
-            };
-                        
-            run();
-
-        #undef regKernel 
-    }
 
 
     void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
@@ -2633,6 +743,215 @@ namespace alignmentdetail{
             numAnchors
         ); CUDACHECKASYNC;
     }
+
+
+
+
+
+
+
+
+    
+
+    template<int blocksize, int groupsize, bool usePositiveShifts, bool useNegativeShifts>
+    void callShiftedHammingDistanceKernelSmem1_impl(
+        int* d_alignment_overlaps,
+        int* d_alignment_shifts,
+        int* d_alignment_nOps,
+        AlignmentOrientation* d_alignment_best_alignment_flags,
+        const unsigned int* d_anchorSequencesData,
+        const unsigned int* d_candidateSequencesData,
+        const int* d_anchorSequencesLength,
+        const int* d_candidateSequencesLength,
+        const int* d_anchorIndicesOfCandidates,
+        int numAnchors,
+        int numCandidates,
+        const bool* d_anchorContainsN,
+        bool removeAmbiguousAnchors,
+        const bool* d_candidateContainsN,
+        bool removeAmbiguousCandidates,
+        int maximumSequenceLengthAnchor,
+        int maximumSequenceLengthCandidate,
+        std::size_t encodedSequencePitchInInts2BitAnchor,
+        std::size_t encodedSequencePitchInInts2BitCandidate,
+        int min_overlap,
+        float maxErrorRate,
+        float min_overlap_ratio,
+        float estimatedNucleotideErrorRate,
+        cudaStream_t stream
+    ){
+        if(numAnchors == 0 || numCandidates == 0) return;
+
+        const std::size_t intsPerSequenceHiLoAnchor = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLengthAnchor);
+        const std::size_t intsPerSequenceHiLoCandidates = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLengthCandidate);
+
+        auto kernel = shiftedHammingDistanceKernelSmem1<blocksize, groupsize,usePositiveShifts,useNegativeShifts>;
+        const std::size_t smem = sizeof(unsigned int) * (intsPerSequenceHiLoAnchor * blocksize + intsPerSequenceHiLoCandidates * blocksize);
+        // std::cerr << "intsPerSequenceHiLoAnchor: " << intsPerSequenceHiLoAnchor << "\n";
+        // std::cerr << "intsPerSequenceHiLoCandidates: " << intsPerSequenceHiLoCandidates << "\n";
+        // std::cerr << "smem: " << smem << "\n";
+
+        int deviceId = 0;
+        int numSMs = 0;
+        int maxBlocksPerSM = 0;
+        CUDACHECK(cudaGetDevice(&deviceId));
+        CUDACHECK(cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, deviceId));
+        CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &maxBlocksPerSM,
+            kernel,
+            blocksize, 
+            smem
+        ));
+
+        const int maxBlocks = maxBlocksPerSM * numSMs;  
+
+        dim3 block(blocksize, 1, 1);
+        const int numBlocks = SDIV(numCandidates, blocksize);
+        dim3 grid(std::min(numBlocks, maxBlocks), 1, 1);
+
+        kernel<<<grid, block, smem, stream>>>(
+            d_alignment_overlaps,
+            d_alignment_shifts,
+            d_alignment_nOps,
+            d_alignment_best_alignment_flags,
+            d_anchorSequencesData,
+            d_anchorSequencesLength,
+            encodedSequencePitchInInts2BitAnchor,
+            d_candidateSequencesData,
+            d_candidateSequencesLength,
+            encodedSequencePitchInInts2BitCandidate,
+            d_anchorIndicesOfCandidates,
+            intsPerSequenceHiLoAnchor,
+            intsPerSequenceHiLoCandidates,
+            d_anchorContainsN,
+            removeAmbiguousAnchors,
+            d_candidateContainsN,
+            removeAmbiguousCandidates,
+            numCandidates,
+            min_overlap,
+            maxErrorRate,
+            min_overlap_ratio,
+            estimatedNucleotideErrorRate
+        );
+        CUDACHECKASYNC;
+    }
+
+
+    void callShiftedHammingDistanceKernel(
+        int* d_alignment_overlaps,
+        int* d_alignment_shifts,
+        int* d_alignment_nOps,
+        AlignmentOrientation* d_alignment_best_alignment_flags,
+        const unsigned int* d_anchorSequencesData,
+        const unsigned int* d_candidateSequencesData,
+        const int* d_anchorSequencesLength,
+        const int* d_candidateSequencesLength,
+        const int* d_anchorIndicesOfCandidates,
+        int numAnchors,
+        int numCandidates,
+        const bool* d_anchorContainsN,
+        bool removeAmbiguousAnchors,
+        const bool* d_candidateContainsN,
+        bool removeAmbiguousCandidates,
+        int maximumSequenceLengthAnchor,
+        int maximumSequenceLengthCandidate,
+        std::size_t encodedSequencePitchInInts2BitAnchor,
+        std::size_t encodedSequencePitchInInts2BitCandidate,
+        int min_overlap,
+        float maxErrorRate,
+        float min_overlap_ratio,
+        float estimatedNucleotideErrorRate,
+        cudaStream_t stream
+    ){
+        constexpr bool usePositiveShifts = true;
+        constexpr bool useNegativeShifts = true;
+        callShiftedHammingDistanceKernelSmem1_impl<128, 2,usePositiveShifts,useNegativeShifts>(
+            d_alignment_overlaps,
+            d_alignment_shifts,
+            d_alignment_nOps,
+            d_alignment_best_alignment_flags,
+            d_anchorSequencesData,
+            d_candidateSequencesData,
+            d_anchorSequencesLength,
+            d_candidateSequencesLength,
+            d_anchorIndicesOfCandidates,
+            numAnchors,
+            numCandidates,
+            d_anchorContainsN,
+            removeAmbiguousAnchors,
+            d_candidateContainsN,
+            removeAmbiguousCandidates,
+            maximumSequenceLengthAnchor,
+            maximumSequenceLengthCandidate,
+            encodedSequencePitchInInts2BitAnchor,
+            encodedSequencePitchInInts2BitCandidate,
+            min_overlap,
+            maxErrorRate,
+            min_overlap_ratio,
+            estimatedNucleotideErrorRate,
+            stream
+        );
+    }
+
+    void callRightShiftedHammingDistanceKernel(
+        int* d_alignment_overlaps,
+        int* d_alignment_shifts,
+        int* d_alignment_nOps,
+        AlignmentOrientation* d_alignment_best_alignment_flags,
+        const unsigned int* d_anchorSequencesData,
+        const unsigned int* d_candidateSequencesData,
+        const int* d_anchorSequencesLength,
+        const int* d_candidateSequencesLength,
+        const int* d_anchorIndicesOfCandidates,
+        int numAnchors,
+        int numCandidates,
+        const bool* d_anchorContainsN,
+        bool removeAmbiguousAnchors,
+        const bool* d_candidateContainsN,
+        bool removeAmbiguousCandidates,
+        int maximumSequenceLengthAnchor,
+        int maximumSequenceLengthCandidate,
+        std::size_t encodedSequencePitchInInts2BitAnchor,
+        std::size_t encodedSequencePitchInInts2BitCandidate,
+        int min_overlap,
+        float maxErrorRate,
+        float min_overlap_ratio,
+        float estimatedNucleotideErrorRate,
+        cudaStream_t stream
+    ){
+        constexpr bool usePositiveShifts = true;
+        constexpr bool useNegativeShifts = false;
+        callShiftedHammingDistanceKernelSmem1_impl<128, 2,usePositiveShifts,useNegativeShifts>(
+            d_alignment_overlaps,
+            d_alignment_shifts,
+            d_alignment_nOps,
+            d_alignment_best_alignment_flags,
+            d_anchorSequencesData,
+            d_candidateSequencesData,
+            d_anchorSequencesLength,
+            d_candidateSequencesLength,
+            d_anchorIndicesOfCandidates,
+            numAnchors,
+            numCandidates,
+            d_anchorContainsN,
+            removeAmbiguousAnchors,
+            d_candidateContainsN,
+            removeAmbiguousCandidates,
+            maximumSequenceLengthAnchor,
+            maximumSequenceLengthCandidate,
+            encodedSequencePitchInInts2BitAnchor,
+            encodedSequencePitchInInts2BitCandidate,
+            min_overlap,
+            maxErrorRate,
+            min_overlap_ratio,
+            estimatedNucleotideErrorRate,
+            stream
+        );
+    }
+
+
+
+
 
 
 }

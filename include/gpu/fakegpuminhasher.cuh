@@ -398,7 +398,7 @@ namespace gpu{
                 constexpr bool valuesOfSameKeyMustBeSorted = false;
                 const int maxValuesPerKey = getNumResultsPerMapThreshold();
 
-                constexpr int minValuesPerKey = 2;
+                constexpr int minValuesPerKey = MINHASHER_MIN_VALUES_PER_KEY;
 
                 bool success = false;
 

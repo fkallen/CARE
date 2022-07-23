@@ -44,6 +44,7 @@
 #include <thrust/gather.h>
 #include <thrust/scan.h>
 #include <thrust/unique.h>
+#include <thrust/equal.h>
 
 #include <rmm/mr/device/per_device_resource.hpp>
 #include <rmm/mr/device/cuda_async_memory_resource.hpp>
@@ -1943,24 +1944,18 @@ namespace gpu{
 
         void getCandidateAlignments(cudaStream_t stream){
 
-
             const bool removeAmbiguousAnchors = programOptions->excludeAmbiguousReads;
             const bool removeAmbiguousCandidates = programOptions->excludeAmbiguousReads;
-            
-            rmm::device_uvector<bool> d_alignment_isValid(currentNumCandidates, stream, mr);
-
-            call_popcount_shifted_hamming_distance_kernel_async(
+   
+            callShiftedHammingDistanceKernel(
                 d_alignment_overlaps.data(),
                 d_alignment_shifts.data(),
                 d_alignment_nOps.data(),
-                d_alignment_isValid.data(),
                 d_alignment_best_alignment_flags.data(),
                 d_anchor_sequences_data.data(),
                 d_candidate_sequences_data.data(),
                 d_anchor_sequences_lengths.data(),
                 d_candidate_sequences_lengths.data(),
-                d_candidates_per_anchor_prefixsum.data(),
-                d_candidates_per_anchor.data(),
                 d_anchorIndicesOfCandidates.data(),
                 currentNumAnchors,
                 currentNumCandidates,
@@ -1969,13 +1964,14 @@ namespace gpu{
                 d_candidateContainsN.data(),
                 removeAmbiguousCandidates,
                 gpuReadStorage->getSequenceLengthUpperBound(),
+                gpuReadStorage->getSequenceLengthUpperBound(),
+                encodedSequencePitchInInts,
                 encodedSequencePitchInInts,
                 programOptions->min_overlap,
                 programOptions->maxErrorRate,
                 programOptions->min_overlap_ratio,
                 programOptions->estimatedErrorrate,
-                stream,
-                mr
+                stream
             );
 
             #if 1
@@ -1993,37 +1989,29 @@ namespace gpu{
                     stream
                 );
             }else{
-                helpers::lambda_kernel<<<currentNumAnchors, 128, 0, stream>>>(
+                helpers::lambda_kernel<<<SDIV(currentNumCandidates, 128), 128, 0, stream>>>(
                     [
                         bestAlignmentFlags = d_alignment_best_alignment_flags.data(),
                         nOps = d_alignment_nOps.data(),
                         overlaps = d_alignment_overlaps.data(),
-                        d_candidates_per_anchor_prefixsum = d_candidates_per_anchor_prefixsum.data(),
-                        n_anchors = currentNumAnchors,
+                        currentNumCandidates = currentNumCandidates,
                         d_isPairedCandidate = d_isPairedCandidate.data(),
                         pairedFilterThreshold = programOptions->pairedFilterThreshold
                     ] __device__(){
-                        for(int anchorindex = blockIdx.x; anchorindex < n_anchors; anchorindex += gridDim.x) {
+                        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                        const int stride = blockDim.x * gridDim.x;
 
-                            const int candidatesForAnchor = d_candidates_per_anchor_prefixsum[anchorindex+1]
-                                                            - d_candidates_per_anchor_prefixsum[anchorindex];
+                        for(int candidate_index = tid; candidate_index < currentNumCandidates; candidate_index += stride){
+                            if(!d_isPairedCandidate[candidate_index]){
+                                if(bestAlignmentFlags[candidate_index] != AlignmentOrientation::None) {
 
-                            const int firstIndex = d_candidates_per_anchor_prefixsum[anchorindex];
+                                    const int alignment_overlap = overlaps[candidate_index];
+                                    const int alignment_nops = nOps[candidate_index];
 
-                            for(int index = threadIdx.x; index < candidatesForAnchor; index += blockDim.x) {
+                                    const float mismatchratio = float(alignment_nops) / alignment_overlap;
 
-                                const int candidate_index = firstIndex + index;
-                                if(!d_isPairedCandidate[candidate_index]){
-                                    if(bestAlignmentFlags[candidate_index] != AlignmentOrientation::None) {
-
-                                        const int alignment_overlap = overlaps[candidate_index];
-                                        const int alignment_nops = nOps[candidate_index];
-
-                                        const float mismatchratio = float(alignment_nops) / alignment_overlap;
-
-                                        if(mismatchratio >= pairedFilterThreshold) {
-                                            bestAlignmentFlags[candidate_index] = AlignmentOrientation::None;
-                                        }
+                                    if(mismatchratio >= pairedFilterThreshold) {
+                                        bestAlignmentFlags[candidate_index] = AlignmentOrientation::None;
                                     }
                                 }
                             }
@@ -2060,18 +2048,6 @@ namespace gpu{
                 currentNumCandidates,
                 stream
             );
-
-            void callSelectIndicesOfGoodCandidatesKernelAsync(
-                int* d_indicesOfGoodCandidates,
-                int* d_numIndicesPerAnchor,
-                int* d_totalNumIndices,
-                const AlignmentOrientation* d_alignmentFlags,
-                const int* d_candidates_per_anchor,
-                const int* d_candidates_per_anchor_prefixsum,
-                const int* d_anchorIndicesOfCandidates,
-                int numAnchors,
-                int numCandidates,
-                cudaStream_t stream);
 
             CUDACHECK(cudaMemcpyAsync(
                 h_numRemainingCandidatesAfterAlignment.data(),
@@ -2741,6 +2717,73 @@ namespace gpu{
 
             managedgpumsa = std::make_unique<ManagedGPUMultiMSA>(stream, mr, h_managedmsa_tmp.data());
 
+            #if 0
+
+            if(useMsaRefinement()){
+                rmm::device_uvector<int> d_indices_tmp(currentNumCandidates+1, stream, mr);
+                rmm::device_uvector<int> d_indices_per_anchor_tmp(maxAnchors+1, stream, mr);
+                rmm::device_uvector<int> d_num_indices_tmp(1, stream, mr);
+     
+                managedgpumsa->constructAndRefine(
+                    d_indices_tmp.data(),
+                    d_indices_per_anchor_tmp.data(),
+                    d_num_indices_tmp.data(),
+                    d_alignment_overlaps.data(),
+                    d_alignment_shifts.data(),
+                    d_alignment_nOps.data(),
+                    d_alignment_best_alignment_flags.data(),
+                    d_anchor_sequences_lengths.data(),
+                    d_candidate_sequences_lengths.data(),
+                    d_indices.data(),
+                    d_indices_per_anchor.data(),
+                    d_candidates_per_anchor_prefixsum.data(),
+                    d_anchor_sequences_data.data(),
+                    d_candidate_sequences_data.data(),
+                    d_isPairedCandidate.data(),
+                    d_anchor_qual,
+                    d_cand_qual,
+                    currentNumAnchors,
+                    currentNumCandidates,
+                    programOptions->maxErrorRate,
+                    programOptions->useQualityScores,
+                    encodedSequencePitchInInts,
+                    qualityPitchInBytes,
+                    programOptions->estimatedCoverage,
+                    getNumRefinementIterations(),
+                    MSAColumnCount{static_cast<int>(msaColumnPitchInElements)},
+                    stream
+                );
+                std::swap(d_indices_tmp, d_indices);
+                std::swap(d_indices_per_anchor_tmp, d_indices_per_anchor);
+                std::swap(d_num_indices_tmp, d_num_indices);
+            }else{
+                managedgpumsa->construct(
+                    d_alignment_overlaps.data(),
+                    d_alignment_shifts.data(),
+                    d_alignment_nOps.data(),
+                    d_alignment_best_alignment_flags.data(),
+                    d_indices.data(),
+                    d_indices_per_anchor.data(),
+                    d_candidates_per_anchor_prefixsum.data(),
+                    d_anchor_sequences_lengths.data(),
+                    d_anchor_sequences_data.data(),
+                    d_anchor_qual,
+                    currentNumAnchors,
+                    d_candidate_sequences_lengths.data(),
+                    d_candidate_sequences_data.data(),
+                    d_cand_qual,
+                    d_isPairedCandidate.data(),
+                    encodedSequencePitchInInts,
+                    qualityPitchInBytes,
+                    programOptions->useQualityScores,
+                    programOptions->maxErrorRate,
+                    MSAColumnCount{static_cast<int>(msaColumnPitchInElements)},
+                    stream
+                );
+            }
+
+            #else
+
             managedgpumsa->construct(
                 d_alignment_overlaps.data(),
                 d_alignment_shifts.data(),
@@ -2805,6 +2848,8 @@ namespace gpu{
                 std::swap(d_num_indices_tmp, d_num_indices);
 
             }
+
+            #endif
 
             if(programOptions->useQualityScores){
                 mr->deallocate(d_anchor_qual, currentNumAnchors * qualityPitchInBytes, stream);

@@ -150,8 +150,8 @@ namespace gpu{
                 }
 
                 if(sumOfWeights == 0){
-                    //printf("s %d c %d\n", anchorIndex, column);
-                    assert(sumOfWeights != 0);
+                    //printf("anchorIndex %d, column %d, codeline %d\n", anchorIndex, column, line);
+                    assert(false);
                 }
 
                 const int cov = coverages[column];
@@ -399,15 +399,6 @@ namespace gpu{
 
             bool error = false;
 
-            __shared__ int leftCount;
-            __shared__ int rightCount;
-
-            if(group.thread_rank() == 0){
-                leftCount = 0;
-                rightCount = 0;
-            }
-            group.sync();
-
             for(int i = group.thread_rank(); i < numColumnsToCheck-1; i += group.size()){
                 const int column = firstColumn_incl + i;
 
@@ -416,44 +407,16 @@ namespace gpu{
 
                 if(thisCoverage < 0 || nextCoverage < 0){
                     error = true;
-                    //printf("column %d, thisCoverage %d, nextCoverage %d\n", column, thisCoverage, nextCoverage);
-                    // assert(thisCoverage >= 0);
-                    // assert(nextCoverage >= 0);
                 }
 
                 if(thisCoverage == 0 && nextCoverage > 0){
                     newFirstColumn_incl = column+1;
-                    atomicAdd(&leftCount, 1);
                 }
 
                 if(thisCoverage > 0 && nextCoverage == 0){
                     newLastColumn_excl = column+1;
-                    atomicAdd(&rightCount, 1);
                 }
             }
-
-            group.sync();
-            // if(group.thread_rank() == 0){
-            //     if(leftCount > 1 || rightCount > 1){
-            //         printf("leftCount %d rightCount %d\n", leftCount, rightCount);
-            //     }
-            // }
-
-            __shared__ bool smemerror[128];
-            assert(group.size() <= 128);
-            smemerror[group.thread_rank()] = error;
-            group.sync();
-            if(group.thread_rank() == 0){
-                error = false;
-                for(int i = 0; i < group.size(); i++){
-                    if(smemerror[i]){
-                        error = true;
-                    }
-                }
-               
-                smemerror[0] = error;                
-            }
-            group.sync();
 
             //there can be at most one thread for which this is true
             if(newFirstColumn_incl != -1){
@@ -466,7 +429,7 @@ namespace gpu{
             
             group.sync();
 
-            return smemerror[0];
+            return error;
         }
 
         template<bool doAdd, class ThreadGroup>
@@ -850,7 +813,7 @@ namespace gpu{
 
         template<class ThreadGroup>
         __device__ __forceinline__
-        void findConsensus(
+        void findConsensus_impl_char4(
             ThreadGroup& group,
             const unsigned int* __restrict__ myAnchorSequenceData, 
             int encodedSequencePitchInInts,
@@ -988,18 +951,173 @@ namespace gpu{
             }
         }
 
+        template<class ThreadGroup>
+        __device__ __forceinline__
+        void findConsensus_impl_char_gmem(
+            ThreadGroup& group,
+            const unsigned int* __restrict__ myAnchorSequenceData, 
+            int encodedSequencePitchInInts,
+            int anchorIndex = -1
+        ){
+
+            const int anchorColumnsBegin_incl = columnProperties->anchorColumnsBegin_incl;
+            const int anchorColumnsEnd_excl = columnProperties->anchorColumnsEnd_excl;
+            const int firstColumn_incl = columnProperties->firstColumn_incl;
+            const int lastColumn_excl = columnProperties->lastColumn_excl;
+
+            assert(lastColumn_excl <= columnPitchInElements);
+
+            const int anchorLength = anchorColumnsEnd_excl - anchorColumnsBegin_incl;
+            const unsigned int* const anchor = myAnchorSequenceData;
+
+            //set columns to zero which are not in range firstColumn_incl <= column && column < lastColumn_excl
+
+            for(int column = group.thread_rank(); 
+                    column < firstColumn_incl; 
+                    column += group.size()){
+
+                support[column] = 0;
+                origWeights[column] = 0;
+                origCoverages[column] = 0;
+            }
+
+            const int leftoverRight = columnPitchInElements - lastColumn_excl;
+
+            for(int i = group.thread_rank(); i < leftoverRight; i += group.size()){
+                const int column = lastColumn_excl + i;
+
+                support[column] = 0;
+                origWeights[column] = 0;
+                origCoverages[column] = 0;
+            }
+
+            for(int column = group.thread_rank(); 
+                    column < firstColumn_incl; 
+                    column += group.size()){
+                    
+                consensus[column] = std::uint8_t{5};
+            }
+
+            for(int i = group.thread_rank(); i < leftoverRight; i += group.size()){
+                const int column = lastColumn_excl + i;
+
+                consensus[column] = std::uint8_t{5};
+            }
+
+            const int* const myCountsA = counts + 0 * columnPitchInElements;
+            const int* const myCountsC = counts + 1 * columnPitchInElements;
+            const int* const myCountsG = counts + 2 * columnPitchInElements;
+            const int* const myCountsT = counts + 3 * columnPitchInElements;
+
+            const float* const myWeightsA = weights + 0 * columnPitchInElements;
+            const float* const myWeightsC = weights + 1 * columnPitchInElements;
+            const float* const myWeightsG = weights + 2 * columnPitchInElements;
+            const float* const myWeightsT = weights + 3 * columnPitchInElements;
+
+            const int numOuterIters = SDIV(lastColumn_excl, group.size());
+
+            for(int outerIter = 0; outerIter < numOuterIters; outerIter += 1){
+                const int begin = outerIter * group.size();
+                const int num = std::min(int(group.size()), lastColumn_excl - begin);
+
+                if(group.thread_rank() < num){
+                    const int column = begin + group.thread_rank();
+                    if(firstColumn_incl <= column && column < lastColumn_excl){
+
+                        const float wa = myWeightsA[column];
+                        const float wc = myWeightsC[column];
+                        const float wg = myWeightsG[column];
+                        const float wt = myWeightsT[column];
+
+                        std::uint8_t cons = 5;
+                        float consWeight = 0.0f;
+                        if(wa > consWeight){
+                            cons = std::uint8_t{0};
+                            consWeight = wa;
+                        }
+                        if(wc > consWeight){
+                            cons = std::uint8_t{1};
+                            consWeight = wc;
+                        }
+                        if(wg > consWeight){
+                            cons = std::uint8_t{2};
+                            consWeight = wg;
+                        }
+                        if(wt > consWeight){
+                            cons = std::uint8_t{3};
+                            consWeight = wt;
+                        }
+
+                        consensus[column] = cons;
+
+                        const float columnWeight = wa + wc + wg + wt;
+                        assert(columnWeight != 0);
+
+                        support[column] = consWeight / columnWeight;
+
+                        if(anchorColumnsBegin_incl <= column && column < anchorColumnsEnd_excl){
+                            constexpr std::uint8_t A_enc = SequenceHelpers::encodedbaseA();
+                            constexpr std::uint8_t C_enc = SequenceHelpers::encodedbaseC();
+                            constexpr std::uint8_t G_enc = SequenceHelpers::encodedbaseG();
+                            constexpr std::uint8_t T_enc = SequenceHelpers::encodedbaseT();
+
+                            const int localIndex = column - anchorColumnsBegin_incl;
+                            const std::uint8_t encNuc = SequenceHelpers::getEncodedNuc2Bit(anchor, anchorLength, localIndex);
+
+                            if(encNuc == A_enc){
+                                origWeights[column] = wa;
+                                origCoverages[column] = myCountsA[column];
+                            }else if(encNuc == C_enc){
+                                origWeights[column] = wc;
+                                origCoverages[column] = myCountsC[column];
+                            }else if(encNuc == G_enc){
+                                origWeights[column] = wg;
+                                origCoverages[column] = myCountsG[column];
+                            }else if(encNuc == T_enc){
+                                origWeights[column] = wt;
+                                origCoverages[column] = myCountsT[column];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        template<class ThreadGroup>
+        __device__ __forceinline__
+        void findConsensus(
+            ThreadGroup& group,
+            const unsigned int* __restrict__ myAnchorSequenceData, 
+            int encodedSequencePitchInInts,
+            int anchorIndex = -1
+        ){
+
+            // findConsensus_impl_char4(
+            //     group,
+            //     myAnchorSequenceData,
+            //     encodedSequencePitchInInts,
+            //     anchorIndex
+            // );
+
+            findConsensus_impl_char_gmem(
+                group,
+                myAnchorSequenceData,
+                encodedSequencePitchInInts,
+                anchorIndex
+            );
+        }
+
         template<
             class ThreadGroup, 
             class GroupReduceBool, 
             class GroupReduceInt2
         >
         __device__ __forceinline__
-        void flagCandidatesOfDifferentRegion(
+        int flagCandidatesOfDifferentRegion(
             ThreadGroup& group,
             GroupReduceBool& groupReduceBool,
             GroupReduceInt2& groupReduceInt2,
             int* __restrict__ myNewIndicesPtr,
-            int* __restrict__ myNewNumIndicesPerAnchorPtr,
             const unsigned int* __restrict__ myAnchorSequenceData,
             const int anchorLength,
             const unsigned int* __restrict__ myCandidateSequencesData,
@@ -1243,12 +1361,9 @@ namespace gpu{
                             }
                         }
 
-                        if(group.thread_rank() == 0){
-                            *myNewNumIndicesPerAnchorPtr = smemcounts[0];
-                        }
-
                         group.sync();
 
+                        return smemcounts[0];
                     };
 
                     //compare found base to original base
@@ -1256,22 +1371,26 @@ namespace gpu{
 
                     if(originalbase == foundBase){
                         //discard all candidates whose base in column col differs from foundBase
-                        discard_rows(true);
+                        return discard_rows(true);
                     }else{
                         //discard all candidates whose base in column col matches foundBase
-                        discard_rows(false);
+                        return discard_rows(false);
                     }
 
                 }else{
                     //did not find a significant columns
 
+                    for(int k = group.thread_rank(); k < myNumIndices; k += group.size()){
+                        myShouldBeKept[k] = true;
+                    }
+
                     //remove no candidate
                     for(int k = group.thread_rank(); k < myNumIndices; k += group.size()){
                         myNewIndicesPtr[k] = myIndices[k];
                     }
-                    if(group.thread_rank() == 0){
-                        *myNewNumIndicesPerAnchorPtr = myNumIndices;
-                    }
+                    group.sync();
+
+                    return myNumIndices;
                 }
 
             }else{
@@ -1285,12 +1404,10 @@ namespace gpu{
                 for(int k = group.thread_rank(); k < myNumIndices; k += group.size()){
                     myNewIndicesPtr[k] = myIndices[k];
                 }
-                if(group.thread_rank() == 0){
-                    *myNewNumIndicesPerAnchorPtr = myNumIndices;
-                }
-            }
+                group.sync();
 
-            group.sync();
+                return myNumIndices;
+            }
         }
 
         __device__ __forceinline__

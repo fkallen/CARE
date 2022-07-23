@@ -7,6 +7,8 @@
 #include <warpcore/multi_value_hash_table.cuh>
 #include <warpcore/multi_bucket_hash_table.cuh>
 
+#include <config.hpp>
+
 #include <hpc_helpers.cuh>
 #include <cpuhashtable.hpp>
 #include <memorymanagement.hpp>
@@ -196,8 +198,12 @@ namespace gpu{
 
                 const int num = table.numValues(tile, key);
                 if(tile.thread_rank() == 0){
+                    #ifdef MINHASHER_CLEAR_OVEROCCUPIED_BUCKETS
                     numValuesPerKey[k] = num > maxValuesPerKey ? 0 : num;
-                    //numValuesPerKey[k] = num;
+                    #else
+                    (void)maxValuesPerKey;
+                    numValuesPerKey[k] = num;
+                    #endif
                 }    
             }
         }
@@ -288,8 +294,12 @@ namespace gpu{
 
                     const int num = table.numValues(tile, key);
                     if(tile.thread_rank() == 0){
+                        #ifdef MINHASHER_CLEAR_OVEROCCUPIED_BUCKETS
                         myNumValuesPerKey[k] = num > maxValuesPerKey ? 0 : num;
-                        //myNumValuesPerKey[k] = num;
+                        #else
+                        (void)maxValuesPerKey;
+                        myNumValuesPerKey[k] = num;
+                        #endif
                     }    
                 }
             }
@@ -516,9 +526,15 @@ namespace gpu{
 
             const std::size_t capacity = maxPairs / load;
             gpuMvTable = std::move(
+                #ifdef MINHASHER_CLEAR_OVEROCCUPIED_BUCKETS
                 std::make_unique<MultiValueHashTable>(
                     capacity, warpcore::defaults::seed<Key>(), maxValuesPerKey + 1
                 )
+                #else
+                std::make_unique<MultiValueHashTable>(
+                    capacity, warpcore::defaults::seed<Key>(), maxValuesPerKey
+                )
+                #endif
             );
 
         }
@@ -723,6 +739,7 @@ namespace gpu{
             return gpuMvTable->num_keys(stream);
         }
 
+        #if defined(MINHASHER_CLEAR_OVEROCCUPIED_BUCKETS) || defined(MINHASHER_CLEAR_UNDEROCCUPIED_BUCKETS)
         void compact(
             void* d_temp,
             std::size_t& temp_bytes,
@@ -859,19 +876,38 @@ namespace gpu{
                         const auto offsetBegin = d_tmp_compactOffset[key];
                         const auto offsetEnd = d_tmp_compactOffset[key + 1];
                         const int numValuesForKey = offsetEnd - offsetBegin;
+                        const int upperLimit = std::min(BucketSize(maxValuesPerKeytmp), std::numeric_limits<BucketSize>::max());
 
-                        if(numValuesForKey > maxValuesPerKeytmp || numValuesForKey < 2){
+                        auto checkUpperBound = [&](){
+                            if(numValuesForKey > upperLimit){
+                                int beginOfRemove = std::min(upperLimit, numValuesForKey);
+                                int endOfRemove = numValuesForKey;
+
+                                #ifdef MINHASHER_CLEAR_OVEROCCUPIED_BUCKETS
+                                beginOfRemove = 0;
+                                #endif
+                                d_compactOffsets[key+1] = numValuesForKey - (endOfRemove - beginOfRemove);
+                                for(std::size_t k = offsetBegin + beginOfRemove + threadIdx.x; k < offsetBegin + endOfRemove; k += blockDim.x){
+                                    d_tmp_valueflags[k] = false;
+                                }
+                            }else{
+                                d_compactOffsets[key+1] = numValuesForKey;
+                            }
+                        };
+
+                        #ifdef MINHASHER_CLEAR_UNDEROCCUPIED_BUCKETS
+                        const int lowerLimit = std::max(BucketSize(MINHASHER_MIN_VALUES_PER_KEY),BucketSize(1));
+                        if(numValuesForKey < lowerLimit){
+                            d_compactOffsets[key+1] = 0;
                             for(int i = threadIdx.x; i < numValuesForKey; i += blockDim.x){
                                 d_tmp_valueflags[offsetBegin + i] = false;
                             }
-                            if(threadIdx.x == 0){
-                                d_compactOffsets[key+1] = 0;
-                            }
                         }else{
-                            if(threadIdx.x == 0){
-                                d_compactOffsets[key+1] = numValuesForKey;
-                            }
+                            checkUpperBound();
                         }
+                        #else
+                        checkUpperBound();
+                        #endif
                     }
                 }
             );
@@ -930,6 +966,121 @@ namespace gpu{
 
             CUDACHECK(cudaStreamSynchronize(stream));
         }
+
+        #else
+
+        void compact(
+            void* d_temp,
+            std::size_t& temp_bytes,
+            cudaStream_t stream = 0
+        ){
+            Index numUniqueKeys = gpuMvTable != nullptr ? gpuMvTable->num_keys(stream) : 0;
+            Index numValuesInTable = gpuMvTable != nullptr ? gpuMvTable->num_values(stream) : 0;
+
+            const std::size_t batchsize = 100000;
+            const std::size_t iters =  SDIV(numUniqueKeys, batchsize);
+
+            void* temp_allocations[3];
+            std::size_t temp_allocation_sizes[3];
+            
+            temp_allocation_sizes[0] = sizeof(Key) * numUniqueKeys; // h_uniqueKeys
+            temp_allocation_sizes[1] = sizeof(Index) * (numUniqueKeys+1); // h_compactOffsetTmp
+            temp_allocation_sizes[2] = sizeof(Value) * numValuesInTable; // h_compactValues
+            std::size_t requiredbytes = d_temp == nullptr ? 0 : temp_bytes;
+            cudaError_t cubstatus = cub::AliasTemporaries(
+                d_temp,
+                requiredbytes,
+                temp_allocations,
+                temp_allocation_sizes
+            );
+            assert(cubstatus == cudaSuccess);
+
+            if(d_temp == nullptr){
+                temp_bytes = requiredbytes;
+                return;
+            }
+
+            if(isCompact) return;
+
+            assert(temp_bytes >= requiredbytes);
+
+            Key* const d_tmp_uniqueKeys = static_cast<Key*>(temp_allocations[0]);
+            Index* const d_tmp_compactOffset = static_cast<Index*>(temp_allocations[1]);
+            Value* const d_tmp_compactValues = static_cast<Value*>(temp_allocations[2]);
+
+            Index numUniqueKeys2 = 0;
+   
+            gpuMvTable->retrieve_all_keys(
+                d_tmp_uniqueKeys,
+                numUniqueKeys2,
+                stream
+            ); CUDACHECKASYNC;
+
+            if(numUniqueKeys != numUniqueKeys2){
+                std::cerr << numUniqueKeys << " " << numUniqueKeys2 << "\n";
+            }
+            assert(numUniqueKeys == numUniqueKeys2);
+
+            retrieve(
+                d_tmp_uniqueKeys,
+                numUniqueKeys,
+                d_tmp_compactOffset,
+                d_tmp_compactOffset + 1,
+                d_tmp_compactValues,
+                numValuesInTable,
+                stream
+            );
+
+            //clear table
+            gpuMvTable.reset();
+            numKeys = 0;
+            numValues = 0;
+
+            //construct new table
+            gpuKeyIndexTable = std::move(
+                std::make_unique<CompactKeyIndexTable>(
+                    numUniqueKeys / load
+                )
+            );
+
+            d_compactOffsets.resize(numUniqueKeys + 1);
+            d_compactValues.resize(numValuesInTable);
+
+            //copy offsets to gpu, convert from Index to int
+            gpuhashtablekernels::assignmentKernel
+            <<<SDIV(numUniqueKeys+1, 256), 256, 0, stream>>>(
+                d_compactOffsets.data(), 
+                d_tmp_compactOffset, 
+                numUniqueKeys+1
+            );
+            CUDACHECKASYNC;
+            
+            cudaMemcpyAsync(
+                d_compactValues, 
+                d_tmp_compactValues, 
+                d_compactValues.sizeInBytes(), 
+                D2D, 
+                stream
+            ); CUDACHECKASYNC;
+
+            gpuhashtablekernels::callInsertIotaValuesKernel(
+                *gpuKeyIndexTable,
+                d_tmp_uniqueKeys,
+                0,
+                numUniqueKeys,
+                stream
+            );
+            numKeys = numUniqueKeys;
+            numValues = numValuesInTable;
+            
+            isCompact = true;
+
+            CUDACHECK(cudaStreamSynchronize(stream));
+        }
+
+
+        #endif
+
 
         std::size_t getMakeCopyTempBytes() const{
             if(!isCompact){
@@ -1055,364 +1206,6 @@ namespace gpu{
 
         gpuhashtablekernels::fixTableKeysKernel<<<grid, block, 0, stream>>>(d_keys, numKeys, isValidKey); CUDACHECKASYNC;
     }
-
-
-    #if 0
-
-    template<class Key, class Value>
-    class CpuReadOnlyMultiValueHashTableWithWarpcoreLookup{
-        static_assert(std::is_integral<Key>::value, "Key must be integral!");
-    public:
-
-        using WarpcoreLookup = warpcore::SingleValueHashTable<Key, std::pair<Value, BucketSize>>;
-
-        struct QueryResult{
-            int numValues;
-            const Value* valuesBegin;
-        };
-
-        CpuReadOnlyMultiValueHashTableWithWarpcoreLookup() = default;
-        CpuReadOnlyMultiValueHashTableWithWarpcoreLookup(const CpuReadOnlyMultiValueHashTableWithWarpcoreLookup&) = default;
-        CpuReadOnlyMultiValueHashTableWithWarpcoreLookup(CpuReadOnlyMultiValueHashTableWithWarpcoreLookup&&) = default;
-        CpuReadOnlyMultiValueHashTableWithWarpcoreLookup& operator=(const CpuReadOnlyMultiValueHashTableWithWarpcoreLookup&) = default;
-        CpuReadOnlyMultiValueHashTableWithWarpcoreLookup& operator=(CpuReadOnlyMultiValueHashTableWithWarpcoreLookup&&) = default;
-
-        CpuReadOnlyMultiValueHashTableWithWarpcoreLookup(
-            std::vector<Key> keys, 
-            std::vector<Value> vals, 
-            int maxValuesPerKey,
-            const std::vector<int>& gpuIds,
-            bool valuesOfSameKeyMustBeSorted = false
-        ){
-            init(std::move(keys), std::move(vals), maxValuesPerKey, gpuIds, valuesOfSameKeyMustBeSorted);
-        }
-
-        CpuReadOnlyMultiValueHashTableWithWarpcoreLookup(
-            std::vector<Key> keys, 
-            std::vector<Value> vals, 
-            int maxValuesPerKey,
-            bool valuesOfSameKeyMustBeSorted = false
-        ){
-            init(std::move(keys), std::move(vals), maxValuesPerKey, valuesOfSameKeyMustBeSorted);
-        }
-
-        CpuReadOnlyMultiValueHashTableWithWarpcoreLookup(
-            std::uint64_t maxNumValues_
-        ) : buildMaxNumValues{maxNumValues_}{
-            buildkeys.reserve(buildMaxNumValues);
-            buildvalues.reserve(buildMaxNumValues);
-        }
-
-        bool operator==(const CpuReadOnlyMultiValueHashTableWithWarpcoreLookup& rhs) const{
-            return values == rhs.values && lookup == rhs.lookup;
-        }
-
-        bool operator!=(const CpuReadOnlyMultiValueHashTableWithWarpcoreLookup& rhs) const{
-            return !(operator==(rhs));
-        }
-
-        void init(
-            std::vector<Key> keys, 
-            std::vector<Value> vals, 
-            int maxValuesPerKey,
-            ThreadPool* threadPool,
-            bool valuesOfSameKeyMustBeSorted = false
-        ){
-            init(std::move(keys), std::move(vals), maxValuesPerKey, threadPool, {}, valuesOfSameKeyMustBeSorted);
-        }
-
-        void init(
-            std::vector<Key> keys, 
-            std::vector<Value> vals, 
-            int maxValuesPerKey,
-            ThreadPool* threadPool,
-            const std::vector<int>& gpuIds,
-            bool valuesOfSameKeyMustBeSorted = false
-        ){
-            assert(keys.size() == vals.size());
-
-            //std::cerr << "init valuesOfSameKeyMustBeSorted = " << valuesOfSameKeyMustBeSorted << "\n";
-
-            if(isInit) return;
-
-            std::vector<read_number> countsPrefixSum;
-            values = std::move(vals);
-
-            if(keys.size() == 0) return;
-
-            #ifdef __NVCC__            
-            if(gpuIds.size() == 0){
-            #endif
-                using GroupByKeyCpu = care::cpu::cpuhashtabledetail::GroupByKeyCpu<Key, Value, read_number>;
-
-                GroupByKeyCpu groupByKey(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
-                groupByKey.execute(keys, values, countsPrefixSum);
-            #ifdef __NVCC__
-            }else{
-
-                bool success = false;
-
-                using GroupByKeyCpu = care::cpu::cpuhashtabledetail::GroupByKeyCpu<Key, Value, read_number>;
-                using GroupByKeyGpu = care::cpu::cpuhashtabledetail::GroupByKeyGpu<Key, Value, read_number>;
-
-                #ifdef CARE_HAS_WARPCORE
-                using GroupByKeyGpuWarpcore = cpuhashtabledetail::GroupByKeyGpuWarpcore<Key, Value, read_number>;
-
-                if(true || valuesOfSameKeyMustBeSorted){
-
-                    GroupByKeyGpu groupByKeyGpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
-                    success = groupByKeyGpu.execute(keys, values, countsPrefixSum);
-
-                }else{
-
-                    GroupByKeyGpuWarpcore groupByKeyGpuWarpcore(maxValuesPerKey);
-                    success = groupByKeyGpuWarpcore.execute(keys, values, countsPrefixSum);
-
-                    if(!success){
-                        GroupByKeyGpu groupByKeyGpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
-                        success = groupByKeyGpu.execute(keys, values, countsPrefixSum);
-                    }
-
-                }
-                #else 
-                    GroupByKeyGpu groupByKeyGpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
-                    success = groupByKeyGpu.execute(keys, values, countsPrefixSum);
-                #endif           
-
-                if(!success){
-                    GroupByKeyCpu groupByKeyCpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
-                    groupByKeyCpu.execute(keys, values, countsPrefixSum);
-                }
-            }
-            #endif
-
-            lookup = std::make_unique<WarpcoreLookup>(keys.size() / 0.8f);
-
-            auto buildKeyLookup = [me=this, keys = std::move(keys), countsPrefixSum = std::move(countsPrefixSum)](){
-
-                constexpr int batchsize = 500000;
-                const int iterations = SDIV(keys.size(), batchsize);
-
-                helpers::SimpleAllocationDevice<Key> d_keys(batchsize);
-                helpers::SimpleAllocationDevice<read_number> d_prefixsum(batchsize+1);
-                helpers::SimpleAllocationDevice<std::pair<Value, BucketSize>> d_lookupvalues(batchsize);
-
-                for(int iter = 0; iter < iterations; iter++){
-                    const int begin = iter * batchsize;
-                    const int end = std::min((iter+1) * batchsize, int(keys.size()));
-                    const int num = end - begin;
-
-                    CUDACHECK(cudaMemcpyAsync(
-                        d_keys.data(),
-                        keys.data() + begin,
-                        sizeof(Key) * num;
-                        H2D,
-                        cudaStreamPerThread
-                    ));
-
-                    CUDACHECK(cudaMemcpyAsync(
-                        d_prefixsum.data(),
-                        countsPrefixSum.data() + begin,
-                        sizeof(read_number) * (num + 1);
-                        H2D,
-                        cudaStreamPerThread
-                    ));
-
-                    helpers::lambda_kernel<<<SDIV(batchsize, 256), 256, 0, cudaStreamPerThread>>>(
-                        [
-                            d_prefixsum = d_prefixsum.data(),
-                            d_lookupvalues = d_lookupvalues.data(),
-                            num
-                        ] __device__ (){
-                            const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-
-                            if(tid < num){
-                                d_lookupvalues[tid].first = d_prefixsum[tid];
-                                d_lookupvalues[tid].second = d_prefixsum[tid + 1] - d_prefixsum[tid];
-                            }
-                        }
-                    ); CUDACHECKASYNC;
-
-                    me->lookup->insert(
-                        d_keys.data(),
-                        d_prefixsum.data(),
-                        num,
-                        cudaStreamPerThread
-                    );
-
-                }
-
-                me->isInit = true;
-            };
-
-            if(threadPool != nullptr){
-                threadPool->enqueue(std::move(buildKeyLookup));
-            }else{
-                buildKeyLookup();
-            }
-
-        }
-
-        void insert(const Key* keys, const Value* values, int N){
-            assert(keys != nullptr);
-            assert(values != nullptr);
-            assert(buildMaxNumValues >= buildkeys.size() + N);
-
-            buildkeys.insert(buildkeys.end(), keys, keys + N);
-            buildvalues.insert(buildvalues.end(), values, values + N);
-        }
-
-        void finalize(int maxValuesPerKey, ThreadPool* threadPool, bool valuesOfSameKeyMustBeSorted, const std::vector<int>& gpuIds = {}){
-            init(std::move(buildkeys), std::move(buildvalues), maxValuesPerKey, threadPool, gpuIds, valuesOfSameKeyMustBeSorted);            
-        }
-
-        bool isInitialized() const noexcept{
-            return isInit;
-        }
-
-        void query(void* d_temp, size_t& d_tempbytes, void* h_temp, size_t& h_tempbytes, const Key* d_keys, std::size_t numKeys, QueryResult* resultsOutput, cudaStream_t stream) const{
-            const int required_d_temp_bytes = sizeof(std::pair<Value, BucketSize>) * numKeys + sizeof(QueryResult) * numKeys;
-            const int required_h_temp_bytes = sizeof(QueryResult) * numKeys;
-
-            if(d_temp == nullptr){
-                d_tempbytes = required_d_temp_bytes;
-            }
-
-            if(h_temp == nullptr){
-                h_tempbytes = required_h_temp_bytes;
-            }
-
-            if(d_temp == nullptr || h_temp == nullptr){
-                return;
-            }
-
-            assert(d_tempbytes >= required_d_temp_bytes);
-            assert(h_tempbytes >= required_h_temp_bytes);
-
-            std::pair<Value, BucketSize>* d_queryoutput = (std::pair<Value, BucketSize>*)d_temp;
-            QueryResult* d_resultsOutput = (QueryResult*)(d_queryoutput + numKeys);
-            QueryResult* h_resultsOutput = (QueryResult*)h_temp;
-
-            CUDACHECK(cudaMemsetAsync(
-                d_tempoutput,
-                0, 
-                required_d_temp_bytes,
-                stream
-            ));
-
-            lookup->retrieve(
-                d_keys,
-                numKeys,
-                d_queryoutput,
-                stream
-            );
-
-            helpers::lambda_kernel<<<SDIV(numKeys, 256), 256, 0, stream>>>(
-                [
-                    d_queryoutput,
-                    d_resultsOutput,
-                    pointerToHostValues = values.data(),
-                    numKeys
-                ] __device__ (){
-                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-
-                    if(tid < numKeys){
-                        if(notempy){
-                            d_resultsOutput[tid].numValues = d_queryoutput[tid].second;
-                            const auto valuepos = d_queryoutput[tid].first;
-                            d_resultsOutput[tid].valuesBegin = pointerToHostValues + valuepos;
-                        }else{
-                            d_resultsOutput[tid].numValues = 0;
-                            d_resultsOutput[tid].valuesBegin = nullptr;
-                        }
-                    }
-                }
-            ); CUDACHECKASYNC;
-
-            CUDACHECK(cudaMemcpyAsync(
-                h_resultsOutput,
-                d_resultsOutput,
-                sizeof(QueryResult) * numKeys,
-                D2H,
-                stream
-            ));
-
-            CUDACHECK(cudaStreamSynchronize(stream));
-
-            std::copy_n(h_resultsOutput, numKeys, resultsOutput);
-        }
-
-        MemoryUsage getMemoryInfo() const{
-            MemoryUsage result;
-            result.host = sizeof(Value) * values.capacity();
-            result.host += lookup.getMemoryInfo().host;
-            result.host += sizeof(Key) * buildkeys.capacity();
-            result.host += sizeof(Value) * buildvalues.capacity();
-
-            result.device = lookup.getMemoryInfo().device;
-
-            std::cerr << lookup.getMemoryInfo().host << " " << result.host << " bytes\n";
-
-            return result;
-        }
-
-        void writeToStream(std::ostream& os) const{
-            assert(isInit);
-
-            const std::size_t elements = values.size();
-            const std::size_t bytes = sizeof(Value) * elements;
-            os.write(reinterpret_cast<const char*>(&elements), sizeof(std::size_t));
-            os.write(reinterpret_cast<const char*>(values.data()), bytes);
-
-            lookup.writeToStream(os);
-        }
-
-        void loadFromStream(std::ifstream& is){
-            destroy();
-
-            std::size_t elements;
-            is.read(reinterpret_cast<char*>(&elements), sizeof(std::size_t));
-            values.resize(elements);
-            const std::size_t bytes = sizeof(Value) * elements;
-            is.read(reinterpret_cast<char*>(values.data()), bytes);
-
-            lookup.loadFromStream(is);
-            isInit = true;
-        }
-
-        void destroy(){
-            std::vector<Value> tmp;
-            std::swap(values, tmp);
-
-            lookup.destroy();
-            isInit = false;
-        }
-
-        static std::size_t estimateGpuMemoryRequiredForInit(std::size_t numElements){
-
-            std::size_t mem = 0;
-            mem += sizeof(Key) * numElements; //d_keys
-            mem += sizeof(Value) * numElements; //d_values
-            mem += sizeof(read_number) * numElements; //d_indices
-            mem += std::max(sizeof(read_number), sizeof(Value)) * numElements; //d_indices_tmp for sorting d_indices or d_values_tmp for sorted values
-
-            return mem;
-        }
-
-    private:
-
-        using ValueIndex = std::pair<read_number, BucketSize>;
-        bool isInit = false;
-        std::uint64_t buildMaxNumValues = 0;
-        std::vector<Key> buildkeys;
-        std::vector<Value> buildvalues;
-        // values with the same key are stored in contiguous memory locations
-        // a single-value hashmap maps keys to the range of the corresponding values
-        std::vector<Value> values; 
-        std::unique_ptr<WarpcoreLookup> lookup;
-    };
-
-    #endif
 
 
 

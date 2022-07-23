@@ -79,7 +79,7 @@ namespace care{
 
         HOSTDEVICEQUALIFIER
         void base(char b){
-            std::uint16_t enc = SequenceHelpers::convertDNACharToIntNoIf(b);
+            std::uint16_t enc = SequenceHelpers::encodeBase(b);
             data = (data & ~0x03) | enc;
             //this->b = b;
         }

@@ -5,18 +5,18 @@ HOSTLINKER=g++
 
 PREFIX = /usr/local
 
-CUB_INCDIR = ./dependencies/cub-1.16.0
-THRUST_INCDIR = ./dependencies/thrust-1.16.0
+CUB_INCDIR = ./dependencies/cub-1.17.0
+THRUST_INCDIR = ./dependencies/thrust-1.17.0
 WARPCORE_INCDIR = ./dependencies/warpcore/include
-RMM_INCDIR = ./dependencies/rmm/include
-SPDLOG_INCDIR = ./dependencies/spdlog/include
+RMM_INCDIR = ./dependencies/rmm-22.06.01/include
+SPDLOG_INCDIR = ./dependencies/spdlog-1.10.0/include
 
 WARPCORE_FLAGS = -DCARE_HAS_WARPCORE -I$(WARPCORE_INCDIR)
 
 CXXFLAGS = 
 
 COMPILER_WARNINGS = -Wall -Wextra 
-COMPILER_DISABLED_WARNING = -Wno-terminate -Wno-deprecated-copy
+COMPILER_DISABLED_WARNING = -Wno-terminate -Wno-class-memaccess
 
 CFLAGS_BASIC = $(COMPILER_WARNINGS) $(COMPILER_DISABLED_WARNING) -fopenmp -Iinclude -O3 -g -march=native -I$(THRUST_INCDIR)
 CFLAGS_DEBUG_BASIC = $(COMPILER_WARNINGS) $(COMPILER_DISABLED_WARNING) -fopenmp -g -Iinclude -O0 -march=native -I$(THRUST_INCDIR)

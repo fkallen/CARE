@@ -11,6 +11,7 @@
 #include <gpu/forest_gpu.cuh>
 
 #include <config.hpp>
+#include <gpu/sequenceconversionkernels.cuh>
 
 #include <map>
 
@@ -47,69 +48,59 @@ struct IsHqAnchor{
 
 
 
+void callShiftedHammingDistanceKernel(
+    int* d_alignment_overlaps,
+    int* d_alignment_shifts,
+    int* d_alignment_nOps,
+    AlignmentOrientation* d_alignment_best_alignment_flags,
+    const unsigned int* d_anchorSequencesData,
+    const unsigned int* d_candidateSequencesData,
+    const int* d_anchorSequencesLength,
+    const int* d_candidateSequencesLength,
+    const int* d_anchorIndicesOfCandidates,
+    int numAnchors,
+    int numCandidates,
+    const bool* d_anchorContainsN,
+    bool removeAmbiguousAnchors,
+    const bool* d_candidateContainsN,
+    bool removeAmbiguousCandidates,
+    int maximumSequenceLengthAnchor,
+    int maximumSequenceLengthCandidate,
+    std::size_t encodedSequencePitchInInts2BitAnchor,
+    std::size_t encodedSequencePitchInInts2BitCandidate,
+    int min_overlap,
+    float maxErrorRate,
+    float min_overlap_ratio,
+    float estimatedNucleotideErrorRate,
+    cudaStream_t stream
+);
 
-
-
-
-
-
-void call_popcount_shifted_hamming_distance_kernel_async(
-            int* d_alignment_overlaps,
-            int* d_alignment_shifts,
-            int* d_alignment_nOps,
-            bool* d_alignment_isValid,
-            AlignmentOrientation* d_alignment_best_alignment_flags,
-            const unsigned int* d_anchorSequencesData,
-            const unsigned int* d_candidateSequencesData,
-            const int* d_anchorSequencesLength,
-            const int* d_candidateSequencesLength,
-            const int* d_candidates_per_anchor_prefixsum,
-            const int* d_candidates_per_anchor,
-            const int* d_anchorIndicesOfCandidates,
-            int numAnchors,
-            int numCandidates,
-            const bool* d_anchorContainsN,
-            bool removeAmbiguousAnchors,
-            const bool* d_candidateContainsN,
-            bool removeAmbiguousCandidates,
-            int maximumSequenceLength,
-            int encodedSequencePitchInInts2Bit,
-            int min_overlap,
-            float maxErrorRate,
-            float min_overlap_ratio,
-            float estimatedNucleotideErrorRate,
-            cudaStream_t stream,
-            rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource());
-
-
-void call_popcount_rightshifted_hamming_distance_kernel_async(
-            int* d_alignment_overlaps,
-            int* d_alignment_shifts,
-            int* d_alignment_nOps,
-            bool* d_alignment_isValid,
-            AlignmentOrientation* d_alignment_best_alignment_flags,
-            const unsigned int* d_anchorSequencesData,
-            const unsigned int* d_candidateSequencesData,
-            const int* d_anchorSequencesLength,
-            const int* d_candidateSequencesLength,
-            const int* d_candidates_per_anchor_prefixsum,
-            const int* d_candidates_per_anchor,
-            const int* d_anchorIndicesOfCandidates,
-            int numAnchors,
-            int numCandidates,
-            const bool* d_anchorContainsN,
-            bool removeAmbiguousAnchors,
-            const bool* d_candidateContainsN,
-            bool removeAmbiguousCandidates,
-            int maximumSequenceLength,
-            int encodedSequencePitchInInts2Bit,
-            int min_overlap,
-            float maxErrorRate,
-            float min_overlap_ratio,
-            float estimatedNucleotideErrorRate,
-            cudaStream_t stream,
-            rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource());
-
+void callRightShiftedHammingDistanceKernel(
+    int* d_alignment_overlaps,
+    int* d_alignment_shifts,
+    int* d_alignment_nOps,
+    AlignmentOrientation* d_alignment_best_alignment_flags,
+    const unsigned int* d_anchorSequencesData,
+    const unsigned int* d_candidateSequencesData,
+    const int* d_anchorSequencesLength,
+    const int* d_candidateSequencesLength,
+    const int* d_anchorIndicesOfCandidates,
+    int numAnchors,
+    int numCandidates,
+    const bool* d_anchorContainsN,
+    bool removeAmbiguousAnchors,
+    const bool* d_candidateContainsN,
+    bool removeAmbiguousCandidates,
+    int maximumSequenceLengthAnchor,
+    int maximumSequenceLengthCandidate,
+    std::size_t encodedSequencePitchInInts2BitAnchor,
+    std::size_t encodedSequencePitchInInts2BitCandidate,
+    int min_overlap,
+    float maxErrorRate,
+    float min_overlap_ratio,
+    float estimatedNucleotideErrorRate,
+    cudaStream_t stream
+);
 
 void callSelectIndicesOfGoodCandidatesKernelAsync(
             int* d_indicesOfGoodCandidates,
@@ -169,6 +160,36 @@ void callComputeMsaSizesKernel(
     cudaStream_t stream
 );
 
+void callConstructAndRefineMultipleSequenceAlignmentsKernel(
+    int* __restrict__ d_newIndices,
+    int* __restrict__ d_newNumIndicesPerAnchor,
+    int* __restrict__ d_newNumIndices,
+    GPUMultiMSA multiMSA,
+    const int* __restrict__ overlaps,
+    const int* __restrict__ shifts,
+    const int* __restrict__ nOps,
+    const AlignmentOrientation* __restrict__ bestAlignmentFlags,
+    const int* __restrict__ anchorLengths,
+    const int* __restrict__ candidateLengths,
+    int* __restrict__ indices,
+    int* __restrict__ indices_per_anchor,
+    const int* __restrict__ candidatesPerAnchorPrefixSum,            
+    const unsigned int* __restrict__ anchorSequencesData,
+    const unsigned int* __restrict__ candidateSequencesData,
+    const bool* __restrict__ d_isPairedCandidate,
+    const char* __restrict__ anchorQualities,
+    const char* __restrict__ candidateQualities,
+    bool* __restrict__ d_shouldBeKept,
+    int numAnchors,
+    float desiredAlignmentMaxErrorRate,
+    bool canUseQualityScores,
+    int encodedSequencePitchInInts,
+    size_t qualityPitchInBytes,
+    int dataset_coverage,
+    int numRefinementIterations,
+    cudaStream_t stream
+);
+
 void callConstructMultipleSequenceAlignmentsKernel_async(
     GPUMultiMSA multiMSA,
     const int* d_overlaps,
@@ -192,38 +213,6 @@ void callConstructMultipleSequenceAlignmentsKernel_async(
     size_t qualityPitchInBytes,
     cudaStream_t stream
 );
-
-void callMsaCandidateRefinementKernel_singleiter_async(
-    int* d_newIndices,
-    int* d_newNumIndicesPerAnchor,
-    int* d_newNumIndices,
-    GPUMultiMSA multiMSA,
-    const AlignmentOrientation* d_bestAlignmentFlags,
-    const int* d_shifts,
-    const int* d_nOps,
-    const int* d_overlaps,
-    const unsigned int* d_anchorSequencesData,
-    const unsigned int* d_candidateSequencesData,
-    const bool* d_isPairedCandidate,
-    const int* d_anchorSequencesLength,
-    const int* d_candidateSequencesLength,
-    const char* d_anchorQualities,
-    const char* d_candidateQualities,
-    bool* d_shouldBeKept,
-    const int* d_candidates_per_anchor_prefixsum,
-    float desiredAlignmentMaxErrorRate,
-    int numAnchors,
-    bool canUseQualityScores,
-    size_t encodedSequencePitchInInts,
-    size_t qualityPitchInBytes,
-    const int* d_indices,
-    const int* d_indices_per_anchor,
-    int dataset_coverage,
-    int iteration,
-    bool* d_anchorIsFinished,
-    cudaStream_t stream
-);
-
 
 void callMsaCandidateRefinementKernel_multiiter_async(
     int* d_newIndices,
@@ -421,54 +410,6 @@ void callConstructSequenceCorrectionResultsKernel(
 );
 
 
-void callConversionKernel2BitTo2BitHiLoNN(
-            const unsigned int* d_inputdata,
-            size_t inputpitchInInts,
-            unsigned int* d_outputdata,
-            size_t outputpitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            cudaStream_t stream);
-
-void callConversionKernel2BitTo2BitHiLoNT(
-            const unsigned int* d_inputdata,
-            size_t inputpitchInInts,
-            unsigned int* d_outputdata,
-            size_t outputpitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            cudaStream_t stream);
-
-void callConversionKernel2BitTo2BitHiLoTT(
-            const unsigned int* d_inputdata,
-            size_t inputpitchInInts,
-            unsigned int* d_outputdata,
-            size_t outputpitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            cudaStream_t stream);            
-
-void callEncodeSequencesTo2BitKernel(
-    unsigned int* d_encodedSequences,
-    const char* d_decodedSequences,
-    const int* d_sequenceLengths,
-    size_t decodedSequencePitchInBytes,
-    size_t encodedSequencePitchInInts,
-    int numSequences,
-    int groupsize,
-    cudaStream_t stream
-);
-
-void callDecodeSequencesFrom2BitKernel(
-    char* d_decodedSequences,
-    const unsigned int* d_encodedSequences,
-    const int* d_sequenceLengths,
-    size_t decodedSequencePitchInBytes,
-    size_t encodedSequencePitchInInts,
-    int numSequences,
-    int groupsize,
-    cudaStream_t stream
-);
 
 /*
     If toFind[s] exists in segment s, remove it from this segment s 

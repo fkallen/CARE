@@ -1272,7 +1272,7 @@ public: //inherited GPUReadStorage interface
                         CUDACHECK(cudaMemcpyAsync(
                             ((char*)d_gatherdestination) + gatherdestinationPitchInBytes * begin,
                             hostpointers[bufferIndex],
-                            sizeof(unsigned int) * numColumnsCompressedQualitiesInts,
+                            sizeof(unsigned int) * numColumnsCompressedQualitiesInts * sizeOfCurrentBatch,
                             H2D,
                             tempData->streams[bufferIndex]
                         ));
@@ -1469,7 +1469,7 @@ public: //inherited GPUReadStorage interface
                     CUDACHECK(cudaMemcpyAsync(
                         ((char*)d_gatherdestination) + gatherdestinationPitchInBytes * begin,
                         hostpointers[bufferIndex],
-                        sizeof(unsigned int) * numColumnsCompressedQualitiesInts,
+                        sizeof(unsigned int) * numColumnsCompressedQualitiesInts * sizeOfCurrentBatch,
                         H2D,
                         tempData->streams[bufferIndex]
                     ));
