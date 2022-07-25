@@ -36,8 +36,6 @@ namespace cudauniquekernels{
         const T* __restrict__ input,
         const int* __restrict__ segmentIds,
         int numSegments,
-        int minimumSegmentSize, //only process segments which are at least of size minimumSegmentSize 
-        int maximumSegmentSize, //only process segments which are at most of size maximumSegmentSize 
         OffsetIterator begin_offsets,
         OffsetIterator end_offsets,
         int begin_bit = 0,
@@ -73,10 +71,6 @@ namespace cudauniquekernels{
             const int segmentEnd = end_offsets[segmentId];
             const int segmentSize = segmentEnd - segmentBegin;
 
-            if(segmentSize < minimumSegmentSize || segmentSize > maximumSegmentSize){
-                //segment size not in specified range. skip
-                continue;
-            }
             if(segmentSize == 0){
                 if(threadIdx.x == 0){
                     unique_lengths[segmentId] = 0;
@@ -129,8 +123,6 @@ namespace cudauniquekernels{
         const T* d_input,
         const int* d_segmentIds,
         int numSegments,
-        int minimumSegmentSize, //only process segments which are at least of size minimumSegmentSize 
-        int maximumSegmentSize, //only process segments which are at most of size maximumSegmentSize 
         OffsetIterator begin_offsets,
         OffsetIterator end_offsets,
         int begin_bit,
@@ -163,8 +155,6 @@ namespace cudauniquekernels{
             d_input,
             d_segmentIds,
             numSegments,
-            minimumSegmentSize,
-            maximumSegmentSize,
             begin_offsets,
             end_offsets,
             begin_bit,
@@ -363,8 +353,8 @@ struct GpuSegmentedUnique{
         T* d_unique_items,
         int* d_unique_lengths,
         int numSegments,
-        int* d_begin_offsets,
-        int* d_end_offsets,
+        const int* d_begin_offsets,
+        const int* d_end_offsets,
         cudaStream_t stream = 0,
         rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource()
     ){
@@ -515,8 +505,6 @@ struct GpuSegmentedUnique{
                     d_items, \
                     d_allSegmentIds.data() + numSegmentsRounded * partitionIndex, \
                     h_partitionSizes[partitionIndex], \
-                    partitionIndex == 0 ? 0 : boundaries[partitionIndex-1] + 1, \
-                    boundaries[partitionIndex], \
                     d_begin_offsets, \
                     d_end_offsets, \
                     0, \
