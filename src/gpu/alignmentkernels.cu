@@ -85,6 +85,7 @@ namespace alignmentdetail{
 
 
     template<int blocksize, int tilesize>
+    __launch_bounds__(blocksize)
     __global__
     void selectIndicesOfGoodCandidatesKernel(
         int* __restrict__ d_indicesOfGoodCandidates,
@@ -165,6 +166,7 @@ namespace alignmentdetail{
 
 
     template<int BLOCKSIZE>
+    __launch_bounds__(BLOCKSIZE)
     __global__
     void cuda_filter_alignments_by_mismatchratio_kernel(
         AlignmentOrientation* __restrict__ bestAlignmentFlags,
@@ -374,6 +376,7 @@ namespace alignmentdetail{
     */
 
     template<int blocksize, int encoderGroupSize, bool usePositiveShifts, bool useNegativeShifts>
+    __launch_bounds__(blocksize)
     __global__
     void shiftedHammingDistanceKernelSmem1(
         int* __restrict__ d_alignment_overlaps,
