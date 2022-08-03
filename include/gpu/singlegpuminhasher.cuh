@@ -82,9 +82,11 @@ namespace gpu{
                 const int tableIndex = w / warpsPerTable;
                 const int valueIndex = tilesPerWarp * (w % warpsPerTable) + tile.meta_group_rank();
                 const int keyIndex = numKeysPerTable * tableIndex + valueIndex;
-                if(isValid[keyIndex]){
-                    DeviceTableInsertView table = tables[tableIndex];
-                    table.insert(keys[keyIndex], values[valueIndex], tile);
+                if(keyIndex < numKeysPerTable * numTables){
+                    if(isValid[keyIndex]){
+                        DeviceTableInsertView table = tables[tableIndex];
+                        table.insert(keys[keyIndex], values[valueIndex], tile);
+                    }
                 }
                 //ensure that different groups in the same warp do not operate on different hashtables (warpcore issue)
                 warp.sync();
