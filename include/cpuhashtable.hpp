@@ -22,13 +22,16 @@
 
 namespace care{
 
-    template<class Key, class Value>
+    //computes the new hashtable size from the current hashtable size on automatic rehash
+    struct RehashPolicyDouble {
+        constexpr std::size_t operator()(const std::size_t x) noexcept { return x * 2; }
+    };
+
+    template<class Key, class Value, class RehashPolicy = RehashPolicyDouble>
     class AoSCpuSingleValueHashTable{
         static_assert(std::is_integral<Key>::value, "Key must be integral!");
 
     public:
-        //computes the new hashtable size from the current hashtable size on automatic rehash
-        using RehashPolicy = std::function<std::size_t(std::size_t)>; 
         class QueryResult{
         public:
             QueryResult() = default;
@@ -58,8 +61,8 @@ namespace care{
         AoSCpuSingleValueHashTable& operator=(const AoSCpuSingleValueHashTable&) = default;
         AoSCpuSingleValueHashTable& operator=(AoSCpuSingleValueHashTable&&) = default;
 
-        AoSCpuSingleValueHashTable(std::size_t size = 1, float load = 0.8, RehashPolicy pol = [](const std::size_t x){ return x * 2; })
-            : load(load), size(size), capacity(size/load), rehashPolicy(pol)
+        AoSCpuSingleValueHashTable(std::size_t size = 1, float load = 0.8)
+            : load(load), size(size), capacity(size/load)
         {
             storage.resize(capacity, emptySlot);
         }
@@ -97,7 +100,7 @@ namespace care{
             using hasher = hashers::MurmurHash<std::uint64_t>;
 
             if(numKeys >= size){
-                rehash(rehashPolicy(size));
+                rehash(RehashPolicy()(size));
             }
 
             const std::uint64_t key64 = std::uint64_t(key);
@@ -127,7 +130,7 @@ namespace care{
             using hasher = hashers::MurmurHash<std::uint64_t>;
 
             if(numKeys >= size){
-                rehash(rehashPolicy(size));
+                rehash(RehashPolicy()(size));
             }
 
             const std::uint64_t key64 = std::uint64_t(key);
@@ -285,7 +288,6 @@ namespace care{
         std::size_t maxProbes{};
         std::size_t size{};
         std::size_t capacity{};
-        RehashPolicy rehashPolicy{};
         std::vector<Data> storage{};        
     };
 
