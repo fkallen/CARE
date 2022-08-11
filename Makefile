@@ -59,7 +59,8 @@ SOURCES_CORRECT_GPU = \
     src/gpu/gpuminhasherconstruction.cu \
     src/gpu/main_correct_gpu.cu \
     src/gpu/msakernels.cu \
-    src/gpu/sequenceconversionkernels.cu
+    src/gpu/sequenceconversionkernels.cu \
+	src/gpu/util_gpu.cu
 
 #sources for extend_cpu
 SOURCES_EXTEND_CPU = \
@@ -86,7 +87,8 @@ SOURCES_EXTEND_GPU = \
     src/gpu/main_extend_gpu.cu \
     src/gpu/msakernels.cu \
     src/gpu/readextension_gpu.cu \
-    src/gpu/sequenceconversionkernels.cu 
+    src/gpu/sequenceconversionkernels.cu \
+	src/gpu/util_gpu.cu
 
 
 EXECUTABLE_CORRECT_CPU = care-cpu
@@ -276,5 +278,9 @@ $(DIR)/readextension_gpu.o : src/gpu/readextension_gpu.cu
 
 $(DIR)/sequenceconversionkernels.o : src/gpu/sequenceconversionkernels.cu
 	$(CUDA_COMPILE)
+
+$(DIR)/util_gpu.o : src/gpu/util_gpu.cu
+	$(CUDA_COMPILE)
+	
 
 
