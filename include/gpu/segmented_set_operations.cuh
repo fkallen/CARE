@@ -62,23 +62,6 @@ void initAndSetOutputSegmentSizesSingleBlockKernel(
     }
 }
 
-template<class T, class U>
-__global__ 
-void setFirstSegmentIdsKernel(
-    const T* __restrict__ segmentSizes,
-    int* __restrict__ segmentIds,
-    const U* __restrict__ segmentOffsets,
-    int N
-){
-    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-    const int stride = blockDim.x * gridDim.x;
-
-    for(int i = tid; i < N; i += stride){
-        if(segmentSizes[i] > 0){
-            segmentIds[segmentOffsets[i]] = i;
-        }
-    }
-}
 
 }
 
