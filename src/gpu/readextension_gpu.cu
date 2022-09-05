@@ -559,7 +559,7 @@ void extend_gpu_pairedend(
     if(!isLastIteration){
 
         for(auto& x : gpuDataVector){
-            x.gpuReadExtender->insertSizeStddev = programOptions.fixedStddev == 0 ? 40 : programOptions.fixedStddev;
+            x.gpuReadExtender->insertSizeStddev = programOptions.fixedStddev == 0 ? programOptions.insertSizeStddev : programOptions.fixedStddev;
             //x.gpuReadExtender->insertSizeStddev = programOptions.fixedStddev == 0 ? 40 : 40;
         }
 

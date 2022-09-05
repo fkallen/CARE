@@ -754,7 +754,8 @@ namespace extension{
 
                 bool didMergeDifferentStrands = false;
 
-                if(r1l + r3l >= insertSize - insertSizeStddev + minimumOverlap){
+                //if the longest achievable pseudo read reaches the minimum required pseudo read length
+                if(r1l + r3l - minimumOverlap >= insertSize - insertSizeStddev){
                     std::string r3revc = SequenceHelpers::reverseComplementSequenceDecoded(r3.extendedRead.data(), r3.extendedRead.size());
 
                     MismatchRatioGlueDecider decider(minimumOverlap, maxRelativeErrorInOverlap);
@@ -763,13 +764,14 @@ namespace extension{
 
                     std::vector<std::pair<std::string, std::string>> possibleResults;
 
-                    const int maxNumberOfPossibilities = 2*insertSizeStddev + 1;
+                    const int minimumResultLength = std::max(r1.originalLength+1, insertSize - insertSizeStddev);
+                    const int maximumResultLength = std::min(r1l + r3l - minimumOverlap, insertSize + insertSizeStddev);
 
-                    for(int p = 0; p < maxNumberOfPossibilities; p++){
+                    for(int resultLength = minimumResultLength; resultLength <= maximumResultLength; resultLength++){
                         auto decision = decider(
                             r1.extendedRead, 
                             r3revc, 
-                            insertSize - insertSizeStddev + p,
+                            resultLength,
                             r1.qualityScores, 
                             r3.qualityScores
                         );
