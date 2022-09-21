@@ -225,6 +225,12 @@ namespace care{
                 }else if(outputFormat == FileFormat::FASTA){
                     outputFormat = FileFormat::FASTAGZ;
                 }
+            }else{
+                if(outputFormat == FileFormat::FASTQGZ){
+                    outputFormat = FileFormat::FASTQ;
+                }else if(outputFormat == FileFormat::FASTAGZ){
+                    outputFormat = FileFormat::FASTA;
+                }
             }
             constructOutputFileFromCorrectionResults(
                 programOptions.inputfiles, 
