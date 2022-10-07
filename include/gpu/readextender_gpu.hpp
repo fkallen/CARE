@@ -2258,15 +2258,6 @@ struct GpuReadExtender{
 
     }
 
-    ~GpuReadExtender(){
-        std::cerr << "readstorage handle memory:\n";
-        auto info = gpuReadStorage->getMemoryInfo(readStorageHandle);
-        std::cerr << "host: " << info.host << "\n";
-        for(const auto& pair : info.device){
-            std::cerr << "device " << pair.first << ": " << pair.second << "\n";
-        }
-    }
-
     static constexpr int getNumRefinementIterations() noexcept{
         return 5;
     }

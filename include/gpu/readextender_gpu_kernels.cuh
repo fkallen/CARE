@@ -2321,7 +2321,8 @@ namespace readextendergpukernels{
 
                 bool didMergeDifferentStrands = false;
 
-                if(extendedReadLength0 + extendedReadLength2 >= insertSize - insertSizeStddev + minimumOverlap){
+                //if the longest achievable pseudo read reaches the minimum required pseudo read length
+                if(extendedReadLength0 + extendedReadLength2 - minimumOverlap >= insertSize - insertSizeStddev){
                     //copy sequences to smem
 
                     for(int k = group.thread_rank(); k < extendedReadLength0; k += group.size()){
@@ -2336,26 +2337,25 @@ namespace readextendergpukernels{
 
                     group.sync();
 
-                    const int maxNumberOfPossibilities = 2*insertSizeStddev + 1;
+                    const int minimumResultLength = std::max(originalLength0+1, insertSize - insertSizeStddev);
+                    const int maximumResultLength = std::min(extendedReadLength0 + extendedReadLength2 - minimumOverlap, insertSize + insertSizeStddev);
 
                     gpu::MismatchRatioGlueDecider<blocksize> decider(smemDecider, minimumOverlap, maxRelativeErrorInOverlap);
                     gpu::QualityWeightedGapGluer gluer(originalLength0, originalLength2);
 
-                    for(int p = 0; p < maxNumberOfPossibilities; p++){                       
-
-                        const int resultlength = insertSize - insertSizeStddev + p;
+                    for(int resultLength = minimumResultLength; resultLength <= maximumResultLength; resultLength++){                       
 
                         auto decision = decider(
                             MyStringView(smemSequence, extendedReadLength0), 
                             MyStringView(smemSequence2, extendedReadLength2), 
-                            resultlength,
+                            resultLength,
                             MyStringView(&dataExtendedReadQualities[i0 * inputPitch], extendedReadLength0),
                             MyStringView(&dataExtendedReadQualities[i2 * inputPitch], extendedReadLength2)
                         );
 
                         if(decision.valid){
                             gluer(group, decision, myResultSequence + currentsize, myResultQualities + currentsize);
-                            currentsize += resultlength;
+                            currentsize += resultLength;
                             
                             didMergeDifferentStrands = true;
                             break;
