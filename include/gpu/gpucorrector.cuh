@@ -1,6 +1,9 @@
 #ifndef CARE_GPUCORRECTOR_CUH
 #define CARE_GPUCORRECTOR_CUH
 
+//#define CANDS_FOREST_FLAGS_DEFAULT 
+#define CANDS_FOREST_FLAGS_COMPUTE_AHEAD
+
 
 #include <hpc_helpers.cuh>
 #include <hpc_helpers/include/nvtx_markers.cuh>
@@ -1168,6 +1171,19 @@ namespace gpu{
             
             if(programOptions->correctCandidates) {
                 CUDACHECK(cudaEventRecord(events[0], stream));
+
+                #ifdef CANDS_FOREST_FLAGS_COMPUTE_AHEAD
+                if(programOptions->correctionType == CorrectionType::Forest){
+                    bool* h_excludeFlags = h_flagsCandidates.data();
+
+                    //corrections of candidates for which a high quality anchor correction exists will not be used
+                    //-> don't compute them
+                    for(int i = 0; i < currentNumCandidates; i++){
+                        const read_number candidateReadId = currentInput->h_candidate_read_ids[i];
+                        h_excludeFlags[i] = correctionFlags->isCorrectedAsHQAnchor(candidateReadId);
+                    }
+                }
+                #endif
             }
             
 
@@ -3189,44 +3205,83 @@ namespace gpu{
 
    
             #if 1
-                rmm::device_uvector<bool> d_flagsCandidates(currentNumCandidates, stream, mr);
-                bool* d_excludeFlags = d_flagsCandidates.data();
-                bool* h_excludeFlags = h_flagsCandidates.data();
+                #ifdef CANDS_FOREST_FLAGS_DEFAULT
+                    rmm::device_uvector<bool> d_flagsCandidates(currentNumCandidates, stream, mr);
+                    bool* d_excludeFlags = d_flagsCandidates.data();
+                    bool* h_excludeFlags = h_flagsCandidates.data();
 
-                //corrections of candidates for which a high quality anchor correction exists will not be used
-                //-> don't compute them
-                for(int i = 0; i < currentNumCandidates; i++){
-                    const read_number candidateReadId = currentInput->h_candidate_read_ids[i];
-                    h_excludeFlags[i] = correctionFlags->isCorrectedAsHQAnchor(candidateReadId);
-                }
+                    //corrections of candidates for which a high quality anchor correction exists will not be used
+                    //-> don't compute them
+                    for(int i = 0; i < currentNumCandidates; i++){
+                        const read_number candidateReadId = currentInput->h_candidate_read_ids[i];
+                        h_excludeFlags[i] = correctionFlags->isCorrectedAsHQAnchor(candidateReadId);
+                    }
 
-                cudaMemcpyAsync(
-                    d_excludeFlags,
-                    h_excludeFlags,
-                    sizeof(bool) * currentNumCandidates,
-                    H2D,
-                    stream
-                );
+                    cudaMemcpyAsync(
+                        d_excludeFlags,
+                        h_excludeFlags,
+                        sizeof(bool) * currentNumCandidates,
+                        H2D,
+                        stream
+                    );
 
-                callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
-                    d_candidateCanBeCorrected.data(),
-                    d_num_corrected_candidates_per_anchor.data(),
-                    managedgpumsa->multiMSAView(),
-                    d_excludeFlags,
-                    d_alignment_shifts.data(),
-                    d_candidate_sequences_lengths.data(),
-                    d_anchorIndicesOfCandidates.data(),
-                    d_is_high_quality_anchor.data(),
-                    d_candidates_per_anchor_prefixsum.data(),
-                    d_indices.data(),
-                    d_indices_per_anchor.data(),
-                    d_numAnchors.data(),
-                    d_numCandidates.data(),
-                    min_support_threshold,
-                    min_coverage_threshold,
-                    new_columns_to_correct,
-                    stream
-                );
+                    callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
+                        d_candidateCanBeCorrected.data(),
+                        d_num_corrected_candidates_per_anchor.data(),
+                        managedgpumsa->multiMSAView(),
+                        d_excludeFlags,
+                        d_alignment_shifts.data(),
+                        d_candidate_sequences_lengths.data(),
+                        d_anchorIndicesOfCandidates.data(),
+                        d_is_high_quality_anchor.data(),
+                        d_candidates_per_anchor_prefixsum.data(),
+                        d_indices.data(),
+                        d_indices_per_anchor.data(),
+                        d_numAnchors.data(),
+                        d_numCandidates.data(),
+                        min_support_threshold,
+                        min_coverage_threshold,
+                        new_columns_to_correct,
+                        stream
+                    );
+                #endif
+
+                #ifdef CANDS_FOREST_FLAGS_COMPUTE_AHEAD
+                    rmm::device_uvector<bool> d_flagsCandidates(currentNumCandidates, stream, mr);
+                    bool* d_excludeFlags = d_flagsCandidates.data();
+                    bool* h_excludeFlags = h_flagsCandidates.data(); //already computed
+
+
+                    cudaMemcpyAsync(
+                        d_excludeFlags,
+                        h_excludeFlags,
+                        sizeof(bool) * currentNumCandidates,
+                        H2D,
+                        stream
+                    );
+
+                    callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
+                        d_candidateCanBeCorrected.data(),
+                        d_num_corrected_candidates_per_anchor.data(),
+                        managedgpumsa->multiMSAView(),
+                        d_excludeFlags,
+                        d_alignment_shifts.data(),
+                        d_candidate_sequences_lengths.data(),
+                        d_anchorIndicesOfCandidates.data(),
+                        d_is_high_quality_anchor.data(),
+                        d_candidates_per_anchor_prefixsum.data(),
+                        d_indices.data(),
+                        d_indices_per_anchor.data(),
+                        d_numAnchors.data(),
+                        d_numCandidates.data(),
+                        min_support_threshold,
+                        min_coverage_threshold,
+                        new_columns_to_correct,
+                        stream
+                    );
+                #endif
+
+
             #else
             callFlagCandidatesToBeCorrectedKernel_async(
                 d_candidateCanBeCorrected.data(),
