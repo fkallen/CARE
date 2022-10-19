@@ -437,7 +437,6 @@ namespace gpu{
         int* tempvalue{};
 
         helpers::SimpleAllocationPinnedHost<int, 0> pinnedValue{};
-        CudaEvent event{cudaEventDisableTiming};
 
         rmm::mr::device_memory_resource* mr;
 
