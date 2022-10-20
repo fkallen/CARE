@@ -929,7 +929,7 @@ private:
         task.revcAlignments.resize(numCandidates);
         task.alignmentFlags.resize(numCandidates);
 
-        cpu::shd::cpuShiftedHammingDistance(
+        cpu::shd::cpuShiftedHammingDistance<cpu::shd::ShiftDirection::LeftRight>(
             task.alignments.begin(),
             task.input.encodedAnchor,
             task.input.anchorLength,
@@ -942,7 +942,7 @@ private:
             programOptions->min_overlap_ratio
         );
 
-        cpu::shd::cpuShiftedHammingDistance(
+        cpu::shd::cpuShiftedHammingDistance<cpu::shd::ShiftDirection::LeftRight>(
             task.revcAlignments.begin(),
             task.input.encodedAnchor,
             task.input.anchorLength,

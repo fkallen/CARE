@@ -152,55 +152,6 @@ namespace care{
         array[indextrafo(size - completeInts - 1)] <<= remainingShift;
     }
 
-
-
-    HD_WARNING_DISABLE
-    template<class IndexTransformation1,
-             class IndexTransformation2,
-             class PopcountFunc>
-    HOSTDEVICEQUALIFIER
-    int hammingdistanceHiLo(const unsigned int* lhi,
-                            const unsigned int* llo,
-                            const unsigned int* rhi,
-                            const unsigned int* rlo,
-                            int lhi_bitcount,
-                            int rhi_bitcount,
-                            int max_errors,
-                            IndexTransformation1 indextrafoL,
-                            IndexTransformation2 indextrafoR,
-                            PopcountFunc popcount){
-
-        const int overlap_bitcount = std::min(lhi_bitcount, rhi_bitcount);
-
-        if(overlap_bitcount == 0)
-            return max_errors+1;
-
-        const int partitions = SDIV(overlap_bitcount, (8 * sizeof(unsigned int)));
-        const int remaining_bitcount = partitions * sizeof(unsigned int) * 8 - overlap_bitcount;
-
-        int result = 0;
-
-        for(int i = 0; i < partitions - 1 && result < max_errors; i += 1) {
-            const unsigned int hixor = lhi[indextrafoL(i)] ^ rhi[indextrafoR(i)];
-            const unsigned int loxor = llo[indextrafoL(i)] ^ rlo[indextrafoR(i)];
-            const unsigned int bits = hixor | loxor;
-            result += popcount(bits);
-        }
-
-        if(result >= max_errors)
-            return result;
-
-        // i == partitions - 1
-
-        const unsigned int mask = remaining_bitcount == 0 ? 0xFFFFFFFF : 0xFFFFFFFF << (remaining_bitcount);
-        const unsigned int hixor = lhi[indextrafoL(partitions - 1)] ^ rhi[indextrafoR(partitions - 1)];
-        const unsigned int loxor = llo[indextrafoL(partitions - 1)] ^ rlo[indextrafoR(partitions - 1)];
-        const unsigned int bits = hixor | loxor;
-        result += popcount(bits & mask);
-
-        return result;
-    }
-
     struct AnchorCorrectionQuality{
     public:
         HOSTDEVICEQUALIFIER
