@@ -3486,7 +3486,7 @@ struct GpuReadExtender{
             stream
         );
 
-        assert(finishedTasksMSA.numMSAs == numFinishedTasks);
+        assert(finishedTasksMSA.getNumMSAs() == numFinishedTasks);
 
         destroy(indices1, stream);
         destroy(d_extendedIterationSequences, stream);

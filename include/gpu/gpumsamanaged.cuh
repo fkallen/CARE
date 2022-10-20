@@ -400,6 +400,10 @@ namespace gpu{
             return multiMSA.columnProperties;
         }
 
+        int getNumMSAs() noexcept{
+            return numMSAs;
+        }
+
     private:
         void initializeBuffers(
             MSAColumnCount maximumMsaWidth, 
