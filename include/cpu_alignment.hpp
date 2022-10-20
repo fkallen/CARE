@@ -406,6 +406,198 @@ namespace shd{
         return curIter;
     }
 
+    template<int foo=0>
+    int hammingdistanceHiLoWithShift_funnel(
+        const unsigned int* lhi_begin,
+        const unsigned int* llo_begin,
+        const unsigned int* rhi,
+        const unsigned int* rlo,
+        int lhi_bitcount,
+        int rhi_bitcount,
+        int numIntsL,
+        int /*numIntsR*/,
+        int shiftamount,
+        int max_errors_excl
+    ){
+
+        const int overlap_bitcount = std::min(std::max(0, lhi_bitcount - shiftamount), rhi_bitcount);
+
+        if(overlap_bitcount == 0)
+            return max_errors_excl+1;
+
+        const int partitions = SDIV(overlap_bitcount, (8 * sizeof(unsigned int)));
+        const int remaining_bitcount = partitions * sizeof(unsigned int) * 8 - overlap_bitcount;
+        const int completeShiftInts = shiftamount / (8 * sizeof(unsigned int));
+        const int remainingShift = shiftamount - completeShiftInts * 8 * sizeof(unsigned int);
+
+        auto myfunnelshift = [](unsigned int a, unsigned int b, int shift){
+            if(shift == 0) return a;
+            return (a << shift) | (b >> (8 * sizeof(unsigned int) - shift));
+        };
+
+        int result = 0;
+
+        for(int i = 0; i < partitions - 1 && result < max_errors_excl; i += 1) {
+            //compute the shifted values of l
+            const unsigned int aaa = lhi_begin[(completeShiftInts + i)];
+            const unsigned int aab = lhi_begin[(completeShiftInts + i + 1)];
+            const unsigned int a = myfunnelshift(aaa, aab, remainingShift);
+            const unsigned int baa = llo_begin[(completeShiftInts + i)];
+            const unsigned int bab = llo_begin[(completeShiftInts + i + 1)];
+            const unsigned int b = myfunnelshift(baa, bab, remainingShift);
+            const unsigned int hixor = a ^ rhi[(i)];
+            const unsigned int loxor = b ^ rlo[(i)];
+            const unsigned int bits = hixor | loxor;
+            result += __builtin_popcount(bits);
+        }
+
+        if(result >= max_errors_excl)
+            return result;
+
+        const unsigned int mask = remaining_bitcount == 0 ? 0xFFFFFFFF : 0xFFFFFFFF << (remaining_bitcount);
+        
+        unsigned int a = 0;
+        unsigned int b = 0;
+        if(completeShiftInts + partitions - 1 < numIntsL - 1){
+            unsigned int aaa = lhi_begin[(completeShiftInts + partitions - 1)];
+            unsigned int aab = lhi_begin[(completeShiftInts + partitions - 1 + 1)];
+            a = myfunnelshift(aaa, aab, remainingShift);
+            unsigned int baa = llo_begin[(completeShiftInts + partitions - 1)];
+            unsigned int bab = llo_begin[(completeShiftInts + partitions - 1 + 1)];
+            b = myfunnelshift(baa, bab, remainingShift);
+        }else{
+            a = (lhi_begin[(completeShiftInts + partitions - 1)]) << remainingShift;
+            b = (llo_begin[(completeShiftInts + partitions - 1)]) << remainingShift;
+        }
+        const unsigned int hixor = a ^ rhi[(partitions - 1)];
+        const unsigned int loxor = b ^ rlo[(partitions - 1)];
+        const unsigned int bits = hixor | loxor;
+        result += __builtin_popcount(bits & mask);
+
+        return result;
+    }
+
+
+    template<int foo=0>
+    AlignmentResult
+    cpuShiftedHammingDistancePopcount2BitHiLo3(
+            CpuAlignmentHandle& /*handle*/,
+            const unsigned int* anchorHiLo,
+            int anchorLength,
+            const unsigned int* candidateHiLo,
+            int candidateLength,
+            int min_overlap,
+            float maxErrorRate,
+            float min_overlap_ratio,
+            bool debug = false) noexcept{
+
+        assert(anchorLength > 0);
+        assert(candidateLength > 0);
+
+        const int anchorInts = SequenceHelpers::getEncodedNumInts2BitHiLo(anchorLength);
+        const int candidateInts = SequenceHelpers::getEncodedNumInts2BitHiLo(candidateLength);
+
+        const unsigned int* const anchor_hi = anchorHiLo;
+        const unsigned int* const anchor_lo = anchorHiLo + anchorInts / 2;
+
+        const unsigned int* const candidate_hi = candidateHiLo;
+        const unsigned int* const candidate_lo = candidateHiLo + candidateInts / 2;
+
+        const int totalbases = anchorLength + candidateLength;
+        const int minoverlap = std::max(min_overlap, int(float(anchorLength) * min_overlap_ratio));
+
+        int bestScore = totalbases; // score is number of mismatches
+        int bestShift = -candidateLength; // shift of query relative to anchor. shift < 0 if query begins before anchor
+        int bestOverlap = 0;
+        int bestHammingDistance = totalbases;
+
+        auto updateBest = [&](int shift, int overlapsize, int hammingDistance, int max_errors_excl){
+            //treat non-overlapping positions as mismatches to prefer a greater overlap if hamming distance is equal for multiple shifts
+            const int nonoverlapping = anchorLength + candidateLength - 2 * overlapsize;
+            const int score = (hammingDistance < max_errors_excl ?
+                hammingDistance + nonoverlapping // non-overlapping regions count as mismatches
+                : std::numeric_limits<int>::max()); // too many errors, discard
+
+            if(score < bestScore){
+                bestScore = score;
+                bestShift = shift;
+                bestOverlap = overlapsize;
+                bestHammingDistance = hammingDistance;
+            }                
+        };
+
+        for(int shift = 0; shift < anchorLength - minoverlap + 1; shift += 1) {
+            const int overlapsize = std::min(anchorLength - shift, candidateLength);
+            const int max_errors_excl = std::min(int(float(overlapsize) * maxErrorRate),
+                bestScore - totalbases + 2*overlapsize);
+        
+            if(max_errors_excl > 0){
+                const int hammingDistance = hammingdistanceHiLoWithShift_funnel(
+                    anchor_hi,
+                    anchor_lo,
+                    candidate_hi,
+                    candidate_lo,
+                    anchorLength,
+                    candidateLength,
+                    anchorInts / 2,
+                    candidateInts / 2,
+                    shift,
+                    max_errors_excl
+                );
+                if(debug){
+                    std::cerr << "shift " << shift << ", hamming " << hammingDistance << "\n";
+                }
+
+                updateBest(shift, overlapsize, hammingDistance, max_errors_excl);
+            }
+        }
+
+        for(int shift = -1; shift >= - candidateLength + minoverlap; shift -= 1) {
+            const int overlapsize = std::min(anchorLength, candidateLength + shift);
+            const int max_errors_excl = std::min(int(float(overlapsize) * maxErrorRate),
+                bestScore - (totalbases) + 2*overlapsize);
+
+            if(max_errors_excl > 0){
+                const int hammingDistance = hammingdistanceHiLoWithShift_funnel(
+                    candidate_hi,
+                    candidate_lo,
+                    anchor_hi,
+                    anchor_lo,
+                    candidateLength,
+                    anchorLength,
+                    candidateInts / 2,
+                    anchorInts / 2,
+                    -shift,
+                    max_errors_excl
+                );
+
+                if(debug){
+                    std::cerr << "shift " << shift << ", hamming " << hammingDistance << "\n";
+                }
+
+                updateBest(shift, overlapsize, hammingDistance, max_errors_excl); 
+            }
+        }
+
+        if(debug){
+            std::cerr << "new bestScore: " << bestScore << ", totalbases: " << totalbases << ", overlapsize: " << bestOverlap << "\n";
+        }
+
+        AlignmentResult alignmentresult;
+        alignmentresult.isValid = (bestShift != -candidateLength);
+        alignmentresult.score = bestScore;
+        alignmentresult.overlap = bestOverlap;
+        alignmentresult.shift = bestShift;
+        alignmentresult.nOps = alignmentresult.isValid ? bestHammingDistance : 0;
+
+        return alignmentresult;
+    }
+
+
+
+
+
+
 
 
     template<class Iter>
@@ -425,10 +617,19 @@ namespace shd{
 
         const int newanchorInts = SequenceHelpers::getEncodedNumInts2BitHiLo(anchorLength);
 
-        handle.anchorConversionBuffer.resize(newanchorInts);
+        //handle.anchorConversionBuffer.resize(newanchorInts);
+
+        std::vector<unsigned int> anchorConversionBuffer(newanchorInts);
+        std::vector<unsigned int> candidateConversionBuffer;
+
+        // auto& aConvBuffer = handle.anchorConversionBuffer;
+        // auto& cConvBuffer = handle.candidateConversionBuffer;
+
+        auto& aConvBuffer = anchorConversionBuffer;
+        auto& cConvBuffer = candidateConversionBuffer;
 
         SequenceHelpers::convert2BitTo2BitHiLo(
-            handle.anchorConversionBuffer.data(),
+            aConvBuffer.data(),
             anchor2Bit,
             anchorLength
         );
@@ -440,210 +641,61 @@ namespace shd{
             const int candidateLength = candidateLengths[candidateIndex];
 
             const int candidateIntsHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(candidateLength);
-            handle.candidateConversionBuffer.resize(candidateIntsHiLo);
+            cConvBuffer.resize(candidateIntsHiLo);
 
             SequenceHelpers::convert2BitTo2BitHiLo(
-                handle.candidateConversionBuffer.data(),
+                cConvBuffer.data(),
                 candidate2Bit,
                 candidateLength
             );
+            *curIter = cpuShiftedHammingDistancePopcount2BitHiLo3(
+                handle,
+                aConvBuffer.data(),
+                anchorLength,
+                cConvBuffer.data(),
+                candidateLength,
+                min_overlap,
+                maxErrorRate,
+                min_overlap_ratio,
+                false //candidateIndex == 33
+            );
 
-            *curIter = cpuShiftedHammingDistancePopcount2BitHiLo(
-                            handle,
-                            handle.anchorConversionBuffer.data(),
-                            anchorLength,
-                            handle.candidateConversionBuffer.data(),
-                            candidateLength,
-                            min_overlap,
-                            maxErrorRate,
-                            min_overlap_ratio
-                        );
+            // *curIter = cpuShiftedHammingDistancePopcount2BitHiLo2(
+            //                 handle,
+            //                 aConvBuffer.data(),
+            //                 anchorLength,
+            //                 cConvBuffer.data(),
+            //                 candidateLength,
+            //                 min_overlap,
+            //                 maxErrorRate,
+            //                 min_overlap_ratio,
+            //                 false //candidateIndex == 33
+            //             );
+            // auto res = cpuShiftedHammingDistancePopcount2BitHiLo3(
+            //     handle,
+            //     aConvBuffer.data(),
+            //     anchorLength,
+            //     cConvBuffer.data(),
+            //     candidateLength,
+            //     min_overlap,
+            //     maxErrorRate,
+            //     min_overlap_ratio,
+            //     false //candidateIndex == 33
+            // );
+
+            // if(res != *curIter){
+            //     std::cerr << "Anchor: " << SequenceHelpers::get2BitString(anchor2Bit, anchorLength) << "\n";
+            //     std::cerr << "Cand  : " << SequenceHelpers::get2BitString(candidate2Bit, candidateLength) << "\n";
+            //     std::cerr << res.score << " " << res.overlap << " " << res.shift << " " << res.nOps << " " << res.isValid << "\n";
+            //     std::cerr << (*curIter).score << " " << (*curIter).overlap << " " << (*curIter).shift << " " << (*curIter).nOps << " " << (*curIter).isValid << "\n";
+            //     throw std::runtime_error("error alignment");
+            // }
         }
 
         return curIter;
     }
 
 
-
-
-
-    template<class Iter>
-    Iter
-    cpu_multi_shifted_hamming_distance_popcount_updated(Iter destinationbegin,
-                                                const unsigned int* anchorHiLo,
-                                                int anchorLength,
-                                                const std::vector<unsigned int>& querydata,
-                                                const std::vector<int>& queryLengths,
-                                                int pitchIntsPerSequence,
-                                                int min_overlap,
-                                                float maxErrorRate,
-                                                float min_overlap_ratio) noexcept{
-
-        assert(anchorLength > 0);
-        if(queryLengths.size() == 0) return destinationbegin;
-
-        auto popcount = [](auto i){return __builtin_popcount(i);};
-
-        auto identity = [](auto i){return i;};
-
-        auto hammingDistanceWithShift = [&](int shift, int overlapsize, int max_errors,
-                                            unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
-                                            int shiftptr_size,
-                                            const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
-                                            auto transfunc2){
-
-            const int shiftamount = shift == 0 ? 0 : 1;
-
-            shiftBitArrayLeftBy(shiftptr_hi, shiftptr_size / 2, shiftamount, transfunc1);
-            shiftBitArrayLeftBy(shiftptr_lo, shiftptr_size / 2, shiftamount, transfunc1);
-
-            const int score = hammingdistanceHiLo(shiftptr_hi,
-                                                    shiftptr_lo,
-                                                    otherptr_hi,
-                                                    otherptr_lo,
-                                                    overlapsize,
-                                                    overlapsize,
-                                                    max_errors,
-                                                    transfunc1,
-                                                    transfunc2,
-                                                    popcount);
-
-            return score;
-        };
-
-
-        const int nQueries = int(queryLengths.size());
-
-        Iter destination = destinationbegin;
-
-        const unsigned int* const anchor = anchorHiLo;
-        const int anchorints = SequenceHelpers::getEncodedNumInts2BitHiLo(anchorLength);
-
-        std::vector<unsigned int> shiftbuffer(pitchIntsPerSequence);
-
-        const unsigned int* const anchorBackup_hi = (const unsigned int*)(anchor);
-        const unsigned int* const anchorBackup_lo = ((const unsigned int*)anchor) + anchorints / 2;
-
-        for(int index = 0; index < nQueries; index++){
-            const unsigned int* const query = querydata.data() + pitchIntsPerSequence * index;
-            const int queryLength = queryLengths[index];
-
-            const int queryints = SequenceHelpers::getEncodedNumInts2BitHiLo(queryLength);
-            const unsigned int* const queryBackup_hi = query;
-            const unsigned int* const queryBackup_lo = query + queryints / 2;
-
-            const int totalbases = anchorLength + queryLength;
-            const int minoverlap = std::max(min_overlap, int(float(anchorLength) * min_overlap_ratio));
-
-
-            int bestScore = totalbases; // score is number of mismatches
-            int bestShift = -queryLength; // shift of query relative to anchor. shift < 0 if query begins before anchor
-
-            auto handle_shift = [&](int shift, int overlapsize,
-                                    unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
-                                    int shiftptr_size,
-                                    const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
-                                    auto transfunc2){
-
-                const int max_errors_excl = std::min(int(float(overlapsize) * maxErrorRate),
-                                                bestScore - totalbases + 2*overlapsize);
-
-                if(max_errors_excl > 0){
-
-                    const int mismatches = hammingDistanceWithShift(shift, overlapsize, max_errors_excl,
-                                                            shiftptr_hi,shiftptr_lo, transfunc1,
-                                                            shiftptr_size,
-                                                            otherptr_hi, otherptr_lo, transfunc2);
-
-                    const int score = (mismatches < max_errors_excl ?
-                                    mismatches + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
-                                    : std::numeric_limits<int>::max()); // too many errors, discard
-
-                    if(score < bestScore){
-                        bestScore = score;
-                        bestShift = shift;
-                    }
-
-                    return true;
-                }else{
-                    return false;
-                }
-            };
-
-            std::copy(anchor, anchor + anchorints, shiftbuffer.begin());
-            unsigned int* shiftbuffer_hi = shiftbuffer.data();
-            unsigned int* shiftbuffer_lo = shiftbuffer.data() + anchorints / 2;
-
-
-            for(int shift = 0; shift < anchorLength - minoverlap + 1; ++shift){
-                const int overlapsize = std::min(anchorLength - shift, queryLength);
-                bool b = handle_shift(shift, overlapsize,
-                                    shiftbuffer_hi, shiftbuffer_lo, identity,
-                                    anchorints,
-                                    queryBackup_hi, queryBackup_lo, identity);
-                if(!b){
-                    break;
-                }
-            }
-
-            std::copy(query, query + queryints, shiftbuffer.begin());
-            shiftbuffer_hi = shiftbuffer.data();
-            shiftbuffer_lo = shiftbuffer.data() + queryints / 2;
-
-            for(int shift = -1; shift >= -queryLength + minoverlap; --shift){
-                const int overlapsize = std::min(anchorLength, queryLength + shift);
-
-                bool b = handle_shift(shift, overlapsize,
-                                    shiftbuffer_hi, shiftbuffer_lo, identity,
-                                    queryints,
-                                    anchorBackup_hi, anchorBackup_lo, identity);
-
-                if(!b){
-                    break;
-                }
-            }
-
-            AlignmentResult& alignmentresult = *destination;
-            alignmentresult.isValid = (bestShift != -queryLength);
-
-            const int queryoverlapbegin_incl = std::max(-bestShift, 0);
-            const int queryoverlapend_excl = std::min(queryLength, anchorLength - bestShift);
-            const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
-            const int opnr = bestScore - totalbases + 2*overlapsize;
-
-            alignmentresult.score = bestScore;
-            alignmentresult.overlap = overlapsize;
-            alignmentresult.shift = bestShift;
-            alignmentresult.nOps = opnr;
-
-            std::advance(destination, 1);
-        }
-
-        return destination;
-    }
-
-
-
-
-    AlignmentResult
-    cpu_shifted_hamming_distance_popcount(const char* anchor,
-                                int anchorLength,
-                                const char* query,
-                                int queryLength,
-                                int min_overlap,
-                                float maxErrorRate,
-                                float min_overlap_ratio) noexcept;
-
-
-    std::vector<AlignmentResult>
-    cpu_multi_shifted_hamming_distance_popcount(const char* anchor_charptr,
-                                int anchorLength,
-                                const std::vector<char>& querydata,
-                                const std::vector<int>& queryLengths,
-                                int max_sequence_bytes,
-                                int min_overlap,
-                                float maxErrorRate,
-                                float min_overlap_ratio) noexcept;
 
 
 } //namespace shd
