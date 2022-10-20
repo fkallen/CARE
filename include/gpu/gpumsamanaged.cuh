@@ -20,7 +20,7 @@
 namespace care{
 namespace gpu{
 
-
+    //#define GPUMSAMANAGED_SINGLE_DATA_BUFFER
     struct MSAColumnCount{
     public:
         constexpr MSAColumnCount(int c) noexcept : value(c){}
@@ -49,14 +49,18 @@ namespace gpu{
     public:
         ManagedGPUMultiMSA(cudaStream_t stream, rmm::mr::device_memory_resource* mr_, int* h_tempstorage = nullptr) 
             : mr(mr_),
-            d_consensusEncoded(0, stream, mr),
-            d_counts(0, stream, mr),
-            d_coverages(0, stream, mr),
-            d_origCoverages(0, stream, mr),
-            d_weights(0, stream, mr),
-            d_support(0, stream, mr),
-            d_origWeights(0, stream, mr),
-            d_columnProperties(0, stream, mr){
+            #ifdef GPUMSAMANAGED_SINGLE_DATA_BUFFER
+            d_data(0, stream, mr){
+            #else
+            d_consensusEncoded_(0, stream, mr),
+            d_counts_(0, stream, mr),
+            d_coverages_(0, stream, mr),
+            d_origCoverages_(0, stream, mr),
+            d_weights_(0, stream, mr),
+            d_support_(0, stream, mr),
+            d_origWeights_(0, stream, mr),
+            d_columnProperties_(0, stream, mr){
+            #endif
 
             if(h_tempstorage != nullptr){
                 tempvalue = h_tempstorage;
@@ -313,27 +317,36 @@ namespace gpu{
                 info.device[deviceId] += d.size() * sizeof(ElementType);
             };
 
-            handleDevice(d_consensusEncoded);
-            handleDevice(d_counts);
-            handleDevice(d_coverages);
-            handleDevice(d_origCoverages);
-            handleDevice(d_weights);
-            handleDevice(d_support);
-            handleDevice(d_origWeights);
-            handleDevice(d_columnProperties);
+            #ifdef GPUMSAMANAGED_SINGLE_DATA_BUFFER
+            handleDevice(d_data);
+            #else
+            handleDevice(d_consensusEncoded_);
+            handleDevice(d_counts_);
+            handleDevice(d_coverages_);
+            handleDevice(d_origCoverages_);
+            handleDevice(d_weights_);
+            handleDevice(d_support_);
+            handleDevice(d_origWeights_);
+            handleDevice(d_columnProperties_);
+            #endif
 
             return info;
         }
 
         void destroy(cudaStream_t stream){
-            ::destroy(d_consensusEncoded, stream);
-            ::destroy(d_counts, stream);
-            ::destroy(d_coverages, stream);
-            ::destroy(d_origCoverages, stream);
-            ::destroy(d_weights, stream);
-            ::destroy(d_support, stream);
-            ::destroy(d_origWeights, stream);
-            ::destroy(d_columnProperties, stream);
+            #ifdef GPUMSAMANAGED_SINGLE_DATA_BUFFER
+            ::destroy(d_data, stream);
+            #else
+            ::destroy(d_consensusEncoded_, stream);
+            ::destroy(d_counts_, stream);
+            ::destroy(d_coverages_, stream);
+            ::destroy(d_origCoverages_, stream);
+            ::destroy(d_weights_, stream);
+            ::destroy(d_support_, stream);
+            ::destroy(d_origWeights_, stream);
+            ::destroy(d_columnProperties_, stream);
+            #endif
+
 
             multiMSA.numMSAs = 0;
             multiMSA.columnPitchInElements = 0;
@@ -353,6 +366,38 @@ namespace gpu{
 
         int getMaximumMsaWidth() const{
             return columnPitchInElements;
+        }
+
+        int* getCounts() noexcept{
+            return multiMSA.counts;
+        }
+
+        float* getWeights() noexcept{
+            return multiMSA.weights;
+        }
+
+        int* getCoverages() noexcept{
+            return multiMSA.coverages;
+        }
+
+        std::uint8_t* getEncodedConsensus() noexcept{
+            return multiMSA.consensus;
+        }
+
+        float* getSupport() noexcept{
+            return multiMSA.support;
+        }
+
+        float* getOrigWeights() noexcept{
+            return multiMSA.origWeights;
+        }
+
+        int* getOrigCoverages() noexcept{
+            return multiMSA.origCoverages;
+        }
+
+        MSAColumnProperties* getColumnProperties() noexcept{
+            return multiMSA.columnProperties;
         }
 
     private:
@@ -401,15 +446,59 @@ namespace gpu{
 
             //pad to 128
             columnPitchInElements = SDIV(columnPitchInElements, 128) * 128;
+            #ifdef GPUMSAMANAGED_SINGLE_DATA_BUFFER
+            size_t allocation_sizes[8];
+            allocation_sizes[0] = sizeof(std::uint8_t) * columnPitchInElements * numAnchors; // consensus
+            allocation_sizes[1] = sizeof(int) * 4 * columnPitchInElements * numAnchors; // counts
+            allocation_sizes[2] = sizeof(int) * columnPitchInElements * numAnchors; // coverages
+            allocation_sizes[3] = sizeof(float) * 4 * columnPitchInElements * numAnchors; // weights
+            allocation_sizes[4] = sizeof(float) * columnPitchInElements * numAnchors; // support
+            allocation_sizes[5] = sizeof(float) * columnPitchInElements * numAnchors; // origweights
+            allocation_sizes[6] = sizeof(int) * columnPitchInElements * numAnchors; // origcoverages
+            allocation_sizes[7] = sizeof(MSAColumnProperties) * numAnchors; // column properties
 
-            resizeUninitialized(d_consensusEncoded, columnPitchInElements * numAnchors, stream);
-            resizeUninitialized(d_counts, 4 * columnPitchInElements * numAnchors, stream);
-            resizeUninitialized(d_coverages, columnPitchInElements * numAnchors, stream);
-            resizeUninitialized(d_origCoverages, columnPitchInElements * numAnchors, stream);
-            resizeUninitialized(d_weights, 4 * columnPitchInElements * numAnchors, stream);
-            resizeUninitialized(d_support, columnPitchInElements * numAnchors, stream);
-            resizeUninitialized(d_origWeights, columnPitchInElements * numAnchors, stream);
-            resizeUninitialized(d_columnProperties, numAnchors, stream);
+            void* allocations[8];
+
+            size_t temp_storage_bytes = 0;
+
+            CUDACHECK(cub::AliasTemporaries(
+                nullptr,
+                temp_storage_bytes,
+                allocations,
+                allocation_sizes
+            ));
+
+            resizeUninitialized(d_data, temp_storage_bytes, stream);
+
+            CUDACHECK(cub::AliasTemporaries(
+                d_data.data(),
+                temp_storage_bytes,
+                allocations,
+                allocation_sizes
+            ));
+
+            multiMSA.numMSAs = numMSAs;
+            multiMSA.columnPitchInElements = columnPitchInElements;
+            multiMSA.consensus = reinterpret_cast<std::uint8_t*>(allocations[0]);
+            multiMSA.counts = reinterpret_cast<int*>(allocations[1]);
+            multiMSA.coverages = reinterpret_cast<int*>(allocations[2]);
+            multiMSA.weights = reinterpret_cast<float*>(allocations[3]);
+            multiMSA.support = reinterpret_cast<float*>(allocations[4]);
+            multiMSA.origWeights = reinterpret_cast<float*>(allocations[5]);
+            multiMSA.origCoverages = reinterpret_cast<int*>(allocations[6]);
+            multiMSA.columnProperties = reinterpret_cast<MSAColumnProperties*>(allocations[7]);
+
+            #else 
+
+            resizeUninitialized(d_consensusEncoded_, columnPitchInElements * numAnchors, stream);
+            resizeUninitialized(d_counts_, 4 * columnPitchInElements * numAnchors, stream);
+            resizeUninitialized(d_coverages_, columnPitchInElements * numAnchors, stream);
+            resizeUninitialized(d_origCoverages_, columnPitchInElements * numAnchors, stream);
+            resizeUninitialized(d_weights_, 4 * columnPitchInElements * numAnchors, stream);
+            resizeUninitialized(d_support_, columnPitchInElements * numAnchors, stream);
+            resizeUninitialized(d_origWeights_, columnPitchInElements * numAnchors, stream);
+            resizeUninitialized(d_columnProperties_, numAnchors, stream);
+
             // CUDACHECK(cudaMemsetAsync(d_consensusEncoded.data(), 0, sizeof(std::uint8_t) * columnPitchInElements * numAnchors, stream));
             // CUDACHECK(cudaMemsetAsync(d_counts.data(), 0, sizeof(int) * 4*columnPitchInElements * numAnchors, stream));
             // CUDACHECK(cudaMemsetAsync(d_coverages.data(), 0, sizeof(int) * columnPitchInElements * numAnchors, stream));
@@ -421,16 +510,17 @@ namespace gpu{
 
             multiMSA.numMSAs = numMSAs;
             multiMSA.columnPitchInElements = columnPitchInElements;
-            multiMSA.counts = d_counts.data();
-            multiMSA.weights = d_weights.data();
-            multiMSA.coverages = d_coverages.data();
-            multiMSA.consensus = d_consensusEncoded.data();
-            multiMSA.support = d_support.data();
-            multiMSA.origWeights = d_origWeights.data();
-            multiMSA.origCoverages = d_origCoverages.data();
-            multiMSA.columnProperties = d_columnProperties.data();
+            multiMSA.counts = d_counts_.data();
+            multiMSA.weights = d_weights_.data();
+            multiMSA.coverages = d_coverages_.data();
+            multiMSA.consensus = d_consensusEncoded_.data();
+            multiMSA.support = d_support_.data();
+            multiMSA.origWeights = d_origWeights_.data();
+            multiMSA.origCoverages = d_origCoverages_.data();
+            multiMSA.columnProperties = d_columnProperties_.data();
+
+            #endif
         }
-        public:  
 
         int numMSAs{};
         int columnPitchInElements{};
@@ -440,16 +530,20 @@ namespace gpu{
 
         rmm::mr::device_memory_resource* mr;
 
-        rmm::device_uvector<std::uint8_t> d_consensusEncoded;
-        rmm::device_uvector<int> d_counts;
-        rmm::device_uvector<int> d_coverages;
-        rmm::device_uvector<int> d_origCoverages;
-        rmm::device_uvector<float> d_weights;
-        rmm::device_uvector<float> d_support;
-        rmm::device_uvector<float> d_origWeights;
-        rmm::device_uvector<MSAColumnProperties> d_columnProperties;
+        #ifdef GPUMSAMANAGED_SINGLE_DATA_BUFFER
+        rmm::device_uvector<char> d_data;
+        #else
+        rmm::device_uvector<std::uint8_t> d_consensusEncoded_;
+        rmm::device_uvector<int> d_counts_;
+        rmm::device_uvector<int> d_coverages_;
+        rmm::device_uvector<int> d_origCoverages_;
+        rmm::device_uvector<float> d_weights_;
+        rmm::device_uvector<float> d_support_;
+        rmm::device_uvector<float> d_origWeights_;
+        rmm::device_uvector<MSAColumnProperties> d_columnProperties_;
+        #endif
 
-        GPUMultiMSA multiMSA{};
+        GPUMultiMSA multiMSA{}; //4319
     };
 
 

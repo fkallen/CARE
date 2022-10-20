@@ -2873,7 +2873,7 @@ struct GpuReadExtender{
             d_alignment_shifts.data(),
             d_alignment_best_alignment_flags.data(),
             d_candidateSequencesData.data(),
-            multiMSA.d_columnProperties.data(),
+            multiMSA.getColumnProperties(),
             encodedSequencePitchInInts
         ); CUDACHECKASYNC;
 
