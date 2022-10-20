@@ -1396,7 +1396,7 @@ public: //inherited GPUReadStorage interface
             nvtx::push_range("qualitiesGpu.gatherContiguous", 5);
 
             qualitiesGpu.gatherContiguous(
-                tempData->handleSequences,
+                tempData->handleQualities,
                 d_gatherdestination,
                 gatherdestinationPitchInBytes,
                 firstIndexOnGpu,
