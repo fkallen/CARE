@@ -975,8 +975,7 @@ private:
             task.alignmentFlags.resize(numCandidates);
             task.alignments.resize(numCandidates);
 
-            care::cpu::shd::cpuShiftedHammingDistancePopcount2BitWithDirection<care::cpu::shd::ShiftDirection::Right>(
-                alignmentHandle,
+            care::cpu::shd::cpuShiftedHammingDistance<care::cpu::shd::ShiftDirection::Right>(
                 forwardAlignments.data(),
                 task.currentAnchor.data(),
                 task.currentAnchorLength,
@@ -989,8 +988,7 @@ private:
                 programOptions.min_overlap_ratio
             );
 
-            care::cpu::shd::cpuShiftedHammingDistancePopcount2BitWithDirection<care::cpu::shd::ShiftDirection::Right>(
-                alignmentHandle,
+            care::cpu::shd::cpuShiftedHammingDistance<care::cpu::shd::ShiftDirection::Right>(
                 revcAlignments.data(),
                 task.currentAnchor.data(),
                 task.currentAnchorLength,
@@ -1996,7 +1994,6 @@ private:
     ProgramOptions programOptions{};
 
     mutable MinhasherHandle minhashHandle;
-    mutable cpu::shd::CpuAlignmentHandle alignmentHandle;
 
     mutable helpers::CpuTimer hashTimer{"hashtimer"};
     mutable helpers::CpuTimer collectTimer{"gathertimer"};
