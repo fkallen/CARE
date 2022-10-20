@@ -135,16 +135,6 @@ namespace shd{
         std::vector<unsigned int> candidateConversionBuffer;
     };
 
-    AlignmentResult
-    cpuShiftedHammingDistancePopcount2BitHiLo(
-            CpuAlignmentHandle& handle,
-            const unsigned int* anchorHiLo,
-            int anchorLength,
-            const unsigned int* candidateHiLo,
-            int candidateLength,
-            int min_overlap,
-            float maxErrorRate,
-            float min_overlap_ratio) noexcept;
 
 
     template<ShiftDirection direction>
@@ -406,8 +396,8 @@ namespace shd{
         return curIter;
     }
 
-    template<int foo=0>
-    int hammingdistanceHiLoWithShift_funnel(
+    template<int dummy=0>
+    int cpuHammingdistanceHiLoWithImplicitShift(
         const unsigned int* lhi_begin,
         const unsigned int* llo_begin,
         const unsigned int* rhi,
@@ -479,17 +469,15 @@ namespace shd{
 
 
     template<int foo=0>
-    AlignmentResult
-    cpuShiftedHammingDistancePopcount2BitHiLo3(
-            CpuAlignmentHandle& /*handle*/,
-            const unsigned int* anchorHiLo,
-            int anchorLength,
-            const unsigned int* candidateHiLo,
-            int candidateLength,
-            int min_overlap,
-            float maxErrorRate,
-            float min_overlap_ratio,
-            bool debug = false) noexcept{
+    AlignmentResult cpuShiftedHammingDistancePopcount(
+        const unsigned int* anchorHiLo,
+        int anchorLength,
+        const unsigned int* candidateHiLo,
+        int candidateLength,
+        int min_overlap,
+        float maxErrorRate,
+        float min_overlap_ratio
+    ) noexcept{
 
         assert(anchorLength > 0);
         assert(candidateLength > 0);
@@ -506,7 +494,7 @@ namespace shd{
         const int totalbases = anchorLength + candidateLength;
         const int minoverlap = std::max(min_overlap, int(float(anchorLength) * min_overlap_ratio));
 
-        int bestScore = totalbases; // score is number of mismatches
+        int bestScore = totalbases; // score is number of mismatches + non overlapping positions
         int bestShift = -candidateLength; // shift of query relative to anchor. shift < 0 if query begins before anchor
         int bestOverlap = 0;
         int bestHammingDistance = totalbases;
@@ -532,7 +520,7 @@ namespace shd{
                 bestScore - totalbases + 2*overlapsize);
         
             if(max_errors_excl > 0){
-                const int hammingDistance = hammingdistanceHiLoWithShift_funnel(
+                const int hammingDistance = cpuHammingdistanceHiLoWithImplicitShift(
                     anchor_hi,
                     anchor_lo,
                     candidate_hi,
@@ -544,9 +532,6 @@ namespace shd{
                     shift,
                     max_errors_excl
                 );
-                if(debug){
-                    std::cerr << "shift " << shift << ", hamming " << hammingDistance << "\n";
-                }
 
                 updateBest(shift, overlapsize, hammingDistance, max_errors_excl);
             }
@@ -558,7 +543,7 @@ namespace shd{
                 bestScore - (totalbases) + 2*overlapsize);
 
             if(max_errors_excl > 0){
-                const int hammingDistance = hammingdistanceHiLoWithShift_funnel(
+                const int hammingDistance = cpuHammingdistanceHiLoWithImplicitShift(
                     candidate_hi,
                     candidate_lo,
                     anchor_hi,
@@ -571,16 +556,118 @@ namespace shd{
                     max_errors_excl
                 );
 
-                if(debug){
-                    std::cerr << "shift " << shift << ", hamming " << hammingDistance << "\n";
-                }
-
                 updateBest(shift, overlapsize, hammingDistance, max_errors_excl); 
             }
         }
 
-        if(debug){
-            std::cerr << "new bestScore: " << bestScore << ", totalbases: " << totalbases << ", overlapsize: " << bestOverlap << "\n";
+        AlignmentResult alignmentresult;
+        alignmentresult.isValid = (bestShift != -candidateLength);
+        alignmentresult.score = bestScore;
+        alignmentresult.overlap = bestOverlap;
+        alignmentresult.shift = bestShift;
+        alignmentresult.nOps = alignmentresult.isValid ? bestHammingDistance : 0;
+
+        return alignmentresult;
+    }
+
+
+
+
+    template<ShiftDirection direction>
+    AlignmentResult cpuShiftedHammingDistancePopcountWithShiftDirectionNew(
+        const unsigned int* anchorHiLo,
+        int anchorLength,
+        const unsigned int* candidateHiLo,
+        int candidateLength,
+        int min_overlap,
+        float maxErrorRate,
+        float min_overlap_ratio
+    ) noexcept{
+
+        assert(anchorLength > 0);
+        assert(candidateLength > 0);
+
+        const int anchorInts = SequenceHelpers::getEncodedNumInts2BitHiLo(anchorLength);
+        const int candidateInts = SequenceHelpers::getEncodedNumInts2BitHiLo(candidateLength);
+
+        const unsigned int* const anchor_hi = anchorHiLo;
+        const unsigned int* const anchor_lo = anchorHiLo + anchorInts / 2;
+
+        const unsigned int* const candidate_hi = candidateHiLo;
+        const unsigned int* const candidate_lo = candidateHiLo + candidateInts / 2;
+
+        const int totalbases = anchorLength + candidateLength;
+        const int minoverlap = std::max(min_overlap, int(float(anchorLength) * min_overlap_ratio));
+
+        int bestScore = totalbases; // score is number of mismatches + non overlapping positions
+        int bestShift = -candidateLength; // shift of query relative to anchor. shift < 0 if query begins before anchor
+        int bestOverlap = 0;
+        int bestHammingDistance = totalbases;
+
+        auto updateBest = [&](int shift, int overlapsize, int hammingDistance, int max_errors_excl){
+            //treat non-overlapping positions as mismatches to prefer a greater overlap if hamming distance is equal for multiple shifts
+            const int nonoverlapping = anchorLength + candidateLength - 2 * overlapsize;
+            const int score = (hammingDistance < max_errors_excl ?
+                hammingDistance + nonoverlapping // non-overlapping regions count as mismatches
+                : std::numeric_limits<int>::max()); // too many errors, discard
+
+            if(score < bestScore){
+                bestScore = score;
+                bestShift = shift;
+                bestOverlap = overlapsize;
+                bestHammingDistance = hammingDistance;
+            }                
+        };
+        
+        //right shift        
+        if constexpr(direction == ShiftDirection::Right || direction == ShiftDirection::LeftRight){
+            for(int shift = 0; shift < anchorLength - minoverlap + 1; shift += 1) {
+                const int overlapsize = std::min(anchorLength - shift, candidateLength);
+                const int max_errors_excl = std::min(int(float(overlapsize) * maxErrorRate),
+                    bestScore - totalbases + 2*overlapsize);
+            
+                if(max_errors_excl > 0){
+                    const int hammingDistance = cpuHammingdistanceHiLoWithImplicitShift(
+                        anchor_hi,
+                        anchor_lo,
+                        candidate_hi,
+                        candidate_lo,
+                        anchorLength,
+                        candidateLength,
+                        anchorInts / 2,
+                        candidateInts / 2,
+                        shift,
+                        max_errors_excl
+                    );
+
+                    updateBest(shift, overlapsize, hammingDistance, max_errors_excl);
+                }
+            }
+        }
+
+        if constexpr (direction == ShiftDirection::Left || direction == ShiftDirection::LeftRight){
+            for(int shift = -1; shift >= - candidateLength + minoverlap; shift -= 1) {
+                const int overlapsize = std::min(anchorLength, candidateLength + shift);
+                const int max_errors_excl = std::min(int(float(overlapsize) * maxErrorRate),
+                    bestScore - (totalbases) + 2*overlapsize);
+
+                if(max_errors_excl > 0){
+                    const int hammingDistance = cpuHammingdistanceHiLoWithImplicitShift(
+                        candidate_hi,
+                        candidate_lo,
+                        anchor_hi,
+                        anchor_lo,
+                        candidateLength,
+                        anchorLength,
+                        candidateInts / 2,
+                        anchorInts / 2,
+                        -shift,
+                        max_errors_excl
+                    );
+
+                    updateBest(shift, overlapsize, hammingDistance, max_errors_excl); 
+                }
+            }
         }
 
         AlignmentResult alignmentresult;
@@ -599,31 +686,24 @@ namespace shd{
 
 
 
-
     template<class Iter>
-    Iter
-    cpuShiftedHammingDistancePopcount2Bit(
-            CpuAlignmentHandle& handle,
-            Iter destinationBegin,
-            const unsigned int* anchor2Bit,
-            int anchorLength,
-            const unsigned int* candidates2Bit,
-            int candidatePitchInInts,
-            const int* candidateLengths,
-            int numCandidates,
-            int min_overlap,
-            float maxErrorRate,
-            float min_overlap_ratio) noexcept{
+    Iter cpuShiftedHammingDistance(
+        Iter destinationBegin,
+        const unsigned int* anchor2Bit,
+        int anchorLength,
+        const unsigned int* candidates2Bit,
+        int candidatePitchInInts,
+        const int* candidateLengths,
+        int numCandidates,
+        int min_overlap,
+        float maxErrorRate,
+        float min_overlap_ratio
+    ) noexcept{
 
         const int newanchorInts = SequenceHelpers::getEncodedNumInts2BitHiLo(anchorLength);
 
-        //handle.anchorConversionBuffer.resize(newanchorInts);
-
         std::vector<unsigned int> anchorConversionBuffer(newanchorInts);
         std::vector<unsigned int> candidateConversionBuffer;
-
-        // auto& aConvBuffer = handle.anchorConversionBuffer;
-        // auto& cConvBuffer = handle.candidateConversionBuffer;
 
         auto& aConvBuffer = anchorConversionBuffer;
         auto& cConvBuffer = candidateConversionBuffer;
@@ -648,48 +728,18 @@ namespace shd{
                 candidate2Bit,
                 candidateLength
             );
-            *curIter = cpuShiftedHammingDistancePopcount2BitHiLo3(
-                handle,
+
+            *curIter = cpuShiftedHammingDistancePopcountWithShiftDirectionNew<ShiftDirection::LeftRight>(
                 aConvBuffer.data(),
                 anchorLength,
                 cConvBuffer.data(),
                 candidateLength,
                 min_overlap,
                 maxErrorRate,
-                min_overlap_ratio,
-                false //candidateIndex == 33
+                min_overlap_ratio
             );
 
-            // *curIter = cpuShiftedHammingDistancePopcount2BitHiLo2(
-            //                 handle,
-            //                 aConvBuffer.data(),
-            //                 anchorLength,
-            //                 cConvBuffer.data(),
-            //                 candidateLength,
-            //                 min_overlap,
-            //                 maxErrorRate,
-            //                 min_overlap_ratio,
-            //                 false //candidateIndex == 33
-            //             );
-            // auto res = cpuShiftedHammingDistancePopcount2BitHiLo3(
-            //     handle,
-            //     aConvBuffer.data(),
-            //     anchorLength,
-            //     cConvBuffer.data(),
-            //     candidateLength,
-            //     min_overlap,
-            //     maxErrorRate,
-            //     min_overlap_ratio,
-            //     false //candidateIndex == 33
-            // );
-
-            // if(res != *curIter){
-            //     std::cerr << "Anchor: " << SequenceHelpers::get2BitString(anchor2Bit, anchorLength) << "\n";
-            //     std::cerr << "Cand  : " << SequenceHelpers::get2BitString(candidate2Bit, candidateLength) << "\n";
-            //     std::cerr << res.score << " " << res.overlap << " " << res.shift << " " << res.nOps << " " << res.isValid << "\n";
-            //     std::cerr << (*curIter).score << " " << (*curIter).overlap << " " << (*curIter).shift << " " << (*curIter).nOps << " " << (*curIter).isValid << "\n";
-            //     throw std::runtime_error("error alignment");
-            // }
+            //assert(res == *curIter);
         }
 
         return curIter;
