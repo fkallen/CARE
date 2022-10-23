@@ -293,8 +293,94 @@ namespace care{
             return TempCorrectedSequenceType((encodedflags >> 29) & std::uint32_t(1));
         }
 
+        template<class Edit>
         static void encodeDataIntoEncodedCorrectedSequence(
             EncodedTempCorrectedSequence& target,
+            read_number readId,
+            bool hq,
+            bool useEdits,
+            TempCorrectedSequenceType type,
+            int shift,
+            int numEdits,
+            const Edit* edits,
+            int sequenceLength,
+            const char* sequence
+        ){
+            const std::uint32_t oldNumBytes = target.getNumBytes(); 
+
+            target.readId = readId;
+
+            target.encodedflags = (std::uint32_t(hq) << 31);
+            target.encodedflags |= (std::uint32_t(useEdits) << 30);
+            target.encodedflags |= (std::uint32_t(int(type)) << 29);
+
+
+            std::uint32_t numBytes = 0;
+            if(useEdits){
+                numBytes += sizeof(int);
+                numBytes += numEdits * (sizeof(int) + sizeof(char));
+            }else{
+                numBytes += sizeof(int);
+                numBytes += sizeof(char) * sequenceLength;
+            }
+
+            if(type == TempCorrectedSequenceType::Anchor){
+                ; //nothing
+            }else{
+                //candidate shift
+                numBytes += sizeof(int);
+            }
+
+            #ifndef NDEBUG
+            //flags use 3 bits, remainings bit can be used for encoding
+            constexpr std::uint32_t maxNumBytes = (std::uint32_t(1) << 29)-1;
+            assert(numBytes <= maxNumBytes);
+            #endif
+
+            target.encodedflags |= numBytes;
+
+            if(numBytes > oldNumBytes){
+                target.data = std::make_unique<std::uint8_t[]>(numBytes);
+            }else{
+                ; //reuse buffer
+            }
+
+            //fill buffer
+
+            std::uint8_t* ptr = target.data.get();
+
+            if(useEdits){
+                std::memcpy(ptr, &numEdits, sizeof(int));
+                ptr += sizeof(int);
+                for(int i = 0; i < numEdits; i++){
+                    const auto& edit = edits[i];
+                    const int p = edit.pos();
+                    std::memcpy(ptr, &p, sizeof(int));
+                    ptr += sizeof(int);
+                }
+                for(int i = 0; i < numEdits; i++){
+                    const auto& edit = edits[i];
+                    const char c = edit.base();
+                    std::memcpy(ptr, &c, sizeof(char));
+                    ptr += sizeof(char);
+                }
+            }else{
+                std::memcpy(ptr, &sequenceLength, sizeof(int));
+                ptr += sizeof(int);
+                std::memcpy(ptr, sequence, sizeof(char) * sequenceLength);
+                ptr += sizeof(char) * sequenceLength;
+            }
+
+            if(type == TempCorrectedSequenceType::Anchor){
+                ; //nothing
+            }else{
+                std::memcpy(ptr, &shift, sizeof(int));
+                ptr += sizeof(int);
+            }
+        }
+
+#if 0
+        static void encodeDataAndSerializeIntoBuffer(
             read_number readId,
             bool hq,
             bool useEdits,
@@ -377,6 +463,8 @@ namespace care{
                 ptr += sizeof(int);
             }
         }
+
+#endif
 
     };
 

@@ -784,24 +784,21 @@ namespace gpu{
 
                 //Edits and numEdits are stored compact, only for corrected anchors.
                 //they are indexed by positionInVector instead of anchor_index
-
-                std::vector<CorrectionEdit> edits;
                             
                 for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
                     const int anchor_index = anchorIndicesToProcess[positionInVector];
                     
                     const read_number readId = currentOutput.h_anchorReadIds[anchor_index];
 
-                    edits.clear();
                     bool useEdits = false;
                     const char* sequence = nullptr;
                     int sequenceLength = 0;
+                    const EncodedCorrectionEdit* edits = nullptr;
                     
                     const int numEdits = currentOutput.h_numEditsPerCorrectedanchor[positionInVector];
                     if(numEdits != currentOutput.doNotUseEditsValue){
                         const int editOffset = currentOutput.h_anchorEditOffsets[positionInVector];
-                        const auto* myEdits = currentOutput.h_editsPerCorrectedanchor + editOffset;
-                        edits.insert(edits.end(), myEdits, myEdits + numEdits);
+                        edits = currentOutput.h_editsPerCorrectedanchor + editOffset;
                         useEdits = true;
                     }else{                        
                         const int sequenceOffset = currentOutput.h_correctedAnchorsOffsets[positionInVector];
@@ -819,8 +816,8 @@ namespace gpu{
                         useEdits,
                         TempCorrectedSequenceType::Anchor,
                         0,
-                        edits.size(),
-                        edits.data(),
+                        numEdits,
+                        edits,
                         sequenceLength,
                         sequence
                     );
@@ -835,9 +832,7 @@ namespace gpu{
                 //buffers are stored compact. offsets for each anchor are given by h_num_corrected_candidates_per_anchor_prefixsum
                 //Edits, numEdits, h_candidate_read_ids, h_candidate_sequences_lengths, h_alignment_shifts are stored compact, only for corrected candidates.
                 //edits are only present for candidates which use edits and have numEdits > 0
-                //offsets to the edits of candidates are stored in h_candidateEditOffsets
-
-                std::vector<CorrectionEdit> edits;          
+                //offsets to the edits of candidates are stored in h_candidateEditOffsets      
 
                 for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
                     
@@ -857,8 +852,6 @@ namespace gpu{
 
                         assert(programOptions->new_columns_to_correct >= candidate_shift);
                     }
-
-                    edits.clear();
                     
                     const int numEdits = currentOutput.h_numEditsPerCorrectedCandidate[offsetForCorrectedCandidateData + candidateIndex];
                     const int editsOffset = currentOutput.h_candidateEditOffsets[offsetForCorrectedCandidateData + candidateIndex];
@@ -866,10 +859,10 @@ namespace gpu{
                     bool useEdits = false;
                     const char* sequence = nullptr;
                     int sequenceLength = 0;
+                    const EncodedCorrectionEdit* edits = nullptr;
 
                     if(numEdits != currentOutput.doNotUseEditsValue){
-                        const auto* myEdits = &currentOutput.h_editsPerCorrectedCandidate[editsOffset];
-                        edits.insert(edits.end(), myEdits, myEdits + numEdits);
+                        edits = &currentOutput.h_editsPerCorrectedCandidate[editsOffset];
                         useEdits = true;
                     }else{
                         const int correctionOffset = currentOutput.h_correctedCandidatesOffsets[candidateIndex];
@@ -887,8 +880,8 @@ namespace gpu{
                         useEdits,
                         TempCorrectedSequenceType::Candidate,
                         candidate_shift,
-                        edits.size(),
-                        edits.data(),
+                        numEdits,
+                        edits,
                         sequenceLength,
                         sequence
                     );
