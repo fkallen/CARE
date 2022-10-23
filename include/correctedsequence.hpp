@@ -317,18 +317,18 @@ namespace care{
 
             std::uint32_t numBytes = 0;
             if(useEdits){
-                numBytes += sizeof(int);
-                numBytes += numEdits * (sizeof(int) + sizeof(char));
+                numBytes += sizeof(short); //number of edits
+                numBytes += numEdits * (sizeof(short) + sizeof(char)); //edits
             }else{
-                numBytes += sizeof(int);
-                numBytes += sizeof(char) * sequenceLength;
+                numBytes += sizeof(short); // sequence length
+                numBytes += sizeof(char) * sequenceLength;  //sequence
             }
 
             if(type == TempCorrectedSequenceType::Anchor){
                 ; //nothing
             }else{
                 //candidate shift
-                numBytes += sizeof(int);
+                numBytes += sizeof(short);
             }
 
             #ifndef NDEBUG
@@ -350,13 +350,14 @@ namespace care{
             std::uint8_t* ptr = target.data.get();
 
             if(useEdits){
-                std::memcpy(ptr, &numEdits, sizeof(int));
-                ptr += sizeof(int);
+                short numEditsShort = numEdits;
+                std::memcpy(ptr, &numEditsShort, sizeof(short));
+                ptr += sizeof(short);
                 for(int i = 0; i < numEdits; i++){
                     const auto& edit = edits[i];
-                    const int p = edit.pos();
-                    std::memcpy(ptr, &p, sizeof(int));
-                    ptr += sizeof(int);
+                    const short p = edit.pos();
+                    std::memcpy(ptr, &p, sizeof(short));
+                    ptr += sizeof(short);
                 }
                 for(int i = 0; i < numEdits; i++){
                     const auto& edit = edits[i];
@@ -365,8 +366,9 @@ namespace care{
                     ptr += sizeof(char);
                 }
             }else{
-                std::memcpy(ptr, &sequenceLength, sizeof(int));
-                ptr += sizeof(int);
+                short lengthShort = sequenceLength;
+                std::memcpy(ptr, &lengthShort, sizeof(short));
+                ptr += sizeof(short);
                 std::memcpy(ptr, sequence, sizeof(char) * sequenceLength);
                 ptr += sizeof(char) * sequenceLength;
             }
@@ -374,8 +376,9 @@ namespace care{
             if(type == TempCorrectedSequenceType::Anchor){
                 ; //nothing
             }else{
-                std::memcpy(ptr, &shift, sizeof(int));
-                ptr += sizeof(int);
+                short shiftShort = shift;
+                std::memcpy(ptr, &shiftShort, sizeof(short));
+                ptr += sizeof(short);
             }
         }
 
@@ -531,17 +534,17 @@ namespace care{
         
 
             if(useEdits){
-                int size;
-                std::memcpy(&size, ptr, sizeof(int));
-                ptr += sizeof(int);
+                short size;
+                std::memcpy(&size, ptr, sizeof(short));
+                ptr += sizeof(short);
 
                 edits.resize(size);
 
                 for(auto& edit : edits){
-                    int p;
-                    std::memcpy(&p, ptr, sizeof(int));
+                    short p;
+                    std::memcpy(&p, ptr, sizeof(short));
                     edit.pos(p);
-                    ptr += sizeof(int);
+                    ptr += sizeof(short);
                 }
                 for(auto& edit : edits){
                     char c;
@@ -550,9 +553,9 @@ namespace care{
                     ptr += sizeof(char);
                 }
             }else{
-                int length;
-                std::memcpy(&length, ptr, sizeof(int));
-                ptr += sizeof(int);
+                short length;
+                std::memcpy(&length, ptr, sizeof(short));
+                ptr += sizeof(short);
 
                 sequence.resize(length);
                 sequence.replace(0, length, (const char*)ptr, length);
@@ -563,8 +566,11 @@ namespace care{
             if(type == TempCorrectedSequenceType::Anchor){
                 ; //nothing
             }else{
-                std::memcpy(&shift, ptr, sizeof(int));
-                ptr += sizeof(int);
+                short shiftShort;
+                std::memcpy(&shiftShort, ptr, sizeof(short));
+                ptr += sizeof(short);
+
+                shift = shiftShort;
             }
         }
 
