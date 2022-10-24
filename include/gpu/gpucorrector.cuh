@@ -773,11 +773,21 @@ namespace gpu{
             //     ", numCorrectedCandidates: " << numCorrectedCandidates << "\n";
 
             EncodedCorrectionOutput encodedCorrectionOutput;
-            encodedCorrectionOutput.encodedAnchorCorrections.resize(numCorrectedAnchors);
+            // encodedCorrectionOutput.encodedAnchorCorrections.resize(numCorrectedAnchors);
 
-            if(programOptions->correctCandidates){
-                encodedCorrectionOutput.encodedCandidateCorrections.resize(numCorrectedCandidates);
-            }
+            // if(programOptions->correctCandidates){
+            //     encodedCorrectionOutput.encodedCandidateCorrections.resize(numCorrectedCandidates);
+            // }
+
+            //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput;
+
+            // serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.resize(numCorrectedAnchors * 192);
+            // serializedEncodedCorrectionOutput.beginOffsetsAnchors.resize(numCorrectedAnchors+1);
+            // serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.resize(numCorrectedCandidates * 192);
+            // serializedEncodedCorrectionOutput.beginOffsetsCandidates.resize(numCorrectedAnchors+1);
+            // serializedEncodedCorrectionOutput.beginOffsetsAnchors[0] = 0;
+            // serializedEncodedCorrectionOutput.beginOffsetsCandidates[0] = 0;
+
 
             auto unpackAnchors = [&](int begin, int end){
                 nvtx::push_range("Anchor unpacking " + std::to_string(end - begin), 3);
@@ -820,7 +830,7 @@ namespace gpu{
                         edits,
                         sequenceLength,
                         sequence
-                    );
+                    );                    
                 }
 
                 nvtx::pop_range();
@@ -885,11 +895,180 @@ namespace gpu{
                         sequenceLength,
                         sequence
                     );
+
+                    // std::uint8_t* endPtr = nullptr;
+                    // while(endPtr == nullptr){
+                    //     endPtr = EncodedTempCorrectedSequence::encodeDataAndSerializeIntoBuffer(
+                    //         serialized.data() + serializedOffsets[numCorrectedAnchors + positionInVector],
+                    //         serialized.data() + serialized.size(),
+                    //         candidate_read_id,
+                    //         false,
+                    //         useEdits,
+                    //         TempCorrectedSequenceType::Candidate,
+                    //         candidate_shift,
+                    //         numEdits,
+                    //         edits,
+                    //         sequenceLength,
+                    //         sequence
+                    //     );
+                    //     if(endPtr != nullptr){
+                    //         serializedOffsets[numCorrectedAnchors + positionInVector + 1] = std::distance(serialized.data(), endPtr);
+                    //     }else{
+                    //         serialized.resize(serialized.size() * 2);
+                    //     }
+                    // }
+
+                    // EncodedTempCorrectedSequence tmp123;
+                    // tmp123.copyFromContiguousMemory(serialized.data() + serializedOffsets[numCorrectedAnchors + positionInVector]);
+
+                    // TempCorrectedSequence oldTcs = encodedCorrectionOutput.encodedCandidateCorrections[positionInVector];
+                    // TempCorrectedSequence newTcs = tmp123;
+
+                    // assert(oldTcs == newTcs);
+
+
                 }
 
                 nvtx::pop_range();
             };
 
+            // auto unpackAnchorsSerialized = [&](int begin, int end){
+            //     nvtx::push_range("Anchor unpacking " + std::to_string(end - begin), 3);
+
+            //     auto& beginOffsetsAnchors = serializedEncodedCorrectionOutput.beginOffsetsAnchors;
+            //     auto& serializedEncodedAnchorCorrections = serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections;
+
+            //     //Edits and numEdits are stored compact, only for corrected anchors.
+            //     //they are indexed by positionInVector instead of anchor_index
+                            
+            //     for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
+            //         const int anchor_index = anchorIndicesToProcess[positionInVector];
+                    
+            //         const read_number readId = currentOutput.h_anchorReadIds[anchor_index];
+
+            //         bool useEdits = false;
+            //         const char* sequence = nullptr;
+            //         int sequenceLength = 0;
+            //         const EncodedCorrectionEdit* edits = nullptr;
+                    
+            //         const int numEdits = currentOutput.h_numEditsPerCorrectedanchor[positionInVector];
+            //         if(numEdits != currentOutput.doNotUseEditsValue){
+            //             const int editOffset = currentOutput.h_anchorEditOffsets[positionInVector];
+            //             edits = currentOutput.h_editsPerCorrectedanchor + editOffset;
+            //             useEdits = true;
+            //         }else{                        
+            //             const int sequenceOffset = currentOutput.h_correctedAnchorsOffsets[positionInVector];
+            //             const char* const my_corrected_anchor_data = currentOutput.h_corrected_anchors + sequenceOffset;
+            //             const int anchor_length = currentOutput.h_anchor_sequences_lengths[anchor_index];
+ 
+            //             sequenceLength = anchor_length;
+            //             sequence = my_corrected_anchor_data;
+            //         }
+
+            //         std::uint8_t* endPtr = nullptr;
+            //         while(endPtr == nullptr){
+            //             endPtr = EncodedTempCorrectedSequence::encodeDataAndSerializeIntoBuffer(
+            //                 serializedEncodedAnchorCorrections.data() + beginOffsetsAnchors[positionInVector],
+            //                 serializedEncodedAnchorCorrections.data() + serializedEncodedAnchorCorrections.size(),
+            //                 readId,
+            //                 currentOutput.h_is_high_quality_anchor[anchor_index].hq(),
+            //                 useEdits,
+            //                 TempCorrectedSequenceType::Anchor,
+            //                 0,
+            //                 numEdits,
+            //                 edits,
+            //                 sequenceLength,
+            //                 sequence
+            //             );
+            //             if(endPtr != nullptr){
+            //                 beginOffsetsAnchors[positionInVector + 1] = std::distance(serializedEncodedAnchorCorrections.data(), endPtr);
+            //             }else{
+            //                 serializedEncodedAnchorCorrections.resize(std::max(4096ull, serializedEncodedAnchorCorrections.size() * 2ull));
+            //             }
+            //         }                    
+            //     }
+
+            //     nvtx::pop_range();
+            // };
+
+            // auto unpackcandidatesSerialized = [&](int begin, int end){
+            //     nvtx::push_range("candidate unpacking " + std::to_string(end - begin), 3);
+
+            //     auto& beginOffsetsCandidates = serializedEncodedCorrectionOutput.beginOffsetsCandidates;
+            //     auto& serializedEncodedCandidateCorrections = serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections;
+
+            //     //buffers are stored compact. offsets for each anchor are given by h_num_corrected_candidates_per_anchor_prefixsum
+            //     //Edits, numEdits, h_candidate_read_ids, h_candidate_sequences_lengths, h_alignment_shifts are stored compact, only for corrected candidates.
+            //     //edits are only present for candidates which use edits and have numEdits > 0
+            //     //offsets to the edits of candidates are stored in h_candidateEditOffsets      
+
+            //     for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
+                    
+
+            //         const int anchor_index = candidateIndicesToProcess[positionInVector].first;
+            //         const int candidateIndex = candidateIndicesToProcess[positionInVector].second;
+            //         const read_number anchorReadId = currentOutput.h_anchorReadIds[anchor_index];
+
+            //         const size_t offsetForCorrectedCandidateData = currentOutput.h_num_corrected_candidates_per_anchor_prefixsum[anchor_index];
+
+            //         const read_number candidate_read_id = currentOutput.h_candidate_read_ids[offsetForCorrectedCandidateData + candidateIndex];
+            //         const int candidate_shift = currentOutput.h_alignment_shifts[offsetForCorrectedCandidateData + candidateIndex];
+
+            //         if(programOptions->new_columns_to_correct < candidate_shift){
+            //             std::cerr << "readid " << anchorReadId << " candidate readid " << candidate_read_id << " : "
+            //             << candidate_shift << " " << programOptions->new_columns_to_correct <<"\n";
+
+            //             assert(programOptions->new_columns_to_correct >= candidate_shift);
+            //         }
+                    
+            //         const int numEdits = currentOutput.h_numEditsPerCorrectedCandidate[offsetForCorrectedCandidateData + candidateIndex];
+            //         const int editsOffset = currentOutput.h_candidateEditOffsets[offsetForCorrectedCandidateData + candidateIndex];
+
+            //         bool useEdits = false;
+            //         const char* sequence = nullptr;
+            //         int sequenceLength = 0;
+            //         const EncodedCorrectionEdit* edits = nullptr;
+
+            //         if(numEdits != currentOutput.doNotUseEditsValue){
+            //             edits = &currentOutput.h_editsPerCorrectedCandidate[editsOffset];
+            //             useEdits = true;
+            //         }else{
+            //             const int correctionOffset = currentOutput.h_correctedCandidatesOffsets[candidateIndex];
+            //             const int candidate_length = currentOutput.h_candidate_sequences_lengths[candidateIndex];
+            //             const char* const candidate_data = currentOutput.h_corrected_candidates + correctionOffset * currentOutput.decodedSequencePitchInBytes;
+
+            //             sequenceLength = candidate_length;
+            //             sequence = candidate_data;
+            //         }
+
+            //         std::uint8_t* endPtr = nullptr;
+            //         while(endPtr == nullptr){
+            //             endPtr = EncodedTempCorrectedSequence::encodeDataAndSerializeIntoBuffer(
+            //                 serializedEncodedCandidateCorrections.data() + beginOffsetsCandidates[positionInVector],
+            //                 serializedEncodedCandidateCorrections.data() + serializedEncodedCandidateCorrections.size(),
+            //                 candidate_read_id,
+            //                 false,
+            //                 useEdits,
+            //                 TempCorrectedSequenceType::Candidate,
+            //                 candidate_shift,
+            //                 numEdits,
+            //                 edits,
+            //                 sequenceLength,
+            //                 sequence
+            //             );
+            //             if(endPtr != nullptr){
+            //                 beginOffsetsCandidates[positionInVector + 1] = std::distance(serializedEncodedCandidateCorrections.data(), endPtr);
+            //             }else{
+            //                 serializedEncodedCandidateCorrections.resize(std::max(4096ull, serializedEncodedCandidateCorrections.size() * 2ull));
+            //             }
+            //         }
+            //     }
+
+            //     nvtx::pop_range();
+            // };
+
+
+            encodedCorrectionOutput.encodedAnchorCorrections.resize(numCorrectedAnchors);
 
             if(!programOptions->correctCandidates){
                 loopExecutor(
@@ -900,8 +1079,37 @@ namespace gpu{
                     }
                 );
             }else{
-        
+
+                //helpers::CpuTimer timerAllocate1("allocateEncoded");
+                if(programOptions->correctCandidates){
+                    encodedCorrectionOutput.encodedCandidateCorrections.resize(numCorrectedCandidates);
+                }
+                // timerAllocate1.stop();
+                // timerAllocate1.print();
+
+                // helpers::CpuTimer timerAllocate2("allocateSerialized");
+                // //serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.resize(numCorrectedAnchors * 192);
+                // serializedEncodedCorrectionOutput.beginOffsetsAnchors.resize(numCorrectedAnchors+1);
+                // //serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.resize(numCorrectedCandidates * 192);
+                // serializedEncodedCorrectionOutput.beginOffsetsCandidates.resize(numCorrectedCandidates+1);
+                // serializedEncodedCorrectionOutput.beginOffsetsAnchors[0] = 0;
+                // serializedEncodedCorrectionOutput.beginOffsetsCandidates[0] = 0;
+                // timerAllocate2.stop();
+                // timerAllocate2.print();
+
+
+                // helpers::CpuTimer timer1("unpackAnchorsSerialized");
+                // loopExecutor(
+                //     0, 
+                //     numCorrectedAnchors, 
+                //     [=](auto begin, auto end, auto /*threadId*/){
+                //         unpackAnchorsSerialized(begin, end);
+                //     }
+                // );
+                // timer1.stop();
+                // timer1.print();
   
+                // helpers::CpuTimer timer2("unpackAnchors");
                 loopExecutor(
                     0, 
                     numCorrectedAnchors, 
@@ -909,17 +1117,226 @@ namespace gpu{
                         unpackAnchors(begin, end);
                     }
                 );
+                // timer2.stop();
+                // timer2.print();      
 
+                // helpers::CpuTimer timer3("unpackcandidatesSerialized");
+                // loopExecutor(
+                //     0, 
+                //     numCorrectedCandidates, 
+                //     [=](auto begin, auto end, auto /*threadId*/){
+                //         unpackcandidatesSerialized(begin, end);
+                //     }
+                // ); 
+                // timer3.stop();
+                // timer3.print();    
+
+                // helpers::CpuTimer timer4("unpackcandidates");
                 loopExecutor(
                     0, 
                     numCorrectedCandidates, 
                     [=](auto begin, auto end, auto /*threadId*/){
                         unpackcandidates(begin, end);
                     }
-                );      
+                );
+                // timer4.stop();
+                // timer4.print();
+
+                // for(int i = 0; i < numCorrectedAnchors; i++){
+                //     EncodedTempCorrectedSequence tmp123;
+                //     tmp123.copyFromContiguousMemory(serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.data() 
+                //         + serializedEncodedCorrectionOutput.beginOffsetsAnchors[i]);
+
+                //     TempCorrectedSequence oldTcs = encodedCorrectionOutput.encodedAnchorCorrections[i];
+                //     TempCorrectedSequence newTcs = tmp123;
+
+                //     assert(oldTcs == newTcs);
+                // }
+
+                // for(int i = 0; i < numCorrectedCandidates; i++){
+                //     EncodedTempCorrectedSequence tmp123;
+                //     tmp123.copyFromContiguousMemory(serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data() 
+                //         + serializedEncodedCorrectionOutput.beginOffsetsCandidates[i]);
+
+                //     TempCorrectedSequence oldTcs = encodedCorrectionOutput.encodedCandidateCorrections[i];
+                //     TempCorrectedSequence newTcs = tmp123;
+
+                //     assert(oldTcs == newTcs);
+                // }
+                                    
             }
 
             return encodedCorrectionOutput;
+        }
+
+        SerializedEncodedCorrectionOutput constructSerializedEncodedResults(const GpuErrorCorrectorRawOutput& currentOutput) const{
+            //assert(cudaSuccess == currentOutput.event.query());
+
+            if(currentOutput.nothingToDo){
+                return SerializedEncodedCorrectionOutput{};
+            }
+
+            const std::vector<int> anchorIndicesToProcess = getAnchorIndicesToProcessAndUpdateCorrectionFlags(currentOutput);
+            const std::vector<std::pair<int,int>> candidateIndicesToProcess = getCandidateIndicesToProcess(currentOutput);
+
+            const int numCorrectedAnchors = anchorIndicesToProcess.size();
+            const int numCorrectedCandidates = candidateIndicesToProcess.size();
+
+            SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput;
+            serializedEncodedCorrectionOutput.numAnchors = numCorrectedAnchors;
+            serializedEncodedCorrectionOutput.numCandidates = numCorrectedCandidates;
+
+            auto unpackAnchors = [&](int begin, int end){
+                nvtx::push_range("Anchor unpacking " + std::to_string(end - begin), 3);
+
+                auto& beginOffsetsAnchors = serializedEncodedCorrectionOutput.beginOffsetsAnchors;
+                auto& serializedEncodedAnchorCorrections = serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections;
+
+                //Edits and numEdits are stored compact, only for corrected anchors.
+                //they are indexed by positionInVector instead of anchor_index
+                            
+                for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
+                    const int anchor_index = anchorIndicesToProcess[positionInVector];
+                    
+                    const read_number readId = currentOutput.h_anchorReadIds[anchor_index];
+
+                    bool useEdits = false;
+                    const char* sequence = nullptr;
+                    int sequenceLength = 0;
+                    const EncodedCorrectionEdit* edits = nullptr;
+                    
+                    const int numEdits = currentOutput.h_numEditsPerCorrectedanchor[positionInVector];
+                    if(numEdits != currentOutput.doNotUseEditsValue){
+                        const int editOffset = currentOutput.h_anchorEditOffsets[positionInVector];
+                        edits = currentOutput.h_editsPerCorrectedanchor + editOffset;
+                        useEdits = true;
+                    }else{                        
+                        const int sequenceOffset = currentOutput.h_correctedAnchorsOffsets[positionInVector];
+                        const char* const my_corrected_anchor_data = currentOutput.h_corrected_anchors + sequenceOffset;
+                        const int anchor_length = currentOutput.h_anchor_sequences_lengths[anchor_index];
+ 
+                        sequenceLength = anchor_length;
+                        sequence = my_corrected_anchor_data;
+                    }
+
+                    std::uint8_t* endPtr = nullptr;
+                    while(endPtr == nullptr){
+                        endPtr = EncodedTempCorrectedSequence::encodeDataAndSerializeIntoBuffer(
+                            serializedEncodedAnchorCorrections.data() + beginOffsetsAnchors[positionInVector],
+                            serializedEncodedAnchorCorrections.data() + serializedEncodedAnchorCorrections.size(),
+                            readId,
+                            currentOutput.h_is_high_quality_anchor[anchor_index].hq(),
+                            useEdits,
+                            TempCorrectedSequenceType::Anchor,
+                            0,
+                            numEdits,
+                            edits,
+                            sequenceLength,
+                            sequence
+                        );
+                        if(endPtr != nullptr){
+                            beginOffsetsAnchors[positionInVector + 1] = std::distance(serializedEncodedAnchorCorrections.data(), endPtr);
+                        }else{
+                            serializedEncodedAnchorCorrections.resize(std::max(4096ull, serializedEncodedAnchorCorrections.size() * 2ull));
+                        }
+                    }                    
+                }
+
+                nvtx::pop_range();
+            };
+
+            auto unpackCandidates = [&](int begin, int end){
+                nvtx::push_range("candidate unpacking " + std::to_string(end - begin), 3);
+
+                auto& beginOffsetsCandidates = serializedEncodedCorrectionOutput.beginOffsetsCandidates;
+                auto& serializedEncodedCandidateCorrections = serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections;
+
+                //buffers are stored compact. offsets for each anchor are given by h_num_corrected_candidates_per_anchor_prefixsum
+                //Edits, numEdits, h_candidate_read_ids, h_candidate_sequences_lengths, h_alignment_shifts are stored compact, only for corrected candidates.
+                //edits are only present for candidates which use edits and have numEdits > 0
+                //offsets to the edits of candidates are stored in h_candidateEditOffsets      
+
+                for(int positionInVector = begin; positionInVector < end; ++positionInVector) {                    
+
+                    const int anchor_index = candidateIndicesToProcess[positionInVector].first;
+                    const int candidateIndex = candidateIndicesToProcess[positionInVector].second;
+                    const read_number anchorReadId = currentOutput.h_anchorReadIds[anchor_index];
+
+                    const size_t offsetForCorrectedCandidateData = currentOutput.h_num_corrected_candidates_per_anchor_prefixsum[anchor_index];
+
+                    const read_number candidate_read_id = currentOutput.h_candidate_read_ids[offsetForCorrectedCandidateData + candidateIndex];
+                    const int candidate_shift = currentOutput.h_alignment_shifts[offsetForCorrectedCandidateData + candidateIndex];
+
+                    if(programOptions->new_columns_to_correct < candidate_shift){
+                        std::cerr << "readid " << anchorReadId << " candidate readid " << candidate_read_id << " : "
+                        << candidate_shift << " " << programOptions->new_columns_to_correct <<"\n";
+
+                        assert(programOptions->new_columns_to_correct >= candidate_shift);
+                    }
+                    
+                    const int numEdits = currentOutput.h_numEditsPerCorrectedCandidate[offsetForCorrectedCandidateData + candidateIndex];
+                    const int editsOffset = currentOutput.h_candidateEditOffsets[offsetForCorrectedCandidateData + candidateIndex];
+
+                    bool useEdits = false;
+                    const char* sequence = nullptr;
+                    int sequenceLength = 0;
+                    const EncodedCorrectionEdit* edits = nullptr;
+
+                    if(numEdits != currentOutput.doNotUseEditsValue){
+                        edits = &currentOutput.h_editsPerCorrectedCandidate[editsOffset];
+                        useEdits = true;
+                    }else{
+                        const int correctionOffset = currentOutput.h_correctedCandidatesOffsets[candidateIndex];
+                        const int candidate_length = currentOutput.h_candidate_sequences_lengths[candidateIndex];
+                        const char* const candidate_data = currentOutput.h_corrected_candidates + correctionOffset * currentOutput.decodedSequencePitchInBytes;
+
+                        sequenceLength = candidate_length;
+                        sequence = candidate_data;
+                    }
+
+                    std::uint8_t* endPtr = nullptr;
+                    while(endPtr == nullptr){
+                        endPtr = EncodedTempCorrectedSequence::encodeDataAndSerializeIntoBuffer(
+                            serializedEncodedCandidateCorrections.data() + beginOffsetsCandidates[positionInVector],
+                            serializedEncodedCandidateCorrections.data() + serializedEncodedCandidateCorrections.size(),
+                            candidate_read_id,
+                            false,
+                            useEdits,
+                            TempCorrectedSequenceType::Candidate,
+                            candidate_shift,
+                            numEdits,
+                            edits,
+                            sequenceLength,
+                            sequence
+                        );
+                        if(endPtr != nullptr){
+                            beginOffsetsCandidates[positionInVector + 1] = std::distance(serializedEncodedCandidateCorrections.data(), endPtr);
+                        }else{
+                            serializedEncodedCandidateCorrections.resize(std::max(4096ull, serializedEncodedCandidateCorrections.size() * 2ull));
+                        }
+                    }
+                }
+
+                nvtx::pop_range();
+            };
+
+            //serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.resize(numCorrectedAnchors * 192);
+            serializedEncodedCorrectionOutput.beginOffsetsAnchors.resize(numCorrectedAnchors+1);
+            serializedEncodedCorrectionOutput.beginOffsetsAnchors[0] = 0;
+
+            if(!programOptions->correctCandidates){
+                unpackAnchors(0, numCorrectedAnchors);
+            }else{
+                
+                //serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.resize(numCorrectedCandidates * 192);
+                serializedEncodedCorrectionOutput.beginOffsetsCandidates.resize(numCorrectedCandidates+1);
+                serializedEncodedCorrectionOutput.beginOffsetsCandidates[0] = 0;
+
+                unpackAnchors(0, numCorrectedAnchors);
+                unpackCandidates(0, numCorrectedCandidates);              
+            }
+
+            return serializedEncodedCorrectionOutput;
         }
 
         MemoryUsage getMemoryInfo() const{

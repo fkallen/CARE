@@ -32,6 +32,8 @@
 
 #include <thrust/iterator/counting_iterator.h>
 
+//#define NORMAL_RESULTS
+
 namespace care{
 namespace gpu{
 
@@ -196,14 +198,15 @@ public:
 
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
     RunStatistics runToCompletion(
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
-        BatchCompletion batchCompleted
+        BatchCompletion batchCompleted,
+        ResultProcessorSerialized processSerializedResults
     ) const {
 
         auto continueCondition = [&](){ return !readIdGenerator.empty(); };
@@ -215,11 +218,12 @@ public:
             correctionFlags,
             processResults,
             batchCompleted,
-            continueCondition
+            continueCondition,
+            processSerializedResults
         );
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
     RunStatistics runSomeBatches(
         int deviceId,
         IdGenerator& readIdGenerator,
@@ -227,7 +231,8 @@ public:
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted,
-        int numBatches
+        int numBatches,
+        ResultProcessorSerialized processSerializedResults
     ) const {
 
         auto continueCondition = [&](){ bool success = !readIdGenerator.empty() && numBatches > 0; numBatches--; return success;};
@@ -239,18 +244,20 @@ public:
             correctionFlags,
             processResults,
             batchCompleted,
-            continueCondition
+            continueCondition,
+            processSerializedResults
         );
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
     RunStatistics runToCompletionDoubleBuffered(
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
-        BatchCompletion batchCompleted
+        BatchCompletion batchCompleted,
+        ResultProcessorSerialized processSerializedResults
     ) const {
 
         constexpr bool useThreadForOutputConstruction = false;
@@ -265,18 +272,20 @@ public:
             useThreadForOutputConstruction,
             processResults,
             batchCompleted,
-            continueCondition
+            continueCondition,
+            processSerializedResults
         );
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
     RunStatistics runToCompletionDoubleBufferedWithExtraThread(
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
-        BatchCompletion batchCompleted
+        BatchCompletion batchCompleted,
+        ResultProcessorSerialized processSerializedResults
     ) const {
 
         constexpr bool useThreadForOutputConstruction = true;
@@ -291,11 +300,12 @@ public:
             useThreadForOutputConstruction,
             processResults,
             batchCompleted,
-            continueCondition
+            continueCondition,
+            processSerializedResults
         );
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
     RunStatistics runSomeBatchesDoubleBuffered(
         int deviceId,
         IdGenerator& readIdGenerator,
@@ -303,7 +313,8 @@ public:
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted,
-        int numBatches
+        int numBatches,
+        ResultProcessorSerialized processSerializedResults
     ) const {
 
         constexpr bool useThreadForOutputConstruction = false;
@@ -318,11 +329,12 @@ public:
             useThreadForOutputConstruction,
             processResults,
             batchCompleted,
-            continueCondition
+            continueCondition,
+            processSerializedResults
         );
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
     RunStatistics runSomeBatchesDoubleBufferedWithExtraThread(
         int deviceId,
         IdGenerator& readIdGenerator,
@@ -330,7 +342,8 @@ public:
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted,
-        int numBatches
+        int numBatches,
+        ResultProcessorSerialized processSerializedResults
     ) const {
 
         constexpr bool useThreadForOutputConstruction = true;
@@ -345,11 +358,12 @@ public:
             useThreadForOutputConstruction,
             processResults,
             batchCompleted,
-            continueCondition
+            continueCondition,
+            processSerializedResults
         );
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ContinueCondition>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ContinueCondition, class ResultProcessorSerialized>
     RunStatistics runDoubleBuffered_impl(
         int deviceId,
         IdGenerator& readIdGenerator,
@@ -358,7 +372,8 @@ public:
         bool useThreadForOutputConstruction,
         ResultProcessor processResults,
         BatchCompletion batchCompleted,
-        ContinueCondition continueCondition
+        ContinueCondition continueCondition,
+        ResultProcessorSerialized processSerializedResults
     ) const {
         cub::SwitchDevice sd{deviceId};
 
@@ -438,8 +453,13 @@ public:
 
                 helpers::CpuTimer outputTimer;
 
+                #ifdef NORMAL_RESULTS
+
                 nvtx::push_range("constructEncodedResults", 2);
+                //helpers::CpuTimer constructResultsTimer("constructEncodedResults");
                 EncodedCorrectionOutput encodedCorrectionOutput = outputConstructor.constructEncodedResults(*rawOutputPtr, forLoopExecutor);
+                // constructResultsTimer.stop();
+                // constructResultsTimer.print();
                 nvtx::pop_range();
 
                 freeRawOutputQueue.push(rawOutputPtr);
@@ -451,6 +471,29 @@ public:
                 processResults(
                     std::move(encodedCorrectionOutput)
                 );
+
+                #else
+
+                nvtx::push_range("constructSerializedEncodedResults", 2);
+                //helpers::CpuTimer constructResultsTimer("constructEncodedResults");
+                SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
+                // constructResultsTimer.stop();
+                // constructResultsTimer.print();
+                nvtx::pop_range();
+
+                freeRawOutputQueue.push(rawOutputPtr);
+                
+                outputTimer.stop();
+                //elapsedOutputTimes.emplace_back(outputTimer.elapsed());
+                elapsedOutputTime += outputTimer.elapsed();
+
+                processSerializedResults(
+                    std::move(serializedEncodedCorrectionOutput)
+                );
+
+
+
+                #endif
             };
 
             std::future<void> outputConstructorFuture{};
@@ -662,7 +705,7 @@ public:
         // std::cerr << "Average: " << elapsedOutputTime / iterations << "\n";
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ContinueCondition>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ContinueCondition, class ResultProcessorSerialized>
     RunStatistics run_impl(
         int deviceId,
         IdGenerator& readIdGenerator,
@@ -670,7 +713,8 @@ public:
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted,
-        ContinueCondition continueCondition
+        ContinueCondition continueCondition,
+        ResultProcessorSerialized processSerializedResults
     ) const {
         cub::SwitchDevice sd{deviceId};
 
@@ -813,6 +857,7 @@ public:
 
                     helpers::CpuTimer outputTimer;
 
+                    #ifdef NORMAL_RESULTS
                     nvtx::push_range("constructEncodedResults", 2);
                     EncodedCorrectionOutput encodedCorrectionOutput = outputConstructor.constructEncodedResults(rawOutput, forLoopExecutor);
                     nvtx::pop_range();
@@ -826,6 +871,29 @@ public:
                     processResults(
                         std::move(encodedCorrectionOutput)
                     );
+
+                    #else
+
+                    nvtx::push_range("constructSerializedEncodedResults", 2);
+                    //helpers::CpuTimer constructResultsTimer("constructSerializedEncodedResults");
+                    SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(rawOutput);
+                    // constructResultsTimer.stop();
+                    // constructResultsTimer.print();
+                    nvtx::pop_range();
+
+                    outputTimer.stop();
+                    //elapsedOutputTimes.emplace_back(outputTimer.elapsed());
+                    if(iterations >= 10){
+                        elapsedOutputTime += outputTimer.elapsed();
+                    }
+
+                    processSerializedResults(
+                        std::move(serializedEncodedCorrectionOutput)
+                    );
+
+
+
+                    #endif
                 }
 
                 batchCompleted(anchorIds.size());
@@ -1564,13 +1632,19 @@ SerializedObjectStorage correct_gpu_impl(
         ](){
             std::vector<std::uint8_t> tempbuffer(256);
 
+            //std::ofstream file("oldflags.txt", std::ios::app);
+            //file << numA << "\n";
+
             auto saveEncodedCorrectedSequence = [&](const EncodedTempCorrectedSequence* encoded){
+                //file << encoded->isHQ() << " " << encoded->useEdits() << " " << encoded->getNumEdits() << "\n";
                 if(!(encoded->isHQ() && encoded->useEdits() && encoded->getNumEdits() == 0)){
                     const std::size_t serializedSize = encoded->getSerializedNumBytes();
                     tempbuffer.resize(serializedSize);
 
                     auto end = encoded->copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
                     assert(end != nullptr);
+
+                    //file << std::distance(tempbuffer.data(), end) << "\n";
 
                     partialResults.insert(tempbuffer.data(), end);
                 }
@@ -1585,6 +1659,66 @@ SerializedObjectStorage correct_gpu_impl(
             for(std::size_t i = 0; i < numC; i++){
                 saveEncodedCorrectedSequence(
                     &encodedCorrectionOutput.encodedCandidateCorrections[i]
+                );
+            }
+        };
+
+        if(numA > 0 || numC > 0){
+            outputThread.enqueue(std::move(outputFunction));
+            //outputFunction();
+        }
+    };
+
+
+    auto processSerializedResults = [&](
+        SerializedEncodedCorrectionOutput&& serializedEncodedCorrectionOutput
+    ){
+
+        const std::size_t numA = serializedEncodedCorrectionOutput.numAnchors;
+        const std::size_t numC = serializedEncodedCorrectionOutput.numCandidates;
+
+        auto outputFunction = [
+            &,
+            serializedEncodedCorrectionOutput = std::move(serializedEncodedCorrectionOutput),
+            numA,
+            numC
+        ](){
+            //std::ofstream file("newflags.txt", std::ios::app);
+            //file << numA << "\n";
+
+            auto saveEncodedCorrectedSequence = [&](const std::uint8_t* encodedBegin, const std::uint8_t* encodedEnd){
+                ParsedEncodedFlags flags = EncodedTempCorrectedSequence::parseEncodedFlags(encodedBegin);
+
+                //file << flags.hq << " " << flags.useEdits << " " << flags.numEdits << "\n";
+
+                if(!(flags.hq && flags.useEdits && flags.numEdits == 0)){
+                    //file << std::distance(encodedBegin, encodedEnd) << "\n";
+
+                    partialResults.insert(encodedBegin, encodedEnd);
+                }
+            };
+
+            for(std::size_t i = 0; i < numA; i++){
+                const std::uint8_t* encodedBegin = serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.data()
+                    + serializedEncodedCorrectionOutput.beginOffsetsAnchors[i];
+                const std::uint8_t* encodedEnd = serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.data()
+                    + serializedEncodedCorrectionOutput.beginOffsetsAnchors[i+1];
+
+                saveEncodedCorrectedSequence(
+                    encodedBegin,
+                    encodedEnd
+                );
+            }
+
+            for(std::size_t i = 0; i < numC; i++){
+                const std::uint8_t* encodedBegin = serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data()
+                    + serializedEncodedCorrectionOutput.beginOffsetsCandidates[i];
+                const std::uint8_t* encodedEnd = serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data()
+                    + serializedEncodedCorrectionOutput.beginOffsetsCandidates[i+1];
+
+                saveEncodedCorrectedSequence(
+                    encodedBegin,
+                    encodedEnd
                 );
             }
         };
@@ -1656,7 +1790,8 @@ SerializedObjectStorage correct_gpu_impl(
                 programOptions,
                 correctionFlags,
                 processResults,
-                batchCompleted
+                batchCompleted,
+                processSerializedResults
             );
         };
     
@@ -1706,7 +1841,8 @@ SerializedObjectStorage correct_gpu_impl(
                 correctionFlags,
                 processResults,
                 batchCompleted,
-                numBatches
+                numBatches,
+                processSerializedResults
             );   
                 
         }
@@ -1734,7 +1870,8 @@ SerializedObjectStorage correct_gpu_impl(
                 programOptions,
                 correctionFlags,
                 processResults,
-                batchCompleted
+                batchCompleted,
+                processSerializedResults
             );  
 
             // pipeline.runToCompletion(
