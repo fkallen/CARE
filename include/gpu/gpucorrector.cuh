@@ -1534,29 +1534,20 @@ namespace gpu{
 
                 nvtx::ScopedRange sr("copySerializedCands", 1);
 
-                int inputCounter = 0;
                 int outputCounter = 0;
 
-                for(int anchor_index = 0; anchor_index < currentOutput.numAnchors; anchor_index++){
+                for(int c = 0; c < currentOutput.numCorrectedCandidates; c++){
+                    const read_number candidate_read_id = currentOutput.h_candidate_read_ids[c];
 
-                    const int globalOffset = currentOutput.h_num_corrected_candidates_per_anchor_prefixsum[anchor_index];
-                    const int n_corrected_candidates = currentOutput.h_num_corrected_candidates_per_anchor[anchor_index];
-
-                    for(int i = 0; i < n_corrected_candidates; ++i) {
-                        const read_number candidate_read_id = currentOutput.h_candidate_read_ids[globalOffset + i];
-
-                        if (!correctionFlags->isCorrectedAsHQAnchor(candidate_read_id)) {
-                            auto it = std::copy(
-                                currentOutput.serializedCandidateResults.data() + currentOutput.serializedCandidateOffsets[inputCounter],
-                                currentOutput.serializedCandidateResults.data() + currentOutput.serializedCandidateOffsets[inputCounter + 1],
-                                serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data() + serializedEncodedCorrectionOutput.beginOffsetsCandidates[outputCounter]
-                            );
-                            serializedEncodedCorrectionOutput.beginOffsetsCandidates[outputCounter+1] 
-                                = std::distance(serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data(), it);
-                            outputCounter++;
-                        }
-
-                        inputCounter++;
+                    if (!correctionFlags->isCorrectedAsHQAnchor(candidate_read_id)) {
+                        auto it = std::copy(
+                            currentOutput.serializedCandidateResults.data() + currentOutput.serializedCandidateOffsets[c],
+                            currentOutput.serializedCandidateResults.data() + currentOutput.serializedCandidateOffsets[c + 1],
+                            serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data() + serializedEncodedCorrectionOutput.beginOffsetsCandidates[outputCounter]
+                        );
+                        serializedEncodedCorrectionOutput.beginOffsetsCandidates[outputCounter+1] 
+                            = std::distance(serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data(), it);
+                        outputCounter++;
                     }
                 }
 
@@ -1638,6 +1629,7 @@ namespace gpu{
             d_editsPerCorrectedanchor{0, cudaStreamPerThread, mr},
             d_numEditsPerCorrectedanchor{0, cudaStreamPerThread, mr},
             d_editsPerCorrectedCandidate{0, cudaStreamPerThread, mr},
+            d_hqAnchorCorrectionOfCandidateExists{0, cudaStreamPerThread, mr},            
             d_numEditsPerCorrectedCandidate{0, cudaStreamPerThread, mr},
             d_indices_of_corrected_anchors{0, cudaStreamPerThread, mr},
             d_num_indices_of_corrected_anchors{0, cudaStreamPerThread, mr},
@@ -1812,6 +1804,8 @@ namespace gpu{
 
                 #ifdef CANDS_FOREST_FLAGS_COMPUTE_AHEAD
                 if(programOptions->correctionType == CorrectionType::Forest){
+                    {
+                    nvtx::ScopedRange sr("candidate hq flags", 7);
                     bool* h_excludeFlags = h_flagsCandidates.data();
 
                     //corrections of candidates for which a high quality anchor correction exists will not be used
@@ -1819,6 +1813,16 @@ namespace gpu{
                     for(int i = 0; i < currentNumCandidates; i++){
                         const read_number candidateReadId = currentInput->h_candidate_read_ids[i];
                         h_excludeFlags[i] = correctionFlags->isCorrectedAsHQAnchor(candidateReadId);
+                    }
+
+                    cudaMemcpyAsync(
+                        d_hqAnchorCorrectionOfCandidateExists.data(),
+                        h_excludeFlags,
+                        sizeof(bool) * currentNumCandidates,
+                        H2D,
+                        extraStream
+                    );
+
                     }
                 }
                 #endif
@@ -1906,6 +1910,7 @@ namespace gpu{
             handleDevice(d_editsPerCorrectedanchor);
             handleDevice(d_numEditsPerCorrectedanchor);
             handleDevice(d_editsPerCorrectedCandidate);
+            handleDevice(d_hqAnchorCorrectionOfCandidateExists);            
             handleDevice(d_numEditsPerCorrectedCandidate);
             handleDevice(d_indices_of_corrected_anchors);
             handleDevice(d_num_indices_of_corrected_anchors);
@@ -1953,6 +1958,7 @@ namespace gpu{
             handleDevice(d_editsPerCorrectedanchor);
             handleDevice(d_numEditsPerCorrectedanchor);
             handleDevice(d_editsPerCorrectedCandidate);
+            handleDevice(d_hqAnchorCorrectionOfCandidateExists);
             handleDevice(d_numEditsPerCorrectedCandidate);
             handleDevice(d_indices_of_corrected_anchors);
             handleDevice(d_num_indices_of_corrected_anchors);
@@ -1984,6 +1990,7 @@ namespace gpu{
             handleDevice(d_indices);
             handleDevice(d_corrected_candidates);
             handleDevice(d_editsPerCorrectedCandidate);
+            handleDevice(d_hqAnchorCorrectionOfCandidateExists);
             handleDevice(d_numEditsPerCorrectedCandidate);
             handleDevice(d_indices_of_corrected_candidates);
             handleDevice(d_candidate_read_ids);
@@ -2072,6 +2079,8 @@ namespace gpu{
             d_indices.resize(numCandidates + 1, stream);
 
             d_indices_of_corrected_candidates.resize(numCandidates, stream);
+
+            d_hqAnchorCorrectionOfCandidateExists.resize(numCandidates, stream);
         }
 
         void flagPairedCandidates(cudaStream_t stream){
@@ -2603,52 +2612,41 @@ namespace gpu{
         void copyCandidateResultsFromDeviceToHostClassic_serialized(cudaStream_t stream){
             nvtx::ScopedRange sr("constructSerializedCandidateResults-gpu", 5);
 
-            CubCallWrapper(mr).cubExclusiveSum(
-                d_num_corrected_candidates_per_anchor.data(), 
-                d_num_corrected_candidates_per_anchor_prefixsum.data(), 
-                currentNumAnchors, 
-                stream
-            );
-
-            helpers::call_copy_n_kernel(
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    d_num_corrected_candidates_per_anchor_prefixsum.data(), 
-                    d_num_corrected_candidates_per_anchor.data()
-                )),
-                currentNumAnchors,
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    currentOutput->h_num_corrected_candidates_per_anchor_prefixsum.data(), 
-                    currentOutput->h_num_corrected_candidates_per_anchor.data()
-                )),
-                stream
-            );
-
             int numCorrectedCandidates = (*h_num_total_corrected_candidates);
 
             rmm::device_uvector<read_number> d_candidate_read_ids2(numCorrectedCandidates, stream, mr);
+            //rmm::device_uvector<read_number> d_hqAnchorCorrectionOfCandidateExists2(numCorrectedCandidates, stream, mr);
 
-            helpers::call_compact_kernel_async(
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    d_candidate_read_ids2.data()
-                )),
+            thrust::gather(
+                rmm::exec_policy_nosync(stream, mr),
+                d_indices_of_corrected_candidates.data(),
+                d_indices_of_corrected_candidates.data() + numCorrectedCandidates,
                 thrust::make_zip_iterator(thrust::make_tuple(
                     d_candidate_read_ids.data()
+                    //d_hqAnchorCorrectionOfCandidateExists.begin()
                 )),
-                d_indices_of_corrected_candidates.data(), 
-                numCorrectedCandidates,
-                stream
-            );
-
-            helpers::call_copy_n_kernel(
                 thrust::make_zip_iterator(thrust::make_tuple(
                     d_candidate_read_ids2.data()
-                )), 
-                numCorrectedCandidates, 
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    currentOutput->h_candidate_read_ids.data()
-                )), 
-                stream
+                    //d_hqAnchorCorrectionOfCandidateExists2.begin()
+                ))
             );
+
+            // const int numCorrectedAnchorsWithoutHqAnchor = thrust::reduce(
+            //     rmm::exec_policy_nosync(stream, mr),
+            //     d_hqAnchorCorrectionOfCandidateExists2.begin(),
+            //     d_hqAnchorCorrectionOfCandidateExists2.end(),
+            //     (int)0
+            // );
+
+            // std::cerr << numCorrectedAnchorsWithoutHqAnchor << " / " << numCorrectedCandidates << "\n";
+
+            CUDACHECK(cudaMemcpyAsync(
+                currentOutput->h_candidate_read_ids.data(),
+                d_candidate_read_ids2.data(),
+                sizeof(read_number) * numCorrectedCandidates,
+                D2H,
+                stream
+            ));
 
             rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedCandidate(numCorrectedCandidates, stream, mr);
             rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedCandidatePrefixSum(numCorrectedCandidates+1, stream, mr);
@@ -4159,6 +4157,8 @@ namespace gpu{
             ); CUDACHECKASYNC;
 
             #if 0
+                {
+                    nvtx::ScopedRange sr("candidate hq flags", 7);
                 rmm::device_uvector<bool> d_flagsCandidates(currentNumCandidates, stream, mr);
                 bool* d_excludeFlags = d_flagsCandidates.data();
                 bool* h_excludeFlags = h_flagsCandidates.data();
@@ -4178,7 +4178,7 @@ namespace gpu{
                 );
 
                 callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
-                    d_candidateCanBeCorrected,
+                    d_candidateCanBeCorrected.data(),
                     d_num_corrected_candidates_per_anchor.data(),
                     managedgpumsa->multiMSAView(),
                     d_excludeFlags,
@@ -4186,16 +4186,17 @@ namespace gpu{
                     d_candidate_sequences_lengths.data(),
                     d_anchorIndicesOfCandidates.data(),
                     d_is_high_quality_anchor.data(),
-                    d_candidates_per_anchor_prefixsum,
+                    d_candidates_per_anchor_prefixsum.data(),
                     d_indices.data(),
                     d_indices_per_anchor.data(),
-                    d_numAnchors,
-                    d_numCandidates,
+                    d_numAnchors.data(),
+                    d_numCandidates.data(),
                     min_support_threshold,
                     min_coverage_threshold,
                     new_columns_to_correct,
                     stream
                 );
+                }
             #else
             callFlagCandidatesToBeCorrectedKernel_async(
                 d_candidateCanBeCorrected.data(),
@@ -4570,6 +4571,7 @@ namespace gpu{
         rmm::device_uvector<EncodedCorrectionEdit> d_editsPerCorrectedanchor;
         rmm::device_uvector<int> d_numEditsPerCorrectedanchor;
         rmm::device_uvector<EncodedCorrectionEdit> d_editsPerCorrectedCandidate;
+        rmm::device_uvector<bool> d_hqAnchorCorrectionOfCandidateExists;
         
         rmm::device_uvector<int> d_numEditsPerCorrectedCandidate;
         rmm::device_uvector<int> d_indices_of_corrected_anchors;
