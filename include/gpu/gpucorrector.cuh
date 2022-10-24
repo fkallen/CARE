@@ -1534,24 +1534,36 @@ namespace gpu{
 
                 nvtx::ScopedRange sr("copySerializedCands", 1);
 
-                int outputCounter = 0;
+                // int outputCounter = 0;
 
-                for(int c = 0; c < currentOutput.numCorrectedCandidates; c++){
-                    const read_number candidate_read_id = currentOutput.h_candidate_read_ids[c];
+                // for(int c = 0; c < currentOutput.numCorrectedCandidates; c++){
+                //     const read_number candidate_read_id = currentOutput.h_candidate_read_ids[c];
 
-                    if (!correctionFlags->isCorrectedAsHQAnchor(candidate_read_id)) {
-                        auto it = std::copy(
-                            currentOutput.serializedCandidateResults.data() + currentOutput.serializedCandidateOffsets[c],
-                            currentOutput.serializedCandidateResults.data() + currentOutput.serializedCandidateOffsets[c + 1],
-                            serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data() + serializedEncodedCorrectionOutput.beginOffsetsCandidates[outputCounter]
-                        );
-                        serializedEncodedCorrectionOutput.beginOffsetsCandidates[outputCounter+1] 
-                            = std::distance(serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data(), it);
-                        outputCounter++;
-                    }
-                }
+                //     if (!correctionFlags->isCorrectedAsHQAnchor(candidate_read_id)) {
+                //         auto it = std::copy(
+                //             currentOutput.serializedCandidateResults.data() + currentOutput.serializedCandidateOffsets[c],
+                //             currentOutput.serializedCandidateResults.data() + currentOutput.serializedCandidateOffsets[c + 1],
+                //             serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data() + serializedEncodedCorrectionOutput.beginOffsetsCandidates[outputCounter]
+                //         );
+                //         serializedEncodedCorrectionOutput.beginOffsetsCandidates[outputCounter+1] 
+                //             = std::distance(serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data(), it);
+                //         outputCounter++;
+                //     }
+                // }
 
-                serializedEncodedCorrectionOutput.numCandidates = outputCounter;
+                // serializedEncodedCorrectionOutput.numCandidates = outputCounter;
+
+                std::copy(
+                    currentOutput.serializedCandidateResults.data(),
+                    currentOutput.serializedCandidateResults.data() + currentOutput.serializedCandidateOffsets[currentOutput.numCorrectedCandidates],
+                    serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data()
+                );
+                std::copy(
+                    currentOutput.serializedCandidateOffsets.data(),
+                    currentOutput.serializedCandidateOffsets.data() + currentOutput.numCorrectedCandidates + 1,
+                    serializedEncodedCorrectionOutput.beginOffsetsCandidates.data()
+                );
+                serializedEncodedCorrectionOutput.numCandidates = currentOutput.numCorrectedCandidates;
             }
 
 
@@ -1802,8 +1814,8 @@ namespace gpu{
             if(programOptions->correctCandidates) {
                 CUDACHECK(cudaEventRecord(events[0], stream));
 
-                #ifdef CANDS_FOREST_FLAGS_COMPUTE_AHEAD
-                if(programOptions->correctionType == CorrectionType::Forest){
+                //#ifdef CANDS_FOREST_FLAGS_COMPUTE_AHEAD
+                //if(programOptions->correctionType == CorrectionType::Forest){
                     {
                     nvtx::ScopedRange sr("candidate hq flags", 7);
                     bool* h_excludeFlags = h_flagsCandidates.data();
@@ -1824,8 +1836,8 @@ namespace gpu{
                     );
 
                     }
-                }
-                #endif
+                //}
+                //#endif
             }
             
 
@@ -2621,15 +2633,23 @@ namespace gpu{
                 rmm::exec_policy_nosync(stream, mr),
                 d_indices_of_corrected_candidates.data(),
                 d_indices_of_corrected_candidates.data() + numCorrectedCandidates,
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    d_candidate_read_ids.data()
-                    //d_hqAnchorCorrectionOfCandidateExists.begin()
-                )),
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    d_candidate_read_ids2.data()
-                    //d_hqAnchorCorrectionOfCandidateExists2.begin()
-                ))
+                d_candidate_read_ids.data(),
+                d_candidate_read_ids2.data()
             );
+
+            // thrust::gather(
+            //     rmm::exec_policy_nosync(stream, mr),
+            //     d_indices_of_corrected_candidates.data(),
+            //     d_indices_of_corrected_candidates.data() + numCorrectedCandidates,
+            //     thrust::make_zip_iterator(thrust::make_tuple(
+            //         d_candidate_read_ids.data(),
+            //         d_hqAnchorCorrectionOfCandidateExists.begin()
+            //     )),
+            //     thrust::make_zip_iterator(thrust::make_tuple(
+            //         d_candidate_read_ids2.data(),
+            //         d_hqAnchorCorrectionOfCandidateExists2.begin()
+            //     ))
+            // );
 
             // const int numCorrectedAnchorsWithoutHqAnchor = thrust::reduce(
             //     rmm::exec_policy_nosync(stream, mr),
@@ -2647,6 +2667,68 @@ namespace gpu{
                 D2H,
                 stream
             ));
+
+            // rmm::device_uvector<int> d_indexList(numCorrectedAnchorsWithoutHqAnchor, stream, mr);
+
+            // thrust::copy_if(
+            //     rmm::exec_policy_nosync(stream, mr),
+            //     thrust::counting_iterator
+            //     d_hqAnchorCorrectionOfCandidateExists2.data(),
+            //     d_hqAnchorCorrectionOfCandidateExists2.data() + numCorrectedAnchorsWithoutHqAnchor,
+            //     d_indexList.begin()
+            // )
+
+            // rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedCandidateFoo(numCorrectedAnchorsWithoutHqAnchor, stream, mr);
+            // rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedCandidateFooPrefixSum(numCorrectedAnchorsWithoutHqAnchor+1, stream, mr);
+            // //compute bytes per numCorrectedCandidates
+            // helpers::lambda_kernel<<<std::max(1, SDIV(numCorrectedCandidates, 128)), 128, 0, stream>>>(
+            //     [
+            //         d_numBytesPerSerializedCandidate = d_numBytesPerSerializedCandidateFoo.data(),
+            //         d_numBytesPerSerializedCandidatePrefixSum = d_numBytesPerSerializedCandidateFooPrefixSum.data(),
+            //         d_numEditsPerCorrectedCandidate = d_numEditsPerCorrectedCandidate.data(),
+            //         d_candidate_sequences_lengths = d_candidate_sequences_lengths.data(),
+            //         numCorrectedCandidates = numCorrectedCandidates,
+            //         dontUseEditsValue = getDoNotUseEditsValue(),
+            //         d_indices_of_corrected_candidates = d_indices_of_corrected_candidates.data(),
+            //         numCorrectedAnchorsWithoutHqAnchor = numCorrectedAnchorsWithoutHqAnchor,
+            //         d_hqAnchorCorrectionOfCandidateExists = d_hqAnchorCorrectionOfCandidateExists.data()
+            //     ] __device__ (){
+            //         const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+            //         const int stride = blockDim.x * gridDim.x;
+            //         if(tid == 0){
+            //             d_numBytesPerSerializedCandidatePrefixSum[0] = 0;
+            //         }
+            //         for(int outputIndex = tid; outputIndex < numCorrectedCandidates; outputIndex += stride){
+            //             const int candidateIndex = d_indices_of_corrected_candidates[outputIndex];
+
+            //             const int numEdits = d_numEditsPerCorrectedCandidate[outputIndex];
+            //             const bool useEdits = numEdits != dontUseEditsValue;
+            //             std::uint32_t numBytes = 0;
+            //             if(useEdits){
+            //                 numBytes += sizeof(short); //number of edits
+            //                 numBytes += numEdits * (sizeof(short) + sizeof(char)); //edits
+            //             }else{
+            //                 const int sequenceLength = d_candidate_sequences_lengths[candidateIndex];
+            //                 numBytes += sizeof(short); // sequence length
+            //                 numBytes += sizeof(char) * sequenceLength;  //sequence
+            //             }
+            //             //candidate shift
+            //             numBytes += sizeof(short);
+
+            //             #ifndef NDEBUG
+            //             //flags use 3 bits, remainings bit can be used for encoding
+            //             constexpr std::uint32_t maxNumBytes = (std::uint32_t(1) << 29)-1;
+            //             assert(numBytes <= maxNumBytes);
+            //             #endif
+
+            //             numBytes += sizeof(read_number) + sizeof(std::uint32_t);
+
+            //             d_numBytesPerSerializedCandidate[outputIndex] = numBytes;
+            //         }
+            //     }
+            // ); CUDACHECKASYNC;
+
+
 
             rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedCandidate(numCorrectedCandidates, stream, mr);
             rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedCandidatePrefixSum(numCorrectedCandidates+1, stream, mr);
@@ -4156,26 +4238,28 @@ namespace gpu{
                 d_candidateCanBeCorrected.data()
             ); CUDACHECKASYNC;
 
-            #if 0
+            #if 1
                 {
                     nvtx::ScopedRange sr("candidate hq flags", 7);
-                rmm::device_uvector<bool> d_flagsCandidates(currentNumCandidates, stream, mr);
-                bool* d_excludeFlags = d_flagsCandidates.data();
-                bool* h_excludeFlags = h_flagsCandidates.data();
+                // rmm::device_uvector<bool> d_flagsCandidates(currentNumCandidates, stream, mr);
+                // bool* d_excludeFlags = d_flagsCandidates.data();
+                // bool* h_excludeFlags = h_flagsCandidates.data();
 
-                //corrections of candidates for which a high quality anchor correction exists will not be used
-                //-> don't compute them
-                for(int i = 0; i < currentNumCandidates; i++){
-                    const read_number candidateReadId = currentInput->h_candidate_read_ids[i];
-                    h_excludeFlags[i] = correctionFlags->isCorrectedAsHQAnchor(candidateReadId);
-                }
+                // //corrections of candidates for which a high quality anchor correction exists will not be used
+                // //-> don't compute them
+                // for(int i = 0; i < currentNumCandidates; i++){
+                //     const read_number candidateReadId = currentInput->h_candidate_read_ids[i];
+                //     h_excludeFlags[i] = correctionFlags->isCorrectedAsHQAnchor(candidateReadId);
+                // }
 
-                helpers::call_copy_n_kernel(
-                    (const int*)h_excludeFlags,
-                    SDIV(currentNumCandidates, sizeof(int)),
-                    (int*)d_excludeFlags,
-                    stream
-                );
+                // helpers::call_copy_n_kernel(
+                //     (const int*)h_excludeFlags,
+                //     SDIV(currentNumCandidates, sizeof(int)),
+                //     (int*)d_excludeFlags,
+                //     stream
+                // );
+
+                bool* d_excludeFlags = d_hqAnchorCorrectionOfCandidateExists.data();
 
                 callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
                     d_candidateCanBeCorrected.data(),
