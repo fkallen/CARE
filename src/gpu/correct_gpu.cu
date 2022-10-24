@@ -981,7 +981,7 @@ public:
 
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion>
+    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
     void run(
         int deviceId,
         const Config& config,
@@ -989,7 +989,8 @@ public:
         const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
-        BatchCompletion batchCompleted
+        BatchCompletion batchCompleted,
+        ResultProcessorSerialized processSerializedResults
     ){
         cub::SwitchDevice sd{deviceId};
 
@@ -1043,7 +1044,10 @@ public:
                             correctorThreadFunctionMultiBufferWithOutput(deviceId, 
                                 programOptions, 
                                 correctionFlags,
-                                processResults, batchCompleted);                          
+                                processResults, 
+                                batchCompleted, 
+                                processSerializedResults
+                            );                          
                         }
                     )
                 );
@@ -1102,8 +1106,13 @@ public:
                     std::async(
                         std::launch::async,
                         [&](){ 
-                            outputConstructorThreadFunction(programOptions, correctionFlags,
-                                processResults, batchCompleted); 
+                            outputConstructorThreadFunction(
+                                programOptions, 
+                                correctionFlags,
+                                processResults, 
+                                batchCompleted,
+                                processSerializedResults
+                            ); 
                         }
                     )
                 );
@@ -1318,13 +1327,14 @@ public:
         return 1;
     }
 
-    template<class ResultProcessor, class BatchCompletion>
+    template<class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
     void correctorThreadFunctionMultiBufferWithOutput(
         int deviceId,
         const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
-        BatchCompletion batchCompleted
+        BatchCompletion batchCompleted,
+        ResultProcessorSerialized processSerializedResults
     ){
         cudaSetDevice(deviceId);
 
@@ -1360,6 +1370,7 @@ public:
             }
 
             auto constructOutput = [&](GpuErrorCorrectorRawOutput* rawOutputPtr){
+                #ifdef NORMAL_RESULTS
                 nvtx::push_range("constructEncodedResults", 2);
                 EncodedCorrectionOutput encodedCorrectionOutput = outputConstructor.constructEncodedResults(*rawOutputPtr, forLoopExecutor);
                 nvtx::pop_range();
@@ -1367,6 +1378,22 @@ public:
                 processResults(
                     std::move(encodedCorrectionOutput)
                 );
+                #else
+                nvtx::push_range("constructSerializedEncodedResults", 2);
+                //helpers::CpuTimer constructResultsTimer("constructSerializedEncodedResults");
+
+                //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
+                SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResultsFaster(*rawOutputPtr);
+
+                // constructResultsTimer.stop();
+                // constructResultsTimer.print();
+                nvtx::pop_range();
+
+                processSerializedResults(
+                    std::move(serializedEncodedCorrectionOutput)
+                );
+
+                #endif
 
                 batchCompleted(rawOutputPtr->numAnchors); 
 
@@ -1500,12 +1527,13 @@ public:
     };
 
 
-    template<class ResultProcessor, class BatchCompletion>
+    template<class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
     void outputConstructorThreadFunction(
         const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
-        BatchCompletion batchCompleted
+        BatchCompletion batchCompleted,
+        ResultProcessorSerialized processSerializedResults
     ){
 
         OutputConstructor outputConstructor(            
@@ -1520,6 +1548,7 @@ public:
         GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputs.pop();
 
         while(rawOutputPtr != nullptr){
+            #ifdef NORMAL_RESULTS
             nvtx::push_range("constructEncodedResults", 2);
             EncodedCorrectionOutput encodedCorrectionOutput = outputConstructor.constructEncodedResults(*rawOutputPtr, forLoopExecutor);
             nvtx::pop_range();
@@ -1527,6 +1556,22 @@ public:
             processResults(
                 std::move(encodedCorrectionOutput)
             );
+            #else
+            nvtx::push_range("constructSerializedEncodedResults", 2);
+            //helpers::CpuTimer constructResultsTimer("constructSerializedEncodedResults");
+
+            //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
+            SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResultsFaster(*rawOutputPtr);
+
+            // constructResultsTimer.stop();
+            // constructResultsTimer.print();
+            nvtx::pop_range();
+
+            processSerializedResults(
+                std::move(serializedEncodedCorrectionOutput)
+            );
+
+            #endif
 
             batchCompleted(rawOutputPtr->numAnchors); 
 
@@ -1934,7 +1979,8 @@ SerializedObjectStorage correct_gpu_impl(
                 programOptions,
                 correctionFlags,
                 processResults,
-                batchCompleted
+                batchCompleted,
+                processSerializedResults
             );
         };
 
