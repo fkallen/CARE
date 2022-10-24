@@ -476,7 +476,11 @@ public:
 
                 nvtx::push_range("constructSerializedEncodedResults", 2);
                 //helpers::CpuTimer constructResultsTimer("constructEncodedResults");
-                SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
+
+                //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
+                SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResultsFaster(*rawOutputPtr);
+                
+
                 // constructResultsTimer.stop();
                 // constructResultsTimer.print();
                 nvtx::pop_range();
@@ -876,7 +880,10 @@ public:
 
                     nvtx::push_range("constructSerializedEncodedResults", 2);
                     //helpers::CpuTimer constructResultsTimer("constructSerializedEncodedResults");
-                    SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(rawOutput);
+
+                    //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(rawOutput);
+                    SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResultsFaster(rawOutput);
+
                     // constructResultsTimer.stop();
                     // constructResultsTimer.print();
                     nvtx::pop_range();
