@@ -1735,17 +1735,10 @@ SerializedObjectStorage correct_gpu_impl(
             numA,
             numC
         ](){
-            //std::ofstream file("newflags.txt", std::ios::app);
-            //file << numA << "\n";
 
-            auto saveEncodedCorrectedSequence = [&](const std::uint8_t* encodedBegin, const std::uint8_t* encodedEnd){
+            auto saveWithFlagCheck = [&](const std::uint8_t* encodedBegin, const std::uint8_t* encodedEnd){
                 ParsedEncodedFlags flags = EncodedTempCorrectedSequence::parseEncodedFlags(encodedBegin);
-
-                //file << flags.hq << " " << flags.useEdits << " " << flags.numEdits << "\n";
-
                 if(!(flags.hq && flags.useEdits && flags.numEdits == 0)){
-                    //file << std::distance(encodedBegin, encodedEnd) << "\n";
-
                     partialResults.insert(encodedBegin, encodedEnd);
                 }
             };
@@ -1756,23 +1749,19 @@ SerializedObjectStorage correct_gpu_impl(
                 const std::uint8_t* encodedEnd = serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.data()
                     + serializedEncodedCorrectionOutput.beginOffsetsAnchors[i+1];
 
-                saveEncodedCorrectedSequence(
+                saveWithFlagCheck(
                     encodedBegin,
                     encodedEnd
                 );
             }
 
-            for(std::size_t i = 0; i < numC; i++){
-                const std::uint8_t* encodedBegin = serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data()
-                    + serializedEncodedCorrectionOutput.beginOffsetsCandidates[i];
-                const std::uint8_t* encodedEnd = serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data()
-                    + serializedEncodedCorrectionOutput.beginOffsetsCandidates[i+1];
-
-                saveEncodedCorrectedSequence(
-                    encodedBegin,
-                    encodedEnd
-                );
-            }
+            // don't need to check flags for candidates. insert blob.
+            partialResults.bulkInsert(
+                serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data(),
+                serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data() + serializedEncodedCorrectionOutput.beginOffsetsCandidates[numC],
+                serializedEncodedCorrectionOutput.beginOffsetsCandidates.data(),
+                serializedEncodedCorrectionOutput.beginOffsetsCandidates.data() + numC
+            );
         };
 
         if(numA > 0 || numC > 0){
