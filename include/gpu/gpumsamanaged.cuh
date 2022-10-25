@@ -20,7 +20,8 @@
 namespace care{
 namespace gpu{
 
-    //#define GPUMSAMANAGED_SINGLE_DATA_BUFFER
+    #define GPUMSAMANAGED_SINGLE_DATA_BUFFER
+    
     struct MSAColumnCount{
     public:
         constexpr MSAColumnCount(int c) noexcept : value(c){}
