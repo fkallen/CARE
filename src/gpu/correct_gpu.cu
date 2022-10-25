@@ -32,8 +32,6 @@
 
 #include <thrust/iterator/counting_iterator.h>
 
-//#define NORMAL_RESULTS
-
 namespace care{
 namespace gpu{
 
@@ -198,13 +196,12 @@ public:
 
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
+    template<class IdGenerator, class BatchCompletion, class ResultProcessorSerialized>
     RunStatistics runToCompletion(
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
-        ResultProcessor processResults,
         BatchCompletion batchCompleted,
         ResultProcessorSerialized processSerializedResults
     ) const {
@@ -216,20 +213,18 @@ public:
             readIdGenerator,
             programOptions,
             correctionFlags,
-            processResults,
             batchCompleted,
             continueCondition,
             processSerializedResults
         );
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
+    template<class IdGenerator, class BatchCompletion, class ResultProcessorSerialized>
     RunStatistics runSomeBatches(
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
-        ResultProcessor processResults,
         BatchCompletion batchCompleted,
         int numBatches,
         ResultProcessorSerialized processSerializedResults
@@ -242,20 +237,18 @@ public:
             readIdGenerator,
             programOptions,
             correctionFlags,
-            processResults,
             batchCompleted,
             continueCondition,
             processSerializedResults
         );
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
+    template<class IdGenerator, class BatchCompletion, class ResultProcessorSerialized>
     RunStatistics runToCompletionDoubleBuffered(
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
-        ResultProcessor processResults,
         BatchCompletion batchCompleted,
         ResultProcessorSerialized processSerializedResults
     ) const {
@@ -270,20 +263,18 @@ public:
             programOptions,
             correctionFlags,
             useThreadForOutputConstruction,
-            processResults,
             batchCompleted,
             continueCondition,
             processSerializedResults
         );
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
+    template<class IdGenerator, class BatchCompletion, class ResultProcessorSerialized>
     RunStatistics runToCompletionDoubleBufferedWithExtraThread(
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
-        ResultProcessor processResults,
         BatchCompletion batchCompleted,
         ResultProcessorSerialized processSerializedResults
     ) const {
@@ -298,20 +289,18 @@ public:
             programOptions,
             correctionFlags,
             useThreadForOutputConstruction,
-            processResults,
             batchCompleted,
             continueCondition,
             processSerializedResults
         );
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
+    template<class IdGenerator, class BatchCompletion, class ResultProcessorSerialized>
     RunStatistics runSomeBatchesDoubleBuffered(
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
-        ResultProcessor processResults,
         BatchCompletion batchCompleted,
         int numBatches,
         ResultProcessorSerialized processSerializedResults
@@ -327,20 +316,18 @@ public:
             programOptions,
             correctionFlags,
             useThreadForOutputConstruction,
-            processResults,
             batchCompleted,
             continueCondition,
             processSerializedResults
         );
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
+    template<class IdGenerator, class BatchCompletion, class ResultProcessorSerialized>
     RunStatistics runSomeBatchesDoubleBufferedWithExtraThread(
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
-        ResultProcessor processResults,
         BatchCompletion batchCompleted,
         int numBatches,
         ResultProcessorSerialized processSerializedResults
@@ -356,21 +343,19 @@ public:
             programOptions,
             correctionFlags,
             useThreadForOutputConstruction,
-            processResults,
             batchCompleted,
             continueCondition,
             processSerializedResults
         );
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ContinueCondition, class ResultProcessorSerialized>
+    template<class IdGenerator, class BatchCompletion, class ContinueCondition, class ResultProcessorSerialized>
     RunStatistics runDoubleBuffered_impl(
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
         bool useThreadForOutputConstruction,
-        ResultProcessor processResults,
         BatchCompletion batchCompleted,
         ContinueCondition continueCondition,
         ResultProcessorSerialized processSerializedResults
@@ -404,8 +389,6 @@ public:
 
             SingleProducerSingleConsumerQueue<std::pair<GpuErrorCorrectorInput*,
                 GpuErrorCorrectorRawOutput*>> dataInFlight;
-
-            SequentialForLoopExecutor forLoopExecutor;
 
             AnchorHasher gpuAnchorHasher(
                 *readStorage,
@@ -453,32 +436,11 @@ public:
 
                 helpers::CpuTimer outputTimer;
 
-                #ifdef NORMAL_RESULTS
-
-                nvtx::push_range("constructEncodedResults", 2);
-                //helpers::CpuTimer constructResultsTimer("constructEncodedResults");
-                EncodedCorrectionOutput encodedCorrectionOutput = outputConstructor.constructEncodedResults(*rawOutputPtr, forLoopExecutor);
-                // constructResultsTimer.stop();
-                // constructResultsTimer.print();
-                nvtx::pop_range();
-
-                freeRawOutputQueue.push(rawOutputPtr);
-                
-                outputTimer.stop();
-                //elapsedOutputTimes.emplace_back(outputTimer.elapsed());
-                elapsedOutputTime += outputTimer.elapsed();
-
-                processResults(
-                    std::move(encodedCorrectionOutput)
-                );
-
-                #else
-
                 nvtx::push_range("constructSerializedEncodedResults", 2);
                 //helpers::CpuTimer constructResultsTimer("constructEncodedResults");
 
                 //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
-                SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResultsFaster(*rawOutputPtr);
+                SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
                 
 
                 // constructResultsTimer.stop();
@@ -494,10 +456,6 @@ public:
                 processSerializedResults(
                     std::move(serializedEncodedCorrectionOutput)
                 );
-
-
-
-                #endif
             };
 
             std::future<void> outputConstructorFuture{};
@@ -709,13 +667,12 @@ public:
         // std::cerr << "Average: " << elapsedOutputTime / iterations << "\n";
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ContinueCondition, class ResultProcessorSerialized>
+    template<class IdGenerator, class BatchCompletion, class ContinueCondition, class ResultProcessorSerialized>
     RunStatistics run_impl(
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
-        ResultProcessor processResults,
         BatchCompletion batchCompleted,
         ContinueCondition continueCondition,
         ResultProcessorSerialized processSerializedResults
@@ -741,10 +698,6 @@ public:
             GpuErrorCorrectorInput input;
 
             GpuErrorCorrectorRawOutput rawOutput;
-
-            //ThreadPool::ParallelForHandle pforHandle;
-            //ForLoopExecutor forLoopExecutor(threadPool, &pforHandle);
-            SequentialForLoopExecutor forLoopExecutor;
 
             AnchorHasher gpuAnchorHasher(
                 *readStorage,
@@ -861,28 +814,11 @@ public:
 
                     helpers::CpuTimer outputTimer;
 
-                    #ifdef NORMAL_RESULTS
-                    nvtx::push_range("constructEncodedResults", 2);
-                    EncodedCorrectionOutput encodedCorrectionOutput = outputConstructor.constructEncodedResults(rawOutput, forLoopExecutor);
-                    nvtx::pop_range();
-
-                    outputTimer.stop();
-                    //elapsedOutputTimes.emplace_back(outputTimer.elapsed());
-                    if(iterations >= 10){
-                        elapsedOutputTime += outputTimer.elapsed();
-                    }
-
-                    processResults(
-                        std::move(encodedCorrectionOutput)
-                    );
-
-                    #else
-
                     nvtx::push_range("constructSerializedEncodedResults", 2);
                     //helpers::CpuTimer constructResultsTimer("constructSerializedEncodedResults");
 
                     //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(rawOutput);
-                    SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResultsFaster(rawOutput);
+                    SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(rawOutput);
 
                     // constructResultsTimer.stop();
                     // constructResultsTimer.print();
@@ -897,10 +833,6 @@ public:
                     processSerializedResults(
                         std::move(serializedEncodedCorrectionOutput)
                     );
-
-
-
-                    #endif
                 }
 
                 batchCompleted(anchorIds.size());
@@ -981,14 +913,13 @@ public:
 
     }
 
-    template<class IdGenerator, class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
+    template<class IdGenerator, class BatchCompletion, class ResultProcessorSerialized>
     void run(
         int deviceId,
         const Config& config,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
-        ResultProcessor processResults,
         BatchCompletion batchCompleted,
         ResultProcessorSerialized processSerializedResults
     ){
@@ -1044,7 +975,6 @@ public:
                             correctorThreadFunctionMultiBufferWithOutput(deviceId, 
                                 programOptions, 
                                 correctionFlags,
-                                processResults, 
                                 batchCompleted, 
                                 processSerializedResults
                             );                          
@@ -1109,7 +1039,6 @@ public:
                             outputConstructorThreadFunction(
                                 programOptions, 
                                 correctionFlags,
-                                processResults, 
                                 batchCompleted,
                                 processSerializedResults
                             ); 
@@ -1327,12 +1256,11 @@ public:
         return 1;
     }
 
-    template<class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
+    template<class BatchCompletion, class ResultProcessorSerialized>
     void correctorThreadFunctionMultiBufferWithOutput(
         int deviceId,
         const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
-        ResultProcessor processResults,
         BatchCompletion batchCompleted,
         ResultProcessorSerialized processSerializedResults
     ){
@@ -1359,8 +1287,6 @@ public:
             );
 
             ThreadPool::ParallelForHandle pforHandle;
-            //ForLoopExecutor forLoopExecutor(&threadPool, &pforHandle);
-            SequentialForLoopExecutor forLoopExecutor;
 
             std::array<GpuErrorCorrectorRawOutput, 1 + getNumExtraBuffers()> rawOutputs{};
             std::queue<GpuErrorCorrectorRawOutput*> myFreeOutputsQueue;
@@ -1370,20 +1296,11 @@ public:
             }
 
             auto constructOutput = [&](GpuErrorCorrectorRawOutput* rawOutputPtr){
-                #ifdef NORMAL_RESULTS
-                nvtx::push_range("constructEncodedResults", 2);
-                EncodedCorrectionOutput encodedCorrectionOutput = outputConstructor.constructEncodedResults(*rawOutputPtr, forLoopExecutor);
-                nvtx::pop_range();
-
-                processResults(
-                    std::move(encodedCorrectionOutput)
-                );
-                #else
                 nvtx::push_range("constructSerializedEncodedResults", 2);
                 //helpers::CpuTimer constructResultsTimer("constructSerializedEncodedResults");
 
                 //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
-                SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResultsFaster(*rawOutputPtr);
+                SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
 
                 // constructResultsTimer.stop();
                 // constructResultsTimer.print();
@@ -1392,8 +1309,6 @@ public:
                 processSerializedResults(
                     std::move(serializedEncodedCorrectionOutput)
                 );
-
-                #endif
 
                 batchCompleted(rawOutputPtr->numAnchors); 
 
@@ -1527,11 +1442,10 @@ public:
     };
 
 
-    template<class ResultProcessor, class BatchCompletion, class ResultProcessorSerialized>
+    template<class BatchCompletion, class ResultProcessorSerialized>
     void outputConstructorThreadFunction(
         const ProgramOptions& programOptions,
         ReadCorrectionFlags& correctionFlags,
-        ResultProcessor processResults,
         BatchCompletion batchCompleted,
         ResultProcessorSerialized processSerializedResults
     ){
@@ -1542,26 +1456,16 @@ public:
         );
 
         ThreadPool::ParallelForHandle pforHandle;
-        //ForLoopExecutor forLoopExecutor(&threadPool, &pforHandle);
-        SequentialForLoopExecutor forLoopExecutor;
+
 
         GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputs.pop();
 
         while(rawOutputPtr != nullptr){
-            #ifdef NORMAL_RESULTS
-            nvtx::push_range("constructEncodedResults", 2);
-            EncodedCorrectionOutput encodedCorrectionOutput = outputConstructor.constructEncodedResults(*rawOutputPtr, forLoopExecutor);
-            nvtx::pop_range();
-
-            processResults(
-                std::move(encodedCorrectionOutput)
-            );
-            #else
             nvtx::push_range("constructSerializedEncodedResults", 2);
             //helpers::CpuTimer constructResultsTimer("constructSerializedEncodedResults");
 
             //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
-            SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResultsFaster(*rawOutputPtr);
+            SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
 
             // constructResultsTimer.stop();
             // constructResultsTimer.print();
@@ -1570,8 +1474,6 @@ public:
             processSerializedResults(
                 std::move(serializedEncodedCorrectionOutput)
             );
-
-            #endif
 
             batchCompleted(rawOutputPtr->numAnchors); 
 
@@ -1666,60 +1568,6 @@ SerializedObjectStorage correct_gpu_impl(
     //std::mutex outputstreamlock;
 
     BackgroundThread outputThread;
-
-
-
-    auto processResults = [&](
-        EncodedCorrectionOutput&& encodedCorrectionOutput
-    ){
-
-        const std::size_t numA = encodedCorrectionOutput.encodedAnchorCorrections.size();
-        const std::size_t numC = encodedCorrectionOutput.encodedCandidateCorrections.size();
-
-        auto outputFunction = [
-            &,
-            encodedCorrectionOutput = std::move(encodedCorrectionOutput),
-            numA,
-            numC
-        ](){
-            std::vector<std::uint8_t> tempbuffer(256);
-
-            //std::ofstream file("oldflags.txt", std::ios::app);
-            //file << numA << "\n";
-
-            auto saveEncodedCorrectedSequence = [&](const EncodedTempCorrectedSequence* encoded){
-                //file << encoded->isHQ() << " " << encoded->useEdits() << " " << encoded->getNumEdits() << "\n";
-                if(!(encoded->isHQ() && encoded->useEdits() && encoded->getNumEdits() == 0)){
-                    const std::size_t serializedSize = encoded->getSerializedNumBytes();
-                    tempbuffer.resize(serializedSize);
-
-                    auto end = encoded->copyToContiguousMemory(tempbuffer.data(), tempbuffer.data() + tempbuffer.size());
-                    assert(end != nullptr);
-
-                    //file << std::distance(tempbuffer.data(), end) << "\n";
-
-                    partialResults.insert(tempbuffer.data(), end);
-                }
-            };
-
-            for(std::size_t i = 0; i < numA; i++){
-                saveEncodedCorrectedSequence(
-                    &encodedCorrectionOutput.encodedAnchorCorrections[i]
-                );
-            }
-
-            for(std::size_t i = 0; i < numC; i++){
-                saveEncodedCorrectedSequence(
-                    &encodedCorrectionOutput.encodedCandidateCorrections[i]
-                );
-            }
-        };
-
-        if(numA > 0 || numC > 0){
-            outputThread.enqueue(std::move(outputFunction));
-            //outputFunction();
-        }
-    };
 
 
     auto processSerializedResults = [&](
@@ -1830,7 +1678,6 @@ SerializedObjectStorage correct_gpu_impl(
                 readIdGenerator,
                 programOptions,
                 correctionFlags,
-                processResults,
                 batchCompleted,
                 processSerializedResults
             );
@@ -1880,7 +1727,6 @@ SerializedObjectStorage correct_gpu_impl(
                 readIdGenerator,
                 programOptions,
                 correctionFlags,
-                processResults,
                 batchCompleted,
                 numBatches,
                 processSerializedResults
@@ -1910,43 +1756,10 @@ SerializedObjectStorage correct_gpu_impl(
                 readIdGenerator,
                 programOptions,
                 correctionFlags,
-                processResults,
                 batchCompleted,
                 processSerializedResults
-            );  
-
-            // pipeline.runToCompletion(
-            //     deviceId,
-            //     readIdGenerator,
-            //     programOptions,
-            //     correctionFlags,
-            //     processResults,
-            //     batchCompleted
-            // );  
+            );
         };
-
-        // auto runSimpleGpuPipelineWithExtraThread = [&](int deviceId,
-        //     const GpuForest* gpuForestAnchor, 
-        //     const GpuForest* gpuForestCandidate
-        // ){
-        //     SimpleGpuCorrectionPipeline<Minhasher> pipeline(
-        //         readStorage,
-        //         minhasher,
-        //         nullptr, //&threadPool
-        //         gpuForestAnchor,
-        //         gpuForestCandidate
-        //     );
-
-        //     pipeline.runToCompletionDoubleBufferedWithExtraThread(
-        //         deviceId,
-        //         readIdGenerator,
-        //         programOptions,
-        //         programOptions,
-        //         correctionFlags,
-        //         processResults,
-        //         batchCompleted
-        //     );  
-        // };
 
         auto runComplexGpuPipeline = [&](int deviceId, typename ComplexGpuCorrectionPipeline<Minhasher>::Config config,
             const GpuForest* gpuForestAnchor, 
@@ -1967,7 +1780,6 @@ SerializedObjectStorage correct_gpu_impl(
                 readIdGenerator,
                 programOptions,
                 correctionFlags,
-                processResults,
                 batchCompleted,
                 processSerializedResults
             );

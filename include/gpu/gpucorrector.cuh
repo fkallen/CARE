@@ -606,8 +606,6 @@ namespace gpu{
 
         template<class ForLoop>
         CorrectionOutput constructResults(const GpuErrorCorrectorRawOutput& currentOutput, ForLoop loopExecutor) const{
-            assert(false && "invalid");
-            //assert(cudaSuccess == currentOutput.event.query());
 
             if(currentOutput.nothingToDo){
                 return CorrectionOutput{};
@@ -723,10 +721,6 @@ namespace gpu{
                         
                         tmp.useEdits = false;
                     }
-
-                    // if(tmp.readId == 9273463){
-                    //     std::cerr << tmp << " with anchorid " << anchorReadId << "\n";
-                    // }
                 }
 
                 nvtx::pop_range();
@@ -766,8 +760,6 @@ namespace gpu{
 
         template<class ForLoop>
         EncodedCorrectionOutput constructEncodedResults(const GpuErrorCorrectorRawOutput& currentOutput, ForLoop loopExecutor) const{
-            assert(false && "invalid");
-            //assert(cudaSuccess == currentOutput.event.query());
 
             if(currentOutput.nothingToDo){
                 return EncodedCorrectionOutput{};
@@ -779,24 +771,7 @@ namespace gpu{
             const int numCorrectedAnchors = anchorIndicesToProcess.size();
             const int numCorrectedCandidates = candidateIndicesToProcess.size();
 
-            // std::cerr << "numCorrectedAnchors: " << numCorrectedAnchors << 
-            //     ", numCorrectedCandidates: " << numCorrectedCandidates << "\n";
-
             EncodedCorrectionOutput encodedCorrectionOutput;
-            // encodedCorrectionOutput.encodedAnchorCorrections.resize(numCorrectedAnchors);
-
-            // if(programOptions->correctCandidates){
-            //     encodedCorrectionOutput.encodedCandidateCorrections.resize(numCorrectedCandidates);
-            // }
-
-            //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput;
-
-            // serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.resize(numCorrectedAnchors * 192);
-            // serializedEncodedCorrectionOutput.beginOffsetsAnchors.resize(numCorrectedAnchors+1);
-            // serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.resize(numCorrectedCandidates * 192);
-            // serializedEncodedCorrectionOutput.beginOffsetsCandidates.resize(numCorrectedAnchors+1);
-            // serializedEncodedCorrectionOutput.beginOffsetsAnchors[0] = 0;
-            // serializedEncodedCorrectionOutput.beginOffsetsCandidates[0] = 0;
 
 
             auto unpackAnchors = [&](int begin, int end){
@@ -905,178 +880,10 @@ namespace gpu{
                         sequenceLength,
                         sequence
                     );
-
-                    // std::uint8_t* endPtr = nullptr;
-                    // while(endPtr == nullptr){
-                    //     endPtr = EncodedTempCorrectedSequence::encodeDataAndSerializeIntoBuffer(
-                    //         serialized.data() + serializedOffsets[numCorrectedAnchors + positionInVector],
-                    //         serialized.data() + serialized.size(),
-                    //         candidate_read_id,
-                    //         false,
-                    //         useEdits,
-                    //         TempCorrectedSequenceType::Candidate,
-                    //         candidate_shift,
-                    //         numEdits,
-                    //         edits,
-                    //         sequenceLength,
-                    //         sequence
-                    //     );
-                    //     if(endPtr != nullptr){
-                    //         serializedOffsets[numCorrectedAnchors + positionInVector + 1] = std::distance(serialized.data(), endPtr);
-                    //     }else{
-                    //         serialized.resize(serialized.size() * 2);
-                    //     }
-                    // }
-
-                    // EncodedTempCorrectedSequence tmp123;
-                    // tmp123.copyFromContiguousMemory(serialized.data() + serializedOffsets[numCorrectedAnchors + positionInVector]);
-
-                    // TempCorrectedSequence oldTcs = encodedCorrectionOutput.encodedCandidateCorrections[positionInVector];
-                    // TempCorrectedSequence newTcs = tmp123;
-
-                    // assert(oldTcs == newTcs);
-
-
                 }
 
                 nvtx::pop_range();
             };
-
-            // auto unpackAnchorsSerialized = [&](int begin, int end){
-            //     nvtx::push_range("Anchor unpacking " + std::to_string(end - begin), 3);
-
-            //     auto& beginOffsetsAnchors = serializedEncodedCorrectionOutput.beginOffsetsAnchors;
-            //     auto& serializedEncodedAnchorCorrections = serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections;
-
-            //     //Edits and numEdits are stored compact, only for corrected anchors.
-            //     //they are indexed by positionInVector instead of anchor_index
-                            
-            //     for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
-            //         const int anchor_index = anchorIndicesToProcess[positionInVector];
-                    
-            //         const read_number readId = currentOutput.h_anchorReadIds[anchor_index];
-
-            //         bool useEdits = false;
-            //         const char* sequence = nullptr;
-            //         int sequenceLength = 0;
-            //         const EncodedCorrectionEdit* edits = nullptr;
-                    
-            //         const int numEdits = currentOutput.h_numEditsPerCorrectedanchor[positionInVector];
-            //         if(numEdits != currentOutput.doNotUseEditsValue){
-            //             const int editOffset = currentOutput.h_anchorEditOffsets[positionInVector];
-            //             edits = currentOutput.h_editsPerCorrectedanchor + editOffset;
-            //             useEdits = true;
-            //         }else{                        
-            //             const int sequenceOffset = currentOutput.h_correctedAnchorsOffsets[positionInVector];
-            //             const char* const my_corrected_anchor_data = currentOutput.h_corrected_anchors + sequenceOffset;
-            //             const int anchor_length = currentOutput.h_anchor_sequences_lengths[anchor_index];
- 
-            //             sequenceLength = anchor_length;
-            //             sequence = my_corrected_anchor_data;
-            //         }
-
-            //         std::uint8_t* endPtr = nullptr;
-            //         while(endPtr == nullptr){
-            //             endPtr = EncodedTempCorrectedSequence::encodeDataAndSerializeIntoBuffer(
-            //                 serializedEncodedAnchorCorrections.data() + beginOffsetsAnchors[positionInVector],
-            //                 serializedEncodedAnchorCorrections.data() + serializedEncodedAnchorCorrections.size(),
-            //                 readId,
-            //                 currentOutput.h_is_high_quality_anchor[anchor_index].hq(),
-            //                 useEdits,
-            //                 TempCorrectedSequenceType::Anchor,
-            //                 0,
-            //                 numEdits,
-            //                 edits,
-            //                 sequenceLength,
-            //                 sequence
-            //             );
-            //             if(endPtr != nullptr){
-            //                 beginOffsetsAnchors[positionInVector + 1] = std::distance(serializedEncodedAnchorCorrections.data(), endPtr);
-            //             }else{
-            //                 serializedEncodedAnchorCorrections.resize(std::max(4096ull, serializedEncodedAnchorCorrections.size() * 2ull));
-            //             }
-            //         }                    
-            //     }
-
-            //     nvtx::pop_range();
-            // };
-
-            // auto unpackcandidatesSerialized = [&](int begin, int end){
-            //     nvtx::push_range("candidate unpacking " + std::to_string(end - begin), 3);
-
-            //     auto& beginOffsetsCandidates = serializedEncodedCorrectionOutput.beginOffsetsCandidates;
-            //     auto& serializedEncodedCandidateCorrections = serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections;
-
-            //     //buffers are stored compact. offsets for each anchor are given by h_num_corrected_candidates_per_anchor_prefixsum
-            //     //Edits, numEdits, h_candidate_read_ids, h_candidate_sequences_lengths, h_alignment_shifts are stored compact, only for corrected candidates.
-            //     //edits are only present for candidates which use edits and have numEdits > 0
-            //     //offsets to the edits of candidates are stored in h_candidateEditOffsets      
-
-            //     for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
-                    
-
-            //         const int anchor_index = candidateIndicesToProcess[positionInVector].first;
-            //         const int candidateIndex = candidateIndicesToProcess[positionInVector].second;
-            //         const read_number anchorReadId = currentOutput.h_anchorReadIds[anchor_index];
-
-            //         const size_t offsetForCorrectedCandidateData = currentOutput.h_num_corrected_candidates_per_anchor_prefixsum[anchor_index];
-
-            //         const read_number candidate_read_id = currentOutput.h_candidate_read_ids[offsetForCorrectedCandidateData + candidateIndex];
-            //         const int candidate_shift = currentOutput.h_alignment_shifts[offsetForCorrectedCandidateData + candidateIndex];
-
-            //         if(programOptions->new_columns_to_correct < candidate_shift){
-            //             std::cerr << "readid " << anchorReadId << " candidate readid " << candidate_read_id << " : "
-            //             << candidate_shift << " " << programOptions->new_columns_to_correct <<"\n";
-
-            //             assert(programOptions->new_columns_to_correct >= candidate_shift);
-            //         }
-                    
-            //         const int numEdits = currentOutput.h_numEditsPerCorrectedCandidate[offsetForCorrectedCandidateData + candidateIndex];
-            //         const int editsOffset = currentOutput.h_candidateEditOffsets[offsetForCorrectedCandidateData + candidateIndex];
-
-            //         bool useEdits = false;
-            //         const char* sequence = nullptr;
-            //         int sequenceLength = 0;
-            //         const EncodedCorrectionEdit* edits = nullptr;
-
-            //         if(numEdits != currentOutput.doNotUseEditsValue){
-            //             edits = &currentOutput.h_editsPerCorrectedCandidate[editsOffset];
-            //             useEdits = true;
-            //         }else{
-            //             const int correctionOffset = currentOutput.h_correctedCandidatesOffsets[candidateIndex];
-            //             const int candidate_length = currentOutput.h_candidate_sequences_lengths[candidateIndex];
-            //             const char* const candidate_data = currentOutput.h_corrected_candidates + correctionOffset * currentOutput.decodedSequencePitchInBytes;
-
-            //             sequenceLength = candidate_length;
-            //             sequence = candidate_data;
-            //         }
-
-            //         std::uint8_t* endPtr = nullptr;
-            //         while(endPtr == nullptr){
-            //             endPtr = EncodedTempCorrectedSequence::encodeDataAndSerializeIntoBuffer(
-            //                 serializedEncodedCandidateCorrections.data() + beginOffsetsCandidates[positionInVector],
-            //                 serializedEncodedCandidateCorrections.data() + serializedEncodedCandidateCorrections.size(),
-            //                 candidate_read_id,
-            //                 false,
-            //                 useEdits,
-            //                 TempCorrectedSequenceType::Candidate,
-            //                 candidate_shift,
-            //                 numEdits,
-            //                 edits,
-            //                 sequenceLength,
-            //                 sequence
-            //             );
-            //             if(endPtr != nullptr){
-            //                 beginOffsetsCandidates[positionInVector + 1] = std::distance(serializedEncodedCandidateCorrections.data(), endPtr);
-            //             }else{
-            //                 serializedEncodedCandidateCorrections.resize(std::max(4096ull, serializedEncodedCandidateCorrections.size() * 2ull));
-            //             }
-            //         }
-            //     }
-
-            //     nvtx::pop_range();
-            // };
-
 
             encodedCorrectionOutput.encodedAnchorCorrections.resize(numCorrectedAnchors);
 
@@ -1090,36 +897,8 @@ namespace gpu{
                 );
             }else{
 
-                //helpers::CpuTimer timerAllocate1("allocateEncoded");
-                if(programOptions->correctCandidates){
-                    encodedCorrectionOutput.encodedCandidateCorrections.resize(numCorrectedCandidates);
-                }
-                // timerAllocate1.stop();
-                // timerAllocate1.print();
-
-                // helpers::CpuTimer timerAllocate2("allocateSerialized");
-                // //serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.resize(numCorrectedAnchors * 192);
-                // serializedEncodedCorrectionOutput.beginOffsetsAnchors.resize(numCorrectedAnchors+1);
-                // //serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.resize(numCorrectedCandidates * 192);
-                // serializedEncodedCorrectionOutput.beginOffsetsCandidates.resize(numCorrectedCandidates+1);
-                // serializedEncodedCorrectionOutput.beginOffsetsAnchors[0] = 0;
-                // serializedEncodedCorrectionOutput.beginOffsetsCandidates[0] = 0;
-                // timerAllocate2.stop();
-                // timerAllocate2.print();
-
-
-                // helpers::CpuTimer timer1("unpackAnchorsSerialized");
-                // loopExecutor(
-                //     0, 
-                //     numCorrectedAnchors, 
-                //     [=](auto begin, auto end, auto /*threadId*/){
-                //         unpackAnchorsSerialized(begin, end);
-                //     }
-                // );
-                // timer1.stop();
-                // timer1.print();
-  
-                // helpers::CpuTimer timer2("unpackAnchors");
+                encodedCorrectionOutput.encodedCandidateCorrections.resize(numCorrectedCandidates);
+ 
                 loopExecutor(
                     0, 
                     numCorrectedAnchors, 
@@ -1127,357 +906,21 @@ namespace gpu{
                         unpackAnchors(begin, end);
                     }
                 );
-                // timer2.stop();
-                // timer2.print();      
 
-                // helpers::CpuTimer timer3("unpackcandidatesSerialized");
-                // loopExecutor(
-                //     0, 
-                //     numCorrectedCandidates, 
-                //     [=](auto begin, auto end, auto /*threadId*/){
-                //         unpackcandidatesSerialized(begin, end);
-                //     }
-                // ); 
-                // timer3.stop();
-                // timer3.print();    
-
-                // helpers::CpuTimer timer4("unpackcandidates");
                 loopExecutor(
                     0, 
                     numCorrectedCandidates, 
                     [=](auto begin, auto end, auto /*threadId*/){
                         unpackcandidates(begin, end);
                     }
-                );
-                // timer4.stop();
-                // timer4.print();
-
-                // for(int i = 0; i < numCorrectedAnchors; i++){
-                //     EncodedTempCorrectedSequence tmp123;
-                //     tmp123.copyFromContiguousMemory(serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.data() 
-                //         + serializedEncodedCorrectionOutput.beginOffsetsAnchors[i]);
-
-                //     TempCorrectedSequence oldTcs = encodedCorrectionOutput.encodedAnchorCorrections[i];
-                //     TempCorrectedSequence newTcs = tmp123;
-
-                //     assert(oldTcs == newTcs);
-                // }
-
-                // for(int i = 0; i < numCorrectedCandidates; i++){
-                //     EncodedTempCorrectedSequence tmp123;
-                //     tmp123.copyFromContiguousMemory(serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data() 
-                //         + serializedEncodedCorrectionOutput.beginOffsetsCandidates[i]);
-
-                //     TempCorrectedSequence oldTcs = encodedCorrectionOutput.encodedCandidateCorrections[i];
-                //     TempCorrectedSequence newTcs = tmp123;
-
-                //     assert(oldTcs == newTcs);
-                // }
-                                    
+                );                                    
             }
 
             return encodedCorrectionOutput;
         }
 
+
         SerializedEncodedCorrectionOutput constructSerializedEncodedResults(const GpuErrorCorrectorRawOutput& currentOutput) const{
-            assert(false && "invalid");
-            //assert(cudaSuccess == currentOutput.event.query());
-
-            if(currentOutput.nothingToDo){
-                return SerializedEncodedCorrectionOutput{};
-            }
-
-            const std::vector<int> anchorIndicesToProcess = getAnchorIndicesToProcessAndUpdateCorrectionFlags(currentOutput);
-            const std::vector<std::pair<int,int>> candidateIndicesToProcess = getCandidateIndicesToProcess(currentOutput);
-
-            std::vector<std::uint8_t> fooA(currentOutput.serializedAnchorResults.size());
-            std::vector<std::size_t> fooAOffsets(currentOutput.numCorrectedAnchors+1);
-            fooAOffsets[0] = 0;
-
-            std::vector<std::uint8_t> fooC(currentOutput.serializedCandidateResults.size());
-            std::vector<std::size_t> fooCOffsets(currentOutput.numCorrectedCandidates+1);
-            fooCOffsets[0] = 0;
-
-            {
-                nvtx::ScopedRange sr("copySerializedAnchors", 1);
-
-                int inputCounter = 0;
-                int outputCounter = 0;
-
-                for(int anchor_index = 0; anchor_index < currentOutput.numAnchors; anchor_index++){
-                    const read_number readId = currentOutput.h_anchorReadIds[anchor_index];
-                    const bool isCorrected = currentOutput.h_anchor_is_corrected[anchor_index];
-                    const bool isHQ = currentOutput.h_is_high_quality_anchor[anchor_index].hq();
-
-                    if(isHQ){
-                        correctionFlags->setCorrectedAsHqAnchor(readId);
-                    }
-
-                    if(isCorrected){
-                        auto it = std::copy(
-                            currentOutput.serializedAnchorResults.data() + currentOutput.serializedAnchorOffsets[inputCounter],
-                            currentOutput.serializedAnchorResults.data() + currentOutput.serializedAnchorOffsets[inputCounter + 1],
-                            fooA.data() + fooAOffsets[outputCounter]
-                        );
-                        fooAOffsets[outputCounter+1] = std::distance(fooA.data(), it);
-                        outputCounter++;
-                         inputCounter++;
-                    }else{
-                        correctionFlags->setCouldNotBeCorrectedAsAnchor(readId);
-                    }
-
-                    assert(!(isHQ && !isCorrected));
-
-                   
-                }
-
-                fooAOffsets.resize(outputCounter + 1);
-            }
-
-            {
-                nvtx::ScopedRange sr("copySerializedCands", 1);
-
-                int inputCounter = 0;
-                int outputCounter = 0;
-
-                for(int anchor_index = 0; anchor_index < currentOutput.numAnchors; anchor_index++){
-
-                    const int globalOffset = currentOutput.h_num_corrected_candidates_per_anchor_prefixsum[anchor_index];
-                    const int n_corrected_candidates = currentOutput.h_num_corrected_candidates_per_anchor[anchor_index];
-
-                    for(int i = 0; i < n_corrected_candidates; ++i) {
-                        //const int global_candidate_index = my_indices_of_corrected_candidates[i];
-                        //const read_number candidate_read_id = currentOutput.h_candidate_read_ids[global_candidate_index];
-                        const read_number candidate_read_id = currentOutput.h_candidate_read_ids[globalOffset + i];
-
-                        if (!correctionFlags->isCorrectedAsHQAnchor(candidate_read_id)) {
-                            auto it = std::copy(
-                                currentOutput.serializedCandidateResults.data() + currentOutput.serializedCandidateOffsets[inputCounter],
-                                currentOutput.serializedCandidateResults.data() + currentOutput.serializedCandidateOffsets[inputCounter + 1],
-                                fooC.data() + fooCOffsets[outputCounter]
-                            );
-                            fooCOffsets[outputCounter+1] = std::distance(fooC.data(), it);
-                            outputCounter++;
-                        }
-
-                        inputCounter++;
-                    }
-                }
-
-                fooCOffsets.resize(outputCounter + 1);
-            }
-
-            const int numCorrectedAnchors = anchorIndicesToProcess.size();
-            const int numCorrectedCandidates = candidateIndicesToProcess.size();
-
-            SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput;
-            serializedEncodedCorrectionOutput.numAnchors = numCorrectedAnchors;
-            serializedEncodedCorrectionOutput.numCandidates = numCorrectedCandidates;
-
-            auto unpackAnchors = [&](int begin, int end){
-                nvtx::push_range("Anchor unpacking " + std::to_string(end - begin), 3);
-
-                auto& beginOffsetsAnchors = serializedEncodedCorrectionOutput.beginOffsetsAnchors;
-                auto& serializedEncodedAnchorCorrections = serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections;
-
-                //Edits and numEdits are stored compact, only for corrected anchors.
-                //they are indexed by positionInVector instead of anchor_index
-
-                // printf("currentOutput.h_numEditsPerCorrectedanchor:\n");
-                // for(int i = 0; i < 30; i++){
-                //     printf("%d ", currentOutput.h_numEditsPerCorrectedanchor[i]);
-                // }
-                // printf("\n");
-                            
-                for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
-                    const int anchor_index = anchorIndicesToProcess[positionInVector];
-                    
-                    const read_number readId = currentOutput.h_anchorReadIds[anchor_index];
-
-                    bool useEdits = false;
-                    const char* sequence = nullptr;
-                    int sequenceLength = 0;
-                    const EncodedCorrectionEdit* edits = nullptr;
-                    
-                    const int numEdits = currentOutput.h_numEditsPerCorrectedanchor[positionInVector];
-                    if(numEdits != currentOutput.doNotUseEditsValue){
-                        const int editOffset = currentOutput.h_anchorEditOffsets[positionInVector];
-                        edits = currentOutput.h_editsPerCorrectedanchor + editOffset;
-                        useEdits = true;
-                    }else{                        
-                        const int sequenceOffset = currentOutput.h_correctedAnchorsOffsets[positionInVector];
-                        const char* const my_corrected_anchor_data = currentOutput.h_corrected_anchors + sequenceOffset;
-                        const int anchor_length = currentOutput.h_anchor_sequences_lengths[anchor_index];
- 
-                        sequenceLength = anchor_length;
-                        sequence = my_corrected_anchor_data;
-                    }
-
-                    std::uint8_t* endPtr = nullptr;
-                    while(endPtr == nullptr){
-                        endPtr = EncodedTempCorrectedSequence::encodeDataAndSerializeIntoBuffer(
-                            serializedEncodedAnchorCorrections.data() + beginOffsetsAnchors[positionInVector],
-                            serializedEncodedAnchorCorrections.data() + serializedEncodedAnchorCorrections.size(),
-                            readId,
-                            currentOutput.h_is_high_quality_anchor[anchor_index].hq(),
-                            useEdits,
-                            TempCorrectedSequenceType::Anchor,
-                            0,
-                            numEdits,
-                            edits,
-                            sequenceLength,
-                            sequence
-                        );
-                        if(endPtr != nullptr){
-                            beginOffsetsAnchors[positionInVector + 1] = std::distance(serializedEncodedAnchorCorrections.data(), endPtr);
-
-                            // const read_number id1 = *((const read_number*)(serializedEncodedAnchorCorrections.data() + beginOffsetsAnchors[positionInVector]));
-                            // const read_number id2 = *((const read_number*)(currentOutput.serializedAnchorResults.data() + currentOutput.serializedAnchorOffsets[positionInVector]));
-
-                            // assert(id1 == id2);
-
-                            // EncodedTempCorrectedSequence s1;
-                            // s1.copyFromContiguousMemory(serializedEncodedAnchorCorrections.data() + beginOffsetsAnchors[positionInVector]);
-                            // TempCorrectedSequence t1 = s1;
-
-                            // EncodedTempCorrectedSequence s2;
-                            // s2.copyFromContiguousMemory(currentOutput.serializedAnchorResults.data() + currentOutput.serializedAnchorOffsets[positionInVector]);
-                            // TempCorrectedSequence t2 = s2;
-
-                            // assert(t1 == t2);
-
-                            // assert(std::equal(
-                            //     serializedEncodedAnchorCorrections.data() + beginOffsetsAnchors[positionInVector],
-                            //     endPtr,
-                            //     currentOutput.serializedAnchorResults.data() + currentOutput.serializedAnchorOffsets[positionInVector]
-                            // ));
-                        }else{
-                            serializedEncodedAnchorCorrections.resize(std::max(4096ull, serializedEncodedAnchorCorrections.size() * 2ull));
-                        }
-                    }                    
-                }
-
-                nvtx::pop_range();
-            };
-
-            auto unpackCandidates = [&](int begin, int end){
-                nvtx::push_range("candidate unpacking " + std::to_string(end - begin), 3);
-
-                auto& beginOffsetsCandidates = serializedEncodedCorrectionOutput.beginOffsetsCandidates;
-                auto& serializedEncodedCandidateCorrections = serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections;
-
-                //buffers are stored compact. offsets for each anchor are given by h_num_corrected_candidates_per_anchor_prefixsum
-                //Edits, numEdits, h_candidate_read_ids, h_candidate_sequences_lengths, h_alignment_shifts are stored compact, only for corrected candidates.
-                //edits are only present for candidates which use edits and have numEdits > 0
-                //offsets to the edits of candidates are stored in h_candidateEditOffsets      
-
-                for(int positionInVector = begin; positionInVector < end; ++positionInVector) {                    
-
-                    const int anchor_index = candidateIndicesToProcess[positionInVector].first;
-                    const int candidateIndex = candidateIndicesToProcess[positionInVector].second;
-                    const read_number anchorReadId = currentOutput.h_anchorReadIds[anchor_index];
-
-                    const size_t offsetForCorrectedCandidateData = currentOutput.h_num_corrected_candidates_per_anchor_prefixsum[anchor_index];
-
-                    const read_number candidate_read_id = currentOutput.h_candidate_read_ids[offsetForCorrectedCandidateData + candidateIndex];
-                    const int candidate_shift = currentOutput.h_alignment_shifts[offsetForCorrectedCandidateData + candidateIndex];
-
-                    if(programOptions->new_columns_to_correct < candidate_shift){
-                        std::cerr << "readid " << anchorReadId << " candidate readid " << candidate_read_id << " : "
-                        << candidate_shift << " " << programOptions->new_columns_to_correct <<"\n";
-
-                        assert(programOptions->new_columns_to_correct >= candidate_shift);
-                    }
-                    
-                    const int numEdits = currentOutput.h_numEditsPerCorrectedCandidate[offsetForCorrectedCandidateData + candidateIndex];
-                    const int editsOffset = currentOutput.h_candidateEditOffsets[offsetForCorrectedCandidateData + candidateIndex];
-
-                    bool useEdits = false;
-                    const char* sequence = nullptr;
-                    int sequenceLength = 0;
-                    const EncodedCorrectionEdit* edits = nullptr;
-
-                    if(numEdits != currentOutput.doNotUseEditsValue){
-                        edits = &currentOutput.h_editsPerCorrectedCandidate[editsOffset];
-                        useEdits = true;
-                    }else{
-                        const int correctionOffset = currentOutput.h_correctedCandidatesOffsets[offsetForCorrectedCandidateData + candidateIndex];
-                        const int candidate_length = currentOutput.h_candidate_sequences_lengths[offsetForCorrectedCandidateData + candidateIndex];
-                        const char* const candidate_data = currentOutput.h_corrected_candidates + correctionOffset;
-
-                        //std::cerr << "correctionOffset: " << correctionOffset << "\n";
-
-                        sequenceLength = candidate_length;
-                        sequence = candidate_data;
-                    }
-
-                    std::uint8_t* endPtr = nullptr;
-                    while(endPtr == nullptr){
-                        endPtr = EncodedTempCorrectedSequence::encodeDataAndSerializeIntoBuffer(
-                            serializedEncodedCandidateCorrections.data() + beginOffsetsCandidates[positionInVector],
-                            serializedEncodedCandidateCorrections.data() + serializedEncodedCandidateCorrections.size(),
-                            candidate_read_id,
-                            false,
-                            useEdits,
-                            TempCorrectedSequenceType::Candidate,
-                            candidate_shift,
-                            numEdits,
-                            edits,
-                            sequenceLength,
-                            sequence
-                        );
-                        if(endPtr != nullptr){
-                            beginOffsetsCandidates[positionInVector + 1] = std::distance(serializedEncodedCandidateCorrections.data(), endPtr);
-                        
-                            // const read_number id1 = *((const read_number*)(serializedEncodedCandidateCorrections.data() + beginOffsetsCandidates[positionInVector]));
-                            // const read_number id2 = *((const read_number*)(currentOutput.serializedCandidateResults.data() + currentOutput.serializedCandidateOffsets[positionInVector]));
-
-                            // assert(id1 == id2);
-
-                            // EncodedTempCorrectedSequence s1;
-                            // s1.copyFromContiguousMemory(serializedEncodedCandidateCorrections.data() + beginOffsetsCandidates[positionInVector]);
-                            // TempCorrectedSequence t1 = s1;
-
-                            // EncodedTempCorrectedSequence s2;
-                            // s2.copyFromContiguousMemory(currentOutput.serializedCandidateResults.data() + currentOutput.serializedCandidateOffsets[positionInVector]);
-                            // TempCorrectedSequence t2 = s2;
-
-                            // assert(t1 == t2);
-                        
-                        }else{
-                            serializedEncodedCandidateCorrections.resize(std::max(4096ull, serializedEncodedCandidateCorrections.size() * 2ull));
-                        }
-                    }
-                }
-
-                nvtx::pop_range();
-            };
-
-            //serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.resize(numCorrectedAnchors * 192);
-            serializedEncodedCorrectionOutput.beginOffsetsAnchors.resize(numCorrectedAnchors+1);
-            serializedEncodedCorrectionOutput.beginOffsetsAnchors[0] = 0;
-
-            if(!programOptions->correctCandidates){
-                unpackAnchors(0, numCorrectedAnchors);
-            }else{
-                
-                serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.resize(currentOutput.serializedCandidateResults.size());
-                serializedEncodedCorrectionOutput.beginOffsetsCandidates.resize(numCorrectedCandidates+1);
-                serializedEncodedCorrectionOutput.beginOffsetsCandidates[0] = 0;
-
-                unpackAnchors(0, numCorrectedAnchors);
-                unpackCandidates(0, numCorrectedCandidates);
-
-                assert(fooCOffsets == serializedEncodedCorrectionOutput.beginOffsetsCandidates);
-                assert(fooC == serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections);
-            }
-
-            return serializedEncodedCorrectionOutput;
-        }
-
-
-
-        SerializedEncodedCorrectionOutput constructSerializedEncodedResultsFaster(const GpuErrorCorrectorRawOutput& currentOutput) const{
             //assert(cudaSuccess == currentOutput.event.query());
 
             if(currentOutput.nothingToDo){
@@ -1533,25 +976,6 @@ namespace gpu{
                 serializedEncodedCorrectionOutput.beginOffsetsCandidates[0] = 0;   
 
                 nvtx::ScopedRange sr("copySerializedCands", 1);
-
-                // int outputCounter = 0;
-
-                // for(int c = 0; c < currentOutput.numCorrectedCandidates; c++){
-                //     const read_number candidate_read_id = currentOutput.h_candidate_read_ids[c];
-
-                //     if (!correctionFlags->isCorrectedAsHQAnchor(candidate_read_id)) {
-                //         auto it = std::copy(
-                //             currentOutput.serializedCandidateResults.data() + currentOutput.serializedCandidateOffsets[c],
-                //             currentOutput.serializedCandidateResults.data() + currentOutput.serializedCandidateOffsets[c + 1],
-                //             serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data() + serializedEncodedCorrectionOutput.beginOffsetsCandidates[outputCounter]
-                //         );
-                //         serializedEncodedCorrectionOutput.beginOffsetsCandidates[outputCounter+1] 
-                //             = std::distance(serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data(), it);
-                //         outputCounter++;
-                //     }
-                // }
-
-                // serializedEncodedCorrectionOutput.numCandidates = outputCounter;
 
                 std::copy(
                     currentOutput.serializedCandidateResults.data(),
@@ -2464,18 +1888,6 @@ namespace gpu{
                 ReplaceNumberOp(getDoNotUseEditsValue(), decodedSequencePitchInBytes)
             );
 
-            // helpers::lambda_kernel<<<1,1,0,stream>>>(
-            //     [
-            //         d_numEditsPerCorrectedanchor = d_numEditsPerCorrectedanchor.data()
-            //     ] __device__ (){
-            //         printf("d_numEditsPerCorrectedanchor:\n");
-            //         for(int i = 0; i < 30; i++){
-            //             printf("%d ", d_numEditsPerCorrectedanchor[i]);
-            //         }
-            //         printf("\n");
-            //     }
-            // ); CUDACHECKASYNC
-
             //num edits per anchor prefixsum
             //num bytes per corrected anchor sequence prefix sum
             CubCallWrapper(mr).cubInclusiveScan(
@@ -2637,29 +2049,6 @@ namespace gpu{
                 d_candidate_read_ids2.data()
             );
 
-            // thrust::gather(
-            //     rmm::exec_policy_nosync(stream, mr),
-            //     d_indices_of_corrected_candidates.data(),
-            //     d_indices_of_corrected_candidates.data() + numCorrectedCandidates,
-            //     thrust::make_zip_iterator(thrust::make_tuple(
-            //         d_candidate_read_ids.data(),
-            //         d_hqAnchorCorrectionOfCandidateExists.begin()
-            //     )),
-            //     thrust::make_zip_iterator(thrust::make_tuple(
-            //         d_candidate_read_ids2.data(),
-            //         d_hqAnchorCorrectionOfCandidateExists2.begin()
-            //     ))
-            // );
-
-            // const int numCorrectedAnchorsWithoutHqAnchor = thrust::reduce(
-            //     rmm::exec_policy_nosync(stream, mr),
-            //     d_hqAnchorCorrectionOfCandidateExists2.begin(),
-            //     d_hqAnchorCorrectionOfCandidateExists2.end(),
-            //     (int)0
-            // );
-
-            // std::cerr << numCorrectedAnchorsWithoutHqAnchor << " / " << numCorrectedCandidates << "\n";
-
             CUDACHECK(cudaMemcpyAsync(
                 currentOutput->h_candidate_read_ids.data(),
                 d_candidate_read_ids2.data(),
@@ -2667,68 +2056,6 @@ namespace gpu{
                 D2H,
                 stream
             ));
-
-            // rmm::device_uvector<int> d_indexList(numCorrectedAnchorsWithoutHqAnchor, stream, mr);
-
-            // thrust::copy_if(
-            //     rmm::exec_policy_nosync(stream, mr),
-            //     thrust::counting_iterator
-            //     d_hqAnchorCorrectionOfCandidateExists2.data(),
-            //     d_hqAnchorCorrectionOfCandidateExists2.data() + numCorrectedAnchorsWithoutHqAnchor,
-            //     d_indexList.begin()
-            // )
-
-            // rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedCandidateFoo(numCorrectedAnchorsWithoutHqAnchor, stream, mr);
-            // rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedCandidateFooPrefixSum(numCorrectedAnchorsWithoutHqAnchor+1, stream, mr);
-            // //compute bytes per numCorrectedCandidates
-            // helpers::lambda_kernel<<<std::max(1, SDIV(numCorrectedCandidates, 128)), 128, 0, stream>>>(
-            //     [
-            //         d_numBytesPerSerializedCandidate = d_numBytesPerSerializedCandidateFoo.data(),
-            //         d_numBytesPerSerializedCandidatePrefixSum = d_numBytesPerSerializedCandidateFooPrefixSum.data(),
-            //         d_numEditsPerCorrectedCandidate = d_numEditsPerCorrectedCandidate.data(),
-            //         d_candidate_sequences_lengths = d_candidate_sequences_lengths.data(),
-            //         numCorrectedCandidates = numCorrectedCandidates,
-            //         dontUseEditsValue = getDoNotUseEditsValue(),
-            //         d_indices_of_corrected_candidates = d_indices_of_corrected_candidates.data(),
-            //         numCorrectedAnchorsWithoutHqAnchor = numCorrectedAnchorsWithoutHqAnchor,
-            //         d_hqAnchorCorrectionOfCandidateExists = d_hqAnchorCorrectionOfCandidateExists.data()
-            //     ] __device__ (){
-            //         const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-            //         const int stride = blockDim.x * gridDim.x;
-            //         if(tid == 0){
-            //             d_numBytesPerSerializedCandidatePrefixSum[0] = 0;
-            //         }
-            //         for(int outputIndex = tid; outputIndex < numCorrectedCandidates; outputIndex += stride){
-            //             const int candidateIndex = d_indices_of_corrected_candidates[outputIndex];
-
-            //             const int numEdits = d_numEditsPerCorrectedCandidate[outputIndex];
-            //             const bool useEdits = numEdits != dontUseEditsValue;
-            //             std::uint32_t numBytes = 0;
-            //             if(useEdits){
-            //                 numBytes += sizeof(short); //number of edits
-            //                 numBytes += numEdits * (sizeof(short) + sizeof(char)); //edits
-            //             }else{
-            //                 const int sequenceLength = d_candidate_sequences_lengths[candidateIndex];
-            //                 numBytes += sizeof(short); // sequence length
-            //                 numBytes += sizeof(char) * sequenceLength;  //sequence
-            //             }
-            //             //candidate shift
-            //             numBytes += sizeof(short);
-
-            //             #ifndef NDEBUG
-            //             //flags use 3 bits, remainings bit can be used for encoding
-            //             constexpr std::uint32_t maxNumBytes = (std::uint32_t(1) << 29)-1;
-            //             assert(numBytes <= maxNumBytes);
-            //             #endif
-
-            //             numBytes += sizeof(read_number) + sizeof(std::uint32_t);
-
-            //             d_numBytesPerSerializedCandidate[outputIndex] = numBytes;
-            //         }
-            //     }
-            // ); CUDACHECKASYNC;
-
-
 
             rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedCandidate(numCorrectedCandidates, stream, mr);
             rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedCandidatePrefixSum(numCorrectedCandidates+1, stream, mr);
@@ -2794,9 +2121,7 @@ namespace gpu{
                 D2H, 
                 stream
             ));
-            CUDACHECK(cudaStreamSynchronize(stream));
-
-            
+            CUDACHECK(cudaStreamSynchronize(stream));            
 
             rmm::device_uvector<std::uint8_t> d_serializedCandidateResults(totalNumBytesForSerializedCandidates, stream, mr);
 
