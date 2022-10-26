@@ -190,17 +190,17 @@ namespace gpu{
         template<class T>
         using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T>;
 
-        bool nothingToDo;
-        int numAnchors;
-        int numCorrectedAnchors = 0;
+        bool nothingToDo = true;
+        int numAnchors = 0;
         int numCorrectedCandidates = 0;
-        PinnedBuffer<read_number> h_anchorReadIds;
-        PinnedBuffer<bool> h_anchor_is_corrected;
-        PinnedBuffer<AnchorHighQualityFlag> h_is_high_quality_anchor;
-        PinnedBuffer<std::uint8_t> serializedAnchorResults;
-        PinnedBuffer<std::uint32_t> serializedAnchorOffsets;
-        PinnedBuffer<std::uint8_t> serializedCandidateResults;
-        PinnedBuffer<std::uint32_t> serializedCandidateOffsets;
+        PinnedBuffer<int> h_numCorrectedAnchors{};
+        PinnedBuffer<read_number> h_anchorReadIds{};
+        PinnedBuffer<bool> h_anchor_is_corrected{};
+        PinnedBuffer<AnchorHighQualityFlag> h_is_high_quality_anchor{};
+        PinnedBuffer<std::uint8_t> serializedAnchorResults{};
+        PinnedBuffer<std::uint32_t> serializedAnchorOffsets{};
+        PinnedBuffer<std::uint8_t> serializedCandidateResults{};
+        PinnedBuffer<std::uint32_t> serializedCandidateOffsets{};
         
         CudaEvent event{cudaEventDisableTiming};
         
@@ -211,6 +211,7 @@ namespace gpu{
                 info.host += h.sizeInBytes();
             };
 
+            handleHost(h_numCorrectedAnchors);
             handleHost(h_anchorReadIds);
             handleHost(h_anchor_is_corrected);
             handleHost(h_is_high_quality_anchor);
@@ -512,10 +513,14 @@ namespace gpu{
 
             SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput;
 
-            serializedEncodedCorrectionOutput.numAnchors = currentOutput.numCorrectedAnchors;
+            //currentOutput.numCorrectedAnchors = *currentOutput.h_numCorrectedAnchors;
+            const int numCorrectedAnchors = *currentOutput.h_numCorrectedAnchors;
+
+            serializedEncodedCorrectionOutput.numAnchors = numCorrectedAnchors;
             serializedEncodedCorrectionOutput.numCandidates = 0;
-            serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.resize(currentOutput.serializedAnchorResults.size());
-            serializedEncodedCorrectionOutput.beginOffsetsAnchors.resize(currentOutput.numCorrectedAnchors+1);
+            //serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.resize(currentOutput.serializedAnchorResults.size());
+            serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.resize(currentOutput.serializedAnchorOffsets[numCorrectedAnchors]);
+            serializedEncodedCorrectionOutput.beginOffsetsAnchors.resize(numCorrectedAnchors+1);
             serializedEncodedCorrectionOutput.beginOffsetsAnchors[0] = 0;           
 
             {
@@ -542,15 +547,15 @@ namespace gpu{
                 //currentOutput.serializedAnchorResults only contains data of corrected anchors. can copy directly.
                 std::copy(
                     currentOutput.serializedAnchorResults.data(),
-                    currentOutput.serializedAnchorResults.data() + currentOutput.serializedAnchorOffsets[currentOutput.numCorrectedAnchors],
+                    currentOutput.serializedAnchorResults.data() + currentOutput.serializedAnchorOffsets[numCorrectedAnchors],
                     serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.data()
                 );
                 std::copy(
                     currentOutput.serializedAnchorOffsets.data(),
-                    currentOutput.serializedAnchorOffsets.data() + currentOutput.numCorrectedAnchors + 1,
+                    currentOutput.serializedAnchorOffsets.data() + numCorrectedAnchors + 1,
                     serializedEncodedCorrectionOutput.beginOffsetsAnchors.data()
                 );
-                serializedEncodedCorrectionOutput.numAnchors = currentOutput.numCorrectedAnchors;
+                serializedEncodedCorrectionOutput.numAnchors = numCorrectedAnchors;
             }
 
             if(programOptions->correctCandidates){
@@ -815,7 +820,7 @@ namespace gpu{
             nvtx::pop_range();
             
             if(programOptions->correctCandidates) {
-                CUDACHECK(cudaEventRecord(events[0], stream));
+                //CUDACHECK(cudaEventRecord(events[0], stream));
 
                 //#ifdef CANDS_FOREST_FLAGS_COMPUTE_AHEAD
                 //if(programOptions->correctionType == CorrectionType::Forest){
@@ -835,10 +840,15 @@ namespace gpu{
                         h_excludeFlags,
                         sizeof(bool) * currentNumCandidates,
                         H2D,
-                        extraStream
+                        //extraStream
+                        stream
                     );
-
                     }
+
+                    nvtx::push_range("correctCandidates", 9);
+                    correctCandidates(stream);
+                    nvtx::pop_range();
+
                 //}
                 //#endif
             }
@@ -849,23 +859,28 @@ namespace gpu{
             nvtx::pop_range();
 
             if(programOptions->correctCandidates) {
-                cudaStream_t candsStream = extraStream;
-                CUDACHECK(cudaStreamWaitEvent(candsStream, events[0], 0)); 
+                // cudaStream_t candsStream = extraStream;
+                // CUDACHECK(cudaStreamWaitEvent(candsStream, events[0], 0)); 
 
-                nvtx::push_range("correctCandidates", 9);
-                correctCandidates(candsStream);
-                nvtx::pop_range();
+                // nvtx::push_range("correctCandidates", 9);
+                // correctCandidates(candsStream);
+                // nvtx::pop_range();
+
+                // nvtx::push_range("copyCandidateResultsFromDeviceToHost", 4);
+                // copyCandidateResultsFromDeviceToHost(candsStream);
+                // nvtx::pop_range(); 
+
+                // CUDACHECK(cudaEventRecord(events[0], candsStream)); 
+                // CUDACHECK(cudaStreamWaitEvent(stream, events[0], 0));    
 
                 nvtx::push_range("copyCandidateResultsFromDeviceToHost", 4);
-                copyCandidateResultsFromDeviceToHost(candsStream);
-                nvtx::pop_range(); 
-
-                CUDACHECK(cudaEventRecord(events[0], candsStream)); 
-                CUDACHECK(cudaStreamWaitEvent(stream, events[0], 0));      
+                copyCandidateResultsFromDeviceToHost(stream);
+                nvtx::pop_range();   
             }
 
             managedgpumsa = nullptr;
 
+            currentOutput->h_anchorReadIds.resize(currentNumAnchors);
             std::copy_n(currentInput->h_anchorReadIds.data(), currentNumAnchors, currentOutput->h_anchorReadIds.data());            
 
             //after the current work in stream is completed, all results in currentOutput are ready to use.
@@ -1056,11 +1071,6 @@ namespace gpu{
  
         void resizeBuffers(int /*numReads*/, int numCandidates, cudaStream_t stream){  
             //assert(numReads <= maxAnchors);
-
-            //does not depend on number of candidates        
-            currentOutput->h_anchorReadIds.resize(maxAnchors);
-            currentOutput->h_anchor_is_corrected.resize(maxAnchors);
-            currentOutput->h_is_high_quality_anchor.resize(maxAnchors);
             
             d_anchorIndicesOfCandidates.resize(numCandidates, stream);
             d_candidateContainsN.resize(numCandidates, stream);
@@ -1132,12 +1142,14 @@ namespace gpu{
         void copyAnchorResultsFromDeviceToHostClassic_serialized(cudaStream_t stream){
             nvtx::ScopedRange sr("constructSerializedAnchorResults-gpu", 5);
 
-            int numCorrectedAnchors = 0;
-            CUDACHECK(cudaMemcpyAsync(&numCorrectedAnchors, d_num_indices_of_corrected_anchors.data(), sizeof(int), D2H, stream));
-            CUDACHECK(cudaStreamSynchronize(stream));
+            const std::uint32_t maxSerializedBytesPerAnchor = 
+                sizeof(read_number) 
+                + sizeof(std::uint32_t) 
+                + sizeof(short) 
+                + sizeof(char) * gpuReadStorage->getSequenceLengthUpperBound();
 
-            rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedAnchor(numCorrectedAnchors, stream, mr);
-            rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedAnchorPrefixSum(numCorrectedAnchors+1, stream, mr);
+            rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedAnchor(currentNumAnchors, stream, mr);
+            rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedAnchorPrefixSum(currentNumAnchors+1, stream, mr);
             //compute bytes per anchor
             helpers::lambda_kernel<<<SDIV(currentNumAnchors, 128), 128, 0, stream>>>(
                 [
@@ -1148,7 +1160,8 @@ namespace gpu{
                     currentNumAnchors = currentNumAnchors,
                     dontUseEditsValue = getDoNotUseEditsValue(),
                     d_num_indices_of_corrected_anchors = d_num_indices_of_corrected_anchors.data(),
-                    d_indices_of_corrected_anchors = d_indices_of_corrected_anchors.data()
+                    d_indices_of_corrected_anchors = d_indices_of_corrected_anchors.data(),
+                    maxSerializedBytesPerAnchor
                 ] __device__ (){
                     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                     const int stride = blockDim.x * gridDim.x;
@@ -1178,6 +1191,11 @@ namespace gpu{
 
                         numBytes += sizeof(read_number) + sizeof(std::uint32_t);
 
+                        #ifndef NDEBUG
+                        assert(numBytes <= maxSerializedBytesPerAnchor);
+                        #endif
+
+
                         d_numBytesPerSerializedAnchor[outputIndex] = numBytes;
                     }
                 }
@@ -1188,32 +1206,20 @@ namespace gpu{
                 d_numBytesPerSerializedAnchor.begin(),
                 d_numBytesPerSerializedAnchor.end(),
                 d_numBytesPerSerializedAnchorPrefixSum.begin() + 1
-            );
+            );           
 
-            std::uint32_t totalNumBytesForSerializedAnchors = 0;
-
-            CUDACHECK(cudaMemcpyAsync(
-                &totalNumBytesForSerializedAnchors, 
-                d_numBytesPerSerializedAnchorPrefixSum.data() + numCorrectedAnchors, 
-                sizeof(std::uint32_t), 
-                D2H, 
-                stream
-            ));
-            CUDACHECK(cudaStreamSynchronize(stream));
-
-            
-
-            rmm::device_uvector<std::uint8_t> d_serializedAnchorResults(totalNumBytesForSerializedAnchors, stream, mr);
+            std::uint32_t maxResultBytes = maxSerializedBytesPerAnchor * currentNumAnchors;
+            rmm::device_uvector<std::uint8_t> d_serializedAnchorResults(maxResultBytes, stream, mr);
 
             //compute serialized anchors
-            helpers::lambda_kernel<<<std::max(1, SDIV(numCorrectedAnchors, 128)), 128, 0, stream>>>(
+            helpers::lambda_kernel<<<std::max(1, SDIV(currentNumAnchors, 128)), 128, 0, stream>>>(
                 [
                     d_numBytesPerSerializedAnchor = d_numBytesPerSerializedAnchor.data(),
                     d_numBytesPerSerializedAnchorPrefixSum = d_numBytesPerSerializedAnchorPrefixSum.data(),
                     d_serializedAnchorResults = d_serializedAnchorResults.data(),
                     d_numEditsPerCorrectedanchor = d_numEditsPerCorrectedanchor.data(),
                     d_anchor_sequences_lengths = d_anchor_sequences_lengths.data(),
-                    numCorrectedAnchors = numCorrectedAnchors,
+                    d_num_indices_of_corrected_anchors = d_num_indices_of_corrected_anchors.data(),
                     dontUseEditsValue = getDoNotUseEditsValue(),
                     d_is_high_quality_anchor = d_is_high_quality_anchor.data(),
                     d_anchorReadIds = d_anchorReadIds.data(),
@@ -1225,6 +1231,8 @@ namespace gpu{
                 ] __device__ (){
                     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                     const int stride = blockDim.x * gridDim.x;
+
+                    const int numCorrectedAnchors = *d_num_indices_of_corrected_anchors;
 
                     for(int outputIndex = tid; outputIndex < numCorrectedAnchors; outputIndex += stride){
                         const int anchorIndex = d_indices_of_corrected_anchors[outputIndex];
@@ -1255,9 +1263,7 @@ namespace gpu{
                         encodedflags |= (std::uint32_t(int(TempCorrectedSequenceType::Anchor)) << 29);
                         encodedflags |= numBytes;
 
-
                         numBytes += sizeof(read_number) + sizeof(std::uint32_t);
-
 
                         std::uint8_t* ptr = d_serializedAnchorResults + d_numBytesPerSerializedAnchorPrefixSum[outputIndex];
 
@@ -1294,48 +1300,68 @@ namespace gpu{
                             ptr += sizeof(char) * sequenceLength;
                         }
 
-                        std::uint32_t writtenBytes = ptr - (d_serializedAnchorResults + d_numBytesPerSerializedAnchorPrefixSum[outputIndex]);
-                        if(writtenBytes != numBytes){
-                            printf("writtenBytes %u, numBytes %u", writtenBytes, numBytes);
-                        }
                         assert(ptr == d_serializedAnchorResults + d_numBytesPerSerializedAnchorPrefixSum[outputIndex+1]);
                     }
                 }
             ); CUDACHECKASYNC;
 
-            currentOutput->serializedAnchorResults.resize(totalNumBytesForSerializedAnchors);
-            currentOutput->serializedAnchorOffsets.resize(numCorrectedAnchors + 1);
+            currentOutput->serializedAnchorResults.resize(maxResultBytes);
+            currentOutput->serializedAnchorOffsets.resize(currentNumAnchors + 1);
+            currentOutput->h_numCorrectedAnchors.resize(1);
+            currentOutput->h_anchor_is_corrected.resize(currentNumAnchors);
+            currentOutput->h_is_high_quality_anchor.resize(currentNumAnchors);
 
-            CUDACHECK(cudaMemcpyAsync(
-                currentOutput->serializedAnchorOffsets.data(),
-                d_numBytesPerSerializedAnchorPrefixSum.data(),
-                sizeof(std::uint32_t) * (numCorrectedAnchors + 1),
-                D2H,
-                stream
-            ));
+            //copy data to host. since number of output bytes of serialized results is only available 
+            // on the device, use a kernel
 
-            CUDACHECK(cudaMemcpyAsync(
-                currentOutput->serializedAnchorResults.data(),
-                d_serializedAnchorResults.data(),
-                sizeof(std::uint8_t) * totalNumBytesForSerializedAnchors,
-                D2H,
-                stream
-            ));
+            helpers::lambda_kernel<<<480,128,0,stream>>>(
+                [
+                    h_numCorrectedAnchors = currentOutput->h_numCorrectedAnchors.data(),
+                    d_numCorrectedAnchors = d_num_indices_of_corrected_anchors.data(),
+                    h_serializedAnchorOffsets = currentOutput->serializedAnchorOffsets.data(),
+                    d_numBytesPerSerializedAnchorPrefixSum = d_numBytesPerSerializedAnchorPrefixSum.data(),
+                    h_anchor_is_corrected = currentOutput->h_anchor_is_corrected.data(),
+                    d_anchor_is_corrected = d_anchor_is_corrected.data(),
+                    h_is_high_quality_anchor = currentOutput->h_is_high_quality_anchor.data(),
+                    d_is_high_quality_anchor = d_is_high_quality_anchor.data(),
+                    h_serializedAnchorResults = currentOutput->serializedAnchorResults.data(),
+                    d_serializedAnchorResults = d_serializedAnchorResults.data(),
+                    currentNumAnchors = currentNumAnchors
+                ] __device__ (){
+                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                    const int stride = blockDim.x * gridDim.x;
 
-            helpers::call_copy_n_kernel(
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    d_anchor_is_corrected.data(),
-                    d_is_high_quality_anchor.data()
-                )), 
-                currentNumAnchors, 
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    currentOutput->h_anchor_is_corrected.data(),
-                    currentOutput->h_is_high_quality_anchor.data()
-                )), 
-                stream
-            ); CUDACHECKASYNC;
+                    const int numCorrectedAnchors = *d_numCorrectedAnchors;
 
-            currentOutput->numCorrectedAnchors = numCorrectedAnchors;
+                    if(tid == 0){
+                        *h_numCorrectedAnchors = numCorrectedAnchors;
+                    }
+
+                    for(int i = tid; i < numCorrectedAnchors + 1; i += stride){
+                        h_serializedAnchorOffsets[i] = d_numBytesPerSerializedAnchorPrefixSum[i];
+                    }
+
+                    for(int i = tid; i < currentNumAnchors; i += stride){
+                        h_anchor_is_corrected[i] = d_anchor_is_corrected[i];
+                        h_is_high_quality_anchor[i] = d_is_high_quality_anchor[i];
+                    }
+
+                    int serializedBytes = d_numBytesPerSerializedAnchorPrefixSum[numCorrectedAnchors];
+                    const size_t numIntCopies = serializedBytes / sizeof(int);
+                    const char* src = reinterpret_cast<const char*>(d_serializedAnchorResults);
+                    char* dst = reinterpret_cast<char*>(h_serializedAnchorResults);
+                    for(size_t i = tid; i < numIntCopies; i += stride){
+                        reinterpret_cast<int*>(dst)[i] = reinterpret_cast<const int*>(src)[i];
+                    }
+                    dst += sizeof(int) * numIntCopies;
+                    src += sizeof(int) * numIntCopies;
+                    serializedBytes -= sizeof(int) * numIntCopies;
+                    for(size_t i = tid; i < serializedBytes; i += stride){
+                        reinterpret_cast<char*>(dst)[i] = reinterpret_cast<const char*>(src)[i];
+                    }
+
+                }
+            ); CUDACHECKASYNC
         }
 
         void copyAnchorResultsFromDeviceToHostClassic(cudaStream_t stream){
@@ -1363,6 +1389,13 @@ namespace gpu{
 
             int numCorrectedCandidates = (*h_num_total_corrected_candidates);
 
+            const std::uint32_t maxSerializedBytesPerCandidate = 
+                sizeof(read_number) 
+                + sizeof(std::uint32_t) 
+                + sizeof(short) 
+                + sizeof(char) * gpuReadStorage->getSequenceLengthUpperBound()
+                + sizeof(short);
+
             rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedCandidate(numCorrectedCandidates, stream, mr);
             rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedCandidatePrefixSum(numCorrectedCandidates+1, stream, mr);
             //compute bytes per numCorrectedCandidates
@@ -1374,7 +1407,8 @@ namespace gpu{
                     d_candidate_sequences_lengths = d_candidate_sequences_lengths.data(),
                     numCorrectedCandidates = numCorrectedCandidates,
                     dontUseEditsValue = getDoNotUseEditsValue(),
-                    d_indices_of_corrected_candidates = d_indices_of_corrected_candidates.data()
+                    d_indices_of_corrected_candidates = d_indices_of_corrected_candidates.data(),
+                    maxSerializedBytesPerCandidate
                 ] __device__ (){
                     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                     const int stride = blockDim.x * gridDim.x;
@@ -1406,6 +1440,10 @@ namespace gpu{
 
                         numBytes += sizeof(read_number) + sizeof(std::uint32_t);
 
+                        #ifndef NDEBUG
+                        assert(numBytes <= maxSerializedBytesPerCandidate);
+                        #endif
+
                         d_numBytesPerSerializedCandidate[outputIndex] = numBytes;
                     }
                 }
@@ -1418,18 +1456,9 @@ namespace gpu{
                 d_numBytesPerSerializedCandidatePrefixSum.begin() + 1
             );
 
-            std::uint32_t totalNumBytesForSerializedCandidates = 0;
+            std::uint32_t maxResultBytes = maxSerializedBytesPerCandidate * numCorrectedCandidates;
 
-            CUDACHECK(cudaMemcpyAsync(
-                &totalNumBytesForSerializedCandidates, 
-                d_numBytesPerSerializedCandidatePrefixSum.data() + numCorrectedCandidates, 
-                sizeof(std::uint32_t), 
-                D2H, 
-                stream
-            ));
-            CUDACHECK(cudaStreamSynchronize(stream));            
-
-            rmm::device_uvector<std::uint8_t> d_serializedCandidateResults(totalNumBytesForSerializedCandidates, stream, mr);
+            rmm::device_uvector<std::uint8_t> d_serializedCandidateResults(maxResultBytes, stream, mr);
 
             //compute serialized candidates
             helpers::lambda_kernel<<<std::max(1, SDIV(numCorrectedCandidates, 128)), 128, 0, stream>>>(
@@ -1524,35 +1553,66 @@ namespace gpu{
                         std::memcpy(ptr, &shiftShort, sizeof(short));
                         ptr += sizeof(short);
 
-                        std::uint32_t writtenBytes = ptr - (d_serializedCandidateResults + d_numBytesPerSerializedCandidatePrefixSum[outputIndex]);
-                        if(writtenBytes != numBytes){
-                            printf("writtenBytes %u, numBytes %u", writtenBytes, numBytes);
-                        }
                         assert(ptr == d_serializedCandidateResults + d_numBytesPerSerializedCandidatePrefixSum[outputIndex+1]);
                     }
                 }
             ); CUDACHECKASYNC;
 
-            currentOutput->serializedCandidateResults.resize(totalNumBytesForSerializedCandidates);
+            currentOutput->serializedCandidateResults.resize(maxResultBytes);
             currentOutput->serializedCandidateOffsets.resize(numCorrectedCandidates + 1);
-
-            CUDACHECK(cudaMemcpyAsync(
-                currentOutput->serializedCandidateOffsets.data(),
-                d_numBytesPerSerializedCandidatePrefixSum.data(),
-                sizeof(std::uint32_t) * (numCorrectedCandidates + 1),
-                D2H,
-                stream
-            ));
-
-            CUDACHECK(cudaMemcpyAsync(
-                currentOutput->serializedCandidateResults.data(),
-                d_serializedCandidateResults.data(),
-                sizeof(std::uint8_t) * totalNumBytesForSerializedCandidates,
-                D2H,
-                stream
-            ));
-
             currentOutput->numCorrectedCandidates = numCorrectedCandidates;
+
+            //copy data to host. since number of output bytes of serialized results is only available 
+            // on the device, use a kernel
+
+            helpers::lambda_kernel<<<480,128,0,stream>>>(
+                [
+                    h_serializedCandidateOffsets = currentOutput->serializedCandidateOffsets.data(),
+                    d_numBytesPerSerializedCandidatePrefixSum = d_numBytesPerSerializedCandidatePrefixSum.data(),
+                    h_serializedCandidateResults = currentOutput->serializedCandidateResults.data(),
+                    d_serializedCandidateResults = d_serializedCandidateResults.data(),
+                    numCorrectedCandidates = numCorrectedCandidates
+                ] __device__ (){
+                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                    const int stride = blockDim.x * gridDim.x;
+
+                    for(int i = tid; i < numCorrectedCandidates + 1; i += stride){
+                        h_serializedCandidateOffsets[i] = d_numBytesPerSerializedCandidatePrefixSum[i];
+                    }
+
+                    int serializedBytes = d_numBytesPerSerializedCandidatePrefixSum[numCorrectedCandidates];
+                    const size_t numIntCopies = serializedBytes / sizeof(int);
+                    const char* src = reinterpret_cast<const char*>(d_serializedCandidateResults);
+                    char* dst = reinterpret_cast<char*>(h_serializedCandidateResults);
+                    for(size_t i = tid; i < numIntCopies; i += stride){
+                        reinterpret_cast<int*>(dst)[i] = reinterpret_cast<const int*>(src)[i];
+                    }
+                    dst += sizeof(int) * numIntCopies;
+                    src += sizeof(int) * numIntCopies;
+                    serializedBytes -= sizeof(int) * numIntCopies;
+                    for(size_t i = tid; i < serializedBytes; i += stride){
+                        reinterpret_cast<char*>(dst)[i] = reinterpret_cast<const char*>(src)[i];
+                    }
+
+                }
+            ); CUDACHECKASYNC
+
+            // CUDACHECK(cudaMemcpyAsync(
+            //     currentOutput->serializedCandidateOffsets.data(),
+            //     d_numBytesPerSerializedCandidatePrefixSum.data(),
+            //     sizeof(std::uint32_t) * (numCorrectedCandidates + 1),
+            //     D2H,
+            //     stream
+            // ));
+
+            // CUDACHECK(cudaMemcpyAsync(
+            //     currentOutput->serializedCandidateResults.data(),
+            //     d_serializedCandidateResults.data(),
+            //     sizeof(std::uint8_t) * totalNumBytesForSerializedCandidates,
+            //     D2H,
+            //     stream
+            // ));
+
         }
 
         void copyCandidateResultsFromDeviceToHostClassic(cudaStream_t stream){
