@@ -630,14 +630,14 @@ namespace gpu{
             readstorageHandle{gpuReadStorage->makeHandle()},
             d_indicesForGather{0, cudaStreamPerThread, mr},
             d_anchorContainsN{0, cudaStreamPerThread, mr},
-            d_candidateContainsN{0, cudaStreamPerThread, mr},
-            d_candidate_sequences_lengths{0, cudaStreamPerThread, mr},
-            d_candidate_sequences_data{0, cudaStreamPerThread, mr},
-            d_anchorIndicesOfCandidates{0, cudaStreamPerThread, mr},
-            d_alignment_overlaps{0, cudaStreamPerThread, mr},
-            d_alignment_shifts{0, cudaStreamPerThread, mr},
-            d_alignment_nOps{0, cudaStreamPerThread, mr},
-            d_alignment_best_alignment_flags{0, cudaStreamPerThread, mr}, 
+            d_candidateContainsN_{0, cudaStreamPerThread, mr},
+            d_candidate_sequences_lengths_{0, cudaStreamPerThread, mr},
+            d_candidate_sequences_data_{0, cudaStreamPerThread, mr},
+            d_anchorIndicesOfCandidates_{0, cudaStreamPerThread, mr},
+            d_alignment_overlaps_{0, cudaStreamPerThread, mr},
+            d_alignment_shifts_{0, cudaStreamPerThread, mr},
+            d_alignment_nOps_{0, cudaStreamPerThread, mr},
+            d_alignment_best_alignment_flags_{0, cudaStreamPerThread, mr}, 
             d_indices{0, cudaStreamPerThread, mr},
             d_indices_per_anchor{0, cudaStreamPerThread, mr},
             d_indices_per_anchor_prefixsum{0, cudaStreamPerThread, mr},
@@ -654,19 +654,20 @@ namespace gpu{
             d_editsPerCorrectedanchor{0, cudaStreamPerThread, mr},
             d_numEditsPerCorrectedanchor{0, cudaStreamPerThread, mr},
             d_editsPerCorrectedCandidate{0, cudaStreamPerThread, mr},
-            d_hqAnchorCorrectionOfCandidateExists{0, cudaStreamPerThread, mr},            
+            d_hqAnchorCorrectionOfCandidateExists_{0, cudaStreamPerThread, mr},
+            d_allCandidateData{0, cudaStreamPerThread, mr},
             d_numEditsPerCorrectedCandidate{0, cudaStreamPerThread, mr},
             d_indices_of_corrected_anchors{0, cudaStreamPerThread, mr},
             d_num_indices_of_corrected_anchors{0, cudaStreamPerThread, mr},
-            d_indices_of_corrected_candidates{0, cudaStreamPerThread, mr},
+            d_indices_of_corrected_candidates_{0, cudaStreamPerThread, mr},
             d_totalNumEdits{0, cudaStreamPerThread, mr},
-            d_isPairedCandidate{0, cudaStreamPerThread, mr},
+            d_isPairedCandidate_{0, cudaStreamPerThread, mr},
             d_numAnchors{0, cudaStreamPerThread, mr},
             d_numCandidates{0, cudaStreamPerThread, mr},
             d_anchorReadIds{0, cudaStreamPerThread, mr},
             d_anchor_sequences_data{0, cudaStreamPerThread, mr},
             d_anchor_sequences_lengths{0, cudaStreamPerThread, mr},
-            d_candidate_read_ids{0, cudaStreamPerThread, mr},
+            d_candidate_read_ids_{0, cudaStreamPerThread, mr},
             d_candidates_per_anchor{0, cudaStreamPerThread, mr},
             d_candidates_per_anchor_prefixsum{0, cudaStreamPerThread, mr}
         {
@@ -755,7 +756,7 @@ namespace gpu{
                 d_anchorReadIds.data(),
                 d_anchor_sequences_data.data(),
                 d_anchor_sequences_lengths.data(),
-                d_candidate_read_ids.data(),
+                d_candidate_read_ids,
                 d_candidates_per_anchor.data(),
                 d_candidates_per_anchor_prefixsum.data(),
                 encodedSequencePitchInInts,
@@ -770,7 +771,7 @@ namespace gpu{
             ); CUDACHECKASYNC;
 
             CUDACHECK(cudaMemcpyAsync(
-                d_candidate_sequences_data.data(),
+                d_candidate_sequences_data,
                 currentInput->d_candidate_sequences_data.data(),
                 sizeof(unsigned int) * encodedSequencePitchInInts * currentNumCandidates,
                 D2D,
@@ -778,7 +779,7 @@ namespace gpu{
             ));
 
             CUDACHECK(cudaMemcpyAsync(
-                d_candidate_sequences_lengths.data(),
+                d_candidate_sequences_lengths,
                 currentInput->d_candidate_sequences_lengths.data(),
                 sizeof(int) * currentNumCandidates,
                 D2D,
@@ -792,7 +793,7 @@ namespace gpu{
 
             gpucorrectorkernels::setAnchorIndicesOfCandidateskernel
                     <<<currentNumAnchors, 128, 0, stream>>>(
-                d_anchorIndicesOfCandidates.data(),
+                d_anchorIndicesOfCandidates,
                 d_numAnchors.data(),
                 d_candidates_per_anchor.data(),
                 d_candidates_per_anchor_prefixsum.data()
@@ -837,7 +838,7 @@ namespace gpu{
                     }
 
                     cudaMemcpyAsync(
-                        d_hqAnchorCorrectionOfCandidateExists.data(),
+                        d_hqAnchorCorrectionOfCandidateExists,
                         h_excludeFlags,
                         sizeof(bool) * currentNumCandidates,
                         H2D,
@@ -916,14 +917,18 @@ namespace gpu{
             handleHost(h_flagsCandidates);
 
             handleDevice(d_anchorContainsN);
-            handleDevice(d_candidateContainsN);
-            handleDevice(d_candidate_sequences_lengths);
-            handleDevice(d_candidate_sequences_data);
-            handleDevice(d_anchorIndicesOfCandidates);
-            handleDevice(d_alignment_overlaps);
-            handleDevice(d_alignment_shifts);
-            handleDevice(d_alignment_nOps);
-            handleDevice(d_alignment_best_alignment_flags);
+            handleDevice(d_candidateContainsN_);
+            handleDevice(d_candidate_sequences_lengths_);
+            handleDevice(d_candidate_sequences_data_);
+            handleDevice(d_anchorIndicesOfCandidates_);
+
+            handleDevice(d_allCandidateData);
+
+            handleDevice(d_alignment_overlaps_);
+            handleDevice(d_alignment_shifts_);
+            handleDevice(d_alignment_nOps_);
+            handleDevice(d_alignment_best_alignment_flags_);
+
             handleDevice(d_indices);
             handleDevice(d_indices_per_anchor);
             handleDevice(d_indices_per_anchor_prefixsum);
@@ -940,18 +945,18 @@ namespace gpu{
             handleDevice(d_editsPerCorrectedanchor);
             handleDevice(d_numEditsPerCorrectedanchor);
             handleDevice(d_editsPerCorrectedCandidate);
-            handleDevice(d_hqAnchorCorrectionOfCandidateExists);            
+            handleDevice(d_hqAnchorCorrectionOfCandidateExists_);            
             handleDevice(d_numEditsPerCorrectedCandidate);
             handleDevice(d_indices_of_corrected_anchors);
             handleDevice(d_num_indices_of_corrected_anchors);
-            handleDevice(d_indices_of_corrected_candidates);
+            handleDevice(d_indices_of_corrected_candidates_);
             handleDevice(d_numEditsPerCorrectedanchor);
             handleDevice(d_numAnchors);
             handleDevice(d_numCandidates);
             handleDevice(d_anchorReadIds);
             handleDevice(d_anchor_sequences_data);
             handleDevice(d_anchor_sequences_lengths);
-            handleDevice(d_candidate_read_ids);
+            handleDevice(d_candidate_read_ids_);
             handleDevice(d_candidates_per_anchor);
             handleDevice(d_candidates_per_anchor_prefixsum);
 
@@ -964,14 +969,17 @@ namespace gpu{
             };
 
             handleDevice(d_anchorContainsN);
-            handleDevice(d_candidateContainsN);
-            handleDevice(d_candidate_sequences_lengths);
-            handleDevice(d_candidate_sequences_data);
-            handleDevice(d_anchorIndicesOfCandidates);
-            handleDevice(d_alignment_overlaps);
-            handleDevice(d_alignment_shifts);
-            handleDevice(d_alignment_nOps);
-            handleDevice(d_alignment_best_alignment_flags);
+            handleDevice(d_candidateContainsN_);
+            handleDevice(d_candidate_sequences_lengths_);
+            handleDevice(d_candidate_sequences_data_);
+            handleDevice(d_anchorIndicesOfCandidates_);
+
+            handleDevice(d_allCandidateData);
+
+            handleDevice(d_alignment_overlaps_);
+            handleDevice(d_alignment_shifts_);
+            handleDevice(d_alignment_nOps_);
+            handleDevice(d_alignment_best_alignment_flags_);
             handleDevice(d_indices);
             handleDevice(d_indices_per_anchor);
             handleDevice(d_indices_per_anchor_prefixsum);
@@ -988,20 +996,18 @@ namespace gpu{
             handleDevice(d_editsPerCorrectedanchor);
             handleDevice(d_numEditsPerCorrectedanchor);
             handleDevice(d_editsPerCorrectedCandidate);
-            handleDevice(d_hqAnchorCorrectionOfCandidateExists);
+            handleDevice(d_hqAnchorCorrectionOfCandidateExists_);
             handleDevice(d_numEditsPerCorrectedCandidate);
             handleDevice(d_indices_of_corrected_anchors);
             handleDevice(d_num_indices_of_corrected_anchors);
-            handleDevice(d_indices_of_corrected_candidates);
+            handleDevice(d_indices_of_corrected_candidates_);
             handleDevice(d_numEditsPerCorrectedanchor);
             handleDevice(d_numAnchors);
             handleDevice(d_numCandidates);
             handleDevice(d_anchorReadIds);
             handleDevice(d_anchor_sequences_data);
             handleDevice(d_anchor_sequences_lengths);
-            handleDevice(d_candidate_read_ids);
-            handleDevice(d_candidates_per_anchor);
-            handleDevice(d_candidates_per_anchor_prefixsum);
+            handleDevice(d_candidate_read_ids_);
         } 
 
         void releaseCandidateMemory(cudaStream_t stream){
@@ -1009,23 +1015,24 @@ namespace gpu{
                 ::destroy(d, stream);
             };
 
-            handleDevice(d_candidateContainsN);
-            handleDevice(d_candidate_sequences_lengths);
-            handleDevice(d_candidate_sequences_data);
-            handleDevice(d_anchorIndicesOfCandidates);
-            handleDevice(d_alignment_overlaps);
-            handleDevice(d_alignment_shifts);
-            handleDevice(d_alignment_nOps);
-            handleDevice(d_alignment_best_alignment_flags);
+            handleDevice(d_candidateContainsN_);
+            handleDevice(d_candidate_sequences_lengths_);
+            handleDevice(d_candidate_sequences_data_);
+            handleDevice(d_anchorIndicesOfCandidates_);
+
+            handleDevice(d_allCandidateData);
+
+            handleDevice(d_alignment_overlaps_);
+            handleDevice(d_alignment_shifts_);
+            handleDevice(d_alignment_nOps_);
+            handleDevice(d_alignment_best_alignment_flags_);
             handleDevice(d_indices);
             handleDevice(d_corrected_candidates);
             handleDevice(d_editsPerCorrectedCandidate);
-            handleDevice(d_hqAnchorCorrectionOfCandidateExists);
+            handleDevice(d_hqAnchorCorrectionOfCandidateExists_);
             handleDevice(d_numEditsPerCorrectedCandidate);
-            handleDevice(d_indices_of_corrected_candidates);
-            handleDevice(d_candidate_read_ids);
-            handleDevice(d_candidates_per_anchor);
-            handleDevice(d_candidates_per_anchor_prefixsum);
+            handleDevice(d_indices_of_corrected_candidates_);
+            handleDevice(d_candidate_read_ids_);
         } 
 
         
@@ -1072,29 +1079,92 @@ namespace gpu{
  
         void resizeBuffers(int /*numReads*/, int numCandidates, cudaStream_t stream){  
             //assert(numReads <= maxAnchors);
-            
-            d_anchorIndicesOfCandidates.resize(numCandidates, stream);
-            d_candidateContainsN.resize(numCandidates, stream);
-            d_candidate_read_ids.resize(numCandidates, stream);
-            d_candidate_sequences_lengths.resize(numCandidates, stream);
-            d_candidate_sequences_data.resize(numCandidates * encodedSequencePitchInInts, stream);
-            d_isPairedCandidate.resize(numCandidates, stream);
+                       
             h_isPairedCandidate.resize(numCandidates);
-
             h_flagsCandidates.resize(numCandidates);
             
-            h_indicesForGather.resize(numCandidates);
-            d_indicesForGather.resize(numCandidates, stream);
-            
-            d_alignment_overlaps.resize(numCandidates, stream);
-            d_alignment_shifts.resize(numCandidates, stream);
-            d_alignment_nOps.resize(numCandidates, stream);
-            d_alignment_best_alignment_flags.resize(numCandidates, stream);
             d_indices.resize(numCandidates + 1, stream);
 
-            d_indices_of_corrected_candidates.resize(numCandidates, stream);
 
-            d_hqAnchorCorrectionOfCandidateExists.resize(numCandidates, stream);
+            #if 0
+            d_alignment_overlaps_.resize(numCandidates, stream);
+            d_alignment_shifts_.resize(numCandidates, stream);
+            d_alignment_nOps_.resize(numCandidates, stream);
+            d_alignment_best_alignment_flags_.resize(numCandidates, stream);            
+            d_anchorIndicesOfCandidates_.resize(numCandidates, stream);
+            d_candidateContainsN_.resize(numCandidates, stream);
+            d_isPairedCandidate_.resize(numCandidates, stream);
+            d_indices_of_corrected_candidates_.resize(numCandidates, stream);
+            d_hqAnchorCorrectionOfCandidateExists_.resize(numCandidates, stream);
+            d_candidate_read_ids_.resize(numCandidates, stream);
+            d_candidate_sequences_lengths_.resize(numCandidates, stream);
+            d_candidate_sequences_data_.resize(numCandidates * encodedSequencePitchInInts, stream);
+
+            d_alignment_overlaps = d_alignment_overlaps_.data();
+            d_alignment_shifts = d_alignment_shifts_.data();
+            d_alignment_nOps = d_alignment_nOps_.data();
+            d_alignment_best_alignment_flags = d_alignment_best_alignment_flags_.data();
+            d_anchorIndicesOfCandidates = d_anchorIndicesOfCandidates_.data();
+            d_candidateContainsN = d_candidateContainsN_.data();
+            d_isPairedCandidate = d_isPairedCandidate_.data();
+            d_indices_of_corrected_candidates = d_indices_of_corrected_candidates_.data();
+            d_hqAnchorCorrectionOfCandidateExists = d_hqAnchorCorrectionOfCandidateExists_.data();
+            d_candidate_read_ids = d_candidate_read_ids_.data();
+            d_candidate_sequences_lengths = d_candidate_sequences_lengths_.data();
+            d_candidate_sequences_data = d_candidate_sequences_data_.data();
+
+
+            #else 
+
+            size_t allocation_sizes[12];
+            allocation_sizes[0] = sizeof(int) * numCandidates; // d_alignment_overlaps
+            allocation_sizes[1] = sizeof(int) * numCandidates; // d_alignment_shifts
+            allocation_sizes[2] = sizeof(int) * numCandidates; // d_alignment_nOps
+            allocation_sizes[3] = sizeof(AlignmentOrientation) * numCandidates; // d_alignment_best_alignment_flags
+            allocation_sizes[4] = sizeof(int) * numCandidates; // d_anchorIndicesOfCandidates
+            allocation_sizes[5] = sizeof(bool) * numCandidates; // d_candidateContainsN
+            allocation_sizes[6] = sizeof(bool) * numCandidates; // d_isPairedCandidate
+            allocation_sizes[7] = sizeof(int) * numCandidates; // d_indices_of_corrected_candidates
+            allocation_sizes[8] = sizeof(bool) * numCandidates; // d_hqAnchorCorrectionOfCandidateExists
+            allocation_sizes[9] = sizeof(read_number) * numCandidates; // d_candidate_read_ids
+            allocation_sizes[10] = sizeof(int) * numCandidates; // d_candidate_sequences_lengths
+            allocation_sizes[11] = sizeof(unsigned int) * encodedSequencePitchInInts * numCandidates; // d_candidate_sequences_data
+
+            void* allocations[12];
+
+            size_t temp_storage_bytes = 0;
+
+            CUDACHECK(cub::AliasTemporaries(
+                nullptr,
+                temp_storage_bytes,
+                allocations,
+                allocation_sizes
+            ));
+
+            resizeUninitialized(d_allCandidateData, temp_storage_bytes, stream);
+
+            CUDACHECK(cub::AliasTemporaries(
+                d_allCandidateData.data(),
+                temp_storage_bytes,
+                allocations,
+                allocation_sizes
+            ));
+
+            d_alignment_overlaps = reinterpret_cast<int*>(allocations[0]);
+            d_alignment_shifts = reinterpret_cast<int*>(allocations[1]);
+            d_alignment_nOps = reinterpret_cast<int*>(allocations[2]);
+            d_alignment_best_alignment_flags = reinterpret_cast<AlignmentOrientation*>(allocations[3]);
+            d_anchorIndicesOfCandidates = reinterpret_cast<int*>(allocations[4]);
+            d_candidateContainsN = reinterpret_cast<bool*>(allocations[5]);
+            d_isPairedCandidate = reinterpret_cast<bool*>(allocations[6]);
+            d_indices_of_corrected_candidates = reinterpret_cast<int*>(allocations[7]);
+            d_hqAnchorCorrectionOfCandidateExists = reinterpret_cast<bool*>(allocations[8]);
+            d_candidate_read_ids = reinterpret_cast<read_number*>(allocations[9]);
+            d_candidate_sequences_lengths = reinterpret_cast<int*>(allocations[10]);
+            d_candidate_sequences_data = reinterpret_cast<unsigned int*>(allocations[11]);
+
+            #endif
+            
         }
 
         void flagPairedCandidates(cudaStream_t stream){
@@ -1104,9 +1174,9 @@ namespace gpu{
                 assert(currentNumAnchors % 2 == 0);
                 assert(currentNumAnchors != 0);
 
-                d_isPairedCandidate.resize(currentNumCandidates, stream);
+                //d_isPairedCandidate.resize(currentNumCandidates, stream);
 
-                helpers::call_fill_kernel_async(d_isPairedCandidate.data(), currentNumCandidates, false, stream);                   
+                helpers::call_fill_kernel_async(d_isPairedCandidate, currentNumCandidates, false, stream);                   
 
                 dim3 block = 128;
                 dim3 grid = currentNumAnchors / 2;
@@ -1117,12 +1187,12 @@ namespace gpu{
                     currentNumAnchors / 2,
                     d_candidates_per_anchor.data(),
                     d_candidates_per_anchor_prefixsum.data(),
-                    d_candidate_read_ids.data(),
-                    d_isPairedCandidate.data()
+                    d_candidate_read_ids,
+                    d_isPairedCandidate
                 ); CUDACHECKASYNC;
             }else{
                 CUDACHECK(cudaMemsetAsync(
-                    d_isPairedCandidate.data(),
+                    d_isPairedCandidate,
                     0,
                     sizeof(bool) * currentNumCandidates,
                     stream
@@ -1405,10 +1475,10 @@ namespace gpu{
                     d_numBytesPerSerializedCandidate = d_numBytesPerSerializedCandidate.data(),
                     d_numBytesPerSerializedCandidatePrefixSum = d_numBytesPerSerializedCandidatePrefixSum.data(),
                     d_numEditsPerCorrectedCandidate = d_numEditsPerCorrectedCandidate.data(),
-                    d_candidate_sequences_lengths = d_candidate_sequences_lengths.data(),
+                    d_candidate_sequences_lengths = d_candidate_sequences_lengths,
                     numCorrectedCandidates = numCorrectedCandidates,
                     dontUseEditsValue = getDoNotUseEditsValue(),
-                    d_indices_of_corrected_candidates = d_indices_of_corrected_candidates.data(),
+                    d_indices_of_corrected_candidates = d_indices_of_corrected_candidates,
                     maxSerializedBytesPerCandidate
                 ] __device__ (){
                     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -1468,16 +1538,16 @@ namespace gpu{
                     d_numBytesPerSerializedCandidatePrefixSum = d_numBytesPerSerializedCandidatePrefixSum.data(),
                     d_serializedCandidateResults = d_serializedCandidateResults.data(),
                     d_numEditsPerCorrectedCandidate = d_numEditsPerCorrectedCandidate.data(),
-                    d_candidate_sequences_lengths = d_candidate_sequences_lengths.data(),
+                    d_candidate_sequences_lengths = d_candidate_sequences_lengths,
                     numCorrectedCandidates = numCorrectedCandidates,
                     dontUseEditsValue = getDoNotUseEditsValue(),
-                    d_candidate_read_ids = d_candidate_read_ids.data(),
+                    d_candidate_read_ids = d_candidate_read_ids,
                     d_corrected_candidates = d_corrected_candidates.data(),
-                    d_alignment_shifts = d_alignment_shifts.data(),
+                    d_alignment_shifts = d_alignment_shifts,
                     decodedSequencePitchInBytes = this->decodedSequencePitchInBytes,
                     d_editsPerCorrectedCandidate = d_editsPerCorrectedCandidate.data(),
                     editsPitchInBytes = editsPitchInBytes,
-                    d_indices_of_corrected_candidates = d_indices_of_corrected_candidates.data()
+                    d_indices_of_corrected_candidates = d_indices_of_corrected_candidates
                 ] __device__ (){
                     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                     const int stride = blockDim.x * gridDim.x;
@@ -1639,8 +1709,8 @@ namespace gpu{
         void getAmbiguousFlagsOfCandidates(cudaStream_t stream){
             gpuReadStorage->areSequencesAmbiguous(
                 readstorageHandle,
-                d_candidateContainsN.data(), 
-                d_candidate_read_ids.data(), 
+                d_candidateContainsN, 
+                d_candidate_read_ids, 
                 currentNumCandidates,
                 stream
             ); 
@@ -1652,20 +1722,20 @@ namespace gpu{
             const bool removeAmbiguousCandidates = programOptions->excludeAmbiguousReads;
    
             callShiftedHammingDistanceKernel(
-                d_alignment_overlaps.data(),
-                d_alignment_shifts.data(),
-                d_alignment_nOps.data(),
-                d_alignment_best_alignment_flags.data(),
+                d_alignment_overlaps,
+                d_alignment_shifts,
+                d_alignment_nOps,
+                d_alignment_best_alignment_flags,
                 d_anchor_sequences_data.data(),
-                d_candidate_sequences_data.data(),
+                d_candidate_sequences_data,
                 d_anchor_sequences_lengths.data(),
-                d_candidate_sequences_lengths.data(),
-                d_anchorIndicesOfCandidates.data(),
+                d_candidate_sequences_lengths,
+                d_anchorIndicesOfCandidates,
                 currentNumAnchors,
                 currentNumCandidates,
                 d_anchorContainsN.data(),
                 removeAmbiguousAnchors,
-                d_candidateContainsN.data(),
+                d_candidateContainsN,
                 removeAmbiguousCandidates,
                 gpuReadStorage->getSequenceLengthUpperBound(),
                 gpuReadStorage->getSequenceLengthUpperBound(),
@@ -1682,9 +1752,9 @@ namespace gpu{
             if(!gpuReadStorage->isPairedEnd()){
                 //default kernel
                 call_cuda_filter_alignments_by_mismatchratio_kernel_async(
-                    d_alignment_best_alignment_flags.data(),
-                    d_alignment_nOps.data(),
-                    d_alignment_overlaps.data(),
+                    d_alignment_best_alignment_flags,
+                    d_alignment_nOps,
+                    d_alignment_overlaps,
                     d_candidates_per_anchor_prefixsum.data(),
                     currentNumAnchors,
                     currentNumCandidates,
@@ -1695,11 +1765,11 @@ namespace gpu{
             }else{
                 helpers::lambda_kernel<<<SDIV(currentNumCandidates, 128), 128, 0, stream>>>(
                     [
-                        bestAlignmentFlags = d_alignment_best_alignment_flags.data(),
-                        nOps = d_alignment_nOps.data(),
-                        overlaps = d_alignment_overlaps.data(),
+                        bestAlignmentFlags = d_alignment_best_alignment_flags,
+                        nOps = d_alignment_nOps,
+                        overlaps = d_alignment_overlaps,
                         currentNumCandidates = currentNumCandidates,
-                        d_isPairedCandidate = d_isPairedCandidate.data(),
+                        d_isPairedCandidate = d_isPairedCandidate,
                         pairedFilterThreshold = programOptions->pairedFilterThreshold
                     ] __device__(){
                         const int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -1744,10 +1814,10 @@ namespace gpu{
                 d_indices.data(),
                 d_indices_per_anchor.data(),
                 d_num_indices.data(),
-                d_alignment_best_alignment_flags.data(),
+                d_alignment_best_alignment_flags,
                 d_candidates_per_anchor.data(),
                 d_candidates_per_anchor_prefixsum.data(),
-                d_anchorIndicesOfCandidates.data(),
+                d_anchorIndicesOfCandidates,
                 currentNumAnchors,
                 currentNumCandidates,
                 stream
@@ -1785,7 +1855,7 @@ namespace gpu{
                     d_cand_qual,
                     qualityPitchInBytes,
                     makeAsyncConstBufferWrapper(currentInput->h_candidate_read_ids.data()),
-                    d_candidate_read_ids.data(),
+                    d_candidate_read_ids,
                     currentNumCandidates,
                     qualityStream,
                     mr
@@ -1798,6 +1868,7 @@ namespace gpu{
 
                 static_assert(false, "Untested code branch");
 
+                d_indicesForGather.resize(currentNumCandidates, stream);
                 rmm::device_uvector<int> d_prefixsum(maxAnchors + 1, stream, mr);
 
                 CubCallWrapper(mr).cubExclusiveSum(
@@ -1806,6 +1877,8 @@ namespace gpu{
                     maxAnchors,
                     stream
                 );
+
+                h_indicesForGather.resize(numCandidates);
 
                 auto zippedValid = thrust::make_zip_iterator(thrust::make_tuple(
                     h_indicesForGather.data(),
@@ -2038,10 +2111,10 @@ namespace gpu{
             #else
 
             managedgpumsa->construct(
-                d_alignment_overlaps.data(),
-                d_alignment_shifts.data(),
-                d_alignment_nOps.data(),
-                d_alignment_best_alignment_flags.data(),
+                d_alignment_overlaps,
+                d_alignment_shifts,
+                d_alignment_nOps,
+                d_alignment_best_alignment_flags,
                 d_indices.data(),
                 d_indices_per_anchor.data(),
                 d_candidates_per_anchor_prefixsum.data(),
@@ -2049,10 +2122,10 @@ namespace gpu{
                 d_anchor_sequences_data.data(),
                 d_anchor_qual,
                 currentNumAnchors,
-                d_candidate_sequences_lengths.data(),
-                d_candidate_sequences_data.data(),
+                d_candidate_sequences_lengths,
+                d_candidate_sequences_data,
                 d_cand_qual,
-                d_isPairedCandidate.data(),
+                d_isPairedCandidate,
                 encodedSequencePitchInInts,
                 qualityPitchInBytes,
                 programOptions->useQualityScores,
@@ -2071,10 +2144,10 @@ namespace gpu{
                     d_indices_tmp.data(),
                     d_indices_per_anchor_tmp.data(),
                     d_num_indices_tmp.data(),
-                    d_alignment_overlaps.data(),
-                    d_alignment_shifts.data(),
-                    d_alignment_nOps.data(),
-                    d_alignment_best_alignment_flags.data(),
+                    d_alignment_overlaps,
+                    d_alignment_shifts,
+                    d_alignment_nOps,
+                    d_alignment_best_alignment_flags,
                     d_indices.data(),
                     d_indices_per_anchor.data(),
                     d_candidates_per_anchor_prefixsum.data(),
@@ -2082,10 +2155,10 @@ namespace gpu{
                     d_anchor_sequences_data.data(),
                     d_anchor_qual,
                     currentNumAnchors,
-                    d_candidate_sequences_lengths.data(),
-                    d_candidate_sequences_data.data(),
+                    d_candidate_sequences_lengths,
+                    d_candidate_sequences_data,
                     d_cand_qual,
-                    d_isPairedCandidate.data(),
+                    d_isPairedCandidate,
                     currentNumCandidates,
                     encodedSequencePitchInInts,
                     qualityPitchInBytes,
@@ -2282,16 +2355,16 @@ namespace gpu{
 
             #if 1
 
-            bool* d_excludeFlags = d_hqAnchorCorrectionOfCandidateExists.data();
+            bool* d_excludeFlags = d_hqAnchorCorrectionOfCandidateExists;
 
             callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
                 d_candidateCanBeCorrected.data(),
                 d_num_corrected_candidates_per_anchor.data(),
                 managedgpumsa->multiMSAView(),
                 d_excludeFlags,
-                d_alignment_shifts.data(),
-                d_candidate_sequences_lengths.data(),
-                d_anchorIndicesOfCandidates.data(),
+                d_alignment_shifts,
+                d_candidate_sequences_lengths,
+                d_anchorIndicesOfCandidates,
                 d_is_high_quality_anchor.data(),
                 d_candidates_per_anchor_prefixsum.data(),
                 d_indices.data(),
@@ -2327,7 +2400,7 @@ namespace gpu{
             CubCallWrapper(mr).cubSelectFlagged(
                 cub::CountingInputIterator<int>(0),
                 d_candidateCanBeCorrected.data(),
-                d_indices_of_corrected_candidates.data(),
+                d_indices_of_corrected_candidates,
                 d_num_total_corrected_candidates.data(),
                 currentNumCandidates,
                 stream
@@ -2352,14 +2425,14 @@ namespace gpu{
                 callCorrectCandidatesKernel(
                     d_corrected_candidates.data(),            
                     managedgpumsa->multiMSAView(),
-                    d_alignment_shifts.data(),
-                    d_alignment_best_alignment_flags.data(),
-                    d_candidate_sequences_data.data(),
-                    d_candidate_sequences_lengths.data(),
-                    d_candidateContainsN.data(),
-                    d_indices_of_corrected_candidates.data(),
+                    d_alignment_shifts,
+                    d_alignment_best_alignment_flags,
+                    d_candidate_sequences_data,
+                    d_candidate_sequences_lengths,
+                    d_candidateContainsN,
+                    d_indices_of_corrected_candidates,
                     d_num_total_corrected_candidates.data(),
-                    d_anchorIndicesOfCandidates.data(),
+                    d_anchorIndicesOfCandidates,
                     *h_num_total_corrected_candidates,
                     encodedSequencePitchInInts,
                     decodedSequencePitchInBytes,
@@ -2371,11 +2444,11 @@ namespace gpu{
                     d_editsPerCorrectedCandidate.data(),
                     d_numEditsPerCorrectedCandidate.data(),
                     getDoNotUseEditsValue(),
-                    d_indices_of_corrected_candidates.data(),
+                    d_indices_of_corrected_candidates,
                     d_num_total_corrected_candidates.data(),
-                    d_candidateContainsN.data(),
-                    d_candidate_sequences_data.data(),
-                    d_candidate_sequences_lengths.data(),
+                    d_candidateContainsN,
+                    d_candidate_sequences_data,
+                    d_candidate_sequences_lengths,
                     d_corrected_candidates.data(),
                     (*h_num_total_corrected_candidates),
                     true,
@@ -2417,16 +2490,16 @@ namespace gpu{
 
    
             #if 1
-                bool* d_excludeFlags = d_hqAnchorCorrectionOfCandidateExists.data();
+                bool* d_excludeFlags = d_hqAnchorCorrectionOfCandidateExists;
 
                 callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
                     d_candidateCanBeCorrected.data(),
                     d_num_corrected_candidates_per_anchor.data(),
                     managedgpumsa->multiMSAView(),
                     d_excludeFlags,
-                    d_alignment_shifts.data(),
-                    d_candidate_sequences_lengths.data(),
-                    d_anchorIndicesOfCandidates.data(),
+                    d_alignment_shifts,
+                    d_candidate_sequences_lengths,
+                    d_anchorIndicesOfCandidates,
                     d_is_high_quality_anchor.data(),
                     d_candidates_per_anchor_prefixsum.data(),
                     d_indices.data(),
@@ -2443,7 +2516,7 @@ namespace gpu{
                 d_candidateCanBeCorrected.data(),
                 d_num_corrected_candidates_per_anchor.data(),
                 managedgpumsa->multiMSAView(),
-                d_alignment_shifts.data(),
+                d_alignment_shifts,
                 d_candidate_sequences_lengths.data(),
                 d_anchorIndicesOfCandidates.data(),
                 d_is_high_quality_anchor.data(),
@@ -2462,7 +2535,7 @@ namespace gpu{
             CubCallWrapper(mr).cubSelectFlagged(
                 cub::CountingInputIterator<int>(0),
                 d_candidateCanBeCorrected.data(),
-                d_indices_of_corrected_candidates.data(),
+                d_indices_of_corrected_candidates,
                 d_num_total_corrected_candidates.data(),
                 currentNumCandidates,
                 stream
@@ -2488,12 +2561,12 @@ namespace gpu{
                 *gpuForestCandidate,
                 programOptions->thresholdCands,
                 programOptions->estimatedCoverage,
-                d_alignment_shifts.data(),
-                d_alignment_best_alignment_flags.data(),
-                d_candidate_sequences_data.data(),
-                d_candidate_sequences_lengths.data(),
-                d_indices_of_corrected_candidates.data(),
-                d_anchorIndicesOfCandidates.data(),
+                d_alignment_shifts,
+                d_alignment_best_alignment_flags,
+                d_candidate_sequences_data,
+                d_candidate_sequences_lengths,
+                d_indices_of_corrected_candidates,
+                d_anchorIndicesOfCandidates,
                 *h_num_total_corrected_candidates,
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
@@ -2505,11 +2578,11 @@ namespace gpu{
                 d_editsPerCorrectedCandidate.data(),
                 d_numEditsPerCorrectedCandidate.data(),
                 getDoNotUseEditsValue(),
-                d_indices_of_corrected_candidates.data(),
+                d_indices_of_corrected_candidates,
                 d_num_total_corrected_candidates.data(),
-                d_candidateContainsN.data(),
-                d_candidate_sequences_data.data(),
-                d_candidate_sequences_lengths.data(),
+                d_candidateContainsN,
+                d_candidate_sequences_data,
+                d_candidate_sequences_lengths,
                 d_corrected_candidates.data(),
                 *h_num_total_corrected_candidates,
                 true,
@@ -2598,14 +2671,14 @@ namespace gpu{
         rmm::device_uvector<read_number> d_indicesForGather;
 
         rmm::device_uvector<bool> d_anchorContainsN;
-        rmm::device_uvector<bool> d_candidateContainsN;
-        rmm::device_uvector<int> d_candidate_sequences_lengths;
-        rmm::device_uvector<unsigned int> d_candidate_sequences_data;
-        rmm::device_uvector<int> d_anchorIndicesOfCandidates;
-        rmm::device_uvector<int> d_alignment_overlaps;
-        rmm::device_uvector<int> d_alignment_shifts;
-        rmm::device_uvector<int> d_alignment_nOps;
-        rmm::device_uvector<AlignmentOrientation> d_alignment_best_alignment_flags; 
+        rmm::device_uvector<bool> d_candidateContainsN_;
+        rmm::device_uvector<int> d_candidate_sequences_lengths_;
+        rmm::device_uvector<unsigned int> d_candidate_sequences_data_;
+        rmm::device_uvector<int> d_anchorIndicesOfCandidates_;
+        rmm::device_uvector<int> d_alignment_overlaps_;
+        rmm::device_uvector<int> d_alignment_shifts_;
+        rmm::device_uvector<int> d_alignment_nOps_;
+        rmm::device_uvector<AlignmentOrientation> d_alignment_best_alignment_flags_; 
         rmm::device_uvector<int> d_indices;
         rmm::device_uvector<int> d_indices_per_anchor;
         rmm::device_uvector<int> d_indices_per_anchor_prefixsum;
@@ -2622,14 +2695,31 @@ namespace gpu{
         rmm::device_uvector<EncodedCorrectionEdit> d_editsPerCorrectedanchor;
         rmm::device_uvector<int> d_numEditsPerCorrectedanchor;
         rmm::device_uvector<EncodedCorrectionEdit> d_editsPerCorrectedCandidate;
-        rmm::device_uvector<bool> d_hqAnchorCorrectionOfCandidateExists;
+        rmm::device_uvector<bool> d_hqAnchorCorrectionOfCandidateExists_;
+
+        rmm::device_uvector<char> d_allCandidateData;
+
+        int* d_alignment_overlaps = nullptr;
+        int* d_alignment_shifts = nullptr;
+        int* d_alignment_nOps = nullptr;
+        AlignmentOrientation* d_alignment_best_alignment_flags = nullptr;
+        int* d_anchorIndicesOfCandidates = nullptr;
+        bool* d_candidateContainsN = nullptr;
+        bool* d_isPairedCandidate = nullptr;
+        int* d_indices_of_corrected_candidates = nullptr;
+        bool* d_hqAnchorCorrectionOfCandidateExists = nullptr;
+
+        read_number* d_candidate_read_ids = nullptr;
+        int* d_candidate_sequences_lengths = nullptr;
+        unsigned int* d_candidate_sequences_data = nullptr;
+
         
         rmm::device_uvector<int> d_numEditsPerCorrectedCandidate;
         rmm::device_uvector<int> d_indices_of_corrected_anchors;
         rmm::device_uvector<int> d_num_indices_of_corrected_anchors;
-        rmm::device_uvector<int> d_indices_of_corrected_candidates;
+        rmm::device_uvector<int> d_indices_of_corrected_candidates_;
         rmm::device_uvector<int> d_totalNumEdits;
-        rmm::device_uvector<bool> d_isPairedCandidate;
+        rmm::device_uvector<bool> d_isPairedCandidate_;
         PinnedBuffer<bool> h_isPairedCandidate;
 
         rmm::device_uvector<int> d_numAnchors;
@@ -2637,7 +2727,7 @@ namespace gpu{
         rmm::device_uvector<read_number> d_anchorReadIds;
         rmm::device_uvector<unsigned int> d_anchor_sequences_data;
         rmm::device_uvector<int> d_anchor_sequences_lengths;
-        rmm::device_uvector<read_number> d_candidate_read_ids;
+        rmm::device_uvector<read_number> d_candidate_read_ids_;
         rmm::device_uvector<int> d_candidates_per_anchor;
         rmm::device_uvector<int> d_candidates_per_anchor_prefixsum; 
 
