@@ -240,7 +240,7 @@ struct SingleProducerSingleConsumerQueue{
 
 template<class T>
 struct MultiProducerMultiConsumerQueue{
-    moodycamel::BlockingConcurrentQueue<T> queue;
+    moodycamel::BlockingConcurrentQueue<T> queue{};
 
     void push(T item){
         queue.enqueue(item); 

@@ -504,6 +504,7 @@ namespace gpu{
 
         }
 
+
         SerializedEncodedCorrectionOutput constructSerializedEncodedResults(const GpuErrorCorrectorRawOutput& currentOutput) const{
             //assert(cudaSuccess == currentOutput.event.query());
 
@@ -526,23 +527,23 @@ namespace gpu{
             {
                 nvtx::ScopedRange sr("copySerializedAnchors", 1);
 
-                for(int anchor_index = 0; anchor_index < currentOutput.numAnchors; anchor_index++){
-                    const read_number readId = currentOutput.h_anchorReadIds[anchor_index];
-                    const bool isCorrected = currentOutput.h_anchor_is_corrected[anchor_index];
-                    const bool isHQ = currentOutput.h_is_high_quality_anchor[anchor_index].hq();
+                // for(int anchor_index = 0; anchor_index < currentOutput.numAnchors; anchor_index++){
+                //     const read_number readId = currentOutput.h_anchorReadIds[anchor_index];
+                //     const bool isCorrected = currentOutput.h_anchor_is_corrected[anchor_index];
+                //     const bool isHQ = currentOutput.h_is_high_quality_anchor[anchor_index].hq();
 
-                    if(isHQ){
-                        correctionFlags->setCorrectedAsHqAnchor(readId);
-                    }
+                //     if(isHQ){
+                //         correctionFlags->setCorrectedAsHqAnchor(readId);
+                //     }
 
-                    if(isCorrected){
-                        ; //nothing
-                    }else{
-                        correctionFlags->setCouldNotBeCorrectedAsAnchor(readId);
-                    }
+                //     if(isCorrected){
+                //         ; //nothing
+                //     }else{
+                //         correctionFlags->setCouldNotBeCorrectedAsAnchor(readId);
+                //     }
 
-                    assert(!(isHQ && !isCorrected));                   
-                }
+                //     assert(!(isHQ && !isCorrected));                   
+                // }
 
                 //currentOutput.serializedAnchorResults only contains data of corrected anchors. can copy directly.
                 std::copy(
@@ -2523,6 +2524,28 @@ namespace gpu{
 
         static constexpr int getDoNotUseEditsValue() noexcept{
             return -1;
+        }
+
+        void updateCorrectionFlags(const GpuErrorCorrectorRawOutput& currentOutput) const{
+            if(!currentOutput.nothingToDo){
+                for(int anchor_index = 0; anchor_index < currentOutput.numAnchors; anchor_index++){
+                    const read_number readId = currentOutput.h_anchorReadIds[anchor_index];
+                    const bool isCorrected = currentOutput.h_anchor_is_corrected[anchor_index];
+                    const bool isHQ = currentOutput.h_is_high_quality_anchor[anchor_index].hq();
+
+                    if(isHQ){
+                        correctionFlags->setCorrectedAsHqAnchor(readId);
+                    }
+
+                    if(isCorrected){
+                        ; //nothing
+                    }else{
+                        correctionFlags->setCouldNotBeCorrectedAsAnchor(readId);
+                    }
+
+                    assert(!(isHQ && !isCorrected));                   
+                }
+            }
         }
 
     private:

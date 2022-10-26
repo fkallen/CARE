@@ -381,7 +381,8 @@ public:
 
 
             std::array<GpuErrorCorrectorRawOutput, 1 + numextra> rawOutputArray;
-            SingleProducerSingleConsumerQueue<GpuErrorCorrectorRawOutput*> freeRawOutputQueue;
+            //SingleProducerSingleConsumerQueue<GpuErrorCorrectorRawOutput*> freeRawOutputQueue;
+            MultiProducerMultiConsumerQueue<GpuErrorCorrectorRawOutput*> freeRawOutputQueue;
 
             for(auto& a : rawOutputArray){
                 freeRawOutputQueue.push(&a);
@@ -422,6 +423,8 @@ public:
             double elapsedCorrectionTime = 0.0;
             double elapsedOutputTime = 0.0;
 
+            std::atomic_int outstandingProcessing{0};
+
             auto processDataInFlight = [&](std::pair<GpuErrorCorrectorInput*, GpuErrorCorrectorRawOutput*> pointers){
                 auto inputPtr = pointers.first;
                 auto rawOutputPtr = pointers.second;
@@ -439,22 +442,33 @@ public:
                 nvtx::push_range("constructSerializedEncodedResults", 2);
                 //helpers::CpuTimer constructResultsTimer("constructEncodedResults");
 
+                gpuErrorCorrector.updateCorrectionFlags(*rawOutputPtr);
+
                 //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
-                SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
+                //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
                 
 
                 // constructResultsTimer.stop();
                 // constructResultsTimer.print();
                 nvtx::pop_range();
 
-                freeRawOutputQueue.push(rawOutputPtr);
+                //freeRawOutputQueue.push(rawOutputPtr);
                 
                 outputTimer.stop();
                 //elapsedOutputTimes.emplace_back(outputTimer.elapsed());
                 elapsedOutputTime += outputTimer.elapsed();
 
+                // processSerializedResults(
+                //     std::move(serializedEncodedCorrectionOutput)
+                // );
+
+                outstandingProcessing++;
                 processSerializedResults(
-                    std::move(serializedEncodedCorrectionOutput)
+                    rawOutputPtr,
+                    [&](GpuErrorCorrectorRawOutput* ptr){
+                        freeRawOutputQueue.push(ptr);
+                        outstandingProcessing--;
+                    }
                 );
             };
 
@@ -624,6 +638,8 @@ public:
                 outputConstructorFuture.wait();
             }
 
+            while(outstandingProcessing != 0){};
+
             
             runStatistics.hasherTimeAverage = elapsedHashingTime / iterations;
             runStatistics.correctorTimeAverage = elapsedCorrectionTime / iterations;
@@ -697,7 +713,7 @@ public:
             cudaStream_t stream = cudaStreamPerThread;
             GpuErrorCorrectorInput input;
 
-            GpuErrorCorrectorRawOutput rawOutput;
+            //std::unique_ptr<GpuErrorCorrectorRawOutput> rawOutputPtr = std::make_unique<GpuErrorCorrectorRawOutput>();
 
             AnchorHasher gpuAnchorHasher(
                 *readStorage,
@@ -721,6 +737,13 @@ public:
                 correctionFlags,
                 programOptions
             );
+
+            std::array<GpuErrorCorrectorRawOutput, 2> rawOutputArray;
+            MultiProducerMultiConsumerQueue<GpuErrorCorrectorRawOutput*> freeRawOutputQueue;
+
+            for(auto& a : rawOutputArray){
+                freeRawOutputQueue.push(&a);
+            }
 
             // auto printUsageStatistics = [&](){
             //     UsageStatistics statistics;
@@ -753,9 +776,12 @@ public:
             double elapsedCorrectionTime = 0.0;
             double elapsedOutputTime = 0.0;
 
+            std::atomic_int outstandingProcessing{0};
+
             //int globalcounter = 0;
 
             while(continueCondition()){
+
 
                 //printUsageStatistics();
 
@@ -773,6 +799,7 @@ public:
                 if(anchorIds.size() > 0){
 
                     CUDACHECK(input.event.synchronize());
+                    GpuErrorCorrectorRawOutput* rawOutputPtr = freeRawOutputQueue.pop();
 
                     //std::cerr << "globalcounter " << globalcounter << "\n";
             
@@ -799,12 +826,12 @@ public:
                     helpers::CpuTimer correctionTimer;
 
                     nvtx::push_range("correct", 1);
-                    gpuErrorCorrector.correct(input, rawOutput, stream);
+                    gpuErrorCorrector.correct(input, *rawOutputPtr, stream);
                     nvtx::pop_range();
 
                     gpuErrorCorrector.releaseCandidateMemory(stream);
 
-                    CUDACHECK(rawOutput.event.synchronize());
+                    CUDACHECK(rawOutputPtr->event.synchronize());
 
                     correctionTimer.stop();
                     //elapsedCorrectionTimes.emplace_back(correctionTimer.elapsed());
@@ -817,8 +844,10 @@ public:
                     nvtx::push_range("constructSerializedEncodedResults", 2);
                     //helpers::CpuTimer constructResultsTimer("constructSerializedEncodedResults");
 
+                    gpuErrorCorrector.updateCorrectionFlags(*rawOutputPtr);
+
                     //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(rawOutput);
-                    SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(rawOutput);
+                    //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(rawOutput);
 
                     // constructResultsTimer.stop();
                     // constructResultsTimer.print();
@@ -830,8 +859,18 @@ public:
                         elapsedOutputTime += outputTimer.elapsed();
                     }
 
+                    // processSerializedResults(
+                    //     std::move(serializedEncodedCorrectionOutput)
+                    // );
+
+
+                    outstandingProcessing++;
                     processSerializedResults(
-                        std::move(serializedEncodedCorrectionOutput)
+                        rawOutputPtr,
+                        [&](GpuErrorCorrectorRawOutput* ptr){
+                            freeRawOutputQueue.push(ptr);
+                            outstandingProcessing--;
+                        }
                     );
                 }
 
@@ -850,6 +889,8 @@ public:
             runStatistics.memoryOutputConstructor = outputConstructor.getMemoryInfo();
             runStatistics.memoryInputData = input.getMemoryInfo();
             //runStatistics.memoryRawOutputData = rawOutput.getMemoryInfo();
+
+            while(outstandingProcessing != 0){};
 
             return runStatistics;
         }catch (const rmm::bad_alloc& e){
@@ -1289,30 +1330,44 @@ public:
             ThreadPool::ParallelForHandle pforHandle;
 
             std::array<GpuErrorCorrectorRawOutput, 1 + getNumExtraBuffers()> rawOutputs{};
-            std::queue<GpuErrorCorrectorRawOutput*> myFreeOutputsQueue;
+            MultiProducerMultiConsumerQueue<GpuErrorCorrectorRawOutput*> myFreeOutputsQueue;
 
             for(auto& i : rawOutputs){
                 myFreeOutputsQueue.push(&i);
             }
 
+            std::atomic_int outstandingProcessing{0};
+
             auto constructOutput = [&](GpuErrorCorrectorRawOutput* rawOutputPtr){
                 nvtx::push_range("constructSerializedEncodedResults", 2);
                 //helpers::CpuTimer constructResultsTimer("constructSerializedEncodedResults");
 
+                gpuErrorCorrector.updateCorrectionFlags(*rawOutputPtr);
+
                 //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
-                SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
+                //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
 
                 // constructResultsTimer.stop();
                 // constructResultsTimer.print();
                 nvtx::pop_range();
 
+                // processSerializedResults(
+                //     std::move(serializedEncodedCorrectionOutput)
+                // );
+
+                outstandingProcessing++;
+
                 processSerializedResults(
-                    std::move(serializedEncodedCorrectionOutput)
+                    rawOutputPtr,
+                    [&](GpuErrorCorrectorRawOutput* ptr){
+                        myFreeOutputsQueue.push(ptr);
+                        outstandingProcessing--;
+                    }
                 );
 
                 batchCompleted(rawOutputPtr->numAnchors); 
 
-                myFreeOutputsQueue.push(rawOutputPtr);
+                //myFreeOutputsQueue.push(rawOutputPtr);
             };
 
             cudaStream_t stream = cudaStreamPerThread;
@@ -1334,8 +1389,7 @@ public:
                 if(inputPtr != nullptr){
                     nvtx::push_range("getFreeRawOutput",1);
                     //GpuErrorCorrectorRawOutput* rawOutputPtr = freeRawOutputs.pop();
-                    GpuErrorCorrectorRawOutput* rawOutputPtr = myFreeOutputsQueue.front();
-                    myFreeOutputsQueue.pop();
+                    GpuErrorCorrectorRawOutput* rawOutputPtr = myFreeOutputsQueue.pop();
                     nvtx::pop_range();
 
                     nvtx::push_range("correct", 0);
@@ -1359,8 +1413,7 @@ public:
             while(inputPtr != nullptr){
                 nvtx::push_range("getFreeRawOutput",1);
                 //GpuErrorCorrectorRawOutput* rawOutputPtr = freeRawOutputs.pop();
-                GpuErrorCorrectorRawOutput* rawOutputPtr = myFreeOutputsQueue.front();
-                myFreeOutputsQueue.pop();
+                GpuErrorCorrectorRawOutput* rawOutputPtr = myFreeOutputsQueue.pop();
                 nvtx::pop_range();
 
                 cudaError_t cstatus = cudaSuccess;
@@ -1424,6 +1477,8 @@ public:
                 constructOutput(pointers.second);
             }
 
+            while(outstandingProcessing != 0){};
+
             activeCorrectorThreads--;
 
             if(activeCorrectorThreads == 0){            
@@ -1449,43 +1504,45 @@ public:
         BatchCompletion batchCompleted,
         ResultProcessorSerialized processSerializedResults
     ){
+        assert(false);
+        // OutputConstructor outputConstructor(            
+        //     correctionFlags,
+        //     programOptions
+        // );
 
-        OutputConstructor outputConstructor(            
-            correctionFlags,
-            programOptions
-        );
-
-        ThreadPool::ParallelForHandle pforHandle;
-
-
-        GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputs.pop();
-
-        while(rawOutputPtr != nullptr){
-            nvtx::push_range("constructSerializedEncodedResults", 2);
-            //helpers::CpuTimer constructResultsTimer("constructSerializedEncodedResults");
-
-            //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
-            SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
-
-            // constructResultsTimer.stop();
-            // constructResultsTimer.print();
-            nvtx::pop_range();
-
-            processSerializedResults(
-                std::move(serializedEncodedCorrectionOutput)
-            );
-
-            batchCompleted(rawOutputPtr->numAnchors); 
+        // ThreadPool::ParallelForHandle pforHandle;
 
 
-            freeRawOutputs.push(rawOutputPtr);
+        // GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputs.pop();
 
-            nvtx::push_range("getUnprocessedRawOutput", 2);
+        // while(rawOutputPtr != nullptr){
+        //     nvtx::push_range("constructSerializedEncodedResults", 2);
+        //     //helpers::CpuTimer constructResultsTimer("constructSerializedEncodedResults");
 
-            rawOutputPtr = unprocessedRawOutputs.pop();
+        //     gpuErrorCorrector.updateCorrectionFlags(*rawOutputPtr);
 
-            nvtx::pop_range();
-        }
+        //     //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
+        //     SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
+
+        //     // constructResultsTimer.stop();
+        //     // constructResultsTimer.print();
+        //     nvtx::pop_range();
+
+        //     processSerializedResults(
+        //         std::move(serializedEncodedCorrectionOutput)
+        //     );
+
+        //     batchCompleted(rawOutputPtr->numAnchors); 
+
+
+        //     freeRawOutputs.push(rawOutputPtr);
+
+        //     nvtx::push_range("getUnprocessedRawOutput", 2);
+
+        //     rawOutputPtr = unprocessedRawOutputs.pop();
+
+        //     nvtx::pop_range();
+        // }
     };
 
 private:
@@ -1570,7 +1627,7 @@ SerializedObjectStorage correct_gpu_impl(
     BackgroundThread outputThread;
 
 
-    auto processSerializedResults = [&](
+    auto processSerializedResults_OLD = [&](
         SerializedEncodedCorrectionOutput&& serializedEncodedCorrectionOutput
     ){
 
@@ -1618,6 +1675,62 @@ SerializedObjectStorage correct_gpu_impl(
         }
     };
 
+    auto processSerializedResultsThenCallback = [&](
+        GpuErrorCorrectorRawOutput* results,
+        auto whenDone
+    ){
+
+
+        const std::size_t numA = *results->h_numCorrectedAnchors;
+        const std::size_t numC = results->numCorrectedCandidates;
+
+        auto outputFunction = [
+            &,
+            results,
+            numA,
+            numC,
+            whenDone = std::move(whenDone)
+        ](){
+
+            nvtx::ScopedRange sr("outputFunction", 7);
+
+            auto saveWithFlagCheck = [&](const std::uint8_t* encodedBegin, const std::uint8_t* encodedEnd){
+                ParsedEncodedFlags flags = EncodedTempCorrectedSequence::parseEncodedFlags(encodedBegin);
+                if(!(flags.hq && flags.useEdits && flags.numEdits == 0)){
+                    partialResults.insert(encodedBegin, encodedEnd);
+                }
+            };
+
+            for(std::size_t i = 0; i < numA; i++){
+                const std::uint8_t* encodedBegin = results->serializedAnchorResults.data()
+                    + results->serializedAnchorOffsets[i];
+                const std::uint8_t* encodedEnd = results->serializedAnchorResults.data()
+                    + results->serializedAnchorOffsets[i+1];
+
+                saveWithFlagCheck(
+                    encodedBegin,
+                    encodedEnd
+                );
+            }
+
+            // don't need to check flags for candidates. insert blob.
+            partialResults.bulkInsert(
+                results->serializedCandidateResults.data(),
+                results->serializedCandidateResults.data() + results->serializedCandidateOffsets[numC],
+                results->serializedCandidateOffsets.data(),
+                results->serializedCandidateOffsets.data() + numC
+            );
+
+            whenDone(results);
+        };
+
+        if(numA > 0 || numC > 0){
+            outputThread.enqueue(std::move(outputFunction));
+            //outputFunction();
+        }
+    };
+
+
     outputThread.setMaximumQueueSize(programOptions.threads);
 
     outputThread.start();
@@ -1658,50 +1771,7 @@ SerializedObjectStorage correct_gpu_impl(
         progressThread.addProgress(size);
     };
 
-    if(false /* && programOptions.threads <= 6*/){
-        //execute a single thread pipeline with each available thread
-
-        auto runPipeline = [&](int deviceId, 
-            const GpuForest* gpuForestAnchor, 
-            const GpuForest* gpuForestCandidate
-        ){    
-            SimpleGpuCorrectionPipeline<Minhasher> pipeline(
-                readStorage,
-                minhasher,
-                nullptr, //&threadPool
-                gpuForestAnchor,
-                gpuForestCandidate
-            );
-    
-            pipeline.runToCompletion(
-                deviceId,
-                readIdGenerator,
-                programOptions,
-                correctionFlags,
-                batchCompleted,
-                processSerializedResults
-            );
-        };
-    
-        std::vector<std::future<void>> futures;
-    
-        for(int i = 0; i < programOptions.threads; i++){
-            const int position = i % deviceIds.size();
-            const int deviceId = deviceIds[position];
-
-            futures.emplace_back(std::async(
-                std::launch::async,
-                runPipeline,
-                deviceId,
-                &anchorForests[position],
-                &candidateForests[position]
-            ));
-        }
-    
-        for(auto& f : futures){
-            f.wait();
-        }
-    }else{
+    {
 
      
 
@@ -1729,7 +1799,8 @@ SerializedObjectStorage correct_gpu_impl(
                 correctionFlags,
                 batchCompleted,
                 numBatches,
-                processSerializedResults
+                //processSerializedResults
+                processSerializedResultsThenCallback
             );   
                 
         }
@@ -1757,7 +1828,8 @@ SerializedObjectStorage correct_gpu_impl(
                 programOptions,
                 correctionFlags,
                 batchCompleted,
-                processSerializedResults
+                //processSerializedResults
+                processSerializedResultsThenCallback
             );
         };
 
@@ -1781,7 +1853,8 @@ SerializedObjectStorage correct_gpu_impl(
                 programOptions,
                 correctionFlags,
                 batchCompleted,
-                processSerializedResults
+                //processSerializedResults
+                processSerializedResultsThenCallback
             );
         };
 
