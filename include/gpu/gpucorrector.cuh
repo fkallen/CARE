@@ -1312,7 +1312,6 @@ namespace gpu{
             handleHost(h_num_total_corrected_candidates);
             handleHost(h_num_indices);
             handleHost(h_numSelected);
-            handleHost(h_numRemainingCandidatesAfterAlignment);
             handleHost(h_managedmsa_tmp);
 
             handleHost(h_indicesForGather);
@@ -1445,7 +1444,6 @@ namespace gpu{
             h_num_total_corrected_candidates.resize(1);
             h_num_indices.resize(1);
             h_numSelected.resize(1);
-            h_numRemainingCandidatesAfterAlignment.resize(1);
             h_managedmsa_tmp.resize(1);
 
             d_anchorContainsN.resize(maxAnchors, stream);
@@ -1542,104 +1540,6 @@ namespace gpu{
                     d_candidate_read_ids.data(),
                     d_isPairedCandidate.data()
                 ); CUDACHECKASYNC;
-
-                #if 0
-                    //remove candidates which are not paired
-                    rmm::device_uvector<read_number> d_candidate_read_ids2(currentNumCandidates, stream, mr);
-                    rmm::device_uvector<int> d_anchorIndicesOfCandidates2(currentNumCandidates, stream, mr);
-
-                    CubCallWrapper(mr).cubSelectFlagged(
-                        thrust::make_zip_iterator(thrust::make_tuple(
-                            d_candidate_read_ids.data(),
-                            d_anchorIndicesOfCandidates.data()
-                        )),                        
-                        thrust::make_transform_iterator(d_isPairedCandidate.data(), thrust::identity<bool>()),
-                        thrust::make_zip_iterator(thrust::make_tuple(
-                            d_candidate_read_ids2.data(),
-                            d_anchorIndicesOfCandidates2.data()
-                        )),
-                        d_numCandidates.data(),
-                        currentNumCandidates,
-                        stream
-                    );
-
-                    CUDACHECK(cudaMemcpyAsync(
-                        h_num_indices.data(),
-                        d_numCandidates.data(),
-                        sizeof(int),
-                        D2H,
-                        stream
-                    ));
-                    CUDACHECK(cudaStreamSynchronize(stream));
-
-                    auto oldNumCandidates = currentNumCandidates;
-                    currentNumCandidates = *h_num_indices;
-
-                    CUDACHECK(cudaMemcpyAsync(
-                        currentInput->h_candidate_read_ids.data(),
-                        d_candidate_read_ids2.data(),
-                        sizeof(int) * currentNumCandidates,
-                        D2H,
-                        stream
-                    ));
-                    CUDACHECK(cudaEventRecord(events[1], stream));
-
-                    std::swap(d_candidate_read_ids, d_candidate_read_ids2);
-                    std::swap(d_anchorIndicesOfCandidates, d_anchorIndicesOfCandidates2);
-
-                    CUDACHECK(cudaMemsetAsync(
-                        d_candidates_per_anchor.data(),
-                        0,
-                        sizeof(int) * currentNumAnchors,
-                        stream
-                    ));
-
-
-                    if(currentNumCandidates > 0){
-
-                        rmm::device_uvector<int> d_uniqueAnchorIndices(maxNumAnchors, stream, mr);
-                        rmm::device_uvector<int> d_aggregates_out(maxNumAnchors, stream, mr);
-                        rmm::device_scalar<int> d_numRuns(stream, mr);
-
-                        CubCallWrapper(mr).cubReduceByKey(
-                            d_anchorIndicesOfCandidates.data(), 
-                            d_uniqueAnchorIndices.data(), 
-                            thrust::make_constant_iterator(1), 
-                            d_aggregates_out.data(), 
-                            d_num_indices.data(), 
-                            cub::Sum(), 
-                            currentNumCandidates, 
-                            stream
-                        );
-
-                        helpers::lambda_kernel<<<SDIV(currentNumAnchors, 256), 256, 0, stream>>>(
-                            [
-                                d_uniqueAnchorIndices = d_uniqueAnchorIndices.data(),
-                                d_aggregates_out = d_aggregates_out.data(),
-                                d_candidates_per_anchor = d_candidates_per_anchor.data(),
-                                d_numRuns = d_numRuns.data()
-                            ] __device__ (){
-                                
-                                const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                                const int stride = blockDim.x * gridDim.x;
-
-                                for(int i = tid; i < *d_numRuns; i += stride){
-                                    d_candidates_per_anchor[d_uniqueAnchorIndices[i]]
-                                        = d_aggregates_out[i];
-                                }
-                            }
-                        ); CUDACHECKASYNC;
-
-                        CubCallWrapper(mr).cubInclusiveSum(
-                            d_candidates_per_anchor.data(),
-                            d_candidates_per_anchor_prefixsum.data() + 1,
-                            currentNumAnchors,
-                            stream
-                        );
-                    }
-
-                    CUDACHECK(cudaEventSynchronize(events[1])); //wait for currentInput->h_candidateReadIds
-                #endif
             }else{
                 CUDACHECK(cudaMemsetAsync(
                     d_isPairedCandidate.data(),
@@ -2584,459 +2484,6 @@ namespace gpu{
                 currentNumCandidates,
                 stream
             );
-
-            CUDACHECK(cudaMemcpyAsync(
-                h_numRemainingCandidatesAfterAlignment.data(),
-                d_num_indices.data(),
-                sizeof(int),
-                D2H,
-                stream
-            ));
-
-            CUDACHECK(cudaEventRecord(events[1], stream));
-
-            //compactCandidatesByAlignmentFlag2(stream);
-        }
-
-        void compactCandidatesByAlignmentFlag(cudaStream_t stream){
-            auto policy = rmm::exec_policy_nosync(stream, mr);
-
-            rmm::device_uvector<int> d_num_indices_new(1, stream, mr);        
-            rmm::device_uvector<int> d_numCandidates_new(1, stream, mr);            
-
-            rmm::device_uvector<int> d_inputPositions(currentNumCandidates, stream, mr);
-            auto newNumCandidates = thrust::distance(
-                d_inputPositions.begin(),
-                thrust::copy_if(
-                    policy,
-                    thrust::make_counting_iterator(0),
-                    thrust::make_counting_iterator(0) + currentNumCandidates,
-                    d_alignment_best_alignment_flags.begin(),
-                    d_inputPositions.begin(),              
-                    []__host__ __device__ (const AlignmentOrientation& o){
-                        return o != AlignmentOrientation::None;
-                    }
-                )
-            );
-
-            CUDACHECK(cudaMemcpyAsync(
-                d_numCandidates_new.data(),
-                &newNumCandidates,
-                sizeof(int),
-                H2D,
-                stream
-            ));
-
-            CUDACHECK(cudaMemcpyAsync(
-                d_num_indices_new.data(),
-                d_numCandidates_new.data(),
-                sizeof(int),
-                D2D,
-                stream
-            ));
-
-
-            auto newNumCandidatesRounded = newNumCandidates;
-
-            rmm::device_uvector<bool> d_candidateContainsN_new(newNumCandidatesRounded, stream, mr);
-            rmm::device_uvector<int> d_candidate_sequences_lengths_new(newNumCandidatesRounded, stream, mr);
-            rmm::device_uvector<int> d_alignment_overlaps_new(newNumCandidatesRounded, stream, mr);
-            rmm::device_uvector<int> d_alignment_shifts_new(newNumCandidatesRounded, stream, mr);
-            rmm::device_uvector<int> d_alignment_nOps_new(newNumCandidatesRounded, stream, mr);
-            rmm::device_uvector<AlignmentOrientation> d_alignment_best_alignment_flags_new(newNumCandidatesRounded, stream, mr);
-            rmm::device_uvector<bool> d_isPairedCandidate_new(newNumCandidatesRounded, stream, mr);
-            rmm::device_uvector<read_number> d_candidate_read_ids_new(newNumCandidatesRounded, stream, mr);
-            rmm::device_uvector<int> d_anchorIndicesOfCandidates_new(newNumCandidatesRounded, stream, mr);
-
-            thrust::gather(
-                policy,
-                d_inputPositions.begin(),
-                d_inputPositions.begin() + newNumCandidates,
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    d_candidateContainsN.begin(),
-                    d_candidate_sequences_lengths.begin(),
-                    d_alignment_overlaps.begin(),
-                    d_alignment_shifts.begin(),
-                    d_alignment_nOps.begin(),
-                    d_alignment_best_alignment_flags.begin(),
-                    d_isPairedCandidate.begin(),
-                    d_candidate_read_ids.begin(),
-                    d_anchorIndicesOfCandidates.begin()
-                )),
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    d_candidateContainsN_new.begin(),
-                    d_candidate_sequences_lengths_new.begin(),
-                    d_alignment_overlaps_new.begin(),
-                    d_alignment_shifts_new.begin(),
-                    d_alignment_nOps_new.begin(),
-                    d_alignment_best_alignment_flags_new.begin(),
-                    d_isPairedCandidate_new.begin(),
-                    d_candidate_read_ids_new.begin(),
-                    d_anchorIndicesOfCandidates_new.begin()
-                ))
-            );
-
-
-            rmm::device_uvector<unsigned int> d_candidate_sequences_data_new(newNumCandidatesRounded * encodedSequencePitchInInts, stream, mr);           
-
-            helpers::lambda_kernel<<<SDIV(newNumCandidates, 128 / 8), 128, 0, stream>>>(
-                [
-                    d_inputPositions = d_inputPositions.data(),
-                    d_candidate_sequences_data_new = d_candidate_sequences_data_new.data(),
-                    d_candidate_sequences_data = d_candidate_sequences_data.data(),
-                    newNumCandidates = newNumCandidates,
-                    encodedSequencePitchInInts = encodedSequencePitchInInts
-                ] __device__ (){
-                    constexpr int groupsize = 8;
-                    auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
-
-                    const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
-                    const int numGroups = (blockDim.x * gridDim.x) / groupsize;
-
-                    for(int c = groupId; c < newNumCandidates; c += numGroups){
-                        const std::size_t srcindex = *(d_inputPositions + c);
-                        const std::size_t destindex = c;
-
-                        for(int k = group.thread_rank(); k < encodedSequencePitchInInts; k += group.size()){
-                            d_candidate_sequences_data_new[destindex * encodedSequencePitchInInts + k]
-                                = d_candidate_sequences_data[srcindex * encodedSequencePitchInInts + k];
-                        }
-                    }
-                }
-            ); CUDACHECKASYNC
-
-            rmm::device_uvector<int> d_candidates_per_anchor_new(currentNumAnchors, stream, mr);
-            rmm::device_uvector<int> d_candidates_per_anchor_prefixsum_new(currentNumAnchors+1, stream, mr);
-            rmm::device_uvector<int> d_indices_per_anchor_new(currentNumAnchors, stream, mr);
-
-            rmm::device_uvector<int> d_tmp1(currentNumAnchors, stream, mr);
-            rmm::device_uvector<int> d_tmp2(currentNumAnchors, stream, mr);
-            auto nonEmpty = thrust::distance(d_tmp1.begin(),
-                thrust::reduce_by_key(
-                    policy,
-                    d_anchorIndicesOfCandidates_new.begin(),
-                    d_anchorIndicesOfCandidates_new.begin() + newNumCandidates,
-                    thrust::make_constant_iterator(1),
-                    d_tmp1.begin(),
-                    d_tmp2.begin()
-                ).first
-            );
-            thrust::fill(policy, d_candidates_per_anchor_new.begin(), d_candidates_per_anchor_new.end(), 0);
-            thrust::scatter(
-                policy,
-                d_tmp2.begin(),
-                d_tmp2.begin() + nonEmpty,
-                d_tmp1.begin(),
-                d_candidates_per_anchor_new.begin()
-            );
-
-            thrust::inclusive_scan(
-                policy,
-                d_candidates_per_anchor_new.begin(),
-                d_candidates_per_anchor_new.begin() + currentNumAnchors,
-                d_candidates_per_anchor_prefixsum_new.begin() + 1
-            );
-
-            CUDACHECK(cudaMemsetAsync(d_candidates_per_anchor_prefixsum_new.data(), 0, sizeof(int), stream));
-            CUDACHECK(cudaMemcpyAsync(
-                d_indices_per_anchor_new.data(),
-                d_candidates_per_anchor_new.data(),
-                sizeof(int) * currentNumAnchors,
-                D2D,
-                stream
-            ));
-
-            rmm::device_uvector<int> d_indices_new(newNumCandidatesRounded, stream, mr);
-
-            helpers::lambda_kernel<<<SDIV(currentNumAnchors, 128 / 32), 128, 0, stream>>>(
-                [
-                    d_candidates_per_anchor_new = d_candidates_per_anchor_new.data(),
-                    d_candidates_per_anchor_prefixsum_new = d_candidates_per_anchor_prefixsum_new.data(),
-                    d_indices_new = d_indices_new.data(),
-                    currentNumAnchors = currentNumAnchors,
-                    newNumCandidatesRounded = int(newNumCandidatesRounded)
-                ] __device__ (){
-                    constexpr int groupsize = 32;
-                    auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
-
-                    const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
-                    const int numGroups = (blockDim.x * gridDim.x) / groupsize;
-
-                    for(int a = groupId; a < currentNumAnchors; a += numGroups){
-                        const int numCands = d_candidates_per_anchor_new[a];
-                        const int offset = d_candidates_per_anchor_prefixsum_new[a];
-
-                        for(int i = group.thread_rank(); i < numCands; i += group.size()){
-                            d_indices_new[offset + i] = i;
-                        }
-                    }
-                }
-            ); CUDACHECKASYNC
-
-            #if 1
-
-            std::swap(d_num_indices, d_num_indices_new);
-            std::swap(d_numCandidates, d_numCandidates_new);
-            std::swap(d_candidateContainsN, d_candidateContainsN_new);
-            std::swap(d_candidate_sequences_lengths, d_candidate_sequences_lengths_new);
-            std::swap(d_alignment_overlaps, d_alignment_overlaps_new);
-            std::swap(d_alignment_shifts, d_alignment_shifts_new);
-            std::swap(d_alignment_nOps, d_alignment_nOps_new);
-            std::swap(d_alignment_best_alignment_flags, d_alignment_best_alignment_flags_new);
-            std::swap(d_isPairedCandidate, d_isPairedCandidate_new);
-            std::swap(d_candidate_read_ids, d_candidate_read_ids_new);
-            std::swap(d_anchorIndicesOfCandidates, d_anchorIndicesOfCandidates_new);
-            std::swap(d_candidate_sequences_data, d_candidate_sequences_data_new);
-            std::swap(d_candidates_per_anchor, d_candidates_per_anchor_new);
-            std::swap(d_candidates_per_anchor_prefixsum, d_candidates_per_anchor_prefixsum_new);
-            std::swap(d_indices_per_anchor, d_indices_per_anchor_new);
-            std::swap(d_indices, d_indices_new);
-
-            currentNumCandidates = newNumCandidates;
-            *h_num_indices = newNumCandidates;
-
-            #endif
-        }
-
-        void compactCandidatesByAlignmentFlag2(cudaStream_t stream){
-            auto policy = rmm::exec_policy_nosync(stream, mr);
-
-            rmm::device_uvector<int> d_num_indices_new(1, stream, mr);        
-            rmm::device_uvector<int> d_numCandidates_new(1, stream, mr);            
-
-            rmm::device_uvector<int> d_inputPositions(currentNumCandidates, stream, mr);
-            CubCallWrapper(mr).cubSelectFlagged(
-                thrust::make_counting_iterator(0),
-                thrust::make_transform_iterator(
-                    d_alignment_best_alignment_flags.begin(),            
-                    []__host__ __device__ (const AlignmentOrientation& o){
-                        return o != AlignmentOrientation::None;
-                    }
-                ),
-                d_inputPositions.begin(),
-                d_numCandidates_new.data(),
-                currentNumCandidates,
-                stream
-            );
-
-            CUDACHECK(cudaMemcpyAsync(
-                h_num_indices,
-                d_numCandidates_new.data(),
-                sizeof(int),
-                D2H,
-                stream
-            ));
-
-            CUDACHECK(cudaMemcpyAsync(
-                d_num_indices_new.data(),
-                d_numCandidates_new.data(),
-                sizeof(int),
-                D2D,
-                stream
-            ));
-
-            CUDACHECK(cudaStreamSynchronize(stream));
-            const int newNumCandidates = *h_num_indices;
-
-            auto newNumCandidatesRounded = newNumCandidates;
-
-            rmm::device_uvector<bool> d_candidateContainsN_new(newNumCandidatesRounded, stream, mr);
-            rmm::device_uvector<int> d_candidate_sequences_lengths_new(newNumCandidatesRounded, stream, mr);
-            rmm::device_uvector<int> d_alignment_overlaps_new(newNumCandidatesRounded, stream, mr);
-            rmm::device_uvector<int> d_alignment_shifts_new(newNumCandidatesRounded, stream, mr);
-            rmm::device_uvector<int> d_alignment_nOps_new(newNumCandidatesRounded, stream, mr);
-            rmm::device_uvector<AlignmentOrientation> d_alignment_best_alignment_flags_new(newNumCandidatesRounded, stream, mr);
-            rmm::device_uvector<bool> d_isPairedCandidate_new(newNumCandidatesRounded, stream, mr);
-            rmm::device_uvector<read_number> d_candidate_read_ids_new(newNumCandidatesRounded, stream, mr);
-            rmm::device_uvector<int> d_anchorIndicesOfCandidates_new(newNumCandidatesRounded, stream, mr);
-
-            helpers::call_compact_kernel_async(
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    d_candidateContainsN_new.begin(),
-                    d_candidate_sequences_lengths_new.begin(),
-                    d_alignment_overlaps_new.begin(),
-                    d_alignment_shifts_new.begin(),
-                    d_alignment_nOps_new.begin(),
-                    d_alignment_best_alignment_flags_new.begin(),
-                    d_isPairedCandidate_new.begin(),
-                    d_candidate_read_ids_new.begin(),
-                    d_anchorIndicesOfCandidates_new.begin()
-                )),
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    d_candidateContainsN.begin(),
-                    d_candidate_sequences_lengths.begin(),
-                    d_alignment_overlaps.begin(),
-                    d_alignment_shifts.begin(),
-                    d_alignment_nOps.begin(),
-                    d_alignment_best_alignment_flags.begin(),
-                    d_isPairedCandidate.begin(),
-                    d_candidate_read_ids.begin(),
-                    d_anchorIndicesOfCandidates.begin()
-                )),
-                d_inputPositions.begin(),
-                d_numCandidates_new.data(),
-                currentNumCandidates,
-                stream
-            );
-
-            rmm::device_uvector<unsigned int> d_candidate_sequences_data_new(newNumCandidatesRounded * encodedSequencePitchInInts, stream, mr);           
-
-            helpers::lambda_kernel<<<SDIV(newNumCandidates, 128 / 8), 128, 0, stream>>>(
-                [
-                    d_inputPositions = d_inputPositions.data(),
-                    d_candidate_sequences_data_new = d_candidate_sequences_data_new.data(),
-                    d_candidate_sequences_data = d_candidate_sequences_data.data(),
-                    newNumCandidates = newNumCandidates,
-                    encodedSequencePitchInInts = encodedSequencePitchInInts
-                ] __device__ (){
-                    constexpr int groupsize = 8;
-                    auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
-
-                    const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
-                    const int numGroups = (blockDim.x * gridDim.x) / groupsize;
-
-                    for(int c = groupId; c < newNumCandidates; c += numGroups){
-                        const std::size_t srcindex = *(d_inputPositions + c);
-                        const std::size_t destindex = c;
-
-                        for(int k = group.thread_rank(); k < encodedSequencePitchInInts; k += group.size()){
-                            d_candidate_sequences_data_new[destindex * encodedSequencePitchInInts + k]
-                                = d_candidate_sequences_data[srcindex * encodedSequencePitchInInts + k];
-                        }
-                    }
-                }
-            ); CUDACHECKASYNC
-
-            rmm::device_uvector<int> d_candidates_per_anchor_new(currentNumAnchors, stream, mr);
-            rmm::device_uvector<int> d_candidates_per_anchor_prefixsum_new(currentNumAnchors+1, stream, mr);
-            rmm::device_uvector<int> d_indices_per_anchor_new(currentNumAnchors, stream, mr);
-
-            rmm::device_uvector<int> d_tmp1(currentNumAnchors, stream, mr);
-            rmm::device_uvector<int> d_tmp2(currentNumAnchors, stream, mr);
-            rmm::device_scalar<int> d_numNonEmptySegments(stream, mr);
-
-            #if 1
-
-            CubCallWrapper(mr).cubReduceByKey(
-                d_anchorIndicesOfCandidates_new.data(),
-                d_tmp1.data(),
-                thrust::make_constant_iterator(1),
-                d_tmp2.data(),
-                d_numNonEmptySegments.data(),
-                thrust::plus<int>{},
-                newNumCandidates,
-                stream
-            );
-            #else
-            int nonEmpty = thrust::distance(d_tmp1.begin(),
-                thrust::reduce_by_key(
-                    policy,
-                    d_anchorIndicesOfCandidates_new.begin(),
-                    d_anchorIndicesOfCandidates_new.begin() + newNumCandidates,
-                    thrust::make_constant_iterator(1),
-                    d_tmp1.begin(),
-                    d_tmp2.begin()
-                ).first
-            );
-            #endif
-
-            helpers::call_fill_kernel_async(d_candidates_per_anchor_new.begin(), currentNumAnchors, 0, stream);
-
-            #if 1
-            helpers::lambda_kernel<<<SDIV(newNumCandidates, 128), 128, 0, stream>>>(
-                [
-                    outputpositions = d_tmp1.data(),
-                    input = d_tmp2.data(),
-                    output = d_candidates_per_anchor_new.data(),
-                    d_numNonEmptySegments = d_numNonEmptySegments.data()
-                ] __device__ (){
-                    for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < *d_numNonEmptySegments; i += gridDim.x * blockDim.x){
-                        output[outputpositions[i]] = input[i];
-                    }
-                }
-            ); CUDACHECKASYNC
-
-            #else
-            helpers::lambda_kernel<<<SDIV(nonEmpty, 128), 128, 0, stream>>>(
-                [
-                    outputpositions = d_tmp1.data(),
-                    input = d_tmp2.data(),
-                    output = d_candidates_per_anchor_new.data(),
-                    nonEmpty
-                ] __device__ (){
-                    for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < nonEmpty; i += gridDim.x * blockDim.x){
-                        output[outputpositions[i]] = input[i];
-                    }
-                }
-            ); CUDACHECKASYNC
-            #endif
-
-            CubCallWrapper(mr).cubInclusiveSum(
-                d_candidates_per_anchor_new.begin(),
-                d_candidates_per_anchor_prefixsum_new.begin() + 1,
-                currentNumAnchors,
-                stream
-            );
-
-            CUDACHECK(cudaMemsetAsync(d_candidates_per_anchor_prefixsum_new.data(), 0, sizeof(int), stream));
-            CUDACHECK(cudaMemcpyAsync(
-                d_indices_per_anchor_new.data(),
-                d_candidates_per_anchor_new.data(),
-                sizeof(int) * currentNumAnchors,
-                D2D,
-                stream
-            ));
-
-            rmm::device_uvector<int> d_indices_new(newNumCandidatesRounded, stream, mr);
-
-            helpers::lambda_kernel<<<SDIV(currentNumAnchors, 128 / 32), 128, 0, stream>>>(
-                [
-                    d_candidates_per_anchor_new = d_candidates_per_anchor_new.data(),
-                    d_candidates_per_anchor_prefixsum_new = d_candidates_per_anchor_prefixsum_new.data(),
-                    d_indices_new = d_indices_new.data(),
-                    currentNumAnchors = currentNumAnchors,
-                    newNumCandidatesRounded = int(newNumCandidatesRounded)
-                ] __device__ (){
-                    constexpr int groupsize = 32;
-                    auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
-
-                    const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
-                    const int numGroups = (blockDim.x * gridDim.x) / groupsize;
-
-                    for(int a = groupId; a < currentNumAnchors; a += numGroups){
-                        const int numCands = d_candidates_per_anchor_new[a];
-                        const int offset = d_candidates_per_anchor_prefixsum_new[a];
-
-                        for(int i = group.thread_rank(); i < numCands; i += group.size()){
-                            d_indices_new[offset + i] = i;
-                        }
-                    }
-                }
-            ); CUDACHECKASYNC
-
-            #if 1
-
-            std::swap(d_num_indices, d_num_indices_new);
-            std::swap(d_numCandidates, d_numCandidates_new);
-            std::swap(d_candidateContainsN, d_candidateContainsN_new);
-            std::swap(d_candidate_sequences_lengths, d_candidate_sequences_lengths_new);
-            std::swap(d_alignment_overlaps, d_alignment_overlaps_new);
-            std::swap(d_alignment_shifts, d_alignment_shifts_new);
-            std::swap(d_alignment_nOps, d_alignment_nOps_new);
-            std::swap(d_alignment_best_alignment_flags, d_alignment_best_alignment_flags_new);
-            std::swap(d_isPairedCandidate, d_isPairedCandidate_new);
-            std::swap(d_candidate_read_ids, d_candidate_read_ids_new);
-            std::swap(d_anchorIndicesOfCandidates, d_anchorIndicesOfCandidates_new);
-            std::swap(d_candidate_sequences_data, d_candidate_sequences_data_new);
-            std::swap(d_candidates_per_anchor, d_candidates_per_anchor_new);
-            std::swap(d_candidates_per_anchor_prefixsum, d_candidates_per_anchor_prefixsum_new);
-            std::swap(d_indices_per_anchor, d_indices_per_anchor_new);
-            std::swap(d_indices, d_indices_new);
-
-            currentNumCandidates = newNumCandidates;
-            *h_num_indices = newNumCandidates;
-
-            #endif
         }
 
         void buildAndRefineMultipleSequenceAlignment(cudaStream_t stream){
@@ -3080,6 +2527,8 @@ namespace gpu{
                 CUDACHECK(cudaStreamWaitEvent(stream, events[0], 0));
 
                 #else 
+
+                static_assert(false, "Untested code branch");
 
                 rmm::device_uvector<int> d_prefixsum(maxAnchors + 1, stream, mr);
 
@@ -3134,7 +2583,7 @@ namespace gpu{
                     readstorageHandle,
                     d_candidate_qualities_compact.data(),
                     qualityPitchInBytes,
-                    makeAsyncConstBufferWrapper(h_indicesForGather.data(), events[1]),
+                    makeAsyncConstBufferWrapper(h_indicesForGather.data()),
                     d_indicesForGather.data(),
                     hNumIndices,
                     stream,
@@ -3564,48 +3013,28 @@ namespace gpu{
             ); CUDACHECKASYNC;
 
             #if 1
-                {
-                    nvtx::ScopedRange sr("candidate hq flags", 7);
-                // rmm::device_uvector<bool> d_flagsCandidates(currentNumCandidates, stream, mr);
-                // bool* d_excludeFlags = d_flagsCandidates.data();
-                // bool* h_excludeFlags = h_flagsCandidates.data();
 
-                // //corrections of candidates for which a high quality anchor correction exists will not be used
-                // //-> don't compute them
-                // for(int i = 0; i < currentNumCandidates; i++){
-                //     const read_number candidateReadId = currentInput->h_candidate_read_ids[i];
-                //     h_excludeFlags[i] = correctionFlags->isCorrectedAsHQAnchor(candidateReadId);
-                // }
+            bool* d_excludeFlags = d_hqAnchorCorrectionOfCandidateExists.data();
 
-                // helpers::call_copy_n_kernel(
-                //     (const int*)h_excludeFlags,
-                //     SDIV(currentNumCandidates, sizeof(int)),
-                //     (int*)d_excludeFlags,
-                //     stream
-                // );
-
-                bool* d_excludeFlags = d_hqAnchorCorrectionOfCandidateExists.data();
-
-                callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
-                    d_candidateCanBeCorrected.data(),
-                    d_num_corrected_candidates_per_anchor.data(),
-                    managedgpumsa->multiMSAView(),
-                    d_excludeFlags,
-                    d_alignment_shifts.data(),
-                    d_candidate_sequences_lengths.data(),
-                    d_anchorIndicesOfCandidates.data(),
-                    d_is_high_quality_anchor.data(),
-                    d_candidates_per_anchor_prefixsum.data(),
-                    d_indices.data(),
-                    d_indices_per_anchor.data(),
-                    d_numAnchors.data(),
-                    d_numCandidates.data(),
-                    min_support_threshold,
-                    min_coverage_threshold,
-                    new_columns_to_correct,
-                    stream
-                );
-                }
+            callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
+                d_candidateCanBeCorrected.data(),
+                d_num_corrected_candidates_per_anchor.data(),
+                managedgpumsa->multiMSAView(),
+                d_excludeFlags,
+                d_alignment_shifts.data(),
+                d_candidate_sequences_lengths.data(),
+                d_anchorIndicesOfCandidates.data(),
+                d_is_high_quality_anchor.data(),
+                d_candidates_per_anchor_prefixsum.data(),
+                d_indices.data(),
+                d_indices_per_anchor.data(),
+                d_numAnchors.data(),
+                d_numCandidates.data(),
+                min_support_threshold,
+                min_coverage_threshold,
+                new_columns_to_correct,
+                stream
+            );
             #else
             callFlagCandidatesToBeCorrectedKernel_async(
                 d_candidateCanBeCorrected.data(),
@@ -3730,83 +3159,27 @@ namespace gpu{
 
    
             #if 1
-                #ifdef CANDS_FOREST_FLAGS_DEFAULT
-                    rmm::device_uvector<bool> d_flagsCandidates(currentNumCandidates, stream, mr);
-                    bool* d_excludeFlags = d_flagsCandidates.data();
-                    bool* h_excludeFlags = h_flagsCandidates.data();
+                bool* d_excludeFlags = d_hqAnchorCorrectionOfCandidateExists.data();
 
-                    //corrections of candidates for which a high quality anchor correction exists will not be used
-                    //-> don't compute them
-                    for(int i = 0; i < currentNumCandidates; i++){
-                        const read_number candidateReadId = currentInput->h_candidate_read_ids[i];
-                        h_excludeFlags[i] = correctionFlags->isCorrectedAsHQAnchor(candidateReadId);
-                    }
-
-                    cudaMemcpyAsync(
-                        d_excludeFlags,
-                        h_excludeFlags,
-                        sizeof(bool) * currentNumCandidates,
-                        H2D,
-                        stream
-                    );
-
-                    callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
-                        d_candidateCanBeCorrected.data(),
-                        d_num_corrected_candidates_per_anchor.data(),
-                        managedgpumsa->multiMSAView(),
-                        d_excludeFlags,
-                        d_alignment_shifts.data(),
-                        d_candidate_sequences_lengths.data(),
-                        d_anchorIndicesOfCandidates.data(),
-                        d_is_high_quality_anchor.data(),
-                        d_candidates_per_anchor_prefixsum.data(),
-                        d_indices.data(),
-                        d_indices_per_anchor.data(),
-                        d_numAnchors.data(),
-                        d_numCandidates.data(),
-                        min_support_threshold,
-                        min_coverage_threshold,
-                        new_columns_to_correct,
-                        stream
-                    );
-                #endif
-
-                #ifdef CANDS_FOREST_FLAGS_COMPUTE_AHEAD
-                    rmm::device_uvector<bool> d_flagsCandidates(currentNumCandidates, stream, mr);
-                    bool* d_excludeFlags = d_flagsCandidates.data();
-                    bool* h_excludeFlags = h_flagsCandidates.data(); //already computed
-
-
-                    cudaMemcpyAsync(
-                        d_excludeFlags,
-                        h_excludeFlags,
-                        sizeof(bool) * currentNumCandidates,
-                        H2D,
-                        stream
-                    );
-
-                    callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
-                        d_candidateCanBeCorrected.data(),
-                        d_num_corrected_candidates_per_anchor.data(),
-                        managedgpumsa->multiMSAView(),
-                        d_excludeFlags,
-                        d_alignment_shifts.data(),
-                        d_candidate_sequences_lengths.data(),
-                        d_anchorIndicesOfCandidates.data(),
-                        d_is_high_quality_anchor.data(),
-                        d_candidates_per_anchor_prefixsum.data(),
-                        d_indices.data(),
-                        d_indices_per_anchor.data(),
-                        d_numAnchors.data(),
-                        d_numCandidates.data(),
-                        min_support_threshold,
-                        min_coverage_threshold,
-                        new_columns_to_correct,
-                        stream
-                    );
-                #endif
-
-
+                callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
+                    d_candidateCanBeCorrected.data(),
+                    d_num_corrected_candidates_per_anchor.data(),
+                    managedgpumsa->multiMSAView(),
+                    d_excludeFlags,
+                    d_alignment_shifts.data(),
+                    d_candidate_sequences_lengths.data(),
+                    d_anchorIndicesOfCandidates.data(),
+                    d_is_high_quality_anchor.data(),
+                    d_candidates_per_anchor_prefixsum.data(),
+                    d_indices.data(),
+                    d_indices_per_anchor.data(),
+                    d_numAnchors.data(),
+                    d_numCandidates.data(),
+                    min_support_threshold,
+                    min_coverage_threshold,
+                    new_columns_to_correct,
+                    stream
+                );
             #else
             callFlagCandidatesToBeCorrectedKernel_async(
                 d_candidateCanBeCorrected.data(),
@@ -3949,7 +3322,6 @@ namespace gpu{
         PinnedBuffer<int> h_num_total_corrected_candidates;
         PinnedBuffer<int> h_num_indices;
         PinnedBuffer<int> h_numSelected;
-        PinnedBuffer<int> h_numRemainingCandidatesAfterAlignment;
         PinnedBuffer<int> h_managedmsa_tmp;
 
         PinnedBuffer<read_number> h_indicesForGather;
