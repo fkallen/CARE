@@ -1219,13 +1219,54 @@ namespace gpu{
                 + sizeof(short) 
                 + sizeof(char) * gpuReadStorage->getSequenceLengthUpperBound();
 
-            rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedAnchor(currentNumAnchors, stream, mr);
-            rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedAnchorPrefixSum(currentNumAnchors+1, stream, mr);
+            const std::uint32_t maxResultBytes = maxSerializedBytesPerAnchor * currentNumAnchors;
+
+            #if 1
+            size_t allocation_sizes[3]{};
+            allocation_sizes[0] = sizeof(std::uint32_t) * currentNumAnchors; // d_numBytesPerSerializedAnchor
+            allocation_sizes[1] = sizeof(std::uint32_t) * (currentNumAnchors+1); // d_numBytesPerSerializedAnchorPrefixSum
+            allocation_sizes[2] = sizeof(uint8_t) * maxResultBytes; // d_serializedAnchorResults
+            void* allocations[3]{};
+            std::size_t tempbytes = 0;
+
+            CUDACHECK(cub::AliasTemporaries(
+                nullptr,
+                tempbytes,
+                allocations,
+                allocation_sizes
+            ));
+
+            rmm::device_uvector<char> d_tmp(tempbytes, stream, mr);
+
+            CUDACHECK(cub::AliasTemporaries(
+                d_tmp.data(),
+                tempbytes,
+                allocations,
+                allocation_sizes
+            ));
+
+            std::uint32_t* d_numBytesPerSerializedAnchor = reinterpret_cast<std::uint32_t*>(allocations[0]);
+            std::uint32_t* d_numBytesPerSerializedAnchorPrefixSum = reinterpret_cast<std::uint32_t*>(allocations[1]);
+            std::uint8_t* d_serializedAnchorResults = reinterpret_cast<std::uint8_t*>(allocations[2]);
+
+            #else
+
+            rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedAnchor_(currentNumAnchors, stream, mr);
+            rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedAnchorPrefixSum_(currentNumAnchors+1, stream, mr);
+            rmm::device_uvector<std::uint8_t> d_serializedAnchorResults_(maxResultBytes, stream, mr);
+
+            std::uint32_t* d_numBytesPerSerializedAnchor = d_numBytesPerSerializedAnchor_.data();
+            std::uint32_t* d_numBytesPerSerializedAnchorPrefixSum = d_numBytesPerSerializedAnchorPrefixSum_.data();
+            std::uint8_t* d_serializedAnchorResults = d_serializedAnchorResults_.data();
+
+            #endif
+
+
             //compute bytes per anchor
             helpers::lambda_kernel<<<SDIV(currentNumAnchors, 128), 128, 0, stream>>>(
                 [
-                    d_numBytesPerSerializedAnchor = d_numBytesPerSerializedAnchor.data(),
-                    d_numBytesPerSerializedAnchorPrefixSum = d_numBytesPerSerializedAnchorPrefixSum.data(),
+                    d_numBytesPerSerializedAnchor = d_numBytesPerSerializedAnchor,
+                    d_numBytesPerSerializedAnchorPrefixSum = d_numBytesPerSerializedAnchorPrefixSum,
                     d_numEditsPerCorrectedanchor = d_numEditsPerCorrectedanchor.data(),
                     d_anchor_sequences_lengths = d_anchor_sequences_lengths.data(),
                     currentNumAnchors = currentNumAnchors,
@@ -1274,20 +1315,17 @@ namespace gpu{
 
             thrust::inclusive_scan(
                 rmm::exec_policy_nosync(stream, mr),
-                d_numBytesPerSerializedAnchor.begin(),
-                d_numBytesPerSerializedAnchor.end(),
-                d_numBytesPerSerializedAnchorPrefixSum.begin() + 1
+                d_numBytesPerSerializedAnchor,
+                d_numBytesPerSerializedAnchor + currentNumAnchors,
+                d_numBytesPerSerializedAnchorPrefixSum + 1
             );           
-
-            std::uint32_t maxResultBytes = maxSerializedBytesPerAnchor * currentNumAnchors;
-            rmm::device_uvector<std::uint8_t> d_serializedAnchorResults(maxResultBytes, stream, mr);
 
             //compute serialized anchors
             helpers::lambda_kernel<<<std::max(1, SDIV(currentNumAnchors, 128)), 128, 0, stream>>>(
                 [
-                    d_numBytesPerSerializedAnchor = d_numBytesPerSerializedAnchor.data(),
-                    d_numBytesPerSerializedAnchorPrefixSum = d_numBytesPerSerializedAnchorPrefixSum.data(),
-                    d_serializedAnchorResults = d_serializedAnchorResults.data(),
+                    d_numBytesPerSerializedAnchor = d_numBytesPerSerializedAnchor,
+                    d_numBytesPerSerializedAnchorPrefixSum = d_numBytesPerSerializedAnchorPrefixSum,
+                    d_serializedAnchorResults = d_serializedAnchorResults,
                     d_numEditsPerCorrectedanchor = d_numEditsPerCorrectedanchor.data(),
                     d_anchor_sequences_lengths = d_anchor_sequences_lengths.data(),
                     d_num_indices_of_corrected_anchors = d_num_indices_of_corrected_anchors.data(),
@@ -1390,13 +1428,13 @@ namespace gpu{
                     h_numCorrectedAnchors = currentOutput->h_numCorrectedAnchors.data(),
                     d_numCorrectedAnchors = d_num_indices_of_corrected_anchors.data(),
                     h_serializedAnchorOffsets = currentOutput->serializedAnchorOffsets.data(),
-                    d_numBytesPerSerializedAnchorPrefixSum = d_numBytesPerSerializedAnchorPrefixSum.data(),
+                    d_numBytesPerSerializedAnchorPrefixSum = d_numBytesPerSerializedAnchorPrefixSum,
                     h_anchor_is_corrected = currentOutput->h_anchor_is_corrected.data(),
                     d_anchor_is_corrected = d_anchor_is_corrected.data(),
                     h_is_high_quality_anchor = currentOutput->h_is_high_quality_anchor.data(),
                     d_is_high_quality_anchor = d_is_high_quality_anchor.data(),
                     h_serializedAnchorResults = currentOutput->serializedAnchorResults.data(),
-                    d_serializedAnchorResults = d_serializedAnchorResults.data(),
+                    d_serializedAnchorResults = d_serializedAnchorResults,
                     currentNumAnchors = currentNumAnchors
                 ] __device__ (){
                     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -1467,13 +1505,53 @@ namespace gpu{
                 + sizeof(char) * gpuReadStorage->getSequenceLengthUpperBound()
                 + sizeof(short);
 
-            rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedCandidate(numCorrectedCandidates, stream, mr);
-            rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedCandidatePrefixSum(numCorrectedCandidates+1, stream, mr);
+            const std::uint32_t maxResultBytes = maxSerializedBytesPerCandidate * numCorrectedCandidates;
+
+            #if 1
+            size_t allocation_sizes[3]{};
+            allocation_sizes[0] = sizeof(std::uint32_t) * numCorrectedCandidates; // d_numBytesPerSerializedAnchor
+            allocation_sizes[1] = sizeof(std::uint32_t) * (numCorrectedCandidates+1); // d_numBytesPerSerializedAnchorPrefixSum
+            allocation_sizes[2] = sizeof(uint8_t) * maxResultBytes; // d_serializedAnchorResults
+            void* allocations[3]{};
+            std::size_t tempbytes = 0;
+
+            CUDACHECK(cub::AliasTemporaries(
+                nullptr,
+                tempbytes,
+                allocations,
+                allocation_sizes
+            ));
+
+            rmm::device_uvector<char> d_tmp(tempbytes, stream, mr);
+
+            CUDACHECK(cub::AliasTemporaries(
+                d_tmp.data(),
+                tempbytes,
+                allocations,
+                allocation_sizes
+            ));
+
+            std::uint32_t* d_numBytesPerSerializedCandidate = reinterpret_cast<std::uint32_t*>(allocations[0]);
+            std::uint32_t* d_numBytesPerSerializedCandidatePrefixSum = reinterpret_cast<std::uint32_t*>(allocations[1]);
+            std::uint8_t* d_serializedCandidateResults = reinterpret_cast<std::uint8_t*>(allocations[2]);
+
+            #else
+
+            rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedCandidate_(numCorrectedCandidates, stream, mr);
+            rmm::device_uvector<std::uint32_t> d_numBytesPerSerializedCandidatePrefixSum_(numCorrectedCandidates+1, stream, mr);
+            rmm::device_uvector<std::uint8_t> d_serializedCandidateResults_(maxResultBytes, stream, mr);
+
+            std::uint32_t* d_numBytesPerSerializedCandidate = d_numBytesPerSerializedCandidate_.data();
+            std::uint32_t* d_numBytesPerSerializedCandidatePrefixSum = d_numBytesPerSerializedCandidatePrefixSum_.data();
+            std::uint8_t* d_serializedCandidateResults = d_serializedCandidateResults_.data();
+
+            #endif
+
             //compute bytes per numCorrectedCandidates
             helpers::lambda_kernel<<<std::max(1, SDIV(numCorrectedCandidates, 128)), 128, 0, stream>>>(
                 [
-                    d_numBytesPerSerializedCandidate = d_numBytesPerSerializedCandidate.data(),
-                    d_numBytesPerSerializedCandidatePrefixSum = d_numBytesPerSerializedCandidatePrefixSum.data(),
+                    d_numBytesPerSerializedCandidate = d_numBytesPerSerializedCandidate,
+                    d_numBytesPerSerializedCandidatePrefixSum = d_numBytesPerSerializedCandidatePrefixSum,
                     d_numEditsPerCorrectedCandidate = d_numEditsPerCorrectedCandidate.data(),
                     d_candidate_sequences_lengths = d_candidate_sequences_lengths,
                     numCorrectedCandidates = numCorrectedCandidates,
@@ -1522,21 +1600,17 @@ namespace gpu{
 
             thrust::inclusive_scan(
                 rmm::exec_policy_nosync(stream, mr),
-                d_numBytesPerSerializedCandidate.begin(),
-                d_numBytesPerSerializedCandidate.end(),
-                d_numBytesPerSerializedCandidatePrefixSum.begin() + 1
+                d_numBytesPerSerializedCandidate,
+                d_numBytesPerSerializedCandidate + numCorrectedCandidates,
+                d_numBytesPerSerializedCandidatePrefixSum + 1
             );
-
-            std::uint32_t maxResultBytes = maxSerializedBytesPerCandidate * numCorrectedCandidates;
-
-            rmm::device_uvector<std::uint8_t> d_serializedCandidateResults(maxResultBytes, stream, mr);
 
             //compute serialized candidates
             helpers::lambda_kernel<<<std::max(1, SDIV(numCorrectedCandidates, 128)), 128, 0, stream>>>(
                 [
-                    d_numBytesPerSerializedCandidate = d_numBytesPerSerializedCandidate.data(),
-                    d_numBytesPerSerializedCandidatePrefixSum = d_numBytesPerSerializedCandidatePrefixSum.data(),
-                    d_serializedCandidateResults = d_serializedCandidateResults.data(),
+                    d_numBytesPerSerializedCandidate = d_numBytesPerSerializedCandidate,
+                    d_numBytesPerSerializedCandidatePrefixSum = d_numBytesPerSerializedCandidatePrefixSum,
+                    d_serializedCandidateResults = d_serializedCandidateResults,
                     d_numEditsPerCorrectedCandidate = d_numEditsPerCorrectedCandidate.data(),
                     d_candidate_sequences_lengths = d_candidate_sequences_lengths,
                     numCorrectedCandidates = numCorrectedCandidates,
@@ -1639,9 +1713,9 @@ namespace gpu{
             helpers::lambda_kernel<<<480,128,0,stream>>>(
                 [
                     h_serializedCandidateOffsets = currentOutput->serializedCandidateOffsets.data(),
-                    d_numBytesPerSerializedCandidatePrefixSum = d_numBytesPerSerializedCandidatePrefixSum.data(),
+                    d_numBytesPerSerializedCandidatePrefixSum = d_numBytesPerSerializedCandidatePrefixSum,
                     h_serializedCandidateResults = currentOutput->serializedCandidateResults.data(),
-                    d_serializedCandidateResults = d_serializedCandidateResults.data(),
+                    d_serializedCandidateResults = d_serializedCandidateResults,
                     numCorrectedCandidates = numCorrectedCandidates
                 ] __device__ (){
                     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -1667,23 +1741,6 @@ namespace gpu{
 
                 }
             ); CUDACHECKASYNC
-
-            // CUDACHECK(cudaMemcpyAsync(
-            //     currentOutput->serializedCandidateOffsets.data(),
-            //     d_numBytesPerSerializedCandidatePrefixSum.data(),
-            //     sizeof(std::uint32_t) * (numCorrectedCandidates + 1),
-            //     D2H,
-            //     stream
-            // ));
-
-            // CUDACHECK(cudaMemcpyAsync(
-            //     currentOutput->serializedCandidateResults.data(),
-            //     d_serializedCandidateResults.data(),
-            //     sizeof(std::uint8_t) * totalNumBytesForSerializedCandidates,
-            //     D2H,
-            //     stream
-            // ));
-
         }
 
         void copyCandidateResultsFromDeviceToHostClassic(cudaStream_t stream){
@@ -1825,7 +1882,8 @@ namespace gpu{
         }
 
         void buildAndRefineMultipleSequenceAlignment(cudaStream_t stream){
-
+            size_t allQualDataBytes = 0;
+            char* d_allQualData = nullptr;
             char* d_anchor_qual = nullptr;
             char* d_cand_qual = nullptr;
 
@@ -1836,7 +1894,29 @@ namespace gpu{
 
                 CUDACHECK(cudaStreamWaitEvent(qualityStream, inputCandidateDataIsReadyEvent, 0));
 
-                d_anchor_qual = reinterpret_cast<char*>(mr->allocate(currentNumAnchors * qualityPitchInBytes, qualityStream));
+                size_t allocation_sizes[2]{};
+                allocation_sizes[0] = currentNumAnchors * qualityPitchInBytes; // d_anchor_qual
+                allocation_sizes[1] = currentNumCandidates * qualityPitchInBytes; // d_cand_qual
+                void* allocations[2]{};
+
+                CUDACHECK(cub::AliasTemporaries(
+                    nullptr,
+                    allQualDataBytes,
+                    allocations,
+                    allocation_sizes
+                ));
+
+                d_allQualData = reinterpret_cast<char*>(mr->allocate(allQualDataBytes, qualityStream));
+
+                CUDACHECK(cub::AliasTemporaries(
+                    d_allQualData,
+                    allQualDataBytes,
+                    allocations,
+                    allocation_sizes
+                ));
+
+                d_anchor_qual = reinterpret_cast<char*>(allocations[0]);
+                d_cand_qual = reinterpret_cast<char*>(allocations[1]);
 
                 gpuReadStorage->gatherContiguousQualities(
                     readstorageHandle,
@@ -1847,8 +1927,6 @@ namespace gpu{
                     qualityStream,
                     mr
                 );
-
-                d_cand_qual = reinterpret_cast<char*>(mr->allocate(currentNumCandidates * qualityPitchInBytes, qualityStream));
 
                 gpuReadStorage->gatherQualities(
                     readstorageHandle,
@@ -1905,7 +1983,29 @@ namespace gpu{
 
                 const int hNumIndices = thrust::distance(zippedValid, copyifend);
 
-                d_anchor_qual = reinterpret_cast<char*>(mr->allocate(currentNumAnchors * qualityPitchInBytes, stream));
+                size_t allocation_sizes[2];
+                allocation_sizes[0] = currentNumAnchors * qualityPitchInBytes; // d_anchor_qual
+                allocation_sizes[1] = currentNumCandidates * qualityPitchInBytes; // d_cand_qual
+                void* allocations[2];
+
+                CUDACHECK(cub::AliasTemporaries(
+                    nullptr,
+                    allQualDataBytes,
+                    allocations,
+                    allocation_sizes
+                ));
+
+                d_allQualData = reinterpret_cast<char*>(mr->allocate(allQualDataBytes, qualityStream));
+
+                CUDACHECK(cub::AliasTemporaries(
+                    d_allQualData,
+                    allQualDataBytes,
+                    allocations,
+                    allocation_sizes
+                ));
+
+                d_anchor_qual = reinterpret_cast<char*>(allocations[0]);
+                d_cand_qual = reinterpret_cast<char*>(allocations[1]);
 
                 gpuReadStorage->gatherContiguousQualities(
                     readstorageHandle,
@@ -1931,8 +2031,6 @@ namespace gpu{
                     mr
                 );
                 nvtx::pop_range();
-
-                d_cand_qual = reinterpret_cast<char*>(mr->allocate(currentNumCandidates * qualityPitchInBytes, stream));
 
                 #if 0
                 //scatter compact quality scores to correct positions
@@ -2178,8 +2276,7 @@ namespace gpu{
             #endif
 
             if(programOptions->useQualityScores){
-                mr->deallocate(d_anchor_qual, currentNumAnchors * qualityPitchInBytes, stream);
-                mr->deallocate(d_cand_qual, currentNumCandidates * qualityPitchInBytes, stream);
+                mr->deallocate(d_allQualData, allQualDataBytes, stream);
             }
         }
 
