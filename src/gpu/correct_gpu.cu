@@ -380,7 +380,7 @@ public:
             }
 
 
-            std::array<GpuErrorCorrectorRawOutput, 1 + numextra> rawOutputArray;
+            std::array<GpuErrorCorrectorRawOutput, 2 + numextra> rawOutputArray;
             //SingleProducerSingleConsumerQueue<GpuErrorCorrectorRawOutput*> freeRawOutputQueue;
             MultiProducerMultiConsumerQueue<GpuErrorCorrectorRawOutput*> freeRawOutputQueue;
 
@@ -738,7 +738,7 @@ public:
                 programOptions
             );
 
-            std::array<GpuErrorCorrectorRawOutput, 2> rawOutputArray;
+            std::array<GpuErrorCorrectorRawOutput, 3> rawOutputArray;
             MultiProducerMultiConsumerQueue<GpuErrorCorrectorRawOutput*> freeRawOutputQueue;
 
             for(auto& a : rawOutputArray){
@@ -1329,7 +1329,7 @@ public:
 
             ThreadPool::ParallelForHandle pforHandle;
 
-            std::array<GpuErrorCorrectorRawOutput, 1 + getNumExtraBuffers()> rawOutputs{};
+            std::array<GpuErrorCorrectorRawOutput, 2 + getNumExtraBuffers()> rawOutputs{};
             MultiProducerMultiConsumerQueue<GpuErrorCorrectorRawOutput*> myFreeOutputsQueue;
 
             for(auto& i : rawOutputs){
