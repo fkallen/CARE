@@ -1772,10 +1772,58 @@ SerializedObjectStorage correct_gpu_impl(
         progressThread.addProgress(size);
     };
 
-    {
+    auto runSimpleGpuPipeline = [&](int deviceId,
+        const GpuForest* gpuForestAnchor, 
+        const GpuForest* gpuForestCandidate
+    ){
+        SimpleGpuCorrectionPipeline<Minhasher> pipeline(
+            readStorage,
+            minhasher,
+            nullptr, //&threadPool
+            gpuForestAnchor,
+            gpuForestCandidate
+        );
 
-     
+        //pipeline.runToCompletionDoubleBufferedWithExtraThread(
+        pipeline.runToCompletionDoubleBuffered(
+        //pipeline.runToCompletion(
+            deviceId,
+            readIdGenerator,
+            programOptions,
+            correctionFlags,
+            batchCompleted,
+            //processSerializedResults
+            processSerializedResultsThenCallback
+        );
+    };
 
+    auto runComplexGpuPipeline = [&](int deviceId, typename ComplexGpuCorrectionPipeline<Minhasher>::Config config,
+        const GpuForest* gpuForestAnchor, 
+        const GpuForest* gpuForestCandidate
+    ){
+        
+        ComplexGpuCorrectionPipeline<Minhasher> pipeline(
+            readStorage, 
+            minhasher, 
+            nullptr,
+            gpuForestAnchor,
+            gpuForestCandidate
+        );
+
+        pipeline.run(
+            deviceId,
+            config,
+            readIdGenerator,
+            programOptions,
+            correctionFlags,
+            batchCompleted,
+            //processSerializedResults
+            processSerializedResultsThenCallback
+        );
+    };
+
+
+    if(programOptions.gpuCorrectorThreadConfig.isAutomatic()){
         //Process a few batches on the first gpu to estimate runtime per step
         //These estimates will be used to spawn an appropriate number of threads for each gpu (assuming all gpus are similar)
 
@@ -1808,56 +1856,6 @@ SerializedObjectStorage correct_gpu_impl(
 
         const int numHashersPerCorrectorByTime = std::ceil(runStatistics.hasherTimeAverage / runStatistics.correctorTimeAverage);
         std::cerr << runStatistics.hasherTimeAverage << " " << runStatistics.correctorTimeAverage << "\n";
-
-        auto runSimpleGpuPipeline = [&](int deviceId,
-            const GpuForest* gpuForestAnchor, 
-            const GpuForest* gpuForestCandidate
-        ){
-            SimpleGpuCorrectionPipeline<Minhasher> pipeline(
-                readStorage,
-                minhasher,
-                nullptr, //&threadPool
-                gpuForestAnchor,
-                gpuForestCandidate
-            );
-
-            //pipeline.runToCompletionDoubleBufferedWithExtraThread(
-            pipeline.runToCompletionDoubleBuffered(
-            //pipeline.runToCompletion(
-                deviceId,
-                readIdGenerator,
-                programOptions,
-                correctionFlags,
-                batchCompleted,
-                //processSerializedResults
-                processSerializedResultsThenCallback
-            );
-        };
-
-        auto runComplexGpuPipeline = [&](int deviceId, typename ComplexGpuCorrectionPipeline<Minhasher>::Config config,
-            const GpuForest* gpuForestAnchor, 
-            const GpuForest* gpuForestCandidate
-        ){
-            
-            ComplexGpuCorrectionPipeline<Minhasher> pipeline(
-                readStorage, 
-                minhasher, 
-                nullptr,
-                gpuForestAnchor,
-                gpuForestCandidate
-            );
-
-            pipeline.run(
-                deviceId,
-                config,
-                readIdGenerator,
-                programOptions,
-                correctionFlags,
-                batchCompleted,
-                //processSerializedResults
-                processSerializedResultsThenCallback
-            );
-        };
 
         std::vector<std::future<void>> futures;
 
@@ -1956,51 +1954,50 @@ SerializedObjectStorage correct_gpu_impl(
         for(auto& f : futures){
             f.wait();
         }        
+    }else{
+        std::vector<std::future<void>> futures;
+
+        const int numDevices = deviceIds.size();
+        const int numHashers = programOptions.gpuCorrectorThreadConfig.numHashers;
+        const int numCorrectors = programOptions.gpuCorrectorThreadConfig.numCorrectors;
+
+        if(numHashers == 0){
+            for(int d = 0; d < numDevices; d++){
+                std::cerr << "Use " << numCorrectors << " simple pipelines on device " << deviceIds[d] << "\n";
+                for(int c = 0; c < numCorrectors; c++){
+                    futures.emplace_back(std::async(
+                        std::launch::async,
+                        runSimpleGpuPipeline,
+                        deviceIds[d],
+                        &anchorForests[d],
+                        &candidateForests[d]
+                    ));
+                }
+            }
+        }else{
+            typename ComplexGpuCorrectionPipeline<Minhasher>::Config pipelineConfig;
+            pipelineConfig.numOutputConstructors = 0; //always 0
+            pipelineConfig.numCorrectors = numCorrectors;
+            pipelineConfig.numHashers = numHashers;
+
+            for(int d = 0; d < numDevices; d++){
+                std::cerr << "Use complex pipeline with " << numCorrectors << ":" << numHashers 
+                    << " on device " << deviceIds[d] << "\n";
+                futures.emplace_back(std::async(
+                    std::launch::async,
+                    runComplexGpuPipeline,
+                    deviceIds[d],
+                    pipelineConfig,
+                    &anchorForests[d],
+                    &candidateForests[d]
+                ));
+            }
+        }
+
+        for(auto& f : futures){
+            f.wait();
+        }
     }
-
-#if 0
-
-    auto printRunStats = [](const auto& runStatistics){
-        std::cerr << "hashing time average: " << runStatistics.hasherTimeAverage << "\n";
-        std::cerr << "corrector time average: " << runStatistics.correctorTimeAverage << "\n";
-        std::cerr << "output constructor time average: " << runStatistics.outputconstructorTimeAverage << "\n";
-
-        std::cerr << "input size: ";
-        std::cerr << "host: " << runStatistics.memoryInputData.host << ", ";
-        for(const auto& d : runStatistics.memoryInputData.device){
-            std::cerr << "device " << d.first << ": " << d.second << " ";
-        }
-        std::cerr << "\n";
-
-        std::cerr << "raw output size ";
-        std::cerr << "host: " << runStatistics.memoryRawOutputData.host << ", ";
-        for(const auto& d : runStatistics.memoryRawOutputData.device){
-            std::cerr << "device " << d.first << ": " << d.second << " ";
-        }
-        std::cerr << "\n";
-
-        std::cerr << "hasher size ";
-        std::cerr << "host: " << runStatistics.memoryHasher.host << ", ";
-        for(const auto& d : runStatistics.memoryHasher.device){
-            std::cerr << "device " << d.first << ": " << d.second << " ";
-        }
-        std::cerr << "\n";
-
-        std::cerr << "corrector size ";
-        std::cerr << "host: " << runStatistics.memoryCorrector.host << ", ";
-        for(const auto& d : runStatistics.memoryCorrector.device){
-            std::cerr << "device " << d.first << ": " << d.second << " ";
-        }
-        std::cerr << "\n";
-
-        std::cerr << "output constructor size ";
-        std::cerr << "host: " << runStatistics.memoryOutputConstructor.host << ", ";
-        for(const auto& d : runStatistics.memoryOutputConstructor.device){
-            std::cerr << "device " << d.first << ": " << d.second << " ";
-        }
-        std::cerr << "\n";
-    };
-#endif   
 
     progressThread.finished(); 
         

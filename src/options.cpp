@@ -244,6 +244,34 @@ namespace care{
             result.warpcore = pr["warpcore"].as<int>();
         }
 
+        if(pr.count("gpuCorrectorThreadConfig")){
+            std::string configString = pr["gpuCorrectorThreadConfig"].as<std::string>();
+
+            auto split = [](const std::string& str, char c) -> std::vector<std::string>{
+                std::vector<std::string> result;
+
+                std::stringstream ss(str);
+                std::string s;
+
+                while (std::getline(ss, s, c)) {
+                        result.emplace_back(s);
+                }
+
+                return result;
+            };
+        
+            auto tokens = split(configString, ':');
+            if(tokens.size() != 2){
+                throw std::runtime_error("gpuCorrectorThreadConfig wrong format. Expected: numCorrectors:numHashers");
+            }
+
+            GpuCorrectorThreadConfig x;
+            x.numCorrectors = std::stoi(tokens[0]);
+            x.numHashers = std::stoi(tokens[1]);
+
+            result.gpuCorrectorThreadConfig = x;
+        }
+
         if(pr.count("replicateGpuReadData")){
             result.replicateGpuReadData = pr["replicateGpuReadData"].as<bool>();
         }
@@ -717,6 +745,11 @@ namespace care{
         stream << "Replicate GPU hashtables " << replicateGpuHashtables << "\n";
         stream << "GPU read layout " << to_string(gpuReadDataLayout) << "\n";
         stream << "GPU hashtable layout " << to_string(gpuHashtableLayout) << "\n";
+        if(gpuCorrectorThreadConfig.isAutomatic()){
+            stream << "GPU corrector thread config: auto\n";
+        }else{
+            stream << "GPU corrector thread config: " << gpuCorrectorThreadConfig.numCorrectors << ":" << gpuCorrectorThreadConfig.numHashers << "\n";
+        }
     }
 
     void ProgramOptions::printAdditionalOptionsExtendCpu(std::ostream&) const{
@@ -944,7 +977,11 @@ namespace care{
             ("replicateGpuHashtables", "Construct warpcore hashtables on a single GPU, then replicate them on each GPU"
                 "Default: " + std::to_string(ProgramOptions{}.replicateGpuHashtables), cxxopts::value<bool>())
             ("gpuReadDataLayout", "GPU read layout. 0: first fit, 1: even share", cxxopts::value<int>())
-            ("gpuHashtableLayout", "GPU hash table layout. 0: first fit, 1: even share", cxxopts::value<int>());
+            ("gpuHashtableLayout", "GPU hash table layout. 0: first fit, 1: even share", cxxopts::value<int>())
+            ("gpuCorrectorThreadConfig", "Per-GPU thread configuration for correction. Format numCorrectors(int):numHashers(int)."
+                "Default: automatic configuration (0:0). When numCorrectors:0 is used, each corrector performs hashing itself. Recommended with gpu hashtables."
+                " Example: 2:8 . ", cxxopts::value<std::string>());
+            
     }
 
     void addAdditionalOptionsExtendCpu(cxxopts::Options&){

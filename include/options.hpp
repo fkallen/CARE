@@ -36,6 +36,15 @@ namespace care
     std::string to_string(CorrectionType t);
     std::string to_string(GpuDataLayout t);
 
+    struct GpuCorrectorThreadConfig{
+        int numCorrectors = 0;
+        int numHashers = 0;
+
+        bool isAutomatic() const noexcept{
+            return numCorrectors == 0 && numHashers == 0;
+        }
+    };
+
 
     //Options which can be parsed from command-line arguments
 
@@ -78,6 +87,8 @@ namespace care
         bool replicateGpuHashtables = false;
         GpuDataLayout gpuReadDataLayout = GpuDataLayout::EvenShare;
         GpuDataLayout gpuHashtableLayout = GpuDataLayout::EvenShare;
+
+        GpuCorrectorThreadConfig gpuCorrectorThreadConfig;
 
         int warpcore = 0;
         int threads = 1;
