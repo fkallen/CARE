@@ -1679,54 +1679,55 @@ SerializedObjectStorage correct_gpu_impl(
         GpuErrorCorrectorRawOutput* results,
         auto whenDone
     ){
-
-
         const std::size_t numA = *results->h_numCorrectedAnchors;
         const std::size_t numC = results->numCorrectedCandidates;
 
-        auto outputFunction = [
-            &,
-            results,
-            numA,
-            numC,
-            whenDone = std::move(whenDone)
-        ](){
+        if(numA > 0 || numC > 0){
+            auto outputFunction = [
+                &,
+                results,
+                numA,
+                numC,
+                whenDone = std::move(whenDone)
+            ](){
 
-            nvtx::ScopedRange sr("outputFunction", 7);
+                nvtx::ScopedRange sr("outputFunction", 7);
 
-            auto saveWithFlagCheck = [&](const std::uint8_t* encodedBegin, const std::uint8_t* encodedEnd){
-                ParsedEncodedFlags flags = EncodedTempCorrectedSequence::parseEncodedFlags(encodedBegin);
-                if(!(flags.hq && flags.useEdits && flags.numEdits == 0)){
-                    partialResults.insert(encodedBegin, encodedEnd);
+                auto saveWithFlagCheck = [&](const std::uint8_t* encodedBegin, const std::uint8_t* encodedEnd){
+                    ParsedEncodedFlags flags = EncodedTempCorrectedSequence::parseEncodedFlags(encodedBegin);
+                    if(!(flags.hq && flags.useEdits && flags.numEdits == 0)){
+                        partialResults.insert(encodedBegin, encodedEnd);
+                    }
+                };
+
+                for(std::size_t i = 0; i < numA; i++){
+                    const std::uint8_t* encodedBegin = results->serializedAnchorResults.data()
+                        + results->serializedAnchorOffsets[i];
+                    const std::uint8_t* encodedEnd = results->serializedAnchorResults.data()
+                        + results->serializedAnchorOffsets[i+1];
+
+                    saveWithFlagCheck(
+                        encodedBegin,
+                        encodedEnd
+                    );
                 }
+
+                // don't need to check flags for candidates. insert blob.
+                partialResults.bulkInsert(
+                    results->serializedCandidateResults.data(),
+                    results->serializedCandidateResults.data() + results->serializedCandidateOffsets[numC],
+                    results->serializedCandidateOffsets.data(),
+                    results->serializedCandidateOffsets.data() + numC
+                );
+
+                whenDone(results);
             };
 
-            for(std::size_t i = 0; i < numA; i++){
-                const std::uint8_t* encodedBegin = results->serializedAnchorResults.data()
-                    + results->serializedAnchorOffsets[i];
-                const std::uint8_t* encodedEnd = results->serializedAnchorResults.data()
-                    + results->serializedAnchorOffsets[i+1];
 
-                saveWithFlagCheck(
-                    encodedBegin,
-                    encodedEnd
-                );
-            }
-
-            // don't need to check flags for candidates. insert blob.
-            partialResults.bulkInsert(
-                results->serializedCandidateResults.data(),
-                results->serializedCandidateResults.data() + results->serializedCandidateOffsets[numC],
-                results->serializedCandidateOffsets.data(),
-                results->serializedCandidateOffsets.data() + numC
-            );
-
-            whenDone(results);
-        };
-
-        if(numA > 0 || numC > 0){
             outputThread.enqueue(std::move(outputFunction));
             //outputFunction();
+        }else{
+            whenDone(results);
         }
     };
 
