@@ -238,7 +238,8 @@ namespace care{
             //tempids2,
             gpumemorylimits,
             0,
-            numQualityBits
+            numQualityBits,
+            gpu::MultiGpuReadStorage::Layout::FirstFit
         );
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
@@ -332,12 +333,13 @@ namespace care{
             //tempids,
             gpumemorylimits,
             memoryLimitHost,
-            numQualityBits
+            numQualityBits,
+            programOptions.gpuReadDataLayout == GpuDataLayout::FirstFit ? gpu::MultiGpuReadStorage::Layout::FirstFit : gpu::MultiGpuReadStorage::Layout::EvenShare
         );
 
         gpumemorylimits = getGpuMemoryLimits();
         
-        if(programOptions.replicateGpuData){
+        if(programOptions.replicateGpuReadData){
             if(gpuReadStorage.trySequenceReplication(gpumemorylimits)){
                 std::cerr << "Replicated gpu read sequences to each gpu\n";
                 gpumemorylimits = getGpuMemoryLimits();
