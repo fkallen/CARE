@@ -51,6 +51,22 @@ namespace care{
         }
     }
 
+    std::string to_string(GpuDataLayout t)
+    {
+        switch (t)
+        {
+        case GpuDataLayout::FirstFit:
+            return "FirstFit";
+            break;
+        case GpuDataLayout::EvenShare:
+            return "EvenShare";
+            break;
+        default:
+            return "Error";
+            break;
+        }
+    }
+
     ProgramOptions::ProgramOptions(const cxxopts::ParseResult& pr){
         ProgramOptions& result = *this;
 
@@ -228,9 +244,35 @@ namespace care{
             result.warpcore = pr["warpcore"].as<int>();
         }
 
-        if(pr.count("replicateGpuData")){
-            result.replicateGpuData = pr["replicateGpuData"].as<bool>();
+        if(pr.count("replicateGpuReadData")){
+            result.replicateGpuReadData = pr["replicateGpuReadData"].as<bool>();
         }
+
+        if(pr.count("replicateGpuHashtables")){
+            result.replicateGpuHashtables = pr["replicateGpuHashtables"].as<bool>();
+        }
+
+        if(pr.count("gpuReadDataLayout")){
+            int val = pr["gpuReadDataLayout"].as<int>();
+            GpuDataLayout opt;
+            switch(val){
+                case 0: opt = GpuDataLayout::FirstFit; break;
+                case 1: opt = GpuDataLayout::EvenShare; break;
+                default: opt = GpuDataLayout::FirstFit; break;
+            }
+            result.gpuReadDataLayout = opt;
+        }
+
+        if(pr.count("gpuHashtableLayout")){
+            int val = pr["gpuHashtableLayout"].as<int>();
+            GpuDataLayout opt;
+            switch(val){
+                case 0: opt = GpuDataLayout::FirstFit; break;
+                case 1: opt = GpuDataLayout::EvenShare; break;
+                default: opt = GpuDataLayout::FirstFit; break;
+            }
+            result.gpuHashtableLayout = opt;
+        }    
 
         if(pr.count("fixedNumberOfReads")){
             result.fixedNumberOfReads = pr["fixedNumberOfReads"].as<std::size_t>();
@@ -671,7 +713,10 @@ namespace care{
     void ProgramOptions::printAdditionalOptionsCorrectGpu(std::ostream& stream) const{
         stream << "Batch size: " << batchsize << "\n";
         stream << "Warpcore: " << warpcore << "\n";
-	    stream << "Replicate GPU data: " << replicateGpuData << "\n";
+	    stream << "Replicate GPU reads: " << replicateGpuReadData << "\n";
+        stream << "Replicate GPU hashtables " << replicateGpuHashtables << "\n";
+        stream << "GPU read layout " << to_string(gpuReadDataLayout) << "\n";
+        stream << "GPU hashtable layout " << to_string(gpuHashtableLayout) << "\n";
     }
 
     void ProgramOptions::printAdditionalOptionsExtendCpu(std::ostream&) const{
@@ -681,7 +726,10 @@ namespace care{
     void ProgramOptions::printAdditionalOptionsExtendGpu(std::ostream& stream) const{
         stream << "Batch size: " << batchsize << "\n";
         stream << "Warpcore: " << warpcore << "\n";
-	    stream << "Replicate GPU data: " << replicateGpuData << "\n";
+	    stream << "Replicate GPU reads: " << replicateGpuReadData << "\n";
+        stream << "Replicate GPU hashtables " << replicateGpuHashtables << "\n";
+        stream << "GPU read layout " << to_string(gpuReadDataLayout) << "\n";
+        stream << "GPU hashtable layout " << to_string(gpuHashtableLayout) << "\n";
     }
 
 
@@ -891,8 +939,12 @@ namespace care{
             ("warpcore", "Enable warpcore hash tables. 0: Disabled, 1: Enabled. "
                 "Default: " + tostring(ProgramOptions{}.warpcore),
                 cxxopts::value<int>())		
-            ("replicateGpuData", "If a GPU data structure fits into the memory of a single GPU, allow its replication to other GPUs. This can improve the runtime when multiple GPUs are used."
-                "Default: " + std::to_string(ProgramOptions{}.replicateGpuData), cxxopts::value<bool>());		
+            ("replicateGpuReadData", "If reads fit into the memory of a single GPU, allow its replication to other GPUs. This can improve the runtime when multiple GPUs are used."
+                "Default: " + std::to_string(ProgramOptions{}.replicateGpuReadData), cxxopts::value<bool>())
+            ("replicateGpuHashtables", "Construct warpcore hashtables on a single GPU, then replicate them on each GPU"
+                "Default: " + std::to_string(ProgramOptions{}.replicateGpuHashtables), cxxopts::value<bool>())
+            ("gpuReadDataLayout", "GPU read layout. 0: first fit, 1: even share", cxxopts::value<int>())
+            ("gpuHashtableLayout", "GPU hash table layout. 0: first fit, 1: even share", cxxopts::value<int>());
     }
 
     void addAdditionalOptionsExtendCpu(cxxopts::Options&){
@@ -907,8 +959,12 @@ namespace care{
             ("warpcore", "Enable warpcore hash tables. 0: Disabled, 1: Enabled. "
                 "Default: " + tostring(ProgramOptions{}.warpcore),
                 cxxopts::value<int>())
-            ("replicateGpuData", "If a GPU data structure fits into the memory of a single GPU, allow its replication to other GPUs. This can improve the runtime when multiple GPUs are used."
-                "Default: " + std::to_string(ProgramOptions{}.replicateGpuData), cxxopts::value<bool>());	
+            ("replicateGpuReadData", "If reads fit into the memory of a single GPU, allow its replication to other GPUs. This can improve the runtime when multiple GPUs are used."
+                "Default: " + std::to_string(ProgramOptions{}.replicateGpuReadData), cxxopts::value<bool>())
+            ("replicateGpuHashtables", "Construct warpcore hashtables on a single GPU, then replicate them on each GPU"
+                "Default: " + std::to_string(ProgramOptions{}.replicateGpuHashtables), cxxopts::value<bool>())
+            ("gpuReadDataLayout", "GPU read layout. 0: first fit, 1: even share", cxxopts::value<int>()->default_value(0))
+            ("gpuHashtableLayout", "GPU hash table layout. 0: first fit, 1: even share", cxxopts::value<int>()->default_value(0));
     }
 
 } //namespace care

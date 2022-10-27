@@ -29,6 +29,7 @@ namespace gpu{
                 case GpuMinhasherType::SingleSingleHash: return "SingleGpuSingleHash";
                 case GpuMinhasherType::Multi: return "MultiGpu";
                 case GpuMinhasherType::MultiSingleHash: return "MultiGpuSingleHash";
+                case GpuMinhasherType::ReplicatedSingle: return "ReplicatedSingle";
                 case GpuMinhasherType::None: return "None";
                 default: return "Unknown";
             }
@@ -259,74 +260,109 @@ namespace gpu{
             const GpuReadStorage& gpuReadStorage,
             GpuMinhasherType requestedType
         ){
-            std::unique_ptr<GpuMinhasher> gpuMinhasher;
-            GpuMinhasherType gpuMinhasherType = GpuMinhasherType::None;
-
-            auto makeFake = [&](){                
-                gpuMinhasher = std::make_unique<FakeGpuMinhasher>(
-                    gpuReadStorage.getNumberOfReads(),
-                    calculateResultsPerMapThreshold(programOptions.estimatedCoverage),
-                    programOptions.kmerlength,
-                    programOptions.hashtableLoadfactor
-                );
-
-                gpuMinhasherType = GpuMinhasherType::Fake;
-            };
-
-            auto makeSingle = [&](){
-                gpuMinhasher = std::make_unique<SingleGpuMinhasher>(
-                    gpuReadStorage.getNumberOfReads(), 
-                    calculateResultsPerMapThreshold(programOptions.estimatedCoverage), 
-                    programOptions.kmerlength,
-                    programOptions.hashtableLoadfactor
-                );
-
-                gpuMinhasherType = GpuMinhasherType::Single;
-            };
-
-            auto makeMulti = [&](){
-                gpuMinhasher = std::make_unique<MultiGpuMinhasher>(
-                    MultiGpuMinhasher::Layout::EvenShare,
-                    gpuReadStorage.getNumberOfReads(), 
-                    calculateResultsPerMapThreshold(programOptions.estimatedCoverage), 
-                    programOptions.kmerlength,
-                    programOptions.hashtableLoadfactor,
-                    programOptions.deviceIds
-                );
-
-                gpuMinhasherType = GpuMinhasherType::Multi;
-            };
-
-            if(requestedType == GpuMinhasherType::Fake || programOptions.warpcore == 0){
-                makeFake();
-
             #ifdef CARE_HAS_WARPCORE
-            }else if(requestedType == GpuMinhasherType::Single || programOptions.deviceIds.size() < 2){
-                makeSingle();
-            }else if(requestedType == GpuMinhasherType::Multi){
-                makeMulti();
+                if(requestedType != GpuMinhasherType::Fake && programOptions.warpcore == 1 && programOptions.replicateGpuHashtables){
+                    auto sgpuminhasher = std::make_unique<SingleGpuMinhasher>(
+                        gpuReadStorage.getNumberOfReads(), 
+                        calculateResultsPerMapThreshold(programOptions.estimatedCoverage), 
+                        programOptions.kmerlength,
+                        programOptions.hashtableLoadfactor
+                    );
+
+                    constructGpuMinhasherFromReadStorage(
+                        programOptions,
+                        gpuReadStorage,
+                        sgpuminhasher.get()
+                    );
+
+                    std::cerr << "Creating ReplicatedSingleGpuMinhasher\n";
+
+                    nvtx::push_range("replicate gpu minhasher", 1);
+                    auto replicated = std::make_unique<ReplicatedSingleGpuMinhasher>(std::move(sgpuminhasher), programOptions.deviceIds);
+                    nvtx::pop_range();
+
+                    return {std::move(replicated), GpuMinhasherType::ReplicatedSingle};
+                }else{
             #endif
-            }else{
-                makeFake();
-            }
 
-            if(programOptions.load_hashtables_from != "" && gpuMinhasher->canLoadFromStream()){
+                    std::unique_ptr<GpuMinhasher> gpuMinhasher;
+                    GpuMinhasherType gpuMinhasherType = GpuMinhasherType::None;
 
-                std::ifstream is(programOptions.load_hashtables_from);
-                assert((bool)is);
+                    auto makeFake = [&](){                
+                        gpuMinhasher = std::make_unique<FakeGpuMinhasher>(
+                            gpuReadStorage.getNumberOfReads(),
+                            calculateResultsPerMapThreshold(programOptions.estimatedCoverage),
+                            programOptions.kmerlength,
+                            programOptions.hashtableLoadfactor
+                        );
 
-                const int loadedMaps = gpuMinhasher->loadFromStream(is, programOptions.numHashFunctions);
+                        gpuMinhasherType = GpuMinhasherType::Fake;
+                    };
 
-                std::cout << "Loaded " << loadedMaps << " hash tables from " << programOptions.load_hashtables_from << std::endl;
-            }else{
-                constructGpuMinhasherFromReadStorage(
-                    programOptions,
-                    gpuReadStorage,
-                    gpuMinhasher.get()
-                );
-            }
+                    #ifdef CARE_HAS_WARPCORE
 
-            return {std::move(gpuMinhasher), gpuMinhasherType};
+                    auto makeSingle = [&](){
+                        gpuMinhasher = std::make_unique<SingleGpuMinhasher>(
+                            gpuReadStorage.getNumberOfReads(), 
+                            calculateResultsPerMapThreshold(programOptions.estimatedCoverage), 
+                            programOptions.kmerlength,
+                            programOptions.hashtableLoadfactor
+                        );
+
+                        gpuMinhasherType = GpuMinhasherType::Single;
+                    };
+
+                    auto makeMulti = [&](){
+                        auto layout = programOptions.gpuHashtableLayout == GpuDataLayout::FirstFit ? gpu::MultiGpuMinhasher::Layout::FirstFit 
+                            : gpu::MultiGpuMinhasher::Layout::EvenShare;
+
+                        gpuMinhasher = std::make_unique<MultiGpuMinhasher>(
+                            layout,
+                            gpuReadStorage.getNumberOfReads(), 
+                            calculateResultsPerMapThreshold(programOptions.estimatedCoverage), 
+                            programOptions.kmerlength,
+                            programOptions.hashtableLoadfactor,
+                            programOptions.deviceIds
+                        );
+
+                        gpuMinhasherType = GpuMinhasherType::Multi;
+                    };
+
+                    #endif
+
+                    if(requestedType == GpuMinhasherType::Fake || programOptions.warpcore == 0){
+                        makeFake();
+
+                    #ifdef CARE_HAS_WARPCORE
+                    }else if(requestedType == GpuMinhasherType::Single || programOptions.deviceIds.size() < 2){
+                        makeSingle();
+                    }else if(requestedType == GpuMinhasherType::Multi){
+                        makeMulti();
+                    #endif
+                    }else{
+                        makeFake();
+                    }
+
+                    if(programOptions.load_hashtables_from != "" && gpuMinhasher->canLoadFromStream()){
+
+                        std::ifstream is(programOptions.load_hashtables_from);
+                        assert((bool)is);
+
+                        const int loadedMaps = gpuMinhasher->loadFromStream(is, programOptions.numHashFunctions);
+
+                        std::cout << "Loaded " << loadedMaps << " hash tables from " << programOptions.load_hashtables_from << std::endl;
+                    }else{
+                        constructGpuMinhasherFromReadStorage(
+                            programOptions,
+                            gpuReadStorage,
+                            gpuMinhasher.get()
+                        );
+                    }
+
+                    return {std::move(gpuMinhasher), gpuMinhasherType};
+            #ifdef CARE_HAS_WARPCORE
+                }
+            #endif
         }
     
     

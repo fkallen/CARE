@@ -211,13 +211,9 @@ namespace gpu{
         enum class Layout {FirstFit, EvenShare};
     private:
         using DeviceSwitcher = cub::SwitchDevice;
-
+        
         template<class T>
         using HostBuffer = helpers::SimpleAllocationPinnedHost<T, 5>;
-        template<class T>
-        using DeviceBuffer = helpers::SimpleAllocationDevice<T, 5>;
-        //using DeviceBuffer = helpers::SimpleAllocationPinnedHost<T, 5>;
-
         struct QueryData{
             enum class Stage{
                 None,
@@ -316,6 +312,10 @@ namespace gpu{
 
                         hashFunctionIdsTmp.erase(hashFunctionIdsTmp.begin(), hashFunctionIdsTmp.begin() + addedTables);
                         remainingTables -= addedTables;
+
+                        if(addedTables > 0){
+                            break;
+                        }
                     }
                 }
             }
@@ -1075,6 +1075,276 @@ private:
 
         std::vector<std::vector<int>> hashFunctionIdsPerGpu{};
         std::vector<int> hashTableLocations{};
+    };
+
+
+
+
+
+
+
+
+
+
+
+
+    class ReplicatedSingleGpuMinhasher : public GpuMinhasher{
+    public:
+        using Key = GpuMinhasher::Key;
+    private:
+        using DeviceSwitcher = cub::SwitchDevice;
+
+        template<class T>
+        using HostBuffer = helpers::SimpleAllocationPinnedHost<T, 5>;
+
+        struct QueryData{
+            std::vector<std::unique_ptr<MinhasherHandle>> singlegpuMinhasherHandles;
+
+            MemoryUsage getMemoryInfo() const{
+                MemoryUsage mem{};
+
+                return mem;
+            }
+        };
+
+    public: 
+
+        //base must be located on one of deviceIds gpus. it is replicated to all gpus of deviceIds
+        ReplicatedSingleGpuMinhasher(std::unique_ptr<SingleGpuMinhasher>&& base, std::vector<int> deviceIds_)
+            : deviceIds(deviceIds_)
+        {
+            const int baseDeviceId = base->getDeviceId();
+            auto iter = std::find(deviceIds.begin(), deviceIds.end(), baseDeviceId);
+            assert(iter != deviceIds.end());
+            const int baseIndex = std::distance(deviceIds.begin(), iter);
+
+            sgpuMinhashers.resize(deviceIds.size());
+            sgpuMinhashers[baseIndex] = std::move(base);
+
+            for(size_t i = 0; i < deviceIds.size(); i++){
+                const int targetDeviceId = deviceIds[i];
+                if(targetDeviceId != baseDeviceId){
+                    sgpuMinhashers[i] = sgpuMinhashers[baseIndex]->makeCopy(targetDeviceId);
+                }
+            }
+        }
+
+        int addHashTables(int, const int*, cudaStream_t) override{
+            return 0;
+        }
+
+        void insert(
+            const unsigned int*,
+            int,
+            const int*,
+            std::size_t,
+            const read_number*,
+            const read_number*,
+            int,
+            int,
+            const int*,
+            cudaStream_t,
+            rmm::mr::device_memory_resource*
+        ) override {
+            
+        }
+
+        int checkInsertionErrors(
+            int,
+            int,
+            cudaStream_t        
+        ) override{
+            return 0;
+        }
+
+        MinhasherHandle makeMinhasherHandle() const override{
+            auto ptr = std::make_unique<QueryData>();
+
+            const int numMinhashers = sgpuMinhashers.size();
+
+            for(int i = 0; i < numMinhashers; i++){
+                DeviceSwitcher ds(sgpuMinhashers[i]->getDeviceId());
+
+                ptr->singlegpuMinhasherHandles.emplace_back(std::make_unique<MinhasherHandle>(sgpuMinhashers[i]->makeMinhasherHandle()));
+            }
+
+            CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
+
+            std::unique_lock<SharedMutex> lock(sharedmutex);
+            const int handleid = counter++;
+            MinhasherHandle h = constructHandle(handleid);
+
+            tempdataVector.emplace_back(std::move(ptr));
+
+            return h;
+        }
+
+        void destroyHandle(MinhasherHandle& handle) const override{            
+
+            std::unique_lock<SharedMutex> lock(sharedmutex);
+
+            const int id = handle.getId();
+            assert(id < int(tempdataVector.size()));
+
+            const int numMinhashers = sgpuMinhashers.size();
+            for(int i = 0; i < numMinhashers; i++){
+                sgpuMinhashers[i]->destroyHandle(*tempdataVector[id]->singlegpuMinhasherHandles[i]);
+            }
+            
+            {
+                tempdataVector[id] = nullptr;
+            }
+            handle = constructHandle(std::numeric_limits<int>::max());
+        }
+
+        void determineNumValues(
+            MinhasherHandle& queryHandle,
+            const unsigned int* d_sequenceData2Bit,
+            std::size_t encodedSequencePitchInInts,
+            const int* d_sequenceLengths,
+            int numSequences,
+            int* d_numValuesPerSequence,
+            int& totalNumValues,
+            cudaStream_t stream,
+            rmm::mr::device_memory_resource* mr
+        ) const override{
+            int currentDeviceId = 0;
+            CUDACHECK(cudaGetDevice(&currentDeviceId));
+            auto deviceIdIter = std::find(deviceIds.begin(), deviceIds.end(), currentDeviceId);
+            assert(deviceIdIter != deviceIds.end());
+            const int sgpuIndex = std::distance(deviceIds.begin(), deviceIdIter);
+
+            QueryData* const queryData = getQueryDataFromHandle(queryHandle);
+
+            sgpuMinhashers[sgpuIndex]->determineNumValues(
+                *queryData->singlegpuMinhasherHandles[sgpuIndex].get(),
+                d_sequenceData2Bit,
+                encodedSequencePitchInInts,
+                d_sequenceLengths,
+                numSequences,
+                d_numValuesPerSequence,
+                totalNumValues,
+                stream,
+                mr
+            );
+        }
+
+        void retrieveValues(
+            MinhasherHandle& queryHandle,
+            int numSequences,
+            int totalNumValues,
+            read_number* d_values,
+            const int* d_numValuesPerSequence,
+            int* d_offsets, //numSequences + 1
+            cudaStream_t stream,
+            rmm::mr::device_memory_resource* mr
+        ) const override{
+            int currentDeviceId = 0;
+            CUDACHECK(cudaGetDevice(&currentDeviceId));
+            auto deviceIdIter = std::find(deviceIds.begin(), deviceIds.end(), currentDeviceId);
+            assert(deviceIdIter != deviceIds.end());
+            const int sgpuIndex = std::distance(deviceIds.begin(), deviceIdIter);
+
+            QueryData* const queryData = getQueryDataFromHandle(queryHandle);
+
+            sgpuMinhashers[sgpuIndex]->retrieveValues(
+                *queryData->singlegpuMinhasherHandles[sgpuIndex].get(),
+                numSequences,
+                totalNumValues,
+                d_values,
+                d_numValuesPerSequence,
+                d_offsets,
+                stream,
+                mr
+            );
+        }
+
+
+        void compact(cudaStream_t) override {      
+        }
+
+        void constructionIsFinished(cudaStream_t) override{            
+        }
+
+        MemoryUsage getMemoryInfo() const noexcept override{
+            MemoryUsage mem{};
+
+            for(const auto& minhasher : sgpuMinhashers){
+                mem += minhasher->getMemoryInfo();
+            }
+
+            return mem;
+        }
+
+        MemoryUsage getMemoryInfo(const MinhasherHandle& handle) const noexcept override{
+            return tempdataVector[handle.getId()]->getMemoryInfo();
+        }
+
+        int getNumResultsPerMapThreshold() const noexcept override{
+            return sgpuMinhashers[0]->getNumResultsPerMapThreshold();
+        }
+        
+        int getNumberOfMaps() const noexcept override{
+            return sgpuMinhashers[0]->getNumberOfMaps();
+        }
+
+        int getKmerSize() const noexcept override{
+            return sgpuMinhashers[0]->getKmerSize();
+        }
+
+        void destroy(){
+            for(auto& minhasher : sgpuMinhashers){
+                DeviceSwitcher sd(minhasher->getDeviceId());
+                minhasher->destroy();
+            }
+        }
+
+        bool hasGpuTables() const noexcept override {
+            return true;
+        }
+
+        void setThreadPool(ThreadPool* /*tp*/) override {}
+
+        void setHostMemoryLimitForConstruction(std::size_t /*bytes*/) override{
+
+        }
+
+        void setDeviceMemoryLimitsForConstruction(const std::vector<std::size_t>&) override {
+
+        }
+
+        void writeToStream(std::ostream& /*os*/) const override{
+            std::cerr << "ReplicatedSingleGpuMinhasher::writeToStream not supported\n";
+        }
+
+        int loadFromStream(std::ifstream& /*is*/, int /*numMapsUpperLimit*/) override{
+            std::cerr << "ReplicatedSingleGpuMinhasher::loadFromStream not supported\n";
+            return 0;
+        } 
+
+        bool canWriteToStream() const noexcept override { return false; };
+        bool canLoadFromStream() const noexcept override { return false; };
+
+private:        
+
+        std::uint64_t getKmerMask() const{
+            constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
+
+            return std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - getKmerSize()) * 2);
+        }
+
+        QueryData* getQueryDataFromHandle(const MinhasherHandle& queryHandle) const{
+            std::shared_lock<SharedMutex> lock(sharedmutex);
+
+            return tempdataVector[queryHandle.getId()].get();
+        }       
+
+        mutable int counter = 0;
+        mutable SharedMutex sharedmutex{};
+
+        std::vector<int> deviceIds;
+        std::vector<std::unique_ptr<SingleGpuMinhasher>> sgpuMinhashers{};
+        mutable std::vector<std::unique_ptr<QueryData>> tempdataVector{};
     };
 
 

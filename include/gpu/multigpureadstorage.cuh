@@ -155,6 +155,8 @@ public:
 
     using IndexType = read_number;
 
+    enum class Layout{FirstFit, EvenShare};
+
     struct TempData{
 
         TempData() : event{cudaEventDisableTiming}{
@@ -193,7 +195,8 @@ public:
         std::vector<int> deviceIds_, 
         std::vector<std::size_t> memoryLimitsPerDevice_,
         std::size_t memoryLimitHost,
-        int numQualBits
+        int numQualBits,
+        Layout gpuDataLayout
     ){
 
         rebuild(
@@ -201,7 +204,8 @@ public:
             deviceIds_,
             memoryLimitsPerDevice_,
             memoryLimitHost,
-            numQualBits
+            numQualBits,
+            gpuDataLayout
         );
 
     }
@@ -211,7 +215,8 @@ public:
         std::vector<int> deviceIds_, 
         std::vector<std::size_t> memoryLimitsPerDevice,
         std::size_t memoryLimitHost,
-        int /*numQualBits*/
+        int /*numQualBits*/,
+        Layout gpuDataLayout
     ){
         assert(deviceIds_.size() > 0);
 
@@ -333,7 +338,7 @@ public:
 
         
 
-        
+        const MultiGpu2dArrayLayout dataLayout = gpuDataLayout == Layout::FirstFit ? MultiGpu2dArrayLayout::FirstFit : MultiGpu2dArrayLayout::EvenShare;
 
         //handle sequences
         const int numColumnsSequences = SequenceHelpers::getEncodedNumInts2Bit(cpuReadStorage->getSequenceLengthUpperBound());
@@ -344,7 +349,7 @@ public:
                 sizeof(unsigned int),
                 deviceIds,
                 memoryLimitsPerDevice,
-                MultiGpu2dArrayLayout::EvenShare,
+                dataLayout,
                 MultiGpu2dArrayInitMode::CanDiscardRows
             )
         );
@@ -449,7 +454,7 @@ public:
                     sizeof(unsigned int),
                     deviceIds,
                     memoryLimitsPerDevice,
-                    MultiGpu2dArrayLayout::EvenShare,
+                    dataLayout,
                     MultiGpu2dArrayInitMode::CanDiscardRows
                 )
             );

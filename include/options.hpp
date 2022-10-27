@@ -27,8 +27,14 @@ namespace care
         Print
     };
 
+    enum class GpuDataLayout{
+        FirstFit,
+        EvenShare
+    };
+
     std::string to_string(SequencePairType s);
     std::string to_string(CorrectionType t);
+    std::string to_string(GpuDataLayout t);
 
 
     //Options which can be parsed from command-line arguments
@@ -68,7 +74,11 @@ namespace care
         int fixedStepsize{};
         bool showProgress = false;
         bool canUseGpu = false;
-        bool replicateGpuData = false;
+        bool replicateGpuReadData = false;
+        bool replicateGpuHashtables = false;
+        GpuDataLayout gpuReadDataLayout = GpuDataLayout::EvenShare;
+        GpuDataLayout gpuHashtableLayout = GpuDataLayout::EvenShare;
+
         int warpcore = 0;
         int threads = 1;
         std::size_t fixedNumberOfReads = 0;

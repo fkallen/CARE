@@ -20,6 +20,7 @@ namespace gpu{
         SingleSingleHash,
         Multi,
         MultiSingleHash,
+        ReplicatedSingle,
         None
     };
 
