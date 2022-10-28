@@ -303,9 +303,6 @@ namespace gpu{
         int numAnchors = 0;
         int numCorrectedCandidates = 0;
         PinnedBuffer<int> h_numCorrectedAnchors{};
-        PinnedBuffer<read_number> h_anchorReadIds{};
-        PinnedBuffer<bool> h_anchor_is_corrected{};
-        PinnedBuffer<AnchorHighQualityFlag> h_is_high_quality_anchor{};
         PinnedBuffer<std::uint8_t> serializedAnchorResults{};
         PinnedBuffer<std::uint32_t> serializedAnchorOffsets{};
         PinnedBuffer<std::uint8_t> serializedCandidateResults{};
@@ -321,9 +318,6 @@ namespace gpu{
             };
 
             handleHost(h_numCorrectedAnchors);
-            handleHost(h_anchorReadIds);
-            handleHost(h_anchor_is_corrected);
-            handleHost(h_is_high_quality_anchor);
             handleHost(serializedAnchorResults);
             handleHost(serializedAnchorOffsets);
             handleHost(serializedCandidateResults);
@@ -597,92 +591,6 @@ namespace gpu{
         rmm::mr::device_memory_resource* mr;
     };
 
-
-    class OutputConstructor{
-    public:
-
-        OutputConstructor() = default;
-
-        template<class Any>
-        OutputConstructor(
-            Any& correctionFlags_,
-            const ProgramOptions& programOptions_
-        ) :
-            programOptions{&programOptions_}
-        {
-
-        }
-
-
-        SerializedEncodedCorrectionOutput constructSerializedEncodedResults(const GpuErrorCorrectorRawOutput& currentOutput) const{
-            //assert(cudaSuccess == currentOutput.event.query());
-
-            if(currentOutput.nothingToDo){
-                return SerializedEncodedCorrectionOutput{};
-            }
-
-            SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput;
-
-            //currentOutput.numCorrectedAnchors = *currentOutput.h_numCorrectedAnchors;
-            const int numCorrectedAnchors = *currentOutput.h_numCorrectedAnchors;
-
-            serializedEncodedCorrectionOutput.numAnchors = numCorrectedAnchors;
-            serializedEncodedCorrectionOutput.numCandidates = 0;
-            //serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.resize(currentOutput.serializedAnchorResults.size());
-            serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.resize(currentOutput.serializedAnchorOffsets[numCorrectedAnchors]);
-            serializedEncodedCorrectionOutput.beginOffsetsAnchors.resize(numCorrectedAnchors+1);
-            serializedEncodedCorrectionOutput.beginOffsetsAnchors[0] = 0;           
-
-            {
-                nvtx::ScopedRange sr("copySerializedAnchors", 1);
-
-                //currentOutput.serializedAnchorResults only contains data of corrected anchors. can copy directly.
-                std::copy(
-                    currentOutput.serializedAnchorResults.data(),
-                    currentOutput.serializedAnchorResults.data() + currentOutput.serializedAnchorOffsets[numCorrectedAnchors],
-                    serializedEncodedCorrectionOutput.serializedEncodedAnchorCorrections.data()
-                );
-                std::copy(
-                    currentOutput.serializedAnchorOffsets.data(),
-                    currentOutput.serializedAnchorOffsets.data() + numCorrectedAnchors + 1,
-                    serializedEncodedCorrectionOutput.beginOffsetsAnchors.data()
-                );
-                serializedEncodedCorrectionOutput.numAnchors = numCorrectedAnchors;
-            }
-
-            if(programOptions->correctCandidates){
-                serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.resize(currentOutput.serializedCandidateResults.size());
-                serializedEncodedCorrectionOutput.beginOffsetsCandidates.resize(currentOutput.numCorrectedCandidates+1);
-                serializedEncodedCorrectionOutput.beginOffsetsCandidates[0] = 0;   
-
-                nvtx::ScopedRange sr("copySerializedCands", 1);
-
-                std::copy(
-                    currentOutput.serializedCandidateResults.data(),
-                    currentOutput.serializedCandidateResults.data() + currentOutput.serializedCandidateOffsets[currentOutput.numCorrectedCandidates],
-                    serializedEncodedCorrectionOutput.serializedEncodedCandidateCorrections.data()
-                );
-                std::copy(
-                    currentOutput.serializedCandidateOffsets.data(),
-                    currentOutput.serializedCandidateOffsets.data() + currentOutput.numCorrectedCandidates + 1,
-                    serializedEncodedCorrectionOutput.beginOffsetsCandidates.data()
-                );
-                serializedEncodedCorrectionOutput.numCandidates = currentOutput.numCorrectedCandidates;
-            }
-
-
-            return serializedEncodedCorrectionOutput;
-        }
-
-        MemoryUsage getMemoryInfo() const{
-            MemoryUsage info{};
-            return info;
-        }
-    public: //private:
-        //ReadCorrectionFlags* correctionFlags;
-        const ProgramOptions* programOptions;
-    };
-
     class GpuErrorCorrector{
 
     public:
@@ -914,72 +822,17 @@ namespace gpu{
             nvtx::pop_range();
             
             if(programOptions->correctCandidates) {
-                //CUDACHECK(cudaEventRecord(events[0], stream));
 
-                //#ifdef CANDS_FOREST_FLAGS_COMPUTE_AHEAD
-                //if(programOptions->correctionType == CorrectionType::Forest){
-                    {
-                        nvtx::ScopedRange sr("candidate hq flags", 7);
-                        //bool* h_excludeFlags = h_flagsCandidates.data();
+                correctionFlags->isCorrectedAsHQAnchor(
+                    d_hqAnchorCorrectionOfCandidateExists, 
+                    d_candidate_read_ids, 
+                    currentNumCandidates, 
+                    stream
+                );
 
-                        //CUDACHECK(cudaDeviceSynchronize());
-
-                        //helpers::GpuTimer timer3(stream, "full device");
-
-                        correctionFlags->isCorrectedAsHQAnchor(
-                            d_hqAnchorCorrectionOfCandidateExists, 
-                            d_candidate_read_ids, 
-                            currentNumCandidates, 
-                            stream
-                        );
-
-                        // timer3.stop();
-                        // timer3.print();
-
-                        // helpers::GpuTimer timer1(stream, "host");
-
-                        // //corrections of candidates for which a high quality anchor correction exists will not be used
-                        // //-> don't compute them
-                        // for(int i = 0; i < currentNumCandidates; i++){
-                        //     const read_number candidateReadId = currentInput->h_candidate_read_ids[i];
-                        //     h_excludeFlags[i] = correctionFlags->isCorrectedAsHQAnchor(candidateReadId);
-                        // }
-
-                        // cudaMemcpyAsync(
-                        //     d_hqAnchorCorrectionOfCandidateExists,
-                        //     h_excludeFlags,
-                        //     sizeof(bool) * currentNumCandidates,
-                        //     H2D,
-                        //     //extraStream
-                        //     stream
-                        // );
-                        // timer1.stop();
-                        // timer1.print();
-
-                        // rmm::device_uvector<bool> d_output(currentNumCandidates, stream, mr);
-
-                        // CUDACHECK(cudaDeviceSynchronize());
-
-                        // helpers::GpuTimer timer2(stream, "device with pinned access");
-
-                        // correctionFlags->isCorrectedAsHQAnchor(d_output.data(), d_candidate_read_ids, currentNumCandidates, stream);
-
-                        // timer2.stop();
-                        // timer2.print();
-
-                        // assert(thrust::equal(rmm::exec_policy_nosync(stream, mr),
-                        //     d_output.begin(),
-                        //     d_output.end(),
-                        //     d_hqAnchorCorrectionOfCandidateExists
-                        // ));
-                    }
-
-                    nvtx::push_range("correctCandidates", 9);
-                    correctCandidates(stream);
-                    nvtx::pop_range();
-
-                //}
-                //#endif
+                nvtx::push_range("correctCandidates", 9);
+                correctCandidates(stream);
+                nvtx::pop_range();
             }
             
 
@@ -987,30 +840,13 @@ namespace gpu{
             copyAnchorResultsFromDeviceToHost(stream);
             nvtx::pop_range();
 
-            if(programOptions->correctCandidates) {
-                // cudaStream_t candsStream = extraStream;
-                // CUDACHECK(cudaStreamWaitEvent(candsStream, events[0], 0)); 
-
-                // nvtx::push_range("correctCandidates", 9);
-                // correctCandidates(candsStream);
-                // nvtx::pop_range();
-
-                // nvtx::push_range("copyCandidateResultsFromDeviceToHost", 4);
-                // copyCandidateResultsFromDeviceToHost(candsStream);
-                // nvtx::pop_range(); 
-
-                // CUDACHECK(cudaEventRecord(events[0], candsStream)); 
-                // CUDACHECK(cudaStreamWaitEvent(stream, events[0], 0));    
-
+            if(programOptions->correctCandidates) { 
                 nvtx::push_range("copyCandidateResultsFromDeviceToHost", 4);
                 copyCandidateResultsFromDeviceToHost(stream);
                 nvtx::pop_range();   
             }
 
-            managedgpumsa = nullptr;
-
-            currentOutput->h_anchorReadIds.resize(currentNumAnchors);
-            std::copy_n(currentInput->h_anchorReadIds.data(), currentNumAnchors, currentOutput->h_anchorReadIds.data());            
+            managedgpumsa = nullptr;         
 
             //after the current work in stream is completed, all results in currentOutput are ready to use.
             CUDACHECK(cudaEventRecord(currentOutput->event, stream));
@@ -1544,8 +1380,6 @@ namespace gpu{
             currentOutput->serializedAnchorResults.resize(maxResultBytes);
             currentOutput->serializedAnchorOffsets.resize(currentNumAnchors + 1);
             currentOutput->h_numCorrectedAnchors.resize(1);
-            currentOutput->h_anchor_is_corrected.resize(currentNumAnchors);
-            currentOutput->h_is_high_quality_anchor.resize(currentNumAnchors);
 
             //copy data to host. since number of output bytes of serialized results is only available 
             // on the device, use a kernel
@@ -1556,10 +1390,6 @@ namespace gpu{
                     d_numCorrectedAnchors = d_num_indices_of_corrected_anchors.data(),
                     h_serializedAnchorOffsets = currentOutput->serializedAnchorOffsets.data(),
                     d_numBytesPerSerializedAnchorPrefixSum = d_numBytesPerSerializedAnchorPrefixSum,
-                    h_anchor_is_corrected = currentOutput->h_anchor_is_corrected.data(),
-                    d_anchor_is_corrected = d_anchor_is_corrected.data(),
-                    h_is_high_quality_anchor = currentOutput->h_is_high_quality_anchor.data(),
-                    d_is_high_quality_anchor = d_is_high_quality_anchor.data(),
                     h_serializedAnchorResults = currentOutput->serializedAnchorResults.data(),
                     d_serializedAnchorResults = d_serializedAnchorResults,
                     currentNumAnchors = currentNumAnchors
@@ -1575,11 +1405,6 @@ namespace gpu{
 
                     for(int i = tid; i < numCorrectedAnchors + 1; i += stride){
                         h_serializedAnchorOffsets[i] = d_numBytesPerSerializedAnchorPrefixSum[i];
-                    }
-
-                    for(int i = tid; i < currentNumAnchors; i += stride){
-                        h_anchor_is_corrected[i] = d_anchor_is_corrected[i];
-                        h_is_high_quality_anchor[i] = d_is_high_quality_anchor[i];
                     }
 
                     int serializedBytes = d_numBytesPerSerializedAnchorPrefixSum[numCorrectedAnchors];
@@ -2830,28 +2655,6 @@ namespace gpu{
                 currentNumAnchors, 
                 stream
             );
-        }
-
-        void updateCorrectionFlags(const GpuErrorCorrectorRawOutput& currentOutput) const{
-            // if(!currentOutput.nothingToDo){
-            //     for(int anchor_index = 0; anchor_index < currentOutput.numAnchors; anchor_index++){
-            //         const read_number readId = currentOutput.h_anchorReadIds[anchor_index];
-            //         const bool isCorrected = currentOutput.h_anchor_is_corrected[anchor_index];
-            //         const bool isHQ = currentOutput.h_is_high_quality_anchor[anchor_index].hq();
-
-            //         if(isHQ){
-            //             correctionFlags->setCorrectedAsHqAnchor(readId);
-            //         }
-
-            //         if(isCorrected){
-            //             ; //nothing
-            //         }else{
-            //             correctionFlags->setCouldNotBeCorrectedAsAnchor(readId);
-            //         }
-
-            //         assert(!(isHQ && !isCorrected));                   
-            //     }
-            // }
         }
 
     private:
