@@ -77,6 +77,15 @@ namespace care{
         ReadCorrectionFlags(std::size_t numReads)
             : size(numReads), flags(std::make_unique<std::uint8_t[]>(numReads)){
             std::fill(flags.get(), flags.get() + size, 0);
+
+            #ifdef __CUDACC__
+            cudaError_t status = cudaHostRegister(flags.get(), sizeInBytes(), cudaHostRegisterDefault);
+            assert(status == cudaSuccess);
+            #endif
+        }
+
+        ~ReadCorrectionFlags(){
+            cudaHostUnregister(flags.get());
         }
 
         std::size_t sizeInBytes() const noexcept{
@@ -98,6 +107,32 @@ namespace care{
         void setCouldNotBeCorrectedAsAnchor(std::int64_t position) const noexcept{
             flags[position] = readCouldNotBeCorrectedAsAnchor();
         }
+
+        #ifdef __CUDACC__
+        void isCorrectedAsHQAnchor(bool* output, const read_number* readIds, int numIds, cudaStream_t stream) const noexcept{
+            helpers::lambda_kernel<<<SDIV(numIds, 128), 128, 0, stream>>>(
+                [
+                    flags = flags.get(),
+                    output,
+                    readIds,
+                    numIds
+                ] __device__(){
+                    constexpr std::uint8_t HQVALUE = 1;
+                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                    const int stride = blockDim.x * gridDim.x;
+
+                    for(int i = tid; i < numIds; i += stride){
+                        if(flags[readIds[i]] == HQVALUE){
+                            output[i] = true;
+                        }else{
+                            output[i] = false;
+                        }
+                    }
+                }
+            );
+            CUDACHECKASYNC;
+        }
+        #endif
 
     private:
         static constexpr std::uint8_t readCorrectedAsHQAnchor() noexcept{ return 1; };

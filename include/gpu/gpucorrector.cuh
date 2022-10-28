@@ -18,6 +18,7 @@
 #include <gpu/gpumsamanaged.cuh>
 #include <gpu/global_cuda_stream_pool.cuh>
 #include <gpu/minhashqueryfilter.cuh>
+#include <gpu/gpubitarray.cuh>
 
 #include <config.hpp>
 #include <util.hpp>
@@ -110,6 +111,112 @@ namespace gpu{
         int operator()(const int num) const noexcept{
             return num == doNotUseEditsValue ? decodedSequencePitchInBytes : 0;
         }
+    };
+
+
+    class GpuReadCorrectionFlags{
+    public:
+        GpuReadCorrectionFlags(std::vector<int> deviceIds_, std::size_t numReads_)
+            : deviceIds(deviceIds_){
+
+            const int numDevices = deviceIds.size();
+            for(int d = 0; d < numDevices; d++){
+                cub::SwitchDevice sd(deviceIds[d]);
+
+                vec_d_isHqAnchor.emplace_back(makeGpuBitArray<read_number>(numReads_));
+                events.emplace_back(cudaEventDisableTiming);
+            }
+        }
+
+        ~GpuReadCorrectionFlags(){
+            const int numDevices = deviceIds.size();
+            for(int d = 0; d < numDevices; d++){
+                cub::SwitchDevice sd(deviceIds[d]);
+
+                destroyGpuBitArray(vec_d_isHqAnchor[d]);
+            }
+        }
+
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage result;
+
+            const int numDevices = deviceIds.size();
+            for(int d = 0; d < numDevices; d++){
+                result.device[deviceIds[d]] = vec_d_isHqAnchor[d].numAllocatedBytes;
+            }
+
+            return result;
+        }
+
+        void isCorrectedAsHQAnchor(bool* d_output, const read_number* d_readIds, int numIds, cudaStream_t stream) const noexcept{
+            if(numIds == 0) return;
+
+            int deviceId = 0;
+            CUDACHECK(cudaGetDevice(&deviceId));
+            auto it = std::find(deviceIds.begin(), deviceIds.end(), deviceId);
+            assert(it != deviceIds.end());
+            const int index = std::distance(deviceIds.begin(), it);
+
+            readBitarray<<<SDIV(numIds, 128), 128, 0, stream>>>(
+                d_output, 
+                vec_d_isHqAnchor[index],
+                d_readIds,
+                numIds
+            );
+            CUDACHECKASYNC;
+        }
+
+        //d_readIds must be unique
+        void setIsCorrectedAsHQAnchor(const bool* d_flags, const read_number* d_readIds, int numIds, cudaStream_t stream) noexcept{
+            if(numIds == 0) return;
+
+            int deviceId = 0;
+            CUDACHECK(cudaGetDevice(&deviceId));
+            auto it = std::find(deviceIds.begin(), deviceIds.end(), deviceId);
+            assert(it != deviceIds.end());
+            const int index = std::distance(deviceIds.begin(), it);
+
+            setBitarray<<<SDIV(numIds, 128), 128, 0, stream>>>(
+                vec_d_isHqAnchor[index],
+                d_flags, 
+                d_readIds,
+                numIds
+            );
+            CUDACHECKASYNC;
+
+            //set on all other devices
+            const int numDevices = deviceIds.size();
+            if(numDevices > 1){
+                CUDACHECK(cudaEventRecord(events[index], stream));
+            
+                for(int d = 0; d < numDevices; d++){
+                    if(deviceIds[d] != deviceId){
+                        cub::SwitchDevice sd(deviceIds[d]);
+                        CUDACHECK(cudaStreamWaitEvent(cudaStreamPerThread, events[index], 0));
+
+                        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
+                        rmm::device_uvector<bool> d_flags_remote(numIds, cudaStreamPerThread, mr);
+                        rmm::device_uvector<read_number> d_readIds_remote(numIds, cudaStreamPerThread, mr);
+                        CUDACHECK(cudaMemcpyPeerAsync(d_flags_remote.data(), deviceIds[d], d_flags, deviceId, sizeof(bool) * numIds, cudaStreamPerThread));
+                        CUDACHECK(cudaMemcpyPeerAsync(d_readIds_remote.data(), deviceIds[d], d_readIds, deviceId, sizeof(read_number) * numIds, cudaStreamPerThread));
+
+                        setBitarray<<<SDIV(numIds, 128), 128, 0, cudaStreamPerThread>>>(
+                            vec_d_isHqAnchor[d],
+                            d_flags_remote.data(), 
+                            d_readIds_remote.data(),
+                            numIds
+                        );
+                        CUDACHECKASYNC;
+                    }
+                }
+            }
+
+        }
+
+    private:
+        std::vector<CudaEvent> events{};
+        std::vector<int> deviceIds{};
+        std::vector<GpuBitArray<read_number>> vec_d_isHqAnchor{};
     };
 
 
@@ -494,11 +601,11 @@ namespace gpu{
 
         OutputConstructor() = default;
 
+        template<class Any>
         OutputConstructor(
-            ReadCorrectionFlags& correctionFlags_,
+            Any& correctionFlags_,
             const ProgramOptions& programOptions_
         ) :
-            correctionFlags{&correctionFlags_},
             programOptions{&programOptions_}
         {
 
@@ -526,24 +633,6 @@ namespace gpu{
 
             {
                 nvtx::ScopedRange sr("copySerializedAnchors", 1);
-
-                // for(int anchor_index = 0; anchor_index < currentOutput.numAnchors; anchor_index++){
-                //     const read_number readId = currentOutput.h_anchorReadIds[anchor_index];
-                //     const bool isCorrected = currentOutput.h_anchor_is_corrected[anchor_index];
-                //     const bool isHQ = currentOutput.h_is_high_quality_anchor[anchor_index].hq();
-
-                //     if(isHQ){
-                //         correctionFlags->setCorrectedAsHqAnchor(readId);
-                //     }
-
-                //     if(isCorrected){
-                //         ; //nothing
-                //     }else{
-                //         correctionFlags->setCouldNotBeCorrectedAsAnchor(readId);
-                //     }
-
-                //     assert(!(isHQ && !isCorrected));                   
-                // }
 
                 //currentOutput.serializedAnchorResults only contains data of corrected anchors. can copy directly.
                 std::copy(
@@ -588,7 +677,7 @@ namespace gpu{
             return info;
         }
     public: //private:
-        ReadCorrectionFlags* correctionFlags;
+        //ReadCorrectionFlags* correctionFlags;
         const ProgramOptions* programOptions;
     };
 
@@ -611,7 +700,7 @@ namespace gpu{
 
         GpuErrorCorrector(
             const GpuReadStorage& gpuReadStorage_,
-            const ReadCorrectionFlags& correctionFlags_,
+            GpuReadCorrectionFlags& correctionFlags_,
             const ProgramOptions& programOptions_,
             int maxAnchorsPerCall,
             rmm::mr::device_memory_resource* mr_,
@@ -819,6 +908,7 @@ namespace gpu{
 
             nvtx::push_range("correctanchors", 8);
             correctAnchors(stream);
+            updateCorrectionFlags(stream);
             nvtx::pop_range();
             
             if(programOptions->correctCandidates) {
@@ -827,24 +917,59 @@ namespace gpu{
                 //#ifdef CANDS_FOREST_FLAGS_COMPUTE_AHEAD
                 //if(programOptions->correctionType == CorrectionType::Forest){
                     {
-                    nvtx::ScopedRange sr("candidate hq flags", 7);
-                    bool* h_excludeFlags = h_flagsCandidates.data();
+                        nvtx::ScopedRange sr("candidate hq flags", 7);
+                        //bool* h_excludeFlags = h_flagsCandidates.data();
 
-                    //corrections of candidates for which a high quality anchor correction exists will not be used
-                    //-> don't compute them
-                    for(int i = 0; i < currentNumCandidates; i++){
-                        const read_number candidateReadId = currentInput->h_candidate_read_ids[i];
-                        h_excludeFlags[i] = correctionFlags->isCorrectedAsHQAnchor(candidateReadId);
-                    }
+                        //CUDACHECK(cudaDeviceSynchronize());
 
-                    cudaMemcpyAsync(
-                        d_hqAnchorCorrectionOfCandidateExists,
-                        h_excludeFlags,
-                        sizeof(bool) * currentNumCandidates,
-                        H2D,
-                        //extraStream
-                        stream
-                    );
+                        //helpers::GpuTimer timer3(stream, "full device");
+
+                        correctionFlags->isCorrectedAsHQAnchor(
+                            d_hqAnchorCorrectionOfCandidateExists, 
+                            d_candidate_read_ids, 
+                            currentNumCandidates, 
+                            stream
+                        );
+
+                        // timer3.stop();
+                        // timer3.print();
+
+                        // helpers::GpuTimer timer1(stream, "host");
+
+                        // //corrections of candidates for which a high quality anchor correction exists will not be used
+                        // //-> don't compute them
+                        // for(int i = 0; i < currentNumCandidates; i++){
+                        //     const read_number candidateReadId = currentInput->h_candidate_read_ids[i];
+                        //     h_excludeFlags[i] = correctionFlags->isCorrectedAsHQAnchor(candidateReadId);
+                        // }
+
+                        // cudaMemcpyAsync(
+                        //     d_hqAnchorCorrectionOfCandidateExists,
+                        //     h_excludeFlags,
+                        //     sizeof(bool) * currentNumCandidates,
+                        //     H2D,
+                        //     //extraStream
+                        //     stream
+                        // );
+                        // timer1.stop();
+                        // timer1.print();
+
+                        // rmm::device_uvector<bool> d_output(currentNumCandidates, stream, mr);
+
+                        // CUDACHECK(cudaDeviceSynchronize());
+
+                        // helpers::GpuTimer timer2(stream, "device with pinned access");
+
+                        // correctionFlags->isCorrectedAsHQAnchor(d_output.data(), d_candidate_read_ids, currentNumCandidates, stream);
+
+                        // timer2.stop();
+                        // timer2.print();
+
+                        // assert(thrust::equal(rmm::exec_policy_nosync(stream, mr),
+                        //     d_output.begin(),
+                        //     d_output.end(),
+                        //     d_hqAnchorCorrectionOfCandidateExists
+                        // ));
                     }
 
                     nvtx::push_range("correctCandidates", 9);
@@ -2696,26 +2821,35 @@ namespace gpu{
             return -1;
         }
 
+        void updateCorrectionFlags(cudaStream_t stream) const{
+            correctionFlags->setIsCorrectedAsHQAnchor(
+                reinterpret_cast<const bool*>(d_is_high_quality_anchor.data()), 
+                d_anchorReadIds.data(), 
+                currentNumAnchors, 
+                stream
+            );
+        }
+
         void updateCorrectionFlags(const GpuErrorCorrectorRawOutput& currentOutput) const{
-            if(!currentOutput.nothingToDo){
-                for(int anchor_index = 0; anchor_index < currentOutput.numAnchors; anchor_index++){
-                    const read_number readId = currentOutput.h_anchorReadIds[anchor_index];
-                    const bool isCorrected = currentOutput.h_anchor_is_corrected[anchor_index];
-                    const bool isHQ = currentOutput.h_is_high_quality_anchor[anchor_index].hq();
+            // if(!currentOutput.nothingToDo){
+            //     for(int anchor_index = 0; anchor_index < currentOutput.numAnchors; anchor_index++){
+            //         const read_number readId = currentOutput.h_anchorReadIds[anchor_index];
+            //         const bool isCorrected = currentOutput.h_anchor_is_corrected[anchor_index];
+            //         const bool isHQ = currentOutput.h_is_high_quality_anchor[anchor_index].hq();
 
-                    if(isHQ){
-                        correctionFlags->setCorrectedAsHqAnchor(readId);
-                    }
+            //         if(isHQ){
+            //             correctionFlags->setCorrectedAsHqAnchor(readId);
+            //         }
 
-                    if(isCorrected){
-                        ; //nothing
-                    }else{
-                        correctionFlags->setCouldNotBeCorrectedAsAnchor(readId);
-                    }
+            //         if(isCorrected){
+            //             ; //nothing
+            //         }else{
+            //             correctionFlags->setCouldNotBeCorrectedAsAnchor(readId);
+            //         }
 
-                    assert(!(isHQ && !isCorrected));                   
-                }
-            }
+            //         assert(!(isHQ && !isCorrected));                   
+            //     }
+            // }
         }
 
     private:
@@ -2740,7 +2874,7 @@ namespace gpu{
 
         std::map<int, int> numCandidatesPerReadMap{};
 
-        const ReadCorrectionFlags* correctionFlags;
+        GpuReadCorrectionFlags* correctionFlags;
 
         const GpuReadStorage* gpuReadStorage;
 

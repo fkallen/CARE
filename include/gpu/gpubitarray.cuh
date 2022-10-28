@@ -175,7 +175,7 @@ void readBitarray(bool* __restrict__ result, GpuBitArray<Index_t> bitarray, cons
 
 template<class Index_t>
 __global__
-void setBitarray(GpuBitArray<Index_t> bitarray, bool* __restrict__ values, const Index_t* __restrict__ positions, int nPositions){
+void setBitarray(GpuBitArray<Index_t> bitarray, const bool* __restrict__ values, const Index_t* __restrict__ positions, int nPositions){
     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
     const int stride = blockDim.x * gridDim.x;
 

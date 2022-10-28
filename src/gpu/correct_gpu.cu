@@ -36,129 +36,6 @@ namespace care{
 namespace gpu{
 
 
-#if 0
-
-//TODO classifier?
-class SimpleCpuCorrectionPipeline{
-    template<class T>
-    using HostContainer = helpers::SimpleAllocationPinnedHost<T, 0>;
-
-public:
-    template<class ResultProcessor, class BatchCompletion>
-    void runToCompletion(
-        cpu::RangeGenerator<read_number>& readIdGenerator,
-        const CorrectionOptions& programOptions,
-        const GoodAlignmentProperties& programOptions,
-        ReadCorrectionFlags& correctionFlags,
-        ResultProcessor processResults,
-        BatchCompletion batchCompleted
-    ) const {
-        assert(false);
-#if 0                
-        //const int threadId = omp_get_thread_num();
-
-        const std::size_t encodedSequencePitchInInts2Bit = SequenceHelpers::getEncodedNumInts2Bit(gpuReadStorage->getSequenceLengthUpperBound());
-        const std::size_t decodedSequencePitchInBytes = gpuReadStorage->getSequenceLengthUpperBound();
-        const std::size_t qualityPitchInBytes = gpuReadStorage->getSequenceLengthUpperBound();
-
-        CpuErrorCorrector errorCorrector(
-            encodedSequencePitchInInts2Bit,
-            decodedSequencePitchInBytes,
-            qualityPitchInBytes,
-            programOptions,
-            programOptions,
-            *candidateIdsProvider,
-            *readProvider,
-            correctionFlags
-        );
-
-        HostContainer<read_number> batchReadIds(programOptions.batchsize);
-        HostContainer<unsigned int> batchEncodedData(programOptions.batchsize * encodedSequencePitchInInts2Bit);
-        HostContainer<char> batchQualities(programOptions.batchsize * qualityPitchInBytes);
-        HostContainer<int> batchReadLengths(programOptions.batchsize);
-
-        std::vector<read_number> tmpids(programOptions.batchsize);
-
-        while(!(readIdGenerator.empty())){
-            tmpids.resize(programOptions.batchsize);            
-
-            auto readIdsEnd = readIdGenerator.next_n_into_buffer(
-                programOptions.batchsize, 
-                tmpids.begin()
-            );
-            
-            tmpids.erase(readIdsEnd, tmpids.end());
-
-            if(tmpids.empty()){
-                continue;
-            }
-
-            const int numAnchors = tmpids.size();
-
-            batchReadIds.resize(numAnchors);
-            std::copy(tmpids.begin(), tmpids.end(), batchReadIds.begin());
-
-            //collect input data of all reads in batch
-            readProvider->setReadIds(batchReadIds.data(), batchReadIds.size());
-
-            readProvider->gatherSequenceLengths(
-                batchReadLengths.data()
-            );
-
-            readProvider->gatherSequenceData(
-                batchEncodedData.data(),
-                encodedSequencePitchInInts2Bit
-            );
-
-            if(programOptions.useQualityScores){
-                readProvider->gatherSequenceQualities(
-                    batchQualities.data(),
-                    qualityPitchInBytes
-                );
-            }
-
-            CpuErrorCorrector::MultiCorrectionInput input;
-            input.anchorLengths.insert(input.anchorLengths.end(), batchReadLengths.begin(), batchReadLengths.end());
-            input.anchorReadIds.insert(input.anchorReadIds.end(), batchReadIds.begin(), batchReadIds.end());
-
-            input.encodedAnchors.resize(numAnchors);            
-            for(int i = 0; i < numAnchors; i++){
-                input.encodedAnchors[i] = batchEncodedData.data() + encodedSequencePitchInInts2Bit * i;
-            }
-
-            if(programOptions.useQualityScores){
-                input.anchorQualityscores.resize(numAnchors);
-                for(int i = 0; i < numAnchors; i++){
-                    input.anchorQualityscores[i] = batchQualities.data() + qualityPitchInBytes * i;
-                }
-            }
-            
-            auto errorCorrectorOutputVector = errorCorrector.processMulti(input);
-            
-            CorrectionOutput correctionOutput;
-
-            for(auto& output : errorCorrectorOutputVector){
-                if(output.hasAnchorCorrection){
-                    correctionOutput.encodedAnchorCorrections.emplace_back(output.anchorCorrection.encode());
-                    correctionOutput.anchorCorrections.emplace_back(std::move(output.anchorCorrection));
-                }
-
-                for(auto& tmp : output.candidateCorrections){
-                    correctionOutput.encodedCandidateCorrections.emplace_back(tmp.encode());
-                    correctionOutput.candidateCorrections.emplace_back(std::move(tmp));
-                }
-            }
-
-            processResults(std::move(correctionOutput));
-
-            batchCompleted(batchReadIds.size()); 
-            
-        } //while unprocessed reads exist loop end   
-#endif
-    }
-};
-#endif
-
 template<class Minhasher>
 class SimpleGpuCorrectionPipeline{    
     /*
@@ -201,7 +78,7 @@ public:
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
-        ReadCorrectionFlags& correctionFlags,
+        GpuReadCorrectionFlags& correctionFlags,
         BatchCompletion batchCompleted,
         ResultProcessorSerialized processSerializedResults
     ) const {
@@ -224,7 +101,7 @@ public:
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
-        ReadCorrectionFlags& correctionFlags,
+        GpuReadCorrectionFlags& correctionFlags,
         BatchCompletion batchCompleted,
         int numBatches,
         ResultProcessorSerialized processSerializedResults
@@ -248,7 +125,7 @@ public:
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
-        ReadCorrectionFlags& correctionFlags,
+        GpuReadCorrectionFlags& correctionFlags,
         BatchCompletion batchCompleted,
         ResultProcessorSerialized processSerializedResults
     ) const {
@@ -274,7 +151,7 @@ public:
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
-        ReadCorrectionFlags& correctionFlags,
+        GpuReadCorrectionFlags& correctionFlags,
         BatchCompletion batchCompleted,
         ResultProcessorSerialized processSerializedResults
     ) const {
@@ -300,7 +177,7 @@ public:
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
-        ReadCorrectionFlags& correctionFlags,
+        GpuReadCorrectionFlags& correctionFlags,
         BatchCompletion batchCompleted,
         int numBatches,
         ResultProcessorSerialized processSerializedResults
@@ -327,7 +204,7 @@ public:
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
-        ReadCorrectionFlags& correctionFlags,
+        GpuReadCorrectionFlags& correctionFlags,
         BatchCompletion batchCompleted,
         int numBatches,
         ResultProcessorSerialized processSerializedResults
@@ -354,7 +231,7 @@ public:
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
-        ReadCorrectionFlags& correctionFlags,
+        GpuReadCorrectionFlags& correctionFlags,
         bool useThreadForOutputConstruction,
         BatchCompletion batchCompleted,
         ContinueCondition continueCondition,
@@ -442,7 +319,7 @@ public:
                 nvtx::push_range("constructSerializedEncodedResults", 2);
                 //helpers::CpuTimer constructResultsTimer("constructEncodedResults");
 
-                gpuErrorCorrector.updateCorrectionFlags(*rawOutputPtr);
+                //gpuErrorCorrector.updateCorrectionFlags(*rawOutputPtr);
 
                 //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
                 //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
@@ -688,7 +565,7 @@ public:
         int deviceId,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
-        ReadCorrectionFlags& correctionFlags,
+        GpuReadCorrectionFlags& correctionFlags,
         BatchCompletion batchCompleted,
         ContinueCondition continueCondition,
         ResultProcessorSerialized processSerializedResults
@@ -844,7 +721,7 @@ public:
                     nvtx::push_range("constructSerializedEncodedResults", 2);
                     //helpers::CpuTimer constructResultsTimer("constructSerializedEncodedResults");
 
-                    gpuErrorCorrector.updateCorrectionFlags(*rawOutputPtr);
+                    //gpuErrorCorrector.updateCorrectionFlags(*rawOutputPtr);
 
                     //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(rawOutput);
                     //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(rawOutput);
@@ -960,7 +837,7 @@ public:
         const Config& config,
         IdGenerator& readIdGenerator,
         const ProgramOptions& programOptions,
-        ReadCorrectionFlags& correctionFlags,
+        GpuReadCorrectionFlags& correctionFlags,
         BatchCompletion batchCompleted,
         ResultProcessorSerialized processSerializedResults
     ){
@@ -1206,7 +1083,7 @@ public:
     void correctorThreadFunction(
         int deviceId,
         const ProgramOptions& programOptions,
-        const ReadCorrectionFlags& correctionFlags
+        GpuReadCorrectionFlags& correctionFlags
     ){
         cudaSetDevice(deviceId);
 
@@ -1301,7 +1178,7 @@ public:
     void correctorThreadFunctionMultiBufferWithOutput(
         int deviceId,
         const ProgramOptions& programOptions,
-        ReadCorrectionFlags& correctionFlags,
+        GpuReadCorrectionFlags& correctionFlags,
         BatchCompletion batchCompleted,
         ResultProcessorSerialized processSerializedResults
     ){
@@ -1342,7 +1219,7 @@ public:
                 nvtx::push_range("constructSerializedEncodedResults", 2);
                 //helpers::CpuTimer constructResultsTimer("constructSerializedEncodedResults");
 
-                gpuErrorCorrector.updateCorrectionFlags(*rawOutputPtr);
+                //gpuErrorCorrector.updateCorrectionFlags(*rawOutputPtr);
 
                 //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
                 //SerializedEncodedCorrectionOutput serializedEncodedCorrectionOutput = outputConstructor.constructSerializedEncodedResults(*rawOutputPtr);
@@ -1500,7 +1377,7 @@ public:
     template<class BatchCompletion, class ResultProcessorSerialized>
     void outputConstructorThreadFunction(
         const ProgramOptions& programOptions,
-        ReadCorrectionFlags& correctionFlags,
+        GpuReadCorrectionFlags& correctionFlags,
         BatchCompletion batchCompleted,
         ResultProcessorSerialized processSerializedResults
     ){
@@ -1597,15 +1474,16 @@ SerializedObjectStorage correct_gpu_impl(
         memoryAvailableBytesHost = 0;
     }
 
-    ReadCorrectionFlags correctionFlags(readStorage.getNumberOfReads());
+    //ReadCorrectionFlags correctionFlags(readStorage.getNumberOfReads());
+    GpuReadCorrectionFlags correctionFlags(programOptions.deviceIds, readStorage.getNumberOfReads());
 
-    std::cerr << "Status flags per reads require " << correctionFlags.sizeInBytes() / 1024. / 1024. << " MB\n";
+    // std::cerr << "Status flags per reads require " << correctionFlags.sizeInBytes() / 1024. / 1024. << " MB\n";
 
-    if(memoryAvailableBytesHost > correctionFlags.sizeInBytes()){
-        memoryAvailableBytesHost -= correctionFlags.sizeInBytes();
-    }else{
-        memoryAvailableBytesHost = 0;
-    }
+    // if(memoryAvailableBytesHost > correctionFlags.sizeInBytes()){
+    //     memoryAvailableBytesHost -= correctionFlags.sizeInBytes();
+    // }else{
+    //     memoryAvailableBytesHost = 0;
+    // }
 
     const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
     std::size_t memoryForPartialResultsInBytes = 0;
