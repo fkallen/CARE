@@ -81,8 +81,9 @@ namespace gpu{
             for(int w = warpId; w < warpsPerTable * numTables; w += numWarpsInGrid){
                 const int tableIndex = w / warpsPerTable;
                 const int valueIndex = tilesPerWarp * (w % warpsPerTable) + tile.meta_group_rank();
-                const int keyIndex = numKeysPerTable * tableIndex + valueIndex;
-                if(keyIndex < numKeysPerTable * numTables){
+
+                if(valueIndex < numKeysPerTable){
+                    const int keyIndex = numKeysPerTable * tableIndex + valueIndex;
                     if(isValid[keyIndex]){
                         DeviceTableInsertView table = tables[tableIndex];
                         table.insert(keys[keyIndex], values[valueIndex], tile);
