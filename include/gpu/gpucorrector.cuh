@@ -49,6 +49,7 @@
 #include <thrust/scan.h>
 #include <thrust/unique.h>
 #include <thrust/equal.h>
+#include <thrust/logical.h>
 
 #include <rmm/mr/device/per_device_resource.hpp>
 #include <rmm/mr/device/cuda_async_memory_resource.hpp>
@@ -117,7 +118,7 @@ namespace gpu{
     class GpuReadCorrectionFlags{
     public:
         GpuReadCorrectionFlags(std::vector<int> deviceIds_, std::size_t numReads_)
-            : deviceIds(deviceIds_){
+            : deviceIds(deviceIds_), size(numReads_){
 
             const int numDevices = deviceIds.size();
             for(int d = 0; d < numDevices; d++){
@@ -184,7 +185,7 @@ namespace gpu{
             );
             CUDACHECKASYNC;
 
-            //set on all other devices
+            // set on all other devices
             const int numDevices = deviceIds.size();
             if(numDevices > 1){
                 CUDACHECK(cudaEventRecord(events[index], stream));
@@ -214,6 +215,7 @@ namespace gpu{
         }
 
     private:
+        std::size_t size{};
         std::vector<CudaEvent> events{};
         std::vector<int> deviceIds{};
         std::vector<GpuBitArray<read_number>> vec_d_isHqAnchor{};
