@@ -165,6 +165,352 @@ extension::SplittedExtensionOutput makeAndSplitExtensionOutput(
 
 
 
+struct ExtensionPipeline{
+    using ReadyResultsCallback = std::function<void(std::vector<ExtendedRead>&&, std::vector<EncodedExtendedRead>&&, std::vector<read_number>&&)>;
+    static constexpr bool isPairedEnd = true; 
+
+    const ProgramOptions& programOptions;
+    const GpuMinhasher& minhasher;
+    const GpuReadStorage& gpuReadStorage;
+    std::size_t encodedSequencePitchInInts;
+    std::size_t decodedSequencePitchInBytes;
+    std::size_t qualityPitchInBytes;
+    std::size_t msaColumnPitchInElements;
+    ReadyResultsCallback submitReadyResults;
+    ProgressThread<read_number>* progressThread;
+
+    std::vector<read_number> pairsWhichShouldBeRepeated{};
+    std::vector<read_number> pairsWhichShouldBeRepeatedTmp{};
+
+    ExtensionPipeline(
+        const ProgramOptions& programOptions_,
+        const GpuMinhasher& minhasher_,
+        const GpuReadStorage& gpuReadStorage_,
+        std::size_t encodedSequencePitchInInts_,
+        std::size_t decodedSequencePitchInBytes_,
+        std::size_t qualityPitchInBytes_,
+        std::size_t msaColumnPitchInElements_,
+        ReadyResultsCallback submitReadyResults_,
+        ProgressThread<read_number>* progressThread_
+    )
+    : programOptions(programOptions_),
+        minhasher(minhasher_),
+        gpuReadStorage(gpuReadStorage_),
+        encodedSequencePitchInInts(encodedSequencePitchInInts_),
+        decodedSequencePitchInBytes(decodedSequencePitchInBytes_),
+        qualityPitchInBytes(qualityPitchInBytes_),
+        msaColumnPitchInElements(msaColumnPitchInElements_),
+        submitReadyResults(submitReadyResults_),
+        progressThread(progressThread_)
+    {
+
+    }
+
+    void executeFirstPass(){
+        constexpr bool extraHashing = false;
+        constexpr bool isRepeatedIteration = false;
+
+        GpuReadExtender::IterationConfig iterationConfig;
+        iterationConfig.maxextensionPerStep = programOptions.fixedStepsize == 0 ? 20 : programOptions.fixedStepsize;
+        iterationConfig.minCoverageForExtension = 3;
+
+        const std::size_t numReadsToProcess = getNumReadsToProcess(&gpuReadStorage, programOptions);
+
+        IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(
+            thrust::make_counting_iterator<read_number>(0),
+            thrust::make_counting_iterator<read_number>(0) + numReadsToProcess
+        );
+
+        const int maxNumThreads = programOptions.threads;
+        const int numDevices = programOptions.deviceIds.size();
+
+        std::cerr << "First Pass\n";
+        std::cerr << "use " << maxNumThreads << " threads\n";
+
+        std::vector<std::future<std::vector<read_number>>> futures;
+        for(int t = 0; t < maxNumThreads; t++){
+            futures.emplace_back(
+                std::async(
+                    std::launch::async,
+                    [&](){
+                        const int deviceId = programOptions.deviceIds[t % numDevices];
+                        return extenderThreadFunc(
+                            deviceId,
+                            &readIdGenerator,
+                            isRepeatedIteration,
+                            extraHashing,
+                            iterationConfig
+                        );
+                    }
+                )
+            );
+        }
+
+        for(auto& f : futures){
+            auto vec = f.get();
+            pairsWhichShouldBeRepeatedTmp.insert(pairsWhichShouldBeRepeatedTmp.end(), vec.begin(), vec.end());
+        }
+
+        std::swap(pairsWhichShouldBeRepeated, pairsWhichShouldBeRepeatedTmp);
+        pairsWhichShouldBeRepeatedTmp.clear();
+        std::sort(pairsWhichShouldBeRepeated.begin(), pairsWhichShouldBeRepeated.end());
+    }
+
+
+    void runExtraHashingPass(){
+        constexpr bool extraHashing = true;
+        constexpr bool isRepeatedIteration = true;
+
+        GpuReadExtender::IterationConfig iterationConfig;
+        iterationConfig.maxextensionPerStep = programOptions.fixedStepsize == 0 ? 20 : programOptions.fixedStepsize;
+        iterationConfig.minCoverageForExtension = 3;
+
+
+        const int numPairsToRepeat = pairsWhichShouldBeRepeated.size() / 2;
+        std::cerr << "Extra hashing pass\n";
+        std::cerr << "Will repeat extension of " << numPairsToRepeat << " read pairs\n";
+
+        //isLastIteration = (iterationConfig.maxextensionPerStep <= 4);
+
+        auto readIdGenerator = makeIteratorRangeTraversal(
+            pairsWhichShouldBeRepeated.data(), 
+            pairsWhichShouldBeRepeated.data() + pairsWhichShouldBeRepeated.size()
+        );
+
+        const int threadsForPairs = SDIV(numPairsToRepeat, programOptions.batchsize);
+        const int maxNumThreads = std::min(threadsForPairs, programOptions.threads);
+        std::cerr << "use " << maxNumThreads << " threads\n";
+        const int numDevices = programOptions.deviceIds.size();
+
+        std::vector<std::future<std::vector<read_number>>> futures;
+        for(int t = 0; t < maxNumThreads; t++){
+            futures.emplace_back(
+                std::async(
+                    std::launch::async,
+                    [&](){
+                        const int deviceId = programOptions.deviceIds[t % numDevices];
+                        return extenderThreadFunc(
+                            deviceId,
+                            &readIdGenerator,
+                            isRepeatedIteration,
+                            extraHashing,
+                            iterationConfig
+                        );
+                    }
+                )
+            );
+        }
+
+        for(auto& f : futures){
+            auto vec = f.get();
+            pairsWhichShouldBeRepeatedTmp.insert(pairsWhichShouldBeRepeatedTmp.end(), vec.begin(), vec.end());
+        }
+
+        std::swap(pairsWhichShouldBeRepeated, pairsWhichShouldBeRepeatedTmp);
+        pairsWhichShouldBeRepeatedTmp.clear();
+        std::sort(pairsWhichShouldBeRepeated.begin(), pairsWhichShouldBeRepeated.end());
+
+        submitReadyResults(
+            {}, 
+            {},
+            std::move(pairsWhichShouldBeRepeated) //pairs which did not find mate after repetition will remain unextended
+        );
+    }
+
+    template<class ReadIdGenerator>
+    std::vector<read_number> extenderThreadFunc(
+        int deviceId,
+        ReadIdGenerator* readIdGenerator,
+        bool isRepeatedIteration,
+        bool extraHashing,
+        GpuReadExtender::IterationConfig iterationConfig
+    ){
+        CUDACHECK(cudaSetDevice(deviceId));
+        cudaStream_t stream = cudaStreamPerThread;
+        rmm::mr::device_memory_resource* rmmDeviceResource = rmm::mr::get_current_device_resource();
+
+        cpu::QualityScoreConversion qualityConversion{};
+
+        auto gpuReadExtender = std::make_unique<GpuReadExtender>(
+            encodedSequencePitchInInts,
+            decodedSequencePitchInBytes,
+            qualityPitchInBytes,
+            msaColumnPitchInElements,
+            isPairedEnd,
+            gpuReadStorage, 
+            programOptions,
+            qualityConversion,
+            programOptions.insertSize,
+            (programOptions.fixedStddev == 0 ? programOptions.insertSizeStddev : programOptions.fixedStddev),
+            stream,
+            rmmDeviceResource
+        );
+
+        std::map<int, int> extensionLengthsMap;
+        std::map<int, int> mismatchesBetweenMateExtensions;
+
+        ReadStorageHandle readStorageHandle = gpuReadStorage.makeHandle();
+
+
+        helpers::SimpleAllocationPinnedHost<read_number> currentIds(2 * programOptions.batchsize);
+        helpers::SimpleAllocationDevice<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * programOptions.batchsize);
+        helpers::SimpleAllocationDevice<int> currentReadLengths(2 * programOptions.batchsize);
+        helpers::SimpleAllocationDevice<char> currentQualityScores(2 * qualityPitchInBytes * programOptions.batchsize);
+
+        if(!programOptions.useQualityScores){
+            helpers::call_fill_kernel_async(currentQualityScores.data(), currentQualityScores.size(), 'I', stream);
+        }
+
+
+        GpuReadExtender::Hasher anchorHasher(minhasher, rmmDeviceResource);
+
+        GpuReadExtender::TaskData tasks(rmmDeviceResource, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, stream);
+        GpuReadExtender::TaskData finishedTasks(rmmDeviceResource, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, stream);
+
+        GpuReadExtender::AnchorData anchorData(rmmDeviceResource);
+        GpuReadExtender::AnchorHashResult anchorHashResult(rmmDeviceResource);
+
+        GpuReadExtender::RawExtendResult rawExtendResult{};
+
+        std::vector<read_number> pairsWhichShouldBeRepeated;
+
+        auto output = [&](){
+
+            nvtx::push_range("output", 5);
+
+            nvtx::push_range("convert extension results", 7);
+
+            auto splittedExtOutput = makeAndSplitExtensionOutput(finishedTasks, rawExtendResult, gpuReadExtender.get(), isRepeatedIteration, stream);
+
+            nvtx::pop_range();
+
+            pairsWhichShouldBeRepeated.insert(
+                pairsWhichShouldBeRepeated.end(), 
+                splittedExtOutput.idsOfPartiallyExtendedReads.begin(), 
+                splittedExtOutput.idsOfPartiallyExtendedReads.end()
+            );
+
+            const std::size_t numExtended = splittedExtOutput.extendedReads.size();
+
+            if(!programOptions.allowOutwardExtension){
+                for(auto& er : splittedExtOutput.extendedReads){
+                    er.removeOutwardExtension();
+                }
+            }
+
+            std::vector<EncodedExtendedRead> encvec(numExtended);
+            for(std::size_t i = 0; i < numExtended; i++){
+                splittedExtOutput.extendedReads[i].encodeInto(encvec[i]);
+            }
+
+            submitReadyResults(
+                std::move(splittedExtOutput.extendedReads), 
+                std::move(encvec),
+                std::move(splittedExtOutput.idsOfNotExtendedReads)
+            );
+
+            progressThread->addProgress(numExtended);
+
+            nvtx::pop_range();
+        };
+
+        while(!(readIdGenerator->empty() && tasks.size() == 0)){
+            if(int(tasks.size()) < (programOptions.batchsize * 4) / 2){
+                initializeExtenderInput(
+                    *readIdGenerator,
+                    programOptions.batchsize * 4,
+                    gpuReadStorage,
+                    readStorageHandle,
+                    currentIds.data(), 
+                    currentReadLengths.data(), 
+                    currentEncodedReads.data(),
+                    programOptions.useQualityScores,
+                    currentQualityScores.data(), 
+                    encodedSequencePitchInInts,
+                    qualityPitchInBytes,
+                    tasks,
+                    stream,
+                    rmmDeviceResource
+                );
+            }
+
+            tasks.aggregateAnchorData(anchorData, stream);
+            
+            nvtx::push_range("getCandidateReadIds", 4);
+            if(extraHashing){
+            //if(false){
+                anchorHasher.getCandidateReadIdsWithExtraExtensionHash(
+                    anchorData, 
+                    anchorHashResult,
+                    iterationConfig, 
+                    thrust::make_transform_iterator(
+                        tasks.iteration.data(),
+                        IsGreaterThan<int>{0}
+                    ),
+                    stream
+                );
+            }else{
+                anchorHasher.getCandidateReadIds(anchorData, anchorHashResult, stream);
+            }
+            // #if 0
+            // anchorHasher.getCandidateReadIds(anchorData, anchorHashResult, stream);
+            // #else
+            // anchorHasher.getCandidateReadIdsWithExtraExtensionHash(
+            //     *gpudata.dataAllocator,
+            //     anchorData, 
+            //     anchorHashResult,
+            //     iterationConfig, 
+            //     thrust::make_transform_iterator(
+            //         tasks.iteration.data(),
+            //         IsGreaterThan<int>{0}
+            //     ),
+            //     stream
+            // );
+            // #endif
+            nvtx::pop_range();
+
+            gpuReadExtender->processOneIteration(
+                tasks,
+                anchorData, 
+                anchorHashResult, 
+                finishedTasks, 
+                iterationConfig,
+                stream
+            );
+
+            CUDACHECK(cudaStreamSynchronizeWrapper(stream));
+            
+            if(finishedTasks.size() > std::size_t((programOptions.batchsize * 4) / 2)){
+                output();
+            }
+
+            //std::cerr << "Remaining: tasks " << tasks.size() << ", finishedtasks " << gpuReadExtender->finishedTasks->size() << "\n";
+        }
+
+        output();
+        assert(finishedTasks.size() == 0);
+        
+        gpuReadStorage.destroyHandle(readStorageHandle);
+
+        return pairsWhichShouldBeRepeated;
+    };
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 template<class Callback>
 void extend_gpu_pairedend(
     const ProgramOptions& programOptions,
@@ -219,13 +565,6 @@ void extend_gpu_pairedend(
     //round up to 32 elements
     const std::size_t msaColumnPitchInElements = SDIV(msa_max_column_count, 32) * 32;
 
-    std::mutex ompCriticalMutex;
-
-    std::int64_t totalNumSuccess0 = 0;
-    std::int64_t totalNumSuccess1 = 0;
-    std::int64_t totalNumSuccess01 = 0;
-    std::int64_t totalNumSuccessRead = 0;
-
     std::map<int, int> totalExtensionLengthsMap;
 
     std::map<int, int> totalMismatchesBetweenMateExtensions;
@@ -233,8 +572,6 @@ void extend_gpu_pairedend(
     //omp_set_num_threads(1);
 
     CUDACHECK(cudaSetDevice(programOptions.deviceIds[0]));
-
-    const int batchsizePairs = programOptions.batchsize;
 
     constexpr bool isPairedEnd = true;           
 
@@ -293,7 +630,17 @@ void extend_gpu_pairedend(
 
 
 
-    auto extenderThreadFunc = [&](int gpuIndex, int /*threadId*/, auto* readIdGenerator, bool isRepeatedIteration, bool /*isLastIteration*/, bool extraHashing, GpuReadExtender::IterationConfig iterationConfig){
+    auto extenderThreadFunc = [
+        &gpuDataVector,
+        &gpuReadStorage,
+        &minhasher,
+        &programOptions,
+        &submitReadyResults,
+        &progressThread,
+        encodedSequencePitchInInts,
+        decodedSequencePitchInBytes,
+        qualityPitchInBytes
+    ](int gpuIndex, int /*threadId*/, auto* readIdGenerator, bool isRepeatedIteration, bool /*isLastIteration*/, bool extraHashing, GpuReadExtender::IterationConfig iterationConfig){
         //std::cerr << "extenderThreadFunc( " << gpuIndex << ", " << threadId << ")\n";
         auto& gpudata = gpuDataVector[gpuIndex];
 
@@ -303,21 +650,16 @@ void extend_gpu_pairedend(
 
         rmm::mr::device_memory_resource* rmmDeviceResource = rmm::mr::get_current_device_resource();
 
-        std::int64_t numSuccess0 = 0;
-        std::int64_t numSuccess1 = 0;
-        std::int64_t numSuccess01 = 0;
-        std::int64_t numSuccessRead = 0;
-
         std::map<int, int> extensionLengthsMap;
         std::map<int, int> mismatchesBetweenMateExtensions;
 
         ReadStorageHandle readStorageHandle = gpuReadStorage.makeHandle();
 
 
-        helpers::SimpleAllocationPinnedHost<read_number> currentIds(2 * batchsizePairs);
-        helpers::SimpleAllocationDevice<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsizePairs);
-        helpers::SimpleAllocationDevice<int> currentReadLengths(2 * batchsizePairs);
-        helpers::SimpleAllocationDevice<char> currentQualityScores(2 * qualityPitchInBytes * batchsizePairs);
+        helpers::SimpleAllocationPinnedHost<read_number> currentIds(2 * programOptions.batchsize);
+        helpers::SimpleAllocationDevice<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * programOptions.batchsize);
+        helpers::SimpleAllocationDevice<int> currentReadLengths(2 * programOptions.batchsize);
+        helpers::SimpleAllocationDevice<char> currentQualityScores(2 * qualityPitchInBytes * programOptions.batchsize);
 
         if(!programOptions.useQualityScores){
             helpers::call_fill_kernel_async(currentQualityScores.data(), currentQualityScores.size(), 'I', stream);
@@ -377,10 +719,10 @@ void extend_gpu_pairedend(
         };
 
         while(!(readIdGenerator->empty() && tasks.size() == 0)){
-            if(int(tasks.size()) < (batchsizePairs * 4) / 2){
+            if(int(tasks.size()) < (programOptions.batchsize * 4) / 2){
                 initializeExtenderInput(
                     *readIdGenerator,
-                    batchsizePairs * 4,
+                    programOptions.batchsize * 4,
                     gpuReadStorage,
                     readStorageHandle,
                     currentIds.data(), 
@@ -442,7 +784,7 @@ void extend_gpu_pairedend(
 
             CUDACHECK(cudaStreamSynchronizeWrapper(stream));
             
-            if(finishedTasks.size() > std::size_t((batchsizePairs * 4) / 2)){
+            if(finishedTasks.size() > std::size_t((programOptions.batchsize * 4) / 2)){
                 output();
             }
 
@@ -452,22 +794,22 @@ void extend_gpu_pairedend(
         output();
         assert(finishedTasks.size() == 0);
 
-        {
-            std::lock_guard<std::mutex> lg(ompCriticalMutex);
+        // {
+        //     std::lock_guard<std::mutex> lg(ompCriticalMutex);
 
-            totalNumSuccess0 += numSuccess0;
-            totalNumSuccess1 += numSuccess1;
-            totalNumSuccess01 += numSuccess01;
-            totalNumSuccessRead += numSuccessRead;
+        //     totalNumSuccess0 += numSuccess0;
+        //     totalNumSuccess1 += numSuccess1;
+        //     totalNumSuccess01 += numSuccess01;
+        //     totalNumSuccessRead += numSuccessRead;
 
-            for(const auto& pair : extensionLengthsMap){
-                totalExtensionLengthsMap[pair.first] += pair.second;
-            }
+        //     for(const auto& pair : extensionLengthsMap){
+        //         totalExtensionLengthsMap[pair.first] += pair.second;
+        //     }
 
-            for(const auto& pair : mismatchesBetweenMateExtensions){
-                totalMismatchesBetweenMateExtensions[pair.first] += pair.second;
-            }   
-        }
+        //     for(const auto& pair : mismatchesBetweenMateExtensions){
+        //         totalMismatchesBetweenMateExtensions[pair.first] += pair.second;
+        //     }   
+        // }
 
         
         gpuReadStorage.destroyHandle(readStorageHandle);
@@ -587,7 +929,7 @@ void extend_gpu_pairedend(
                 pairsWhichShouldBeRepeated.data() + pairsWhichShouldBeRepeated.size()
             );
 
-            const int threadsForPairs = SDIV(numPairsToRepeat, batchsizePairs);
+            const int threadsForPairs = SDIV(numPairsToRepeat, programOptions.batchsize);
             const int maxNumThreads = std::min(threadsForPairs, programOptions.threads);
             std::cerr << "use " << maxNumThreads << " threads\n";
 
