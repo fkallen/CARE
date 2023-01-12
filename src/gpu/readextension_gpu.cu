@@ -39,8 +39,10 @@
 #include <cub/cub.cuh>
 #include <thrust/iterator/transform_iterator.h>
 
-
-
+#include <rmm/mr/device/statistics_resource_adaptor.hpp>
+#include <rmm/mr/device/per_device_resource.hpp>
+#include <rmm/mr/device/cuda_async_memory_resource.hpp>
+#include <gpu/rmm_utilities.cuh>
 
 namespace care{
 namespace gpu{
@@ -159,10 +161,8 @@ extension::SplittedExtensionOutput makeAndSplitExtensionOutput(
     std::vector<extension::ExtendResult> extensionResults = gpuReadExtender->convertRawExtendResults(rawExtendResult);
 
 
-    return splitExtensionOutput(extensionResults, isRepeatedIteration);
+    return splitExtensionOutput(std::move(extensionResults), isRepeatedIteration);
 }
-
-
 
 
 struct ExtensionPipeline{
@@ -179,8 +179,42 @@ struct ExtensionPipeline{
     ReadyResultsCallback submitReadyResults;
     ProgressThread<read_number>* progressThread;
 
+    int deviceId;
+
     std::vector<read_number> pairsWhichShouldBeRepeated{};
     std::vector<read_number> pairsWhichShouldBeRepeatedTmp{};
+
+    struct TaskBatch{
+        static int counter;
+
+        int id;
+        GpuReadExtender::TaskData* taskData{};
+        GpuReadExtender::AnchorData* anchorData{};
+        GpuReadExtender::AnchorHashResult* anchorHashResult{};
+        CudaEvent event{cudaEventDisableTiming};
+        cudaStream_t stream;
+
+        TaskBatch(
+            cudaStream_t stream_,
+            int id_,
+            GpuReadExtender::TaskData* taskData_,
+            GpuReadExtender::AnchorData* anchorData_,
+            GpuReadExtender::AnchorHashResult* anchorHashResult_
+        ):
+            id(id_++),
+            taskData(taskData_),
+            anchorData(anchorData_),
+            anchorHashResult(anchorHashResult_),
+            stream(stream_)
+        {
+
+        }
+    };
+
+    MultiProducerMultiConsumerQueue<TaskBatch*> freeTaskBatchQueue; //taskbatches that can be populated by hashers
+    MultiProducerMultiConsumerQueue<TaskBatch*> hashedTaskBatchQueue; //taskbatches that are ready for an extension iteration
+    MultiProducerMultiConsumerQueue<GpuReadExtender::TaskData*> unprocessedFinishedTasksQueue;
+    MultiProducerMultiConsumerQueue<GpuReadExtender::TaskData*> freeFinishedTasksQueue;
 
     ExtensionPipeline(
         const ProgramOptions& programOptions_,
@@ -203,8 +237,400 @@ struct ExtensionPipeline{
         submitReadyResults(submitReadyResults_),
         progressThread(progressThread_)
     {
-
+        CUDACHECK(cudaGetDevice(&deviceId));
     }
+
+    void executeFirstPassProducerConsumer(){
+        constexpr bool extraHashing = false;
+        constexpr bool isRepeatedIteration = false;
+
+        cudaStream_t stream = cudaStreamPerThread;
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
+
+        GpuReadExtender::IterationConfig iterationConfig;
+        iterationConfig.maxextensionPerStep = programOptions.fixedStepsize == 0 ? 20 : programOptions.fixedStepsize;
+        iterationConfig.minCoverageForExtension = 3;
+
+        const std::size_t numReadsToProcess = getNumReadsToProcess(&gpuReadStorage, programOptions);
+
+        IteratorRangeTraversal<thrust::counting_iterator<read_number>> readIdGenerator(
+            thrust::make_counting_iterator<read_number>(0),
+            thrust::make_counting_iterator<read_number>(0) + numReadsToProcess
+        );
+
+        const int maxNumThreads = programOptions.threads;
+        const int numDevices = programOptions.deviceIds.size();
+
+        std::cerr << "First Pass\n";
+        std::cerr << "use " << maxNumThreads << " threads\n";
+
+        std::vector<CudaStream> taskStreams;
+        std::vector<GpuReadExtender::TaskData> taskDataVec;
+        std::vector<GpuReadExtender::TaskData> finishedTaskDataVec;
+        std::vector<GpuReadExtender::AnchorData> anchorDataVec;
+        std::vector<GpuReadExtender::AnchorHashResult> anchorHashResultVec;
+        std::vector<TaskBatch> taskBatchVec;
+
+        const int numHashers = 8;
+        const int numExtenders = 1;
+        const int numTaskBatches = numHashers + numExtenders;
+        const int numFinishedTaskbatches = numExtenders + 1;
+        std::cerr << "numHashers = " << numHashers << ", numExtenders = " << numExtenders << "\n";
+
+        for(int i = 0; i < numTaskBatches; i++){
+            taskStreams.emplace_back();
+            taskDataVec.emplace_back(mr, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, stream);
+            anchorDataVec.emplace_back(stream, mr);
+            anchorHashResultVec.emplace_back(stream, mr);            
+        }
+
+        taskBatchVec.reserve(numTaskBatches);
+        for(int i = 0; i < numTaskBatches; i++){
+            taskBatchVec.emplace_back(
+                taskStreams[i], 
+                i, 
+                &taskDataVec[i],
+                &anchorDataVec[i],
+                &anchorHashResultVec[i]
+            );
+            freeTaskBatchQueue.push(&taskBatchVec[i]);
+        }
+
+        // for(int i = 0; i < numFinishedTaskbatches; i++){
+        //     finishedTaskDataVec.emplace_back(mr, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, stream);        
+        // }
+        
+
+
+        std::atomic<std::int64_t> totalNumFinishedTasks = 0;
+        const std::int64_t numTasksToProcess = (std::int64_t)numReadsToProcess * 2;
+
+        std::vector<std::future<void>> hasherFutures;
+        for(int t = 0; t < numHashers; t++){
+            hasherFutures.emplace_back(
+                std::async(
+                    std::launch::async,
+                    [&](){
+                        hasherThreadFunc(
+                            &readIdGenerator,
+                            isRepeatedIteration,
+                            extraHashing,
+                            iterationConfig,
+                            totalNumFinishedTasks,
+                            numTasksToProcess
+                        );
+                    }
+                )
+            );
+        }
+
+        std::vector<std::future<std::vector<read_number>>> extenderfutures;
+        for(int t = 0; t < numExtenders; t++){
+            extenderfutures.emplace_back(
+                std::async(
+                    std::launch::async,
+                    [&](){
+                        return extenderThreadFunc(
+                            &readIdGenerator,
+                            isRepeatedIteration,
+                            extraHashing,
+                            iterationConfig,
+                            totalNumFinishedTasks,
+                            numTasksToProcess
+                        );
+                    }
+                )
+            );
+        }
+
+        //wait for hashers
+        for(auto& f : hasherFutures){
+            f.wait();
+        }
+
+        //hashers are done. notify extenders
+        for(int i = 0; i < numExtenders; i++){
+            hashedTaskBatchQueue.push(nullptr);
+        }
+
+        //wait for extenders
+        for(auto& f : extenderfutures){
+            auto vec = f.get();
+            pairsWhichShouldBeRepeatedTmp.insert(pairsWhichShouldBeRepeatedTmp.end(), vec.begin(), vec.end());
+        }
+        CUDACHECK(cudaDeviceSynchronize());
+
+        std::swap(pairsWhichShouldBeRepeated, pairsWhichShouldBeRepeatedTmp);
+        pairsWhichShouldBeRepeatedTmp.clear();
+        std::sort(pairsWhichShouldBeRepeated.begin(), pairsWhichShouldBeRepeated.end());
+    }
+
+
+    template<class ReadIdGenerator>
+    void hasherThreadFunc(
+        ReadIdGenerator* readIdGenerator,
+        bool /*isRepeatedIteration*/,
+        bool extraHashing,
+        GpuReadExtender::IterationConfig iterationConfig,
+        std::atomic<std::int64_t>& totalNumFinishedTasks,
+        std::int64_t numTasksToProcess
+    ){
+        CUDACHECK(cudaSetDevice(deviceId));
+        cudaStream_t stream = cudaStreamPerThread;
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
+
+        ReadStorageHandle readStorageHandle = gpuReadStorage.makeHandle();
+
+
+        helpers::SimpleAllocationPinnedHost<read_number> currentIds(2 * programOptions.batchsize);
+        rmm::device_uvector<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * programOptions.batchsize, stream, mr);
+        rmm::device_uvector<int> currentReadLengths(2 * programOptions.batchsize, stream, mr);
+        rmm::device_uvector<char> currentQualityScores(2 * qualityPitchInBytes * programOptions.batchsize, stream, mr);
+
+        if(!programOptions.useQualityScores){
+            thrust::fill(
+                rmm::exec_policy_nosync(stream, mr),
+                currentQualityScores.begin(),
+                currentQualityScores.end(),
+                'I'
+            );
+        }
+
+
+        GpuReadExtender::Hasher anchorHasher(minhasher, mr);
+        CUDACHECK(cudaDeviceSynchronize());
+
+        std::set<int> seenEmptyTaskBatchesAfterInit;
+
+        while(totalNumFinishedTasks != numTasksToProcess){
+            //std::cerr << totalNumFinishedTasks << " " << numTasksToProcess << "\n";
+            TaskBatch* const taskBatchPtr = freeTaskBatchQueue.pop();
+            assert(taskBatchPtr != nullptr);
+
+            auto& tasks = *taskBatchPtr->taskData;
+            auto& anchorData = *taskBatchPtr->anchorData;
+            auto& anchorHashResult = *taskBatchPtr->anchorHashResult;
+
+            //CUDACHECK(cudaStreamWaitEvent(stream, taskBatchPtr->event, 0));
+            //std::cerr << "num tasks before init " << tasks.size() << "\n";
+            if(int(tasks.size()) < (programOptions.batchsize * 4) / 2){
+                initializeExtenderInput(
+                    *readIdGenerator,
+                    programOptions.batchsize * 4,
+                    gpuReadStorage,
+                    readStorageHandle,
+                    currentIds.data(), 
+                    currentReadLengths.data(), 
+                    currentEncodedReads.data(),
+                    programOptions.useQualityScores,
+                    currentQualityScores.data(), 
+                    encodedSequencePitchInInts,
+                    qualityPitchInBytes,
+                    tasks,
+                    taskBatchPtr->stream,
+                    mr
+                );
+            }
+            //std::cerr << "num tasks after init " << tasks.size() << "\n";
+            if(int(tasks.size()) > 0){
+                tasks.aggregateAnchorData(anchorData, taskBatchPtr->stream);
+                
+                nvtx::push_range("getCandidateReadIds", 4);
+                if(extraHashing){
+                    anchorHasher.getCandidateReadIdsWithExtraExtensionHash(
+                        anchorData, 
+                        anchorHashResult,
+                        iterationConfig, 
+                        thrust::make_transform_iterator(
+                            tasks.iteration.data(),
+                            IsGreaterThan<int>{0}
+                        ),
+                        taskBatchPtr->stream
+                    );
+                }else{
+                    anchorHasher.getCandidateReadIds(anchorData, anchorHashResult, taskBatchPtr->stream);
+                }
+
+                CUDACHECK(cudaEventRecord(taskBatchPtr->event, taskBatchPtr->stream));
+                nvtx::pop_range();
+
+                hashedTaskBatchQueue.push(taskBatchPtr);
+            }else{
+                //seenEmptyTaskBatchesAfterInit.insert(taskBatchPtr->id);
+                freeTaskBatchQueue.push(taskBatchPtr);
+            }
+        }
+
+        gpuReadStorage.destroyHandle(readStorageHandle);
+    };
+
+    template<class ReadIdGenerator>
+    std::vector<read_number> extenderThreadFunc(
+        ReadIdGenerator* /*readIdGenerator*/,
+        bool isRepeatedIteration,
+        bool /*extraHashing*/,
+        GpuReadExtender::IterationConfig iterationConfig,
+        std::atomic<std::int64_t>& totalNumFinishedTasks,
+        std::int64_t numTasksToProcess
+    ){
+        CUDACHECK(cudaSetDevice(deviceId));
+        cudaStream_t stream = cudaStreamPerThread;
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
+
+        cpu::QualityScoreConversion qualityConversion{};
+
+        rmm::mr::statistics_resource_adaptor<rmm::mr::device_memory_resource> extenderpool(mr);
+        rmm::mr::statistics_resource_adaptor<rmm::mr::device_memory_resource> finishedtaskspool(mr);
+
+        auto gpuReadExtender = std::make_unique<GpuReadExtender>(
+            encodedSequencePitchInInts,
+            decodedSequencePitchInBytes,
+            qualityPitchInBytes,
+            msaColumnPitchInElements,
+            isPairedEnd,
+            gpuReadStorage, 
+            programOptions,
+            qualityConversion,
+            programOptions.insertSize,
+            (programOptions.fixedStddev == 0 ? programOptions.insertSizeStddev : programOptions.fixedStddev),
+            stream,
+            &extenderpool
+        );
+
+        GpuReadExtender::TaskData finishedTasks(&finishedtaskspool, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, stream);
+
+        GpuReadExtender::RawExtendResult rawExtendResult{};
+
+        CUDACHECK(cudaDeviceSynchronize());
+
+        std::vector<read_number> pairsWhichShouldBeRepeated;
+
+        auto output = [&](){
+
+            nvtx::push_range("output", 5);
+
+            nvtx::push_range("convert extension results", 7);
+
+            auto splittedExtOutput = makeAndSplitExtensionOutput(finishedTasks, rawExtendResult, gpuReadExtender.get(), isRepeatedIteration, stream);
+
+            nvtx::pop_range();
+
+            pairsWhichShouldBeRepeated.insert(
+                pairsWhichShouldBeRepeated.end(), 
+                splittedExtOutput.idsOfPartiallyExtendedReads.begin(), 
+                splittedExtOutput.idsOfPartiallyExtendedReads.end()
+            );
+
+
+            // numFinishedReads += splittedExtOutput.extendedReads.size() + splittedExtOutput.idsOfPartiallyExtendedReads.size() + splittedExtOutput.idsOfNotExtendedReads.size();
+            // std::cerr << "update numFinishedReads to " << numFinishedReads << "\n";
+
+            if(!programOptions.allowOutwardExtension){
+                for(auto& er : splittedExtOutput.extendedReads){
+                    er.removeOutwardExtension();
+                }
+            }
+
+            const std::size_t numExtended = splittedExtOutput.extendedReads.size();
+            std::vector<EncodedExtendedRead> encvec(numExtended);
+            for(std::size_t i = 0; i < numExtended; i++){
+                splittedExtOutput.extendedReads[i].encodeInto(encvec[i]);
+            }
+
+            submitReadyResults(
+                std::move(splittedExtOutput.extendedReads), 
+                std::move(encvec),
+                std::move(splittedExtOutput.idsOfNotExtendedReads)
+            );
+
+            progressThread->addProgress(numExtended);
+
+            nvtx::pop_range();
+        };
+
+        TaskBatch* taskBatchPtr = hashedTaskBatchQueue.pop();
+        while(taskBatchPtr != nullptr){
+
+            auto& tasks = *taskBatchPtr->taskData;
+            auto& anchorData = *taskBatchPtr->anchorData;
+            auto& anchorHashResult = *taskBatchPtr->anchorHashResult;
+            //auto& finishedTasks = *taskBatchPtr->finishedTaskData;
+
+            //CUDACHECK(cudaStreamWaitEvent(stream, taskBatchPtr->event, 0));
+
+            //std::cerr << "num tasks before extend " << tasks.size() << "\n";
+
+            const std::int64_t finishedBefore = finishedTasks.size();
+
+            gpuReadExtender->processOneIteration(
+                tasks,
+                anchorData, 
+                anchorHashResult, 
+                finishedTasks, 
+                iterationConfig,
+                taskBatchPtr->stream
+            );
+
+
+            CUDACHECK(cudaStreamSynchronizeWrapper(taskBatchPtr->stream));
+
+            const std::int64_t finishedAfter = finishedTasks.size();
+
+            //std::cerr << "num tasks after extend " << tasks.size() << "\n";
+            //std::cerr << "num finished tasks after extend " << finishedTasks.size() << "\n";
+
+            totalNumFinishedTasks += (finishedAfter - finishedBefore);
+            //std::cerr << "update totalNumFinishedTasks to " << totalNumFinishedTasks << "\n";
+
+
+            const std::size_t limit = (programOptions.batchsize * 4) / 2;
+            if(finishedTasks.size() > limit){
+                output();
+                //std::cerr << "num finished tasks after output " << finishedTasks.size() << "\n";
+            }
+
+            {
+                CUDACHECK(cudaDeviceSynchronize());
+                rmm::mr::cuda_async_memory_resource* asyncmr = dynamic_cast<rmm::mr::cuda_async_memory_resource*>(mr);
+                assert(asyncmr != nullptr);
+                CUDACHECK(cudaMemPoolTrimTo(asyncmr->pool_handle(), 0));
+            }
+
+            CUDACHECK(cudaEventRecord(taskBatchPtr->event, taskBatchPtr->stream));
+
+            freeTaskBatchQueue.push(taskBatchPtr);
+
+            taskBatchPtr = hashedTaskBatchQueue.pop();
+        }
+        auto extenderbytes = extenderpool.get_bytes_counter();
+        std::cerr << "extenderbytes: peak " << extenderbytes.peak << ", total " << extenderbytes.total << ", current " << extenderbytes.value << "\n";
+
+        auto finishedtasksbytes = finishedtaskspool.get_bytes_counter();
+        std::cerr << "finishedtasksbytes: peak " << finishedtasksbytes.peak << ", total " << finishedtasksbytes.total << ", current " << finishedtasksbytes.value << "\n";
+
+        std::cerr << "num finished tasks after extend loop " << finishedTasks.size() << "\n";
+        output();
+        std::cerr << "num finished tasks after output " << finishedTasks.size() << "\n";
+
+        // for(int i = 0; i < finishedTasks.size(); i++){
+        //     std::cerr << "(" << finishedTasks.pairId.element(i,cudaStreamPerThread) << "," << finishedTasks.id.element(i,cudaStreamPerThread) << "), ";
+        // }
+        assert(finishedTasks.size() == 0);
+
+        
+        return pairsWhichShouldBeRepeated;
+    };
+
+
+
+
+
+
+
+
+
+
+
 
     void executeFirstPass(){
         constexpr bool extraHashing = false;
@@ -234,8 +660,7 @@ struct ExtensionPipeline{
                     std::launch::async,
                     [&](){
                         const int deviceId = programOptions.deviceIds[t % numDevices];
-                        return extenderThreadFunc(
-                            deviceId,
+                        return combinedHasherAndExtenderThreadFunc(
                             &readIdGenerator,
                             isRepeatedIteration,
                             extraHashing,
@@ -288,9 +713,7 @@ struct ExtensionPipeline{
                 std::async(
                     std::launch::async,
                     [&](){
-                        const int deviceId = programOptions.deviceIds[t % numDevices];
-                        return extenderThreadFunc(
-                            deviceId,
+                        return combinedHasherAndExtenderThreadFunc(
                             &readIdGenerator,
                             isRepeatedIteration,
                             extraHashing,
@@ -318,8 +741,7 @@ struct ExtensionPipeline{
     }
 
     template<class ReadIdGenerator>
-    std::vector<read_number> extenderThreadFunc(
-        int deviceId,
+    std::vector<read_number> combinedHasherAndExtenderThreadFunc(
         ReadIdGenerator* readIdGenerator,
         bool isRepeatedIteration,
         bool extraHashing,
@@ -327,7 +749,7 @@ struct ExtensionPipeline{
     ){
         CUDACHECK(cudaSetDevice(deviceId));
         cudaStream_t stream = cudaStreamPerThread;
-        rmm::mr::device_memory_resource* rmmDeviceResource = rmm::mr::get_current_device_resource();
+        rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
 
         cpu::QualityScoreConversion qualityConversion{};
 
@@ -343,32 +765,32 @@ struct ExtensionPipeline{
             programOptions.insertSize,
             (programOptions.fixedStddev == 0 ? programOptions.insertSizeStddev : programOptions.fixedStddev),
             stream,
-            rmmDeviceResource
+            mr
         );
-
-        std::map<int, int> extensionLengthsMap;
-        std::map<int, int> mismatchesBetweenMateExtensions;
 
         ReadStorageHandle readStorageHandle = gpuReadStorage.makeHandle();
 
-
         helpers::SimpleAllocationPinnedHost<read_number> currentIds(2 * programOptions.batchsize);
-        helpers::SimpleAllocationDevice<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * programOptions.batchsize);
-        helpers::SimpleAllocationDevice<int> currentReadLengths(2 * programOptions.batchsize);
-        helpers::SimpleAllocationDevice<char> currentQualityScores(2 * qualityPitchInBytes * programOptions.batchsize);
+        rmm::device_uvector<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * programOptions.batchsize, stream, mr);
+        rmm::device_uvector<int> currentReadLengths(2 * programOptions.batchsize, stream, mr);
+        rmm::device_uvector<char> currentQualityScores(2 * qualityPitchInBytes * programOptions.batchsize, stream, mr);
 
         if(!programOptions.useQualityScores){
-            helpers::call_fill_kernel_async(currentQualityScores.data(), currentQualityScores.size(), 'I', stream);
+            thrust::fill(
+                rmm::exec_policy_nosync(stream, mr),
+                currentQualityScores.begin(),
+                currentQualityScores.end(),
+                'I'
+            );
         }
 
+        GpuReadExtender::Hasher anchorHasher(minhasher, mr);
 
-        GpuReadExtender::Hasher anchorHasher(minhasher, rmmDeviceResource);
+        GpuReadExtender::TaskData tasks(mr, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, stream);
+        GpuReadExtender::TaskData finishedTasks(mr, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, stream);
 
-        GpuReadExtender::TaskData tasks(rmmDeviceResource, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, stream);
-        GpuReadExtender::TaskData finishedTasks(rmmDeviceResource, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, stream);
-
-        GpuReadExtender::AnchorData anchorData(rmmDeviceResource);
-        GpuReadExtender::AnchorHashResult anchorHashResult(rmmDeviceResource);
+        GpuReadExtender::AnchorData anchorData(stream, mr);
+        GpuReadExtender::AnchorHashResult anchorHashResult(stream, mr);
 
         GpuReadExtender::RawExtendResult rawExtendResult{};
 
@@ -430,7 +852,7 @@ struct ExtensionPipeline{
                     qualityPitchInBytes,
                     tasks,
                     stream,
-                    rmmDeviceResource
+                    mr
                 );
             }
 
@@ -495,12 +917,6 @@ struct ExtensionPipeline{
         return pairsWhichShouldBeRepeated;
     };
 };
-
-
-
-
-
-
 
 
 
@@ -578,7 +994,9 @@ void extend_gpu_pairedend(
         &progressThread
     );
 
-    extensionPipeline.executeFirstPass();
+    //extensionPipeline.executeFirstPass();
+    extensionPipeline.executeFirstPassProducerConsumer();
+
     extensionPipeline.runExtraHashingPass();
 
    

@@ -170,15 +170,15 @@ struct GpuReadExtender{
     using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T>;
 
     struct AnchorData{
-        AnchorData(rmm::mr::device_memory_resource* mr_)
+        AnchorData(cudaStream_t stream, rmm::mr::device_memory_resource* mr_)
             : mr(mr_),
-            d_anchorSequencesLength(0, cudaStreamPerThread, mr),
-            d_accumExtensionsLengths(0, cudaStreamPerThread, mr),
-            d_anchorSequencesDataDecoded(0, cudaStreamPerThread, mr),
-            d_anchorQualityScores(0, cudaStreamPerThread, mr),
-            d_anchorSequencesData(0, cudaStreamPerThread, mr){
+            d_anchorSequencesLength(0, stream, mr),
+            d_accumExtensionsLengths(0, stream, mr),
+            d_anchorSequencesDataDecoded(0, stream, mr),
+            d_anchorQualityScores(0, stream, mr),
+            d_anchorSequencesData(0, stream, mr){
 
-            CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
+            CUDACHECK(cudaStreamSynchronize(stream));
         }
 
         std::size_t encodedSequencePitchInInts = 0;
@@ -194,13 +194,13 @@ struct GpuReadExtender{
     };
 
     struct AnchorHashResult{
-        AnchorHashResult(rmm::mr::device_memory_resource* mr_)
+        AnchorHashResult(cudaStream_t stream, rmm::mr::device_memory_resource* mr_)
             : mr(mr_),
-            d_candidateReadIds(0, cudaStreamPerThread),
-            d_numCandidatesPerAnchor(0, cudaStreamPerThread),
-            d_numCandidatesPerAnchorPrefixSum(0, cudaStreamPerThread){
+            d_candidateReadIds(0, stream),
+            d_numCandidatesPerAnchor(0, stream),
+            d_numCandidatesPerAnchorPrefixSum(0, stream){
 
-            CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
+            CUDACHECK(cudaStreamSynchronize(stream));
         }
 
         void resizeBuffersUninitialized(std::size_t newsize, cudaStream_t stream){
@@ -737,7 +737,7 @@ struct GpuReadExtender{
             //std::cerr << "task " << this << " append, stream " << stream << "\n";
             assert(checkPitch(rhs));
 
-            nvtx::push_range("soa append", 7);
+            nvtx::ScopedRange sr("soa append", 7);
 
             //std::cerr << "append check self\n";
             consistencyCheck(stream);
@@ -1132,8 +1132,6 @@ struct GpuReadExtender{
 
             //std::cerr << "after append\n";
             consistencyCheck(stream);
-
-            nvtx::pop_range();
         }
 
         void iterationIsFinished(cudaStream_t stream){
@@ -1169,7 +1167,7 @@ struct GpuReadExtender{
         template<class FlagIter>
         TaskData select(FlagIter d_selectionFlags, cudaStream_t stream, void* hostTempStorage){
             //std::cerr << "task " << this << " select, stream " << stream << "\n";
-            nvtx::push_range("soa_select", 1);
+            nvtx::ScopedRange sr("soa_select", 1);
             rmm::device_uvector<int> positions(entries, stream, mr);
             rmm::device_scalar<int> d_numSelected(stream, mr);
 
@@ -1191,7 +1189,6 @@ struct GpuReadExtender{
             CUDACHECK(cudaStreamSynchronizeWrapper(stream));
 
             TaskData selection = gather(positions.begin(), positions.begin() + (*numSelected), stream, hostTempStorage);
-            nvtx::pop_range();
 
             //std::cerr << "check selected\n";
             selection.consistencyCheck(stream);
@@ -1203,7 +1200,7 @@ struct GpuReadExtender{
         TaskData gather(MapIter d_mapBegin, MapIter d_mapEnd, cudaStream_t stream, void* hostTempStorage){
             //std::cerr << "task " << this << " gather, stream " << stream << "\n";
 
-            nvtx::push_range("soa_gather", 2);
+            nvtx::ScopedRange sr("soa_gather", 2);
 
             auto gathersize = thrust::distance(d_mapBegin, d_mapEnd);
 
@@ -1263,8 +1260,6 @@ struct GpuReadExtender{
             );    
 
             gatherSoaData(selection, d_mapBegin, d_mapEnd, stream, hostTempStorage);   
-
-            nvtx::pop_range();
 
             //std::cerr << "check gather\n";
 
@@ -3320,7 +3315,7 @@ struct GpuReadExtender{
 
     void constructRawResults(TaskData& finishedTasks, RawExtendResult& rawResults, cudaStream_t stream) const{
 
-        nvtx::push_range("constructRawResults", 5);
+        nvtx::ScopedRange sr("constructRawResults", 5);
         std::lock_guard<std::mutex> lockguard(mutex);
         //std::cerr << "constructRawResults enter thread " << std::this_thread::get_id() << "\n";
 
@@ -3634,12 +3629,10 @@ struct GpuReadExtender{
         rawResults.outputpitch = outputPitch;
 
         //std::cerr << "exit thread " << std::this_thread::get_id() << "\n";
-
-        nvtx::pop_range();
     }
 
     std::vector<extension::ExtendResult> convertRawExtendResults(const RawExtendResult& rawResults) const{
-        nvtx::push_range("convertRawExtendResults", 7);
+        nvtx::ScopedRange sr("convertRawExtendResults", 7);
 
         std::vector<extension::ExtendResult> gpuResultVector(rawResults.numResults);
 
@@ -3718,8 +3711,6 @@ struct GpuReadExtender{
                 std::fill(result.qualityScores.begin(), result.qualityScores.end(), 'I');
             }
         }
-
-        nvtx::pop_range();
 
         return gpuResultVector;
     }
