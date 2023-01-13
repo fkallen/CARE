@@ -511,7 +511,7 @@ struct ExtensionPipelineProducerConsumer{
     struct TaskBatch{
         static int counter;
 
-        int id;
+        int extenderId;
         GpuReadExtender::TaskData* taskData{};
         GpuReadExtender::AnchorData* anchorData{};
         GpuReadExtender::AnchorHashResult* anchorHashResult{};
@@ -520,12 +520,12 @@ struct ExtensionPipelineProducerConsumer{
 
         TaskBatch(
             cudaStream_t stream_,
-            int id_,
+            int extenderId_,
             GpuReadExtender::TaskData* taskData_,
             GpuReadExtender::AnchorData* anchorData_,
             GpuReadExtender::AnchorHashResult* anchorHashResult_
         ):
-            id(id_++),
+            extenderId(extenderId_++),
             taskData(taskData_),
             anchorData(anchorData_),
             anchorHashResult(anchorHashResult_),
@@ -573,48 +573,38 @@ struct ExtensionPipelineProducerConsumer{
 
         const int numDevices = programOptions.deviceIds.size();
 
-        const int numHashersPerGroup = 6;
-        const int numExtendersPerGroup = 1;
-        const int numTaskBatchesPerGroup = numHashersPerGroup + numExtendersPerGroup;
-        const int numGroups = 2;
-        std::cerr << "numGroups = " << numGroups << ", numHashersPerGroup = " << numHashersPerGroup << ", numExtendersPerGroup = " << numExtendersPerGroup << "\n";
+        const int numHashers = 12;
+        const int numExtenders = 2;
+        const int numTaskBatches = SDIV(numHashers + numExtenders, numExtenders) * numExtenders;
 
-        std::vector<std::vector<CudaStream>> taskStreamsPerGroup(numGroups);
-        std::vector<std::vector<GpuReadExtender::TaskData>> taskDataVecPerGroup(numGroups);
-        std::vector<std::vector<GpuReadExtender::AnchorData>> anchorDataVecPerGroup(numGroups);
-        std::vector<std::vector<GpuReadExtender::AnchorHashResult>> anchorHashResultVecPerGroup(numGroups);
-        std::vector<std::vector<TaskBatch>> taskBatchVecPerGroup(numGroups);
+        std::cerr << "numHashers = " << numHashers << ", numExtenders = " << numExtenders << "\n";
 
-        std::vector<MultiProducerMultiConsumerQueue<TaskBatch*>> freeTaskBatchQueuePerGroup(numGroups);
-        std::vector<MultiProducerMultiConsumerQueue<TaskBatch*>> hashedTaskBatchQueuePerGroup(numGroups);
+        std::vector<CudaStream> taskStreams;
+        std::vector<GpuReadExtender::TaskData> taskDataVec;
+        std::vector<GpuReadExtender::AnchorData> anchorDataVec;
+        std::vector<GpuReadExtender::AnchorHashResult> anchorHashResultVec;
+        std::vector<TaskBatch> taskBatchVec;
 
-        std::cerr << "queues at \n";
-        for(auto& x : freeTaskBatchQueuePerGroup){
-            std::cerr << &x << "\n";
+        MultiProducerMultiConsumerQueue<TaskBatch*> freeTaskBatchQueue;
+        std::vector<MultiProducerMultiConsumerQueue<TaskBatch*>> hashedTaskBatchQueuePerExtender(numExtenders);
+
+        for(int i = 0; i < numTaskBatches; i++){
+            taskStreams.emplace_back();
+            taskDataVec.emplace_back(mr, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, stream);
+            anchorDataVec.emplace_back(stream, mr);
+            anchorHashResultVec.emplace_back(stream, mr);            
         }
-        for(auto& x : hashedTaskBatchQueuePerGroup){
-            std::cerr << &x << "\n";
-        }
 
-        for(int groupId = 0; groupId < numGroups; groupId++){
-            for(int i = 0; i < numTaskBatchesPerGroup; i++){
-                taskStreamsPerGroup[groupId].emplace_back();
-                taskDataVecPerGroup[groupId].emplace_back(mr, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, stream);
-                anchorDataVecPerGroup[groupId].emplace_back(stream, mr);
-                anchorHashResultVecPerGroup[groupId].emplace_back(stream, mr);            
-            }
-
-            taskBatchVecPerGroup[groupId].reserve(numTaskBatchesPerGroup);
-            for(int i = 0; i < numTaskBatchesPerGroup; i++){
-                taskBatchVecPerGroup[groupId].emplace_back(
-                    taskStreamsPerGroup[groupId][i], 
-                    i, 
-                    &taskDataVecPerGroup[groupId][i],
-                    &anchorDataVecPerGroup[groupId][i],
-                    &anchorHashResultVecPerGroup[groupId][i]
-                );
-                freeTaskBatchQueuePerGroup[groupId].push(&taskBatchVecPerGroup[groupId][i]);
-            }
+        taskBatchVec.reserve(numTaskBatches);
+        for(int i = 0; i < numTaskBatches; i++){
+            taskBatchVec.emplace_back(
+                taskStreams[i], 
+                i % numExtenders, 
+                &taskDataVec[i],
+                &anchorDataVec[i],
+                &anchorHashResultVec[i]
+            );
+            freeTaskBatchQueue.push(&taskBatchVec[i]);
         }
         CUDACHECK(cudaDeviceSynchronize());
 
@@ -622,103 +612,67 @@ struct ExtensionPipelineProducerConsumer{
         std::atomic<std::int64_t> totalNumFinishedTasks = 0;
         const std::int64_t numTasksToProcess = (std::int64_t)numReadsToProcess * 2;
 
-        std::cerr << "taskStreamsPerGroup.size() = " << taskStreamsPerGroup.size() << "\n";
-        std::cerr << "taskDataVecPerGroup.size() = " << taskDataVecPerGroup.size() << "\n";
-        std::cerr << "anchorDataVecPerGroup.size() = " << anchorDataVecPerGroup.size() << "\n";
-        std::cerr << "anchorHashResultVecPerGroup.size() = " << anchorHashResultVecPerGroup.size() << "\n";
-        std::cerr << "taskBatchVecPerGroup.size() = " << taskBatchVecPerGroup.size() << "\n";
-        std::cerr << "freeTaskBatchQueuePerGroup.size() = " << freeTaskBatchQueuePerGroup.size() << "\n";
-        std::cerr << "hashedTaskBatchQueuePerGroup.size() = " << hashedTaskBatchQueuePerGroup.size() << "\n";
+        std::vector<std::future<void>> hasherFutures;
+        std::vector<std::future<std::vector<read_number>>> extenderfutures;
 
-        for(const auto& x : taskStreamsPerGroup){
-            std::cerr << "taskStreamsPerGroup[x].size() = " << x.size() << "\n";
+        for(int t = 0; t < numHashers; t++){
+            hasherFutures.emplace_back(
+                std::async(
+                    std::launch::async,
+                    [&](){
+                        hasherThreadFunc(
+                            &readIdGenerator,
+                            freeTaskBatchQueue,
+                            hashedTaskBatchQueuePerExtender,
+                            isRepeatedIteration,
+                            extraHashing,
+                            iterationConfig,
+                            totalNumFinishedTasks,
+                            numTasksToProcess
+                        );
+                    }
+                )
+            );
         }
-        for(const auto& x : taskDataVecPerGroup){
-            std::cerr << "taskDataVecPerGroup[x].size() = " << x.size() << "\n";
-        }
-        for(const auto& x : anchorDataVecPerGroup){
-            std::cerr << "anchorDataVecPerGroup[x].size() = " << x.size() << "\n";
-        }
-        for(const auto& x : anchorHashResultVecPerGroup){
-            std::cerr << "anchorHashResultVecPerGroup[x].size() = " << x.size() << "\n";
-        }
-        for(const auto& x : taskBatchVecPerGroup){
-            std::cerr << "taskBatchVecPerGroup[x].size() = " << x.size() << "\n";
-        }
 
-
-        std::vector<std::vector<std::future<void>>> hasherFuturesPerGroup(numGroups);
-        std::vector<std::vector<std::future<std::vector<read_number>>>> extenderfuturesPerGroup(numGroups);
-
-        for(int groupId = 0; groupId < numGroups; groupId++){
-            for(int t = 0; t < numHashersPerGroup; t++){
-                //std::cerr << "launch hasher " << &freeTaskBatchQueuePerGroup[groupId] << " " << &hashedTaskBatchQueuePerGroup[groupId] << "\n";
-                hasherFuturesPerGroup[groupId].emplace_back(
-                    std::async(
-                        std::launch::async,
-                        [&](int groupId){
-                            hasherThreadFunc(
-                                &readIdGenerator,
-                                &freeTaskBatchQueuePerGroup[groupId],
-                                &hashedTaskBatchQueuePerGroup[groupId],
-                                isRepeatedIteration,
-                                extraHashing,
-                                iterationConfig,
-                                totalNumFinishedTasks,
-                                numTasksToProcess
-                            );
-                        },
-                        groupId
-                    )
-                );
-            }
-
-            for(int t = 0; t < numExtendersPerGroup; t++){
-                std::cerr << "freeTaskBatchQueuePerGroup.data() = " << freeTaskBatchQueuePerGroup.data() << "\n";
-                std::cerr << "launch extender " << &freeTaskBatchQueuePerGroup[groupId] << " " << &hashedTaskBatchQueuePerGroup[groupId] << "\n";
-                extenderfuturesPerGroup[groupId].emplace_back(
-                    std::async(
-                        std::launch::async,
-                        [&](int groupId){
-                            std::cerr << "freeTaskBatchQueuePerGroup.data() = " << freeTaskBatchQueuePerGroup.data() << "\n";
-                            std::cerr << "launch extender lambda " << &freeTaskBatchQueuePerGroup[groupId] << " " << &hashedTaskBatchQueuePerGroup[groupId] << "\n";
-
-                            return extenderThreadFunc(
-                                &readIdGenerator,
-                                &freeTaskBatchQueuePerGroup[groupId],
-                                &hashedTaskBatchQueuePerGroup[groupId],
-                                isRepeatedIteration,
-                                extraHashing,
-                                iterationConfig,
-                                totalNumFinishedTasks,
-                                numTasksToProcess
-                            );
-                        },
-                        groupId
-                    )
-                );
-            }
+        for(int t = 0; t < numExtenders; t++){
+            extenderfutures.emplace_back(
+                std::async(
+                    std::launch::async,
+                    [&](int extenderId){
+                        return extenderThreadFunc(
+                            &readIdGenerator,
+                            freeTaskBatchQueue,
+                            hashedTaskBatchQueuePerExtender[extenderId],
+                            isRepeatedIteration,
+                            extraHashing,
+                            iterationConfig,
+                            totalNumFinishedTasks,
+                            numTasksToProcess,
+                            extenderId
+                        );
+                    },
+                    t
+                )
+            );
         }
 
 
         std::vector<read_number> pairsWhichShouldBeRepeatedTmp{};
+        //wait for hashers
+        for(auto& f : hasherFutures){
+            f.wait();
+        }
 
-        for(int groupId = 0; groupId < numGroups; groupId++){
-            //wait for hashers
-            for(auto& f : hasherFuturesPerGroup[groupId]){
-                f.wait();
-            }
+        //hashers are done. notify extenders
+        for(int i = 0; i < numExtenders; i++){
+            hashedTaskBatchQueuePerExtender[i].push(nullptr);
+        }
 
-            //hashers are done. notify extenders
-            for(int i = 0; i < numExtendersPerGroup; i++){
-                hashedTaskBatchQueuePerGroup[groupId].push(nullptr);
-            }
-
-            //wait for extenders
-            for(auto& f : extenderfuturesPerGroup[groupId]){
-                auto vec = f.get();
-                pairsWhichShouldBeRepeatedTmp.insert(pairsWhichShouldBeRepeatedTmp.end(), vec.begin(), vec.end());
-            }
+        //wait for extenders
+        for(auto& f : extenderfutures){
+            auto vec = f.get();
+            pairsWhichShouldBeRepeatedTmp.insert(pairsWhichShouldBeRepeatedTmp.end(), vec.begin(), vec.end());
         }
 
         
@@ -783,8 +737,8 @@ struct ExtensionPipelineProducerConsumer{
     template<class ReadIdGenerator, class UnhashedQueue, class HashedQueue>
     void hasherThreadFunc(
         ReadIdGenerator* readIdGenerator,
-        UnhashedQueue* freeTaskBatchQueue,
-        HashedQueue* hashedTaskBatchQueue,
+        UnhashedQueue& freeTaskBatchQueue,
+        std::vector<HashedQueue>& hashedTaskBatchQueues,
         bool /*isRepeatedIteration*/,
         bool extraHashing,
         GpuReadExtender::IterationConfig iterationConfig,
@@ -796,9 +750,6 @@ struct ExtensionPipelineProducerConsumer{
         rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
 
         ReadStorageHandle readStorageHandle = gpuReadStorage.makeHandle();
-
-        //std::cerr << "hasherThread queues: " << freeTaskBatchQueue << " " << hashedTaskBatchQueue << "\n";
-
 
         helpers::SimpleAllocationPinnedHost<read_number> currentIds(2 * programOptions.batchsize);
         rmm::device_uvector<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * programOptions.batchsize, stream, mr);
@@ -821,8 +772,7 @@ struct ExtensionPipelineProducerConsumer{
         std::set<int> seenEmptyTaskBatchesAfterInit;
 
         while(totalNumFinishedTasks != numTasksToProcess){
-            //std::cerr << totalNumFinishedTasks << " " << numTasksToProcess << "\n";
-            TaskBatch* const taskBatchPtr = freeTaskBatchQueue->pop();
+            TaskBatch* const taskBatchPtr = freeTaskBatchQueue.pop();
             assert(taskBatchPtr != nullptr);
 
             auto& tasks = *taskBatchPtr->taskData;
@@ -872,10 +822,10 @@ struct ExtensionPipelineProducerConsumer{
                 CUDACHECK(cudaEventRecord(taskBatchPtr->event, taskBatchPtr->stream));
                 nvtx::pop_range();
 
-                hashedTaskBatchQueue->push(taskBatchPtr);
+                hashedTaskBatchQueues[taskBatchPtr->extenderId].push(taskBatchPtr);
             }else{
                 //seenEmptyTaskBatchesAfterInit.insert(taskBatchPtr->id);
-                freeTaskBatchQueue->push(taskBatchPtr);
+                freeTaskBatchQueue.push(taskBatchPtr);
             }
         }
 
@@ -885,21 +835,20 @@ struct ExtensionPipelineProducerConsumer{
     template<class ReadIdGenerator, class UnhashedQueue, class HashedQueue>
     std::vector<read_number> extenderThreadFunc(
         ReadIdGenerator* /*readIdGenerator*/,
-        UnhashedQueue* freeTaskBatchQueue,
-        HashedQueue* hashedTaskBatchQueue,
+        UnhashedQueue& freeTaskBatchQueue,
+        HashedQueue& hashedTaskBatchQueue,
         bool isRepeatedIteration,
         bool /*extraHashing*/,
         GpuReadExtender::IterationConfig iterationConfig,
         std::atomic<std::int64_t>& totalNumFinishedTasks,
-        std::int64_t numTasksToProcess
+        std::int64_t numTasksToProcess,
+        int extenderId
     ){
         CUDACHECK(cudaSetDevice(deviceId));
         cudaStream_t stream = cudaStreamPerThread;
         rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource();
 
         cpu::QualityScoreConversion qualityConversion{};
-
-        std::cerr << "extenderThreadFunc queues: " << freeTaskBatchQueue << " " << hashedTaskBatchQueue << "\n";
 
         rmm::mr::statistics_resource_adaptor<rmm::mr::device_memory_resource> extenderpool(mr);
         rmm::mr::statistics_resource_adaptor<rmm::mr::device_memory_resource> finishedtaskspool(mr);
@@ -970,13 +919,13 @@ struct ExtensionPipelineProducerConsumer{
             nvtx::pop_range();
         };
 
-        TaskBatch* taskBatchPtr = hashedTaskBatchQueue->pop();
+        TaskBatch* taskBatchPtr = hashedTaskBatchQueue.pop();
         while(taskBatchPtr != nullptr){
+            assert(taskBatchPtr->extenderId == extenderId);
 
             auto& tasks = *taskBatchPtr->taskData;
             auto& anchorData = *taskBatchPtr->anchorData;
             auto& anchorHashResult = *taskBatchPtr->anchorHashResult;
-            //auto& finishedTasks = *taskBatchPtr->finishedTaskData;
 
             //CUDACHECK(cudaStreamWaitEvent(stream, taskBatchPtr->event, 0));
 
@@ -1020,9 +969,9 @@ struct ExtensionPipelineProducerConsumer{
 
             CUDACHECK(cudaEventRecord(taskBatchPtr->event, taskBatchPtr->stream));
 
-            freeTaskBatchQueue->push(taskBatchPtr);
+            freeTaskBatchQueue.push(taskBatchPtr);
 
-            taskBatchPtr = hashedTaskBatchQueue->pop();
+            taskBatchPtr = hashedTaskBatchQueue.pop();
         }
         auto extenderbytes = extenderpool.get_bytes_counter();
         std::cerr << "extenderbytes: peak " << extenderbytes.peak << ", total " << extenderbytes.total << ", current " << extenderbytes.value << "\n";
