@@ -272,6 +272,36 @@ namespace care{
             result.gpuCorrectorThreadConfig = x;
         }
 
+        if(pr.count("gpuExtenderThreadConfig")){
+            std::string configString = pr["gpuExtenderThreadConfig"].as<std::string>();
+
+            auto split = [](const std::string& str, char c) -> std::vector<std::string>{
+                std::vector<std::string> result;
+
+                std::stringstream ss(str);
+                std::string s;
+
+                while (std::getline(ss, s, c)) {
+                        result.emplace_back(s);
+                }
+
+                return result;
+            };
+        
+            auto tokens = split(configString, ':');
+            if(tokens.size() != 2){
+                throw std::runtime_error("gpuExtenderThreadConfig wrong format. Expected: numCorrectors:numHashers");
+            }
+
+            GpuExtenderThreadConfig x;
+            x.numExtenders = std::stoi(tokens[0]);
+            x.numHashers = std::stoi(tokens[1]);
+
+            result.gpuExtenderThreadConfig = x;
+        }
+
+        
+
         if(pr.count("replicateGpuReadData")){
             result.replicateGpuReadData = pr["replicateGpuReadData"].as<bool>();
         }
@@ -763,6 +793,12 @@ namespace care{
         stream << "Replicate GPU hashtables " << replicateGpuHashtables << "\n";
         stream << "GPU read layout " << to_string(gpuReadDataLayout) << "\n";
         stream << "GPU hashtable layout " << to_string(gpuHashtableLayout) << "\n";
+
+        if(gpuExtenderThreadConfig.isAutomatic()){
+            stream << "GPU extender thread config: auto\n";
+        }else{
+            stream << "GPU extender thread config: " << gpuExtenderThreadConfig.numExtenders << ":" << gpuExtenderThreadConfig.numHashers << "\n";
+        }
     }
 
 
@@ -1001,7 +1037,11 @@ namespace care{
             ("replicateGpuHashtables", "Construct warpcore hashtables on a single GPU, then replicate them on each GPU"
                 "Default: " + std::to_string(ProgramOptions{}.replicateGpuHashtables), cxxopts::value<bool>())
             ("gpuReadDataLayout", "GPU read layout. 0: first fit, 1: even share", cxxopts::value<int>())
-            ("gpuHashtableLayout", "GPU hash table layout. 0: first fit, 1: even share", cxxopts::value<int>());
+            ("gpuHashtableLayout", "GPU hash table layout. 0: first fit, 1: even share", cxxopts::value<int>())
+            ("gpuExtenderThreadConfig", "Per-GPU thread configuration for extension. Format numExtenders(int):numHashers(int)."
+                "Default: automatic configuration (0:0). "
+                "Example: 2:8 . When numExtenders:0 is used, each extender performs hashing itself. This is recommended with gpu hashtables.", 
+                cxxopts::value<std::string>());
     }
 
 } //namespace care

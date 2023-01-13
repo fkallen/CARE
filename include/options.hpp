@@ -45,6 +45,15 @@ namespace care
         }
     };
 
+    struct GpuExtenderThreadConfig{
+        int numExtenders = 0;
+        int numHashers = 0;
+
+        bool isAutomatic() const noexcept{
+            return numExtenders == 0 && numHashers == 0;
+        }
+    };
+
 
     //Options which can be parsed from command-line arguments
 
@@ -89,6 +98,7 @@ namespace care
         GpuDataLayout gpuHashtableLayout = GpuDataLayout::EvenShare;
 
         GpuCorrectorThreadConfig gpuCorrectorThreadConfig;
+        GpuExtenderThreadConfig gpuExtenderThreadConfig;
 
         int warpcore = 0;
         int threads = 1;

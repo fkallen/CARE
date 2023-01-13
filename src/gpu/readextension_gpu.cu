@@ -61,10 +61,13 @@ struct IsGreaterThan{
     }
 };
 
+//get read ids from generator, 
+//populate currentIds, currentReadLengths, currentEncodedReads, currentQualityScores
+//return number of new reads
 template<class IdGenerator>
-void initializeExtenderInput(
+int getNewReadsForExtender(
     IdGenerator& readIdGenerator,
-    int requestedSizeOfTasks,
+    int maxNumNewPairs,
     const GpuReadStorage& gpuReadStorage,
     ReadStorageHandle& readStorageHandle,
     read_number* currentIds, // pinned memory
@@ -74,18 +77,15 @@ void initializeExtenderInput(
     char* currentQualityScores, //device accessible
     std::size_t encodedSequencePitchInInts,
     std::size_t qualityPitchInBytes,
-    GpuReadExtender::TaskData& tasks,
     cudaStream_t stream,
     rmm::mr::device_memory_resource* mr
 ){
-    nvtx::push_range("init", 2);
-
-    const int maxNumPairs = (requestedSizeOfTasks - tasks.size()) / 4;
+    nvtx::ScopedRange sr("getNewReadsForExtender", 2);
 
     int numNewReadsInBatch = 0;
 
     readIdGenerator.process_next_n(
-        maxNumPairs * 2, 
+        maxNumNewPairs * 2, 
         [&](auto begin, auto end){
             auto readIdsEnd = std::copy(begin, end, currentIds);
             numNewReadsInBatch = std::distance(currentIds, readIdsEnd);
@@ -129,18 +129,37 @@ void initializeExtenderInput(
                 mr
             );
         }
-        
-        const int numReadPairsInBatch = numNewReadsInBatch / 2; 
-
-        //std::cerr << "thread " << std::this_thread::get_id() << "add tasks\n";
-        tasks.addTasks(numReadPairsInBatch, currentIds, currentReadLengths, currentEncodedReads, currentQualityScores, stream);
-
-        //gpuReadExtender->setState(GpuReadExtender::State::UpdateWorkingSet);
-
-        //std::cerr << "Added " << (numReadPairsInBatch * 4) << " new tasks to batch\n";
     }
 
-    nvtx::pop_range();
+    return numNewReadsInBatch;
+};
+
+void addNewReadsToTasks(
+    int numNewReads,
+    read_number* currentIds, // pinned memory
+    int* currentReadLengths, //device accessible
+    unsigned int* currentEncodedReads, //device accessible
+    bool /*useQualityScores*/,
+    char* currentQualityScores, //device accessible
+    std::size_t /*encodedSequencePitchInInts*/,
+    std::size_t /*qualityPitchInBytes*/,
+    GpuReadExtender::TaskData& tasks,
+    cudaStream_t stream,
+    rmm::mr::device_memory_resource* /*mr*/
+){
+    nvtx::ScopedRange sr("addNewReadsToTasks", 2);
+
+   
+    const int numReadPairsInBatch = numNewReads / 2; 
+    tasks.addTasks(
+        numReadPairsInBatch, 
+        currentIds, 
+        currentReadLengths, 
+        currentEncodedReads, 
+        currentQualityScores, 
+        stream
+    );
+
 };
 
 
@@ -410,11 +429,25 @@ struct ExtensionPipeline{
 
         while(!(readIdGenerator->empty() && tasks.size() == 0)){
             if(int(tasks.size()) < (programOptions.batchsize * 4) / 2){
-                initializeExtenderInput(
+                const int maxNumNewPairs = (programOptions.batchsize * 4 - tasks.size()) / 4;
+                const int numNewReads = getNewReadsForExtender(
                     *readIdGenerator,
-                    programOptions.batchsize * 4,
+                    maxNumNewPairs,
                     gpuReadStorage,
                     readStorageHandle,
+                    currentIds.data(), 
+                    currentReadLengths.data(), 
+                    currentEncodedReads.data(),
+                    programOptions.useQualityScores,
+                    currentQualityScores.data(), 
+                    encodedSequencePitchInInts,
+                    qualityPitchInBytes,
+                    stream,
+                    mr
+                );
+
+                addNewReadsToTasks(
+                    numNewReads,
                     currentIds.data(), 
                     currentReadLengths.data(), 
                     currentEncodedReads.data(),
@@ -573,11 +606,31 @@ struct ExtensionPipelineProducerConsumer{
 
         const int numDevices = programOptions.deviceIds.size();
 
-        const int numHashers = 12;
-        const int numExtenders = 2;
+        auto threadsPerGpu = programOptions.gpuExtenderThreadConfig;
+        if(threadsPerGpu.isAutomatic()){
+            threadsPerGpu.numHashers = 1;
+            threadsPerGpu.numExtenders = 1;
+
+            int numThreadsRemaining = programOptions.threads / numDevices;
+            while(numThreadsRemaining > 0 && threadsPerGpu.numHashers < 4){
+                threadsPerGpu.numHashers++;
+                numThreadsRemaining--;
+            }
+            if(numThreadsRemaining >= 2){
+                threadsPerGpu.numHashers++;
+                threadsPerGpu.numExtenders++;
+            }
+            while(numThreadsRemaining > 0 && threadsPerGpu.numHashers < 10){
+                threadsPerGpu.numHashers++;
+                numThreadsRemaining--;
+            }
+        }
+
+        const int numHashers = threadsPerGpu.numHashers;
+        const int numExtenders = threadsPerGpu.numExtenders;
         const int numTaskBatches = SDIV(numHashers + numExtenders, numExtenders) * numExtenders;
 
-        std::cerr << "numHashers = " << numHashers << ", numExtenders = " << numExtenders << "\n";
+        std::cerr << "Per GPU: " << "numHashers = " << numHashers << ", numExtenders = " << numExtenders << "\n";
 
         std::vector<CudaStream> taskStreams;
         std::vector<GpuReadExtender::TaskData> taskDataVec;
@@ -782,11 +835,25 @@ struct ExtensionPipelineProducerConsumer{
             //CUDACHECK(cudaStreamWaitEvent(stream, taskBatchPtr->event, 0));
             //std::cerr << "num tasks before init " << tasks.size() << "\n";
             if(int(tasks.size()) < (programOptions.batchsize * 4) / 2){
-                initializeExtenderInput(
+                const int maxNumNewPairs = (programOptions.batchsize * 4 - tasks.size()) / 4;
+                const int numNewReads = getNewReadsForExtender(
                     *readIdGenerator,
-                    programOptions.batchsize * 4,
+                    maxNumNewPairs,
                     gpuReadStorage,
                     readStorageHandle,
+                    currentIds.data(), 
+                    currentReadLengths.data(), 
+                    currentEncodedReads.data(),
+                    programOptions.useQualityScores,
+                    currentQualityScores.data(), 
+                    encodedSequencePitchInInts,
+                    qualityPitchInBytes,
+                    taskBatchPtr->stream,
+                    mr
+                );
+
+                addNewReadsToTasks(
+                    numNewReads,
                     currentIds.data(), 
                     currentReadLengths.data(), 
                     currentEncodedReads.data(),
@@ -1058,31 +1125,49 @@ void extend_gpu_pairedend(
     assert(programOptions.deviceIds.size() > 0);
     CUDACHECK(cudaSetDevice(programOptions.deviceIds[0]));
 
-
-    ExtensionPipelineProducerConsumer extensionPipelineProducerConsumer(
-        programOptions,
-        minhasher,
-        gpuReadStorage,
-        encodedSequencePitchInInts,
-        decodedSequencePitchInBytes,
-        qualityPitchInBytes,
-        msaColumnPitchInElements,
-        submitReadyResults,
-        &progressThread
-    );
-
-    //std::vector<read_number> pairsWhichShouldBeRepeated = extensionPipeline.executeFirstPass();
-    std::vector<read_number> pairsWhichShouldBeRepeated = extensionPipelineProducerConsumer.executeFirstPass();
-
-    pairsWhichShouldBeRepeated = extensionPipelineProducerConsumer.executeExtraHashingPass(pairsWhichShouldBeRepeated);
-
-    submitReadyResults(
-        {}, 
-        {},
-        std::move(pairsWhichShouldBeRepeated) //pairs which did not find mate after repetition will remain unextended
-    );
-
-   
+    if(programOptions.gpuExtenderThreadConfig.isAutomatic() || programOptions.gpuExtenderThreadConfig.numHashers > 0){
+        ExtensionPipelineProducerConsumer extensionPipelineProducerConsumer(
+            programOptions,
+            minhasher,
+            gpuReadStorage,
+            encodedSequencePitchInInts,
+            decodedSequencePitchInBytes,
+            qualityPitchInBytes,
+            msaColumnPitchInElements,
+            submitReadyResults,
+            &progressThread
+        );
+    
+        std::vector<read_number> pairsWhichShouldBeRepeated = extensionPipelineProducerConsumer.executeFirstPass();    
+        pairsWhichShouldBeRepeated = extensionPipelineProducerConsumer.executeExtraHashingPass(pairsWhichShouldBeRepeated);
+    
+        submitReadyResults(
+            {}, 
+            {},
+            std::move(pairsWhichShouldBeRepeated) //pairs which did not find mate after repetition will remain unextended
+        );
+    }else{
+        ExtensionPipeline extensionPipeline(
+            programOptions,
+            minhasher,
+            gpuReadStorage,
+            encodedSequencePitchInInts,
+            decodedSequencePitchInBytes,
+            qualityPitchInBytes,
+            msaColumnPitchInElements,
+            submitReadyResults,
+            &progressThread
+        );
+    
+        std::vector<read_number> pairsWhichShouldBeRepeated = extensionPipeline.executeFirstPass();    
+        pairsWhichShouldBeRepeated = extensionPipeline.executeExtraHashingPass(pairsWhichShouldBeRepeated);
+    
+        submitReadyResults(
+            {}, 
+            {},
+            std::move(pairsWhichShouldBeRepeated) //pairs which did not find mate after repetition will remain unextended
+        );
+    }
 
     progressThread.finished();
 
