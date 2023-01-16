@@ -1021,7 +1021,7 @@ struct ExtensionPipelineProducerConsumer{
             //std::cerr << "update totalNumFinishedTasks to " << totalNumFinishedTasks << "\n";
 
 
-            const std::size_t limit = (programOptions.batchsize * 4) / 2;
+            const std::size_t limit = (programOptions.batchsize * 4);
             if(finishedTasks.size() > limit){
                 output();
                 //std::cerr << "num finished tasks after output " << finishedTasks.size() << "\n";

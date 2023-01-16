@@ -317,6 +317,78 @@ namespace readextendergpukernels{
         }
     }
 
+    template<int blocksize, int groupsize, class MapIter>
+    __global__
+    void taskGatherKernel2(
+        MapIter d_mapBegin,
+        MapIter d_mapEnd,
+        int gathersize,
+        std::size_t decodedSequencePitchInBytes,
+        std::size_t qualityPitchInBytes,
+        const int* __restrict__ selection_soaNumIterationResultsPerTaskPrefixSum,
+        const int* __restrict__ soaNumIterationResultsPerTaskPrefixSum,
+        const int* __restrict__ soaNumIterationResultsPerTask,
+        int* __restrict__ selection_soatotalDecodedAnchorsLengths,
+        const int* __restrict__ soatotalDecodedAnchorsLengths,
+        int* __restrict__ selection_soatotalAnchorBeginInExtendedRead,
+        const int* __restrict__ soatotalAnchorBeginInExtendedRead,
+        char* __restrict__ selection_soatotalDecodedAnchorsFlat,
+        const char* __restrict__ soatotalDecodedAnchorsFlat,
+        char* __restrict__ selection_soatotalAnchorQualityScoresFlat,
+        const char* __restrict__ soatotalAnchorQualityScoresFlat,
+        const int* __restrict__ selection_d_numUsedReadIdsPerTaskPrefixSum,
+        const int* __restrict__ d_numUsedReadIdsPerTaskPrefixSum,
+        const int* __restrict__ d_numUsedReadIdsPerTask,
+        read_number* __restrict__ selection_d_usedReadIds,
+        const read_number* __restrict__ d_usedReadIds
+    ){
+        for(int i = blockIdx.x; i < gathersize; i += gridDim.x){
+            const std::size_t srcindex = *(d_mapBegin + i);
+            const std::size_t destindex = i;
+
+            //iteration results
+            {
+                int destoffset = selection_soaNumIterationResultsPerTaskPrefixSum[destindex];
+                int srcoffset = soaNumIterationResultsPerTaskPrefixSum[srcindex];
+                int num = soaNumIterationResultsPerTask[srcindex];
+
+                for(int k = threadIdx.x; k < num; k += blockDim.x){
+                    selection_soatotalDecodedAnchorsLengths[destoffset + k] 
+                        = soatotalDecodedAnchorsLengths[srcoffset + k];
+
+                    selection_soatotalAnchorBeginInExtendedRead[destoffset + k] 
+                        = soatotalAnchorBeginInExtendedRead[srcoffset + k];
+                }
+
+                std::size_t pitchnum1 = decodedSequencePitchInBytes * num;
+
+                for(int k = threadIdx.x; k < pitchnum1; k += blockDim.x){
+                    selection_soatotalDecodedAnchorsFlat[destoffset * decodedSequencePitchInBytes + k] 
+                        = soatotalDecodedAnchorsFlat[srcoffset * decodedSequencePitchInBytes+ k];
+                }
+
+                std::size_t pitchnum2 = qualityPitchInBytes * num;
+
+                for(int k = threadIdx.x; k < pitchnum2; k += blockDim.x){
+                    selection_soatotalAnchorQualityScoresFlat[destoffset * qualityPitchInBytes + k] 
+                        = soatotalAnchorQualityScoresFlat[srcoffset * qualityPitchInBytes + k];
+                }
+            }
+
+            //used ids
+            {
+                int destoffset = selection_d_numUsedReadIdsPerTaskPrefixSum[destindex];
+                int srcoffset = d_numUsedReadIdsPerTaskPrefixSum[srcindex];
+                int num = d_numUsedReadIdsPerTask[srcindex];
+
+                for(int k = threadIdx.x; k < num; k += blockDim.x){
+                    selection_d_usedReadIds[destoffset + k] 
+                        = d_usedReadIds[srcoffset + k];
+                }
+            }
+        }
+    }
+
     template<int blocksize>
     __global__
     void taskFixAppendedPrefixSumsKernel(
@@ -349,6 +421,36 @@ namespace readextendergpukernels{
                     += d_numUsedReadIdsPerTaskPrefixSum[size-1] + d_numUsedReadIdsPerTask[size - 1];
                 d_numFullyUsedReadIdsPerTaskPrefixSum[size + i] 
                     += d_numFullyUsedReadIdsPerTaskPrefixSum[size-1] + d_numFullyUsedReadIdsPerTask[size - 1];
+            }
+        }
+    }
+
+    template<int blocksize>
+    __global__
+    void taskFixAppendedPrefixSumsKernel(
+        int* __restrict__ soaNumIterationResultsPerTaskPrefixSum,
+        int* __restrict__ d_numUsedReadIdsPerTaskPrefixSum,
+        const int* __restrict__ soaNumIterationResultsPerTask,
+        const int* __restrict__ d_numUsedReadIdsPerTask,
+        int size,
+        int rhssize
+    ){
+        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+        const int stride = blockDim.x * gridDim.x;
+
+        if(size == 0){
+            if(tid == 0){
+                soaNumIterationResultsPerTaskPrefixSum[rhssize] 
+                    = soaNumIterationResultsPerTaskPrefixSum[rhssize-1] + soaNumIterationResultsPerTask[rhssize-1];
+                d_numUsedReadIdsPerTaskPrefixSum[rhssize] 
+                    = d_numUsedReadIdsPerTaskPrefixSum[rhssize-1] + d_numUsedReadIdsPerTask[rhssize-1];
+            }
+        }else{
+            for(int i = tid; i < rhssize+1; i += stride){
+                soaNumIterationResultsPerTaskPrefixSum[size + i] 
+                    += soaNumIterationResultsPerTaskPrefixSum[size-1] + soaNumIterationResultsPerTask[size - 1];
+                d_numUsedReadIdsPerTaskPrefixSum[size + i] 
+                    += d_numUsedReadIdsPerTaskPrefixSum[size-1] + d_numUsedReadIdsPerTask[size - 1];
             }
         }
     }
