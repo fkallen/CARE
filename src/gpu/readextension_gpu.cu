@@ -240,7 +240,7 @@ struct ExtensionPipeline{
             thrust::make_counting_iterator<read_number>(0) + numReadsToProcess
         );
 
-        const int maxNumThreads = programOptions.threads;
+        const int maxNumThreads = std::min(programOptions.threads, programOptions.gpuExtenderThreadConfig.numExtenders);
         const int numDevices = programOptions.deviceIds.size();
 
         std::cerr << "First Pass\n";
@@ -298,7 +298,7 @@ struct ExtensionPipeline{
         );
 
         const int threadsForPairs = SDIV(numPairsToRepeat, programOptions.batchsize);
-        const int maxNumThreads = std::min(threadsForPairs, programOptions.threads);
+        const int maxNumThreads = std::min(std::min(threadsForPairs, programOptions.threads), programOptions.gpuExtenderThreadConfig.numExtenders);
         std::cerr << "use " << maxNumThreads << " threads\n";
         const int numDevices = programOptions.deviceIds.size();
 
