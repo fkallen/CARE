@@ -345,9 +345,6 @@ namespace care{
 
             rmm::mr::device_memory_resource* currentResource = rmm::mr::get_current_device_resource();
             rmm::mr::cuda_async_memory_resource* asyncmr = dynamic_cast<rmm::mr::cuda_async_memory_resource*>(currentResource);
-            assert(asyncmr != nullptr);
-
-            using FailureCallbackMR = rmm::mr::failure_callback_resource_adaptor<rmm::mr::cuda_async_memory_resource>;
 
             struct CallbackData{
                 rmm::mr::cuda_async_memory_resource* asyncmr;
@@ -355,15 +352,18 @@ namespace care{
 
             auto clearAsyncMrCallback = [](size_t /*bytes*/, void* args){
                 CallbackData* callbackData = static_cast<CallbackData*>(args);
-                CUDACHECK(cudaDeviceSynchronize());
-                CUDACHECK(cudaMemPoolTrimTo(callbackData->asyncmr->pool_handle(), 0));
+                if(callbackData->asyncmr != nullptr){
+                    CUDACHECK(cudaDeviceSynchronize());
+                    CUDACHECK(cudaMemPoolTrimTo(callbackData->asyncmr->pool_handle(), 0));
+                }
                 return false; //re-throw the exception
             };
 
             CallbackData callbackData;
             callbackData.asyncmr = asyncmr;
 
-            FailureCallbackMR failureCallbackMR(asyncmr, clearAsyncMrCallback, (void*)&callbackData);
+            using FailureCallbackMR = rmm::mr::failure_callback_resource_adaptor<rmm::mr::device_memory_resource>;
+            FailureCallbackMR failureCallbackMR(currentResource, clearAsyncMrCallback, (void*)&callbackData);
 
             rmm::mr::managed_memory_resource managedMemoryResource;
 
