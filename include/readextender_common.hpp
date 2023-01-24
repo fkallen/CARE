@@ -153,7 +153,7 @@ namespace extension{
         std::vector<std::string> totalAnchorQualityScores;
         std::vector<int> totalAnchorBeginInExtendedRead;
         std::vector<read_number> allUsedCandidateReadIdPairs; //sorted
-        std::vector<read_number> allFullyUsedCandidateReadIdPairs;
+        //std::vector<read_number> allFullyUsedCandidateReadIdPairs;
         std::vector<char> candidateStrings;
         std::vector<int> candidateShifts;
         std::vector<float> candidateOverlapWeights;
@@ -204,7 +204,7 @@ namespace extension{
                 if(totalAnchorQualityScores != rhs.totalAnchorQualityScores) std::cerr << "totalAnchorQualityScores differs\n";                
                 if(totalAnchorBeginInExtendedRead != rhs.totalAnchorBeginInExtendedRead) std::cerr << "totalAnchorBeginInExtendedRead differs\n";
                 if(allUsedCandidateReadIdPairs != rhs.allUsedCandidateReadIdPairs) std::cerr << "allUsedCandidateReadIdPairs differs\n";
-                if(allFullyUsedCandidateReadIdPairs != rhs.allFullyUsedCandidateReadIdPairs) std::cerr << "allFullyUsedCandidateReadIdPairs differs\n";                
+                //if(allFullyUsedCandidateReadIdPairs != rhs.allFullyUsedCandidateReadIdPairs) std::cerr << "allFullyUsedCandidateReadIdPairs differs\n";                
                 if(candidateStrings != rhs.candidateStrings) std::cerr << "candidateStrings differs\n";
                 if(candidateShifts != rhs.candidateShifts) std::cerr << "candidateShifts differs\n";
                 if(candidateOverlapWeights != rhs.candidateOverlapWeights) std::cerr << "candidateOverlapWeights differs\n";
@@ -251,7 +251,7 @@ namespace extension{
             if(totalAnchorQualityScores != rhs.totalAnchorQualityScores) return false;            
             if(totalAnchorBeginInExtendedRead != rhs.totalAnchorBeginInExtendedRead) return false;
             if(allUsedCandidateReadIdPairs != rhs.allUsedCandidateReadIdPairs) return false;
-            if(allFullyUsedCandidateReadIdPairs != rhs.allFullyUsedCandidateReadIdPairs) return false;            
+            //if(allFullyUsedCandidateReadIdPairs != rhs.allFullyUsedCandidateReadIdPairs) return false;            
             if(candidateStrings != rhs.candidateStrings) return false;
             if(candidateShifts != rhs.candidateShifts) return false;
             if(candidateOverlapWeights != rhs.candidateOverlapWeights) return false;
@@ -317,7 +317,7 @@ namespace extension{
             clear(totalAnchorQualityScores);
             clear(totalAnchorBeginInExtendedRead);
             clear(allUsedCandidateReadIdPairs);
-            clear(allFullyUsedCandidateReadIdPairs);
+            //clear(allFullyUsedCandidateReadIdPairs);
             clear(candidateStrings);
             clear(candidateShifts);
             clear(candidateOverlapWeights);
@@ -543,7 +543,7 @@ namespace extension{
 
 
     __inline__
-    void handleEarlyExitOfTasks4(std::vector<extension::Task>& tasks, const std::vector<int> indicesOfActiveTasks){
+    void handleEarlyExitOfTasks4(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
         constexpr bool disableOtherStrand = false;
 
         //std::cout << "Check early exit\n";

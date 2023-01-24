@@ -71,10 +71,10 @@ public:
         msaTimer.print();
     }
 
-    std::vector<extension::ExtendResult> extend(std::vector<extension::ExtendInput> inputs, bool isRepetition){
+    std::vector<extension::ExtendResult> extend(const std::vector<extension::ExtendInput>& inputs, bool doExtraHash){
         auto tasks = makePairedEndTasksFromInput4(inputs.begin(), inputs.end());
         
-        auto extendedTasks = processPairedEndTasks(tasks, isRepetition);
+        auto extendedTasks = processPairedEndTasks(tasks, doExtraHash);
 
         auto extendResults = constructResults(
             extendedTasks
@@ -123,7 +123,7 @@ private:
 
     std::vector<extension::Task>& processPairedEndTasks(
         std::vector<extension::Task>& tasks,
-        bool isRepetition
+        bool doExtraHash
     ) const{
  
         std::vector<int> indicesOfActiveTasks(tasks.size());
@@ -132,7 +132,7 @@ private:
         while(indicesOfActiveTasks.size() > 0){
             //perform one extension iteration for active tasks
 
-            doOneExtensionIteration(tasks, indicesOfActiveTasks, isRepetition);
+            doOneExtensionIteration(tasks, indicesOfActiveTasks, doExtraHash);
 
             //update list of active task indices
 
@@ -151,7 +151,7 @@ private:
         return tasks;
     }
 
-    void doOneExtensionIteration(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks, bool isRepetition) const{
+    void doOneExtensionIteration(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks, bool doExtraHash) const{
         for(int indexOfActiveTask : indicesOfActiveTasks){
             auto& task = tasks[indexOfActiveTask];
 
@@ -166,7 +166,7 @@ private:
 
         hashTimer.start();
 
-        if(!isRepetition){
+        if(!doExtraHash){
             getCandidateReadIds(tasks, indicesOfActiveTasks);
         }else{
             getCandidateReadIdsWithExtraExtensionHash(tasks, indicesOfActiveTasks);
@@ -269,52 +269,40 @@ private:
 
             std::swap(task.allUsedCandidateReadIdPairs, tmp);
 
-            const int numCandidates = task.candidateReadIds.size();
+            // const int numCandidates = task.candidateReadIds.size();
 
-            if(numCandidates > 0 && task.abortReason == extension::AbortReason::None){
-                assert(task.totalAnchorBeginInExtendedRead.size() >= 2);
-                const int oldAccumExtensionsLength 
-                    = task.totalAnchorBeginInExtendedRead[task.totalAnchorBeginInExtendedRead.size() - 2];
-                const int newAccumExtensionsLength = task.totalAnchorBeginInExtendedRead.back();
-                const int lengthOfExtension = newAccumExtensionsLength - oldAccumExtensionsLength;
+            // if(numCandidates > 0 && task.abortReason == extension::AbortReason::None){
+            //     assert(task.totalAnchorBeginInExtendedRead.size() >= 2);
+            //     const int oldAccumExtensionsLength 
+            //         = task.totalAnchorBeginInExtendedRead[task.totalAnchorBeginInExtendedRead.size() - 2];
+            //     const int newAccumExtensionsLength = task.totalAnchorBeginInExtendedRead.back();
+            //     const int lengthOfExtension = newAccumExtensionsLength - oldAccumExtensionsLength;
 
-                std::vector<read_number> fullyUsedIds;
+            //     std::vector<read_number> fullyUsedIds;
 
-                for(int c = 0; c < numCandidates; c += 1){
-                    const int candidateLength = task.candidateSequenceLengths[c];
-                    const int shift = task.alignments[c].shift;
+            //     for(int c = 0; c < numCandidates; c += 1){
+            //         const int candidateLength = task.candidateSequenceLengths[c];
+            //         const int shift = task.alignments[c].shift;
 
-                    if(candidateLength + shift <= task.currentAnchorLength + lengthOfExtension){
-                        fullyUsedIds.emplace_back(task.candidateReadIds[c]);
-                    }
-                }
+            //         if(candidateLength + shift <= task.currentAnchorLength + lengthOfExtension){
+            //             fullyUsedIds.emplace_back(task.candidateReadIds[c]);
+            //         }
+            //     }
 
-                std::vector<read_number> tmp2(task.allFullyUsedCandidateReadIdPairs.size() + fullyUsedIds.size());
-                auto tmp2_end = std::set_union(
-                    task.allFullyUsedCandidateReadIdPairs.begin(),
-                    task.allFullyUsedCandidateReadIdPairs.end(),
-                    fullyUsedIds.begin(),
-                    fullyUsedIds.end(),
-                    tmp2.begin()
-                );
+            //     std::vector<read_number> tmp2(task.allFullyUsedCandidateReadIdPairs.size() + fullyUsedIds.size());
+            //     auto tmp2_end = std::set_union(
+            //         task.allFullyUsedCandidateReadIdPairs.begin(),
+            //         task.allFullyUsedCandidateReadIdPairs.end(),
+            //         fullyUsedIds.begin(),
+            //         fullyUsedIds.end(),
+            //         tmp2.begin()
+            //     );
 
-                tmp2.erase(tmp2_end, tmp2.end());
-                std::swap(task.allFullyUsedCandidateReadIdPairs, tmp2);
+            //     tmp2.erase(tmp2_end, tmp2.end());
+            //     std::swap(task.allFullyUsedCandidateReadIdPairs, tmp2);
 
-                assert(task.allFullyUsedCandidateReadIdPairs.size() <= task.allUsedCandidateReadIdPairs.size());
-            }
-
-            // std::cerr << "id " << task.id << ", after iteration " << task.iteration << "\n";
-            // std::cerr << "used " << task.allUsedCandidateReadIdPairs.size() << ": ";
-            // std::copy(task.allUsedCandidateReadIdPairs.begin(), task.allUsedCandidateReadIdPairs.end(), std::ostream_iterator<read_number>(std::cerr, ", "));
-            // std::cerr << "\n";
-            // std::cerr << "fully used " << task.allFullyUsedCandidateReadIdPairs.size() << ": ";
-            // std::copy(task.allFullyUsedCandidateReadIdPairs.begin(), task.allFullyUsedCandidateReadIdPairs.end(), std::ostream_iterator<read_number>(std::cerr, ", "));
-            // std::cerr << "\n";
-
-            // std::cerr << "task readid " << task.myReadId << "iteration " << task.iteration << " fullyused\n";
-            // std::copy(task.allFullyUsedCandidateReadIdPairs.begin(), task.allFullyUsedCandidateReadIdPairs.end(), std::ostream_iterator<read_number>(std::cerr, " "));
-            // std::cerr << "\n";
+            //     assert(task.allFullyUsedCandidateReadIdPairs.size() <= task.allUsedCandidateReadIdPairs.size());
+            // }
 
             task.iteration++;
         }
@@ -635,23 +623,23 @@ private:
             */
             #ifndef DO_ONLY_REMOVE_MATE_IDS
 
-            for(int indexOfActiveTask : indicesOfActiveTasks){
-                auto& task = tasks[indexOfActiveTask];
+            // for(int indexOfActiveTask : indicesOfActiveTasks){
+            //     auto& task = tasks[indexOfActiveTask];
 
-                std::vector<read_number> tmp(task.candidateReadIds.size());
+            //     std::vector<read_number> tmp(task.candidateReadIds.size());
 
-                auto end = std::set_difference(
-                    task.candidateReadIds.begin(),
-                    task.candidateReadIds.end(),
-                    task.allFullyUsedCandidateReadIdPairs.begin(),
-                    task.allFullyUsedCandidateReadIdPairs.end(),
-                    tmp.begin()
-                );
+            //     auto end = std::set_difference(
+            //         task.candidateReadIds.begin(),
+            //         task.candidateReadIds.end(),
+            //         task.allFullyUsedCandidateReadIdPairs.begin(),
+            //         task.allFullyUsedCandidateReadIdPairs.end(),
+            //         tmp.begin()
+            //     );
 
-                tmp.erase(end, tmp.end());
+            //     tmp.erase(end, tmp.end());
 
-                std::swap(task.candidateReadIds, tmp);
-            }
+            //     std::swap(task.candidateReadIds, tmp);
+            // }
 
             #endif
         }
