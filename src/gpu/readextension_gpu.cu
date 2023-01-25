@@ -166,7 +166,7 @@ void addNewReadsToTasks(
 extension::SplittedExtensionOutput makeAndSplitExtensionOutput(
     GpuReadExtender::TaskData& finishedTasks, 
     GpuReadExtender::RawExtendResult& rawExtendResult, 
-    const GpuReadExtender* gpuReadExtender, 
+    GpuReadExtender* gpuReadExtender, 
     bool isRepeatedIteration, 
     cudaStream_t stream
 ){
