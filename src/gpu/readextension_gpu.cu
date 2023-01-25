@@ -915,9 +915,6 @@ struct ExtensionPipelineProducerConsumer{
 
         cpu::QualityScoreConversion qualityConversion{};
 
-        rmm::mr::statistics_resource_adaptor<rmm::mr::device_memory_resource> extenderpool(mr);
-        rmm::mr::statistics_resource_adaptor<rmm::mr::device_memory_resource> finishedtaskspool(mr);
-
         auto gpuReadExtender = std::make_unique<GpuReadExtender>(
             encodedSequencePitchInInts,
             decodedSequencePitchInBytes,
@@ -928,10 +925,10 @@ struct ExtensionPipelineProducerConsumer{
             programOptions,
             qualityConversion,
             stream,
-            &extenderpool
+            mr
         );
 
-        GpuReadExtender::TaskData finishedTasks(&finishedtaskspool, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, stream);
+        GpuReadExtender::TaskData finishedTasks(mr, 0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, stream);
 
         GpuReadExtender::RawExtendResult rawExtendResult{};
 
@@ -1036,15 +1033,10 @@ struct ExtensionPipelineProducerConsumer{
 
             taskBatchPtr = hashedTaskBatchQueue.pop();
         }
-        auto extenderbytes = extenderpool.get_bytes_counter();
-        std::cerr << "extenderbytes: peak " << extenderbytes.peak << ", total " << extenderbytes.total << ", current " << extenderbytes.value << "\n";
 
-        auto finishedtasksbytes = finishedtaskspool.get_bytes_counter();
-        std::cerr << "finishedtasksbytes: peak " << finishedtasksbytes.peak << ", total " << finishedtasksbytes.total << ", current " << finishedtasksbytes.value << "\n";
-
-        std::cerr << "num finished tasks after extend loop " << finishedTasks.size() << "\n";
+        //std::cerr << "num finished tasks after extend loop " << finishedTasks.size() << "\n";
         output();
-        std::cerr << "num finished tasks after output " << finishedTasks.size() << "\n";
+        //std::cerr << "num finished tasks after output " << finishedTasks.size() << "\n";
 
         // for(int i = 0; i < finishedTasks.size(); i++){
         //     std::cerr << "(" << finishedTasks.pairId.element(i,cudaStreamPerThread) << "," << finishedTasks.id.element(i,cudaStreamPerThread) << "), ";
