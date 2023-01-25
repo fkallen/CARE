@@ -86,8 +86,8 @@ namespace care
         bool allowOutwardExtension{};
         bool sortedOutput = false;
         bool outputRemainingReads = false;
-        int insertSize{};
-        int insertSizeStddev{};
+        int minFragmentSize{};
+        int maxFragmentSize{};
         int fixedStddev{};
         int fixedStepsize{};
         bool showProgress = false;

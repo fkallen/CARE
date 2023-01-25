@@ -33,7 +33,7 @@ bool checkMandatoryArguments(const cxxopts::ParseResult& parseresults){
 
 	const std::vector<std::string> mandatory = {
 		"inputfiles", "outdir", "outputfilenames", "coverage",
-		"insertsize", "insertsizedev", "pairmode" , "eo", "gpu"
+		"minFragmentSize", "maxFragmentSize", "pairmode"
 	};
 
 	bool success = true;

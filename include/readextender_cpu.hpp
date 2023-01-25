@@ -32,8 +32,6 @@ public:
     ReadExtenderCpu() = default;
 
     ReadExtenderCpu(
-        int insertSize_,
-        int insertSizeStddev_,
         int maxextensionPerStep_,
         int maximumSequenceLength_,
         const CpuReadStorage& rs, 
@@ -43,8 +41,6 @@ public:
     ) : 
         readStorage(&rs), minhasher(&mh), 
         qualityConversion(qualityConversion_),
-        insertSize(insertSize_), 
-        insertSizeStddev(insertSizeStddev_),
         maxextensionPerStep(maxextensionPerStep_),
         maximumSequenceLength(maximumSequenceLength_),
         encodedSequencePitchInInts(SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength_)),
@@ -141,7 +137,7 @@ private:
                     indicesOfActiveTasks.begin(), 
                     indicesOfActiveTasks.end(),
                     [&](int index){
-                        return !tasks[index].isActive(insertSize, insertSizeStddev);
+                        return !tasks[index].isActive(programOptions.minFragmentSize, programOptions.maxFragmentSize);
                     }
                 ),
                 indicesOfActiveTasks.end()
@@ -1547,7 +1543,7 @@ private:
             std::max(0, maxextensionPerStep)
         );
         //cannot extend over fragment 
-        extendBy = std::min(extendBy, (insertSize + insertSizeStddev - mateLength) - task.accumExtensionLengths);
+        extendBy = std::min(extendBy, (programOptions.maxFragmentSize - mateLength) - task.accumExtensionLengths);
 
         if(maxextensionPerStep <= 0){
 
@@ -1560,7 +1556,7 @@ private:
             );
 
             extendBy = std::distance(msa.coverage.begin() + anchorLength, iter);
-            extendBy = std::min(extendBy, (insertSize + insertSizeStddev - mateLength) - task.accumExtensionLengths);
+            extendBy = std::min(extendBy, (programOptions.maxFragmentSize - mateLength) - task.accumExtensionLengths);
         }
 
         auto makeAnchorForNextIteration = [&](){
@@ -1590,13 +1586,13 @@ private:
         const int maxNumMismatches = std::min(int(mateLength * maxRelativeMismatchesInOverlap), maxAbsoluteMismatchesInOverlap);
 
 
-        if(task.pairedEnd && task.accumExtensionLengths + consensusLength - requiredOverlapMate + mateLength >= insertSize - insertSizeStddev){
+        if(task.pairedEnd && task.accumExtensionLengths + consensusLength - requiredOverlapMate + mateLength >= programOptions.minFragmentSize){
             //check if mate can be overlapped with consensus 
-            //for each possibility to overlap the mate and consensus such that the merged sequence would end in the desired range [insertSize - insertSizeStddev, insertSize + insertSizeStddev]
+            //for each possibility to overlap the mate and consensus such that the merged sequence would end in the desired range [minFragmentSize, maxFragmentSize]
 
-            const int firstStartpos = std::max(0, insertSize - insertSizeStddev - task.accumExtensionLengths - mateLength);
+            const int firstStartpos = std::max(0, programOptions.minFragmentSize - task.accumExtensionLengths - mateLength);
             const int lastStartposExcl = std::min(
-                std::max(0, insertSize + insertSizeStddev - task.accumExtensionLengths - mateLength) + 1,
+                std::max(0, programOptions.maxFragmentSize - task.accumExtensionLengths - mateLength) + 1,
                 consensusLength - requiredOverlapMate
             );
 
@@ -1951,8 +1947,8 @@ private:
 
         std::vector<extension::ExtendResult> extendResultsCombined = extension::combinePairedEndDirectionResults4(
             extendResults,
-            insertSize,
-            insertSizeStddev
+            programOptions.minFragmentSize,
+            programOptions.maxFragmentSize
         );
 
         return extendResultsCombined;
@@ -1970,8 +1966,6 @@ private:
     const CpuReadStorage* activeReadStorage{};
     const CpuMinhasher* activeMinhasher{};
 
-    int insertSize{};
-    int insertSizeStddev{};
     int maxextensionPerStep{1};
     int minCoverageForExtension{1};
     int maximumSequenceLength{};

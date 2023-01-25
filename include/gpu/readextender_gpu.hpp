@@ -1787,13 +1787,13 @@ struct GpuReadExtender{
             consistencyCheck(stream);
         }
 
-        void getActiveFlags(bool* d_flags, int insertSize, int insertSizeStddev, cudaStream_t stream) const{
+        void getActiveFlags(bool* d_flags, int minFragmentSize, int maxFragmentSize, cudaStream_t stream) const{
             //std::cerr << "task " << this << " getActiveFlags, stream " << stream << "\n";
             if(size() > 0){
                 readextendergpukernels::taskComputeActiveFlagsKernel<128><<<SDIV(size(), 128), 128, 0, stream>>>(
                     size(),
-                    insertSize,
-                    insertSizeStddev,
+                    minFragmentSize,
+                    maxFragmentSize,
                     d_flags,
                     iteration.data(),
                     soaNumIterationResultsPerTask.data(),
@@ -2296,14 +2296,10 @@ struct GpuReadExtender{
         const gpu::GpuReadStorage& rs, 
         const ProgramOptions& programOptions_,
         const cpu::QualityScoreConversion& qualityConversion_,
-        int insertSize_,
-        int insertSizeStddev_,
         cudaStream_t stream,
         rmm::mr::device_memory_resource* mr_
     ) : 
         pairedEnd(isPairedEnd_),
-        insertSize(insertSize_),
-        insertSizeStddev(insertSizeStddev_),
         mr(mr_),
         gpuReadStorage(&rs),
         programOptions(&programOptions_),
@@ -2927,8 +2923,8 @@ struct GpuReadExtender{
         //compute extensions
 
         readextendergpukernels::computeExtensionStepFromMsaKernel<128><<<tasks->size(), 128, 0, stream>>>(
-            insertSize,
-            insertSizeStddev,
+            programOptions->minFragmentSize,
+            programOptions->maxFragmentSize,
             multiMSA.multiMSAView(),
             d_numCandidatesPerAnchor.data(),
             d_numCandidatesPerAnchorPrefixSum.data(),
@@ -3115,7 +3111,7 @@ struct GpuReadExtender{
         const int totalTasksBefore = tasks->size() + outputFinishedTasks.size();
 
         rmm::device_uvector<bool> d_activeFlags(tasks->size(), stream, mr);
-        tasks->getActiveFlags(d_activeFlags.data(), insertSize, insertSizeStddev, stream);
+        tasks->getActiveFlags(d_activeFlags.data(), programOptions->minFragmentSize, programOptions->maxFragmentSize, stream);
 
         TaskData newgpuSoaActiveTasks = tasks->select(
             d_activeFlags.data(),
@@ -3640,8 +3636,8 @@ struct GpuReadExtender{
             finishedTasks4.mateHasBeenFound.data(),
             finishedTasks4.goodscore.data(),
             resultMSAColumnPitchInElements,
-            insertSize,
-            insertSizeStddev
+            programOptions->minFragmentSize,
+            programOptions->maxFragmentSize
         ); CUDACHECKASYNC;
 
         int* const minmaxPairResultLengths = rawResults.h_tmp.data();
@@ -3703,8 +3699,8 @@ struct GpuReadExtender{
             finishedTasks4.mateHasBeenFound.data(),
             finishedTasks4.goodscore.data(),
             resultMSAColumnPitchInElements,
-            insertSize,
-            insertSizeStddev
+            programOptions->minFragmentSize,
+            programOptions->maxFragmentSize
         ); CUDACHECKASYNC;
 
         destroy(d_consensusQuality, stream);
@@ -4214,8 +4210,6 @@ struct GpuReadExtender{
     int initialNumCandidates = 0;
 
     int deviceId{};
-    int insertSize{};
-    int insertSizeStddev{};
 
     rmm::mr::device_memory_resource* mr{};
     const gpu::GpuReadStorage* gpuReadStorage{};

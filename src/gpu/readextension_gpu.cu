@@ -353,8 +353,6 @@ struct ExtensionPipeline{
             gpuReadStorage, 
             programOptions,
             qualityConversion,
-            programOptions.insertSize,
-            (programOptions.fixedStddev == 0 ? programOptions.insertSizeStddev : programOptions.fixedStddev),
             stream,
             mr
         );
@@ -929,8 +927,6 @@ struct ExtensionPipelineProducerConsumer{
             gpuReadStorage, 
             programOptions,
             qualityConversion,
-            programOptions.insertSize,
-            (programOptions.fixedStddev == 0 ? programOptions.insertSizeStddev : programOptions.fixedStddev),
             stream,
             &extenderpool
         );

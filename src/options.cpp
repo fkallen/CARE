@@ -197,12 +197,12 @@ namespace care{
             result.pairedFilterThreshold = pr["pairedFilterThreshold"].as<float>();
         }
 
-        if(pr.count("insertsize")){
-            result.insertSize = pr["insertsize"].as<int>();
+        if(pr.count("minFragmentSize")){
+            result.minFragmentSize = pr["minFragmentSize"].as<int>();
         }
 
-        if(pr.count("insertsizedev")){
-            result.insertSizeStddev = pr["insertsizedev"].as<int>();
+        if(pr.count("maxFragmentSize")){
+            result.maxFragmentSize = pr["maxFragmentSize"].as<int>();
         }
 
         if(pr.count("fixedStddev")){
@@ -529,16 +529,22 @@ namespace care{
                 << "], is " + std::to_string(opt.kmerlength) << std::endl;
         }
 
-        if(opt.insertSize < 0){
+        if(opt.minFragmentSize < 0){
             valid = false;
-            std::cout << "Error: insert size must be >= 0, is " 
-                << opt.insertSize << std::endl;
+            std::cout << "Error: expected minFragmentSize > 0, is " 
+                << opt.minFragmentSize << std::endl;
         }
 
-        if(opt.insertSizeStddev < 0){
+        if(opt.maxFragmentSize < 0){
             valid = false;
-            std::cout << "Error: insert size deviation must be >= 0, is " 
-                << opt.insertSizeStddev << std::endl;
+            std::cout << "Error: expected maxFragmentSize > 0, is " 
+                << opt.maxFragmentSize << std::endl;
+        }
+
+        if(opt.minFragmentSize > opt.maxFragmentSize){
+            valid = false;
+            std::cout << "Error: expected minFragmentSize <= maxFragmentSize, is " 
+                << opt.minFragmentSize << std::endl;
         }
 
         if(opt.fixedStddev < 0){
@@ -684,8 +690,8 @@ namespace care{
     }
 
     void ProgramOptions::printMandatoryOptionsExtend(std::ostream& stream) const{
-        stream << "Insert size: " << insertSize << "\n";
-	    stream << "Insert size deviation: " << insertSizeStddev << "\n";
+        stream << "Minimum fragment size: " << minFragmentSize << "\n";
+	    stream << "Maximum fragment size " << maxFragmentSize << "\n";
         stream << "Extended reads output file: " << extendedReadsOutputfilename << "\n";
     }
 
@@ -853,11 +859,11 @@ namespace care{
 
     void addMandatoryOptionsExtend(cxxopts::Options& commandLineOptions){
         commandLineOptions.add_options("Mandatory")
-            ("insertsize", 
-                "Insert size for paired reads. -- explanation how insert size is interpreted ---", 
+            ("minFragmentSize", 
+                "Minimum fragment size to consider. Must be > 2*readlength", 
                 cxxopts::value<int>())
-            ("insertsizedev", 
-                "Insert size deviation for paired reads.", 
+            ("maxFragmentSize", 
+                "Maximum fragment size to consider. Must be > minFragmentSize.", 
                 cxxopts::value<int>())
             ("eo", 
                 "The name of the output file containing extended reads",

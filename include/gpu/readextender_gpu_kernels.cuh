@@ -532,8 +532,8 @@ namespace readextendergpukernels{
     __global__
     void taskComputeActiveFlagsKernel(
         int numTasks,
-        int insertSize,
-        int insertSizeStddev,
+        int minFragmentSize,
+        int maxFragmentSize,
         bool* __restrict__ d_flags,
         const int* __restrict__ iteration,
         const int* __restrict__ soaNumIterationResultsPerTask,
@@ -551,8 +551,8 @@ namespace readextendergpukernels{
             const int offset = soaNumIterationResultsPerTaskPrefixSum[i];
             const int accumExtensionLength = num > 0 ? soatotalAnchorBeginInExtendedRead[offset + num - 1] : 0;
 
-            d_flags[i] = (iteration[i] < insertSize 
-                && accumExtensionLength < insertSize - (soainputmateLengths[i]) + insertSizeStddev
+            d_flags[i] = (iteration[i] < minFragmentSize 
+                && accumExtensionLength < maxFragmentSize - (soainputmateLengths[i])
                 && (abortReason[i] == extension::AbortReason::None) 
                 && !mateHasBeenFound[i]
             );
@@ -1664,8 +1664,8 @@ namespace readextendergpukernels{
     template<int blocksize>
     __global__
     void computeExtensionStepFromMsaKernel(
-        int insertSize,
-        int insertSizeStddev,
+        int minFragmentSize,
+        int maxFragmentSize,
         const gpu::GPUMultiMSA multiMSA,
         const int* d_numCandidatesPerAnchor,
         const int* d_numCandidatesPerAnchorPrefixSum,
@@ -1729,7 +1729,7 @@ namespace readextendergpukernels{
                     std::max(0, fixedStepsize)
                 );
                 //cannot extend over fragment 
-                extendBy = std::min(extendBy, (insertSize + insertSizeStddev - mateLength) - accumExtensionsLength);
+                extendBy = std::min(extendBy, (maxFragmentSize - mateLength) - accumExtensionsLength);
 
                 //auto firstLowCoverageIter = std::find_if(coverage + anchorLength, coverage + consensusLength, [&](int cov){ return cov < minCoverageForExtension; });
                 //coverage is monotonically decreasing. convert coverages to 1 if >= minCoverageForExtension, else 0. Find position of first 0
@@ -1752,7 +1752,7 @@ namespace readextendergpukernels{
 
                 if(fixedStepsize <= 0){
                     extendBy = myPos - anchorLength;
-                    extendBy = std::min(extendBy, (insertSize + insertSizeStddev - mateLength) - accumExtensionsLength);
+                    extendBy = std::min(extendBy, (maxFragmentSize - mateLength) - accumExtensionsLength);
                 }
 
                 auto makeAnchorForNextIteration = [&](){
@@ -1781,12 +1781,12 @@ namespace readextendergpukernels{
 
                 
 
-                if(isPaired && accumExtensionsLength + consensusLength - requiredOverlapMate + mateLength >= insertSize - insertSizeStddev){
-                    //for each possibility to overlap the mate and consensus such that the merged sequence would end in the desired range [insertSize - insertSizeStddev, insertSize + insertSizeStddev]
+                if(isPaired && accumExtensionsLength + consensusLength - requiredOverlapMate + mateLength >= minFragmentSize){
+                    //for each possibility to overlap the mate and consensus such that the merged sequence would end in the desired range [minFragmentSize, maxFragmentSize]
 
-                    const int firstStartpos = std::max(0, insertSize - insertSizeStddev - accumExtensionsLength - mateLength);
+                    const int firstStartpos = std::max(0, minFragmentSize - accumExtensionsLength - mateLength);
                     const int lastStartposExcl = std::min(
-                        std::max(0, insertSize + insertSizeStddev - accumExtensionsLength - mateLength) + 1,
+                        std::max(0, maxFragmentSize - accumExtensionsLength - mateLength) + 1,
                         consensusLength - requiredOverlapMate
                     );
 
@@ -2008,8 +2008,8 @@ namespace readextendergpukernels{
         const bool* __restrict__ dataMateHasBeenFound,
         const float* __restrict__ dataGoodScores,
         int inputPitch,
-        int insertSize,
-        int insertSizeStddev
+        int minFragmentSize,
+        int maxFragmentSize
     ){
         auto group = cg::this_thread_block();
         const int numGroupsInGrid = (blockDim.x * gridDim.x) / group.size();
@@ -2112,9 +2112,9 @@ namespace readextendergpukernels{
                 //try to find overlap of d0 and revc(d2)
                 bool didMergeDifferentStrands = false;
 
-                if(extendedReadLength0 + extendedReadLength2 >= insertSize - insertSizeStddev + minimumOverlap){
-                    const int maxNumberOfPossibilities = 2*insertSizeStddev + 1;
-                    const int resultLengthUpperBound = insertSize - insertSizeStddev + maxNumberOfPossibilities;
+                if(extendedReadLength0 + extendedReadLength2 >= minFragmentSize + minimumOverlap){
+                    const int maxNumberOfPossibilities = (maxFragmentSize - minFragmentSize) + 1;
+                    const int resultLengthUpperBound = minFragmentSize + maxNumberOfPossibilities;
                     currentsize += resultLengthUpperBound;
                     didMergeDifferentStrands = true;
                 }
@@ -2161,8 +2161,8 @@ namespace readextendergpukernels{
         const bool* __restrict__ dataMateHasBeenFound,
         const float* __restrict__ dataGoodScores,
         int inputPitch,
-        int insertSize,
-        int insertSizeStddev
+        int minFragmentSize,
+        int maxFragmentSize
     ){
         auto group = cg::this_thread_block();
         const int numGroupsInGrid = (blockDim.x * gridDim.x) / group.size();
@@ -2424,7 +2424,7 @@ namespace readextendergpukernels{
                 bool didMergeDifferentStrands = false;
 
                 //if the longest achievable pseudo read reaches the minimum required pseudo read length
-                if(extendedReadLength0 + extendedReadLength2 - minimumOverlap >= insertSize - insertSizeStddev){
+                if(extendedReadLength0 + extendedReadLength2 - minimumOverlap >= minFragmentSize){
                     //copy sequences to smem
 
                     for(int k = group.thread_rank(); k < extendedReadLength0; k += group.size()){
@@ -2439,8 +2439,8 @@ namespace readextendergpukernels{
 
                     group.sync();
 
-                    const int minimumResultLength = std::max(originalLength0+1, insertSize - insertSizeStddev);
-                    const int maximumResultLength = std::min(extendedReadLength0 + extendedReadLength2 - minimumOverlap, insertSize + insertSizeStddev);
+                    const int minimumResultLength = std::max(originalLength0+1, minFragmentSize);
+                    const int maximumResultLength = std::min(extendedReadLength0 + extendedReadLength2 - minimumOverlap, maxFragmentSize);
 
                     gpu::MismatchRatioGlueDecider<blocksize> decider(smemDecider, minimumOverlap, maxRelativeErrorInOverlap);
                     gpu::QualityWeightedGapGluer gluer(originalLength0, originalLength2);

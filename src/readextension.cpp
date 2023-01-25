@@ -184,8 +184,6 @@ struct ExtensionPipeline{
         cpu::QualityScoreConversion qualityConversion{};
 
         ReadExtenderCpu readExtender{
-            programOptions.insertSize,
-            (programOptions.fixedStddev == 0 ? programOptions.insertSizeStddev : programOptions.fixedStddev),
             maxextensionPerStep,
             readStorage.getSequenceLengthUpperBound(),
             readStorage, 

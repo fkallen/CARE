@@ -268,9 +268,9 @@ namespace extension{
         }
         
 
-        bool isActive(int insertSize, int insertSizeStddev) const noexcept{
-            return (iteration < insertSize 
-                && accumExtensionLengths < insertSize - (mateLength) + insertSizeStddev
+        bool isActive(int minFragmentSize, int maxFragmentSize) const noexcept{
+            return (iteration < minFragmentSize 
+                && accumExtensionLengths < maxFragmentSize - (mateLength)
                 && !abort 
                 && !mateHasBeenFound);
         }
@@ -606,8 +606,8 @@ namespace extension{
     __inline__
     std::vector<ExtendResult> combinePairedEndDirectionResults4(
         std::vector<ExtendResult>& pairedEndDirectionResults,
-        int insertSize,
-        int insertSizeStddev
+        int minFragmentSize,
+        int maxFragmentSize
     ){
         auto idcomp = [](const auto& l, const auto& r){ return l.getReadPairId() < r.getReadPairId();};
         //auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
@@ -755,7 +755,7 @@ namespace extension{
                 bool didMergeDifferentStrands = false;
 
                 //if the longest achievable pseudo read reaches the minimum required pseudo read length
-                if(r1l + r3l - minimumOverlap >= insertSize - insertSizeStddev){
+                if(r1l + r3l - minimumOverlap >= minFragmentSize){
                     std::string r3revc = SequenceHelpers::reverseComplementSequenceDecoded(r3.extendedRead.data(), r3.extendedRead.size());
 
                     MismatchRatioGlueDecider decider(minimumOverlap, maxRelativeErrorInOverlap);
@@ -764,8 +764,8 @@ namespace extension{
 
                     std::vector<std::pair<std::string, std::string>> possibleResults;
 
-                    const int minimumResultLength = std::max(r1.originalLength+1, insertSize - insertSizeStddev);
-                    const int maximumResultLength = std::min(r1l + r3l - minimumOverlap, insertSize + insertSizeStddev);
+                    const int minimumResultLength = std::max(r1.originalLength+1, minFragmentSize);
+                    const int maximumResultLength = std::min(r1l + r3l - minimumOverlap, maxFragmentSize);
 
                     for(int resultLength = minimumResultLength; resultLength <= maximumResultLength; resultLength++){
                         auto decision = decider(
