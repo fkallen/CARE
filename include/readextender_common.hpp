@@ -845,7 +845,7 @@ namespace extension{
     };
 
     __inline__
-    ExtendedRead makeExtendedReadFromExtensionResult(const ExtendResult& extensionOutput, const ExtensionResultConversionOptions& opt){
+    ExtendedRead makeExtendedReadFromExtensionResult(ExtendResult extensionOutput, const ExtensionResultConversionOptions& opt){
 
         ExtendedRead er;
 
@@ -938,7 +938,7 @@ namespace extension{
                     extension::ExtensionResultConversionOptions opts;
                     opts.computedAfterRepetition = isRepeatedIteration;            
                     
-                    returnvalue.extendedReads.push_back(extension::makeExtendedReadFromExtensionResult(extensionOutput, opts));
+                    returnvalue.extendedReads.push_back(extension::makeExtendedReadFromExtensionResult(std::move(extensionOutput), opts));
                 }else{
                     returnvalue.idsOfPartiallyExtendedReads.push_back(extensionOutput.readId1);
                     returnvalue.idsOfPartiallyExtendedReads.push_back(extensionOutput.readId2);

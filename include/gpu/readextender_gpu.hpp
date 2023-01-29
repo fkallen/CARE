@@ -3536,7 +3536,7 @@ struct GpuReadExtender{
             finishedTasks4.soatotalDecodedAnchorsLengths.data(),
             decodedSequencePitchInBytes,
             encodedSequencePitchInInts,
-            numCandidates,
+            totalNumIterationResultsOfFinishedTasks,
             8,
             stream
         );
