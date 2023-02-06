@@ -45,16 +45,6 @@ namespace care
         }
     };
 
-    struct GpuExtenderThreadConfig{
-        int numExtenders = 0;
-        int numHashers = 0;
-
-        bool isAutomatic() const noexcept{
-            return numExtenders == 0 && numHashers == 0;
-        }
-    };
-
-
     //Options which can be parsed from command-line arguments
 
     struct ProgramOptions{
@@ -83,13 +73,6 @@ namespace care
         float sampleRateAnchor = 1.f;
         float sampleRateCands = 0.01f;
         float pairedFilterThreshold = 0.06f;
-        bool allowOutwardExtension{};
-        bool sortedOutput = false;
-        bool outputRemainingReads = false;
-        int minFragmentSize{};
-        int maxFragmentSize{};
-        int fixedStddev{};
-        int fixedStepsize{};
         bool showProgress = false;
         bool canUseGpu = false;
         bool replicateGpuReadData = false;
@@ -98,7 +81,6 @@ namespace care
         GpuDataLayout gpuHashtableLayout = GpuDataLayout::EvenShare;
 
         GpuCorrectorThreadConfig gpuCorrectorThreadConfig;
-        GpuExtenderThreadConfig gpuExtenderThreadConfig;
 
         int warpcore = 0;
         int threads = 1;
@@ -109,8 +91,6 @@ namespace care
         std::size_t memoryForHashtables = 0;
         std::size_t memoryTotalLimit = 0;
         SequencePairType pairType = SequencePairType::SingleEnd;
-        int minimum_sequence_length = 0;
-        int maximum_sequence_length = 0;
         uint32_t maxForestTreesAnchor = std::numeric_limits<uint32_t>::max();
         uint32_t maxForestTreesCands = std::numeric_limits<uint32_t>::max();
         std::uint64_t nReads = 0;
@@ -120,7 +100,6 @@ namespace care
         std::string save_hashtables_to = "";
         std::string load_hashtables_from = "";
         std::string tempdirectory = "";
-        std::string extendedReadsOutputfilename = "UNSET_";
         std::string mlForestfileAnchor = "";
         std::string mlForestfileCands = "";
         std::string mlForestfilePrintAnchor = "anchorfeatures.txt";
@@ -137,20 +116,12 @@ namespace care
         bool isValid() const noexcept;
 
         void printMandatoryOptions(std::ostream& stream) const;
-        void printMandatoryOptionsCorrect(std::ostream& stream) const;
         void printMandatoryOptionsCorrectCpu(std::ostream& stream) const;
         void printMandatoryOptionsCorrectGpu(std::ostream& stream) const;
-        void printMandatoryOptionsExtend(std::ostream& stream) const;
-        void printMandatoryOptionsExtendCpu(std::ostream& stream) const;
-        void printMandatoryOptionsExtendGpu(std::ostream& stream) const;
 
         void printAdditionalOptions(std::ostream& stream) const;
-        void printAdditionalOptionsCorrect(std::ostream& stream) const;
-        void printAdditionalOptionsExtend(std::ostream& stream) const;
         void printAdditionalOptionsCorrectCpu(std::ostream& stream) const;
         void printAdditionalOptionsCorrectGpu(std::ostream& stream) const;
-        void printAdditionalOptionsExtendCpu(std::ostream& stream) const;
-        void printAdditionalOptionsExtendGpu(std::ostream& stream) const;
     };
 
 
@@ -165,20 +136,12 @@ namespace care
 
 
     void addMandatoryOptions(cxxopts::Options& commandLineOptions);
-    void addMandatoryOptionsCorrect(cxxopts::Options& commandLineOptions);
     void addMandatoryOptionsCorrectCpu(cxxopts::Options& commandLineOptions);
     void addMandatoryOptionsCorrectGpu(cxxopts::Options& commandLineOptions);
-    void addMandatoryOptionsExtend(cxxopts::Options& commandLineOptions);
-    void addMandatoryOptionsExtendCpu(cxxopts::Options& commandLineOptions);
-    void addMandatoryOptionsExtendGpu(cxxopts::Options& commandLineOptions);
 
     void addAdditionalOptions(cxxopts::Options& commandLineOptions);
-    void addAdditionalOptionsCorrect(cxxopts::Options& commandLineOptions);
-    void addAdditionalOptionsExtend(cxxopts::Options& commandLineOptions);
     void addAdditionalOptionsCorrectCpu(cxxopts::Options& commandLineOptions);
     void addAdditionalOptionsCorrectGpu(cxxopts::Options& commandLineOptions);
-    void addAdditionalOptionsExtendCpu(cxxopts::Options& commandLineOptions);
-    void addAdditionalOptionsExtendGpu(cxxopts::Options& commandLineOptions);
 
 
 }

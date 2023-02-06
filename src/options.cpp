@@ -197,34 +197,6 @@ namespace care{
             result.pairedFilterThreshold = pr["pairedFilterThreshold"].as<float>();
         }
 
-        if(pr.count("minFragmentSize")){
-            result.minFragmentSize = pr["minFragmentSize"].as<int>();
-        }
-
-        if(pr.count("maxFragmentSize")){
-            result.maxFragmentSize = pr["maxFragmentSize"].as<int>();
-        }
-
-        if(pr.count("fixedStddev")){
-            result.fixedStddev = pr["fixedStddev"].as<int>();
-        }
-
-        if(pr.count("fixedStepsize")){
-            result.fixedStepsize = pr["fixedStepsize"].as<int>();
-        }
-
-        if(pr.count("allowOutwardExtension")){
-            result.allowOutwardExtension = pr["allowOutwardExtension"].as<bool>();
-        }
-
-        if(pr.count("sortedOutput")){
-            result.sortedOutput = pr["sortedOutput"].as<bool>();
-        }
-
-        if(pr.count("outputRemaining")){
-            result.outputRemainingReads = pr["outputRemaining"].as<bool>();
-        }
-
         if(pr.count("threads")){
             result.threads = pr["threads"].as<int>();
         }
@@ -270,37 +242,7 @@ namespace care{
             x.numHashers = std::stoi(tokens[1]);
 
             result.gpuCorrectorThreadConfig = x;
-        }
-
-        if(pr.count("gpuExtenderThreadConfig")){
-            std::string configString = pr["gpuExtenderThreadConfig"].as<std::string>();
-
-            auto split = [](const std::string& str, char c) -> std::vector<std::string>{
-                std::vector<std::string> result;
-
-                std::stringstream ss(str);
-                std::string s;
-
-                while (std::getline(ss, s, c)) {
-                        result.emplace_back(s);
-                }
-
-                return result;
-            };
-        
-            auto tokens = split(configString, ':');
-            if(tokens.size() != 2){
-                throw std::runtime_error("gpuExtenderThreadConfig wrong format. Expected: numCorrectors:numHashers");
-            }
-
-            GpuExtenderThreadConfig x;
-            x.numExtenders = std::stoi(tokens[0]);
-            x.numHashers = std::stoi(tokens[1]);
-
-            result.gpuExtenderThreadConfig = x;
-        }
-
-        
+        }       
 
         if(pr.count("replicateGpuReadData")){
             result.replicateGpuReadData = pr["replicateGpuReadData"].as<bool>();
@@ -419,20 +361,8 @@ namespace care{
             }
         }  
 
-        if(pr.count("eo")){
-            result.extendedReadsOutputfilename = pr["eo"].as<std::string>();
-        }
-
         if(pr.count("nReads")){
 		    result.nReads = pr["nReads"].as<std::uint64_t>();
-        }
-
-        if(pr.count("min_length")){
-            result.minimum_sequence_length = pr["min_length"].as<int>();
-        }
-
-        if(pr.count("max_length")){
-            result.maximum_sequence_length = pr["max_length"].as<int>();
         }
 
         if(pr.count("save-preprocessedreads-to")){
@@ -527,36 +457,6 @@ namespace care{
             valid = false;
             std::cout << "Error: kmer length must be in range [0, " << max_k<kmer_type>::value 
                 << "], is " + std::to_string(opt.kmerlength) << std::endl;
-        }
-
-        if(opt.minFragmentSize < 0){
-            valid = false;
-            std::cout << "Error: expected minFragmentSize > 0, is " 
-                << opt.minFragmentSize << std::endl;
-        }
-
-        if(opt.maxFragmentSize < 0){
-            valid = false;
-            std::cout << "Error: expected maxFragmentSize > 0, is " 
-                << opt.maxFragmentSize << std::endl;
-        }
-
-        if(opt.minFragmentSize > opt.maxFragmentSize){
-            valid = false;
-            std::cout << "Error: expected minFragmentSize <= maxFragmentSize, is " 
-                << opt.minFragmentSize << std::endl;
-        }
-
-        if(opt.fixedStddev < 0){
-            valid = false;
-            std::cout << "Error: fixedStddev must be >= 0, is " 
-                << opt.fixedStddev << std::endl;
-        }
-
-        if(opt.fixedStepsize < 0){
-            valid = false;
-            std::cout << "Error: fixedStepsize must be >= 0, is " 
-                << opt.fixedStepsize << std::endl;
         }
 
         if(opt.threads < 1){
@@ -670,36 +570,11 @@ namespace care{
         stream << "Paired mode: " << to_string(pairType) << "\n";
     }
 
-    void ProgramOptions::printMandatoryOptionsCorrect(std::ostream&) const{
-        //nothing
-    }
-
     void ProgramOptions::printMandatoryOptionsCorrectCpu(std::ostream&) const{
         //nothing
     }
 
     void ProgramOptions::printMandatoryOptionsCorrectGpu(std::ostream& stream) const{
-        stream << "Can use GPU(s): " << canUseGpu << "\n";
-        if(canUseGpu){
-            stream << "GPU device ids: [";
-            for(int id : deviceIds){
-                stream << " " << id;
-            }
-            stream << " ]\n";
-        }
-    }
-
-    void ProgramOptions::printMandatoryOptionsExtend(std::ostream& stream) const{
-        stream << "Minimum fragment size: " << minFragmentSize << "\n";
-	    stream << "Maximum fragment size " << maxFragmentSize << "\n";
-        stream << "Extended reads output file: " << extendedReadsOutputfilename << "\n";
-    }
-
-    void ProgramOptions::printMandatoryOptionsExtendCpu(std::ostream&) const{
-        //nothing
-    }
-
-    void ProgramOptions::printMandatoryOptionsExtendGpu(std::ostream& stream) const{
         stream << "Can use GPU(s): " << canUseGpu << "\n";
         if(canUseGpu){
             stream << "GPU device ids: [";
@@ -740,10 +615,6 @@ namespace care{
         stream << "Fixed number of reads: " << fixedNumberOfReads << "\n";
         stream << "GZ compressed output: " << gzoutput << "\n";
         //stream << "singlehash: " << singlehash << "\n";
-    
-    }
-
-    void ProgramOptions::printAdditionalOptionsCorrect(std::ostream& stream) const{
         stream << "Correct candidate reads: " << correctCandidates << "\n";
         stream << "Output correction quality labels: " << outputCorrectionQualityLabels << "\n";
 	    stream << "Max shift for candidate correction: " << new_columns_to_correct << "\n";
@@ -759,14 +630,6 @@ namespace care{
         stream << "pairedFilterThreshold: " << pairedFilterThreshold << "\n";
         stream << "maxForestTreesAnchor: " << maxForestTreesAnchor << "\n";
         stream << "maxForestTreesCands: " << maxForestTreesCands << "\n";
-    }
-
-    void ProgramOptions::printAdditionalOptionsExtend(std::ostream& stream) const{
-        stream << "Allow extension outside of gap: " << allowOutwardExtension << "\n";
-        stream << "Sort extended reads: " << sortedOutput << "\n";
-        stream << "Output remaining reads: " << outputRemainingReads << "\n";
-        stream << "fixedStddev: " << fixedStddev << "\n";
-	    stream << "fixedStepsize: " << fixedStepsize << "\n";
     }
 
     void ProgramOptions::printAdditionalOptionsCorrectCpu(std::ostream& stream) const{
@@ -787,26 +650,6 @@ namespace care{
             stream << "GPU corrector thread config: " << gpuCorrectorThreadConfig.numCorrectors << ":" << gpuCorrectorThreadConfig.numHashers << "\n";
         }
     }
-
-    void ProgramOptions::printAdditionalOptionsExtendCpu(std::ostream&) const{
-        //nothing
-    }
-
-    void ProgramOptions::printAdditionalOptionsExtendGpu(std::ostream& stream) const{
-        stream << "Batch size: " << batchsize << "\n";
-        stream << "Warpcore: " << warpcore << "\n";
-	    stream << "Replicate GPU reads: " << replicateGpuReadData << "\n";
-        stream << "Replicate GPU hashtables " << replicateGpuHashtables << "\n";
-        stream << "GPU read layout " << to_string(gpuReadDataLayout) << "\n";
-        stream << "GPU hashtable layout " << to_string(gpuHashtableLayout) << "\n";
-
-        if(gpuExtenderThreadConfig.isAutomatic()){
-            stream << "GPU extender thread config: auto\n";
-        }else{
-            stream << "GPU extender thread config: " << gpuExtenderThreadConfig.numExtenders << ":" << gpuExtenderThreadConfig.numHashers << "\n";
-        }
-    }
-
 
 
 
@@ -853,23 +696,6 @@ namespace care{
                 cxxopts::value<std::string>());
     }
 
-    void addMandatoryOptionsCorrect(cxxopts::Options&){
-        //nothing
-    }
-
-    void addMandatoryOptionsExtend(cxxopts::Options& commandLineOptions){
-        commandLineOptions.add_options("Mandatory")
-            ("minFragmentSize", 
-                "Minimum fragment size to consider. Must be > 2*readlength", 
-                cxxopts::value<int>())
-            ("maxFragmentSize", 
-                "Maximum fragment size to consider. Must be > minFragmentSize.", 
-                cxxopts::value<int>())
-            ("eo", 
-                "The name of the output file containing extended reads",
-                cxxopts::value<std::string>());
-    }
-
     void addMandatoryOptionsCorrectCpu(cxxopts::Options&){
         //nothing
     }
@@ -879,14 +705,6 @@ namespace care{
 		    ("g,gpu", "Comma-separated list of GPU device ids to be used. (Example: --gpu 0,1 to use GPU 0 and GPU 1)", cxxopts::value<std::vector<int>>());
     }
 
-    void addMandatoryOptionsExtendCpu(cxxopts::Options&){
-        //nothing
-    }
-
-    void addMandatoryOptionsExtendGpu(cxxopts::Options& commandLineOptions){
-        commandLineOptions.add_options("Mandatory")        
-		    ("g,gpu", "Comma-separated list of GPU device ids to be used. (Example: --gpu 0,1 to use GPU 0 and GPU 1)", cxxopts::value<std::vector<int>>());
-    }
 
     void addAdditionalOptions(cxxopts::Options& commandLineOptions){
         commandLineOptions.add_options("Additional")
@@ -946,12 +764,7 @@ namespace care{
                 "Default: " + std::to_string(ProgramOptions{}.hashtableLoadfactor), cxxopts::value<float>())
             ("fixedNumberOfReads", "Process only the first n reads. Default: " + tostring(ProgramOptions{}.fixedNumberOfReads), cxxopts::value<std::size_t>())
             ("singlehash", "Use 1 hashtables with h smallest unique hashes. Default: " + tostring(ProgramOptions{}.singlehash), cxxopts::value<bool>())
-            ("gzoutput", "gz compressed output (very slow). Default: " + tostring(ProgramOptions{}.gzoutput), cxxopts::value<bool>());
-            
-    }
-
-    void addAdditionalOptionsCorrect(cxxopts::Options& commandLineOptions){
-        commandLineOptions.add_options("Additional")
+            ("gzoutput", "gz compressed output (very slow). Default: " + tostring(ProgramOptions{}.gzoutput), cxxopts::value<bool>())
             ("correctionQualityLabels", "If set, correction quality label will be appended to output read headers. "
                 "Default: " + tostring(ProgramOptions{}.outputCorrectionQualityLabels),
             cxxopts::value<bool>()->implicit_value("true"))
@@ -982,22 +795,6 @@ namespace care{
             ("maxForestTreesCands", "Max. no. of forests to load from candidate forest file. (-1 = all)", cxxopts::value<int>());
     }
 
-    void addAdditionalOptionsExtend(cxxopts::Options& commandLineOptions){
-        commandLineOptions.add_options("Additional")
-            ("allowOutwardExtension", "Will try to fill the gap and extend to the outside"
-                "Default: " + tostring(ProgramOptions{}.allowOutwardExtension), cxxopts::value<bool>()->implicit_value("true"))	
-            ("sortedOutput", "Extended reads in output file will be sorted by read id."
-                "Default: " + tostring(ProgramOptions{}.sortedOutput), cxxopts::value<bool>()->implicit_value("true"))	
-            ("outputRemaining", "Output remaining reads which could not be extended. Will be sorted by read id."
-                "Default: " + tostring(ProgramOptions{}.outputRemainingReads), cxxopts::value<bool>()->implicit_value("true"))
-            ("fixedStepsize", "fixedStepsize "
-                "Default: " + tostring(ProgramOptions{}.fixedStepsize),
-            cxxopts::value<int>())
-            ("fixedStddev", "fixedStddev "
-                "Default: " + tostring(ProgramOptions{}.fixedStddev),
-            cxxopts::value<int>());
-    }
-
     void addAdditionalOptionsCorrectCpu(cxxopts::Options& commandLineOptions){
         commandLineOptions.add_options("Additional")
             ("ml-print-forestfile", "The output file for extracted anchor features when correctionType = Print",
@@ -1024,30 +821,6 @@ namespace care{
                 "Default: automatic configuration (0:0). When numCorrectors:0 is used, each corrector performs hashing itself. Recommended with gpu hashtables."
                 " Example: 2:8 . ", cxxopts::value<std::string>());
             
-    }
-
-    void addAdditionalOptionsExtendCpu(cxxopts::Options&){
-        //nothing	
-    }
-
-    void addAdditionalOptionsExtendGpu(cxxopts::Options& commandLineOptions){
-        commandLineOptions.add_options("Additional")
-            ("batchsize", "Number of reads in a single batch. Must be greater than 0. "
-                "Default: " + tostring(ProgramOptions{}.batchsize),
-                cxxopts::value<int>())
-            ("warpcore", "Enable warpcore hash tables. 0: Disabled, 1: Enabled. "
-                "Default: " + tostring(ProgramOptions{}.warpcore),
-                cxxopts::value<int>())
-            ("replicateGpuReadData", "If reads fit into the memory of a single GPU, allow its replication to other GPUs. This can improve the runtime when multiple GPUs are used."
-                "Default: " + std::to_string(ProgramOptions{}.replicateGpuReadData), cxxopts::value<bool>())
-            ("replicateGpuHashtables", "Construct warpcore hashtables on a single GPU, then replicate them on each GPU"
-                "Default: " + std::to_string(ProgramOptions{}.replicateGpuHashtables), cxxopts::value<bool>())
-            ("gpuReadDataLayout", "GPU read layout. 0: first fit, 1: even share", cxxopts::value<int>())
-            ("gpuHashtableLayout", "GPU hash table layout. 0: first fit, 1: even share", cxxopts::value<int>())
-            ("gpuExtenderThreadConfig", "Per-GPU thread configuration for extension. Format numExtenders(int):numHashers(int)."
-                "Default: automatic configuration (0:0). "
-                "Example: 2:8 . When numExtenders:0 is used, each extender performs hashing itself. This is recommended with gpu hashtables.", 
-                cxxopts::value<std::string>());
     }
 
 } //namespace care
