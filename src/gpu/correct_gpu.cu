@@ -1075,13 +1075,17 @@ SerializedObjectStorage correct_gpu_impl(
                     );
                 }
 
-                // don't need to check flags for candidates. insert blob.
-                partialResults.bulkInsert(
-                    results->serializedCandidateResults.data(),
-                    results->serializedCandidateResults.data() + results->serializedCandidateOffsets[numC],
-                    results->serializedCandidateOffsets.data(),
-                    results->serializedCandidateOffsets.data() + numC
-                );
+                if(numC > 0){
+
+                    // don't need to check flags for candidates. insert blob.
+                    partialResults.bulkInsert(
+                        results->serializedCandidateResults.data(),
+                        results->serializedCandidateResults.data() + results->serializedCandidateOffsets[numC],
+                        results->serializedCandidateOffsets.data(),
+                        results->serializedCandidateOffsets.data() + numC
+                    );
+
+                }
 
                 whenDone(results);
             };
