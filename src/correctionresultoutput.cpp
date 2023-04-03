@@ -89,8 +89,8 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
 
     std::array<ResultTypeBatch, 4> tcsBatches;
 
-    SimpleSingleProducerSingleConsumerQueue<ResultTypeBatch*> freeTcsBatches;
-    SimpleSingleProducerSingleConsumerQueue<ResultTypeBatch*> unprocessedTcsBatches;
+    SimpleConcurrentQueue<ResultTypeBatch*> freeTcsBatches;
+    SimpleConcurrentQueue<ResultTypeBatch*> unprocessedTcsBatches;
 
     for(auto& batch : tcsBatches){
         freeTcsBatches.push(&batch);
@@ -160,9 +160,9 @@ void mergeSerializedResultsWithOriginalReads_multithreaded(
     std::array<ReadBatch, 4> readBatches;
 
     // free -> unprocessed input -> unprocessed output -> free -> ...
-    SimpleSingleProducerSingleConsumerQueue<ReadBatch*> freeReadBatches;
-    SimpleSingleProducerSingleConsumerQueue<ReadBatch*> unprocessedInputreadBatches;
-    SimpleSingleProducerSingleConsumerQueue<ReadBatch*> unprocessedOutputreadBatches;
+    SimpleConcurrentQueue<ReadBatch*> freeReadBatches;
+    SimpleConcurrentQueue<ReadBatch*> unprocessedInputreadBatches;
+    SimpleConcurrentQueue<ReadBatch*> unprocessedOutputreadBatches;
 
     std::atomic<bool> noMoreInputreadBatches{false};
 

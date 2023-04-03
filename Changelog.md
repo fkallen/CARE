@@ -1,4 +1,10 @@
 
+# CARE 2.2
+* CPU / GPU performance improvements
+* Add option to specify data layout for hash tables and reads when using multiple gpus
+* Add option to specify detailed thread configuration for gpu version
+* Bugfixes
+* Refactoring
 # CARE 2.1
 * .gz output
 * Avoid some non-deterministic floating-point operations in gpu version

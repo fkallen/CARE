@@ -65,11 +65,9 @@ int main(int argc, char** argv){
 	cxxopts::Options commandLineOptions(argv[0], "CARE: Context-Aware Read Error Correction for Illumina reads");
 
 	addMandatoryOptions(commandLineOptions);
-	addMandatoryOptionsCorrect(commandLineOptions);
 	addMandatoryOptionsCorrectCpu(commandLineOptions);
 
 	addAdditionalOptions(commandLineOptions);
-	addAdditionalOptionsCorrect(commandLineOptions);
 	addAdditionalOptionsCorrectCpu(commandLineOptions);
 
 	commandLineOptions.add_options("Additional")			
@@ -132,11 +130,9 @@ int main(int argc, char** argv){
 	std::cout << "----------------------------------------\n";
 
 	programOptions.printMandatoryOptions(std::cout);
-	programOptions.printMandatoryOptionsCorrect(std::cout);
 	programOptions.printMandatoryOptionsCorrectCpu(std::cout);
 
 	programOptions.printAdditionalOptions(std::cout);
-	programOptions.printAdditionalOptionsCorrect(std::cout);
 	programOptions.printAdditionalOptionsCorrectCpu(std::cout);
 
 	std::cout << "----------------------------------------\n";

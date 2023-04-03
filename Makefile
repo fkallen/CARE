@@ -59,7 +59,8 @@ SOURCES_CORRECT_GPU = \
     src/gpu/gpuminhasherconstruction.cu \
     src/gpu/main_correct_gpu.cu \
     src/gpu/msakernels.cu \
-    src/gpu/sequenceconversionkernels.cu
+    src/gpu/sequenceconversionkernels.cu \
+	src/gpu/util_gpu.cu
 
 EXECUTABLE_CORRECT_CPU = care-cpu
 EXECUTABLE_CORRECT_GPU = care-gpu
@@ -144,9 +145,6 @@ $(DIR)/cpuminhasherconstruction.o : src/cpuminhasherconstruction.cpp
 $(DIR)/dispatch_care_correct_cpu.o : src/dispatch_care_correct_cpu.cpp
 	$(COMPILE)
 
-$(DIR)/extensionresultoutput.o : src/extensionresultoutput.cpp
-	$(COMPILE)
-
 $(DIR)/main_correct_cpu.o : src/main_correct_cpu.cpp
 	$(COMPILE)
 
@@ -154,9 +152,6 @@ $(DIR)/msa.o : src/msa.cpp
 	$(COMPILE)
 	
 $(DIR)/options.o : src/options.cpp
-	$(COMPILE)
-
-$(DIR)/readextension.o : src/readextension.cpp
 	$(COMPILE)
 
 $(DIR)/readlibraryio.o : src/readlibraryio.cpp
@@ -195,10 +190,11 @@ $(DIR)/main_correct_gpu.o : src/gpu/main_correct_gpu.cu
 $(DIR)/msakernels.o : src/gpu/msakernels.cu
 	$(CUDA_COMPILE)
 
-$(DIR)/readextension_gpu.o : src/gpu/readextension_gpu.cu
-	$(CUDA_COMPILE)
-
 $(DIR)/sequenceconversionkernels.o : src/gpu/sequenceconversionkernels.cu
 	$(CUDA_COMPILE)
+
+$(DIR)/util_gpu.o : src/gpu/util_gpu.cu
+	$(CUDA_COMPILE)
+	
 
 

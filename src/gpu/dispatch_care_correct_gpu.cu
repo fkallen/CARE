@@ -693,7 +693,8 @@ namespace care{
             //tempids2,
             gpumemorylimits,
             0,
-            numQualityBits
+            numQualityBits,
+            gpu::MultiGpuReadStorage::Layout::FirstFit
         );
 
         std::vector<gpu::GpuForest> anchorForests;
@@ -769,19 +770,27 @@ namespace care{
 
         //After minhasher is constructed, remaining gpu memory can be used to store reads
 
-        //std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 2ull*1024ull*1024ull*1024ull);
-        std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 1024ull*1024ull);
-        for(int i = 0; i < int(programOptions.deviceIds.size()); i++){
-            std::size_t total = 0;
-            cudaMemGetInfo(&gpumemorylimits[i], &total);
+        auto getGpuMemoryLimits = [&](){
+            const std::size_t numGpus = programOptions.deviceIds.size();
+            std::vector<std::size_t> limits(numGpus, 0);
 
-            std::size_t safety = 1 << 30; //leave 1 GB for correction algorithm
-            if(gpumemorylimits[i] > safety){
-                gpumemorylimits[i] -= safety;
-            }else{
-                gpumemorylimits[i] = 0;
+            for(std::size_t i = 0; i < numGpus; i++){
+                cub::SwitchDevice sd{programOptions.deviceIds[i]};
+                
+                std::size_t total = 0;
+                cudaMemGetInfo(&limits[i], &total);
+
+                std::size_t safety = 1 << 30; //leave 1 GB for algorithm
+                if(limits[i] > safety){
+                    limits[i] -= safety;
+                }else{
+                    limits[i] = 0;
+                }
             }
-        }
+            return limits;
+        };
+
+        gpumemorylimits = getGpuMemoryLimits();
 
         std::size_t memoryLimitHost = programOptions.memoryTotalLimit 
             - cpuReadStorage->getMemoryInfo().host
@@ -802,8 +811,24 @@ namespace care{
             gpumemorylimits,
             //templimits,
             memoryLimitHost,
-            numQualityBits
+            numQualityBits,
+            programOptions.gpuReadDataLayout == GpuDataLayout::FirstFit ? gpu::MultiGpuReadStorage::Layout::FirstFit : gpu::MultiGpuReadStorage::Layout::EvenShare
         );
+
+        gpumemorylimits = getGpuMemoryLimits();
+        
+        if(programOptions.replicateGpuReadData){
+            if(gpuReadStorage.trySequenceReplication(gpumemorylimits)){
+                std::cerr << "Replicated gpu read sequences to each gpu\n";
+                gpumemorylimits = getGpuMemoryLimits();
+            }
+            
+            if(gpuReadStorage.tryQualityReplication(gpumemorylimits)){
+                std::cerr << "Replicated gpu read qualities to each gpu\n";
+                gpumemorylimits = getGpuMemoryLimits();
+            }
+        }
+        
         cpugputimer.print();
 
         printDataStructureMemoryUsage(gpuReadStorage, "reads");

@@ -13,8 +13,8 @@ namespace care{
 
     class CorrectionOutput{
     public:
-        std::vector<TempCorrectedSequence> anchorCorrections;
-        std::vector<TempCorrectedSequence> candidateCorrections;
+        std::vector<TempCorrectedSequence> anchorCorrections{};
+        std::vector<TempCorrectedSequence> candidateCorrections{};
     };
 
     class EncodedCorrectionOutput{
@@ -47,8 +47,27 @@ namespace care{
             return *this;
         }
 
-        std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
-        std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
+        std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections{};
+        std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections{};
+    };
+
+    class SerializedEncodedCorrectionOutput{
+    public:
+        SerializedEncodedCorrectionOutput() = default;
+        SerializedEncodedCorrectionOutput(const SerializedEncodedCorrectionOutput&) = default;
+        SerializedEncodedCorrectionOutput(SerializedEncodedCorrectionOutput&&) = default;
+
+        SerializedEncodedCorrectionOutput& operator=(SerializedEncodedCorrectionOutput rhs){
+            std::swap(*this, rhs);
+            return *this;
+        }
+
+        int numAnchors = 0;
+        int numCandidates = 0;
+        std::vector<std::uint8_t> serializedEncodedAnchorCorrections{};
+        std::vector<std::size_t> beginOffsetsAnchors{};
+        std::vector<std::uint8_t> serializedEncodedCandidateCorrections{};
+        std::vector<std::size_t> beginOffsetsCandidates{};
     };
 
     class ReadCorrectionFlags{

@@ -33,6 +33,21 @@ public:
         offsetbuffer->push_back(std::distance(databuffer->begin(), first));
     }
 
+    template<class OffsetType>
+    void bulkInsert(const std::uint8_t* begin, const std::uint8_t* end, OffsetType offsetsBegin, OffsetType offsetsEnd){
+        const std::size_t numItemsToInsert = std::distance(offsetsBegin, offsetsEnd);
+        const std::size_t currentSize = size();
+
+        auto first = databuffer->insert(databuffer->end(), begin, end);
+        offsetbuffer->insert(offsetbuffer->end(), offsetsBegin, offsetsEnd);
+
+        const std::size_t offsetToAdd = std::distance(databuffer->begin(), first);
+
+        for(std::size_t i = currentSize; i < currentSize + numItemsToInsert; i++){
+            (*offsetbuffer)[i] += offsetToAdd;
+        }
+    }
+
     MemoryUsage getMemoryInfo() const{
         MemoryUsage result;
         result.host += databuffer->getCapacityInMemoryInBytes();
