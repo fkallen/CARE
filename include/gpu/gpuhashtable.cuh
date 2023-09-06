@@ -457,16 +457,20 @@ namespace gpu{
                     keyIndex,
                     group
                 );
-                
-                const int begin = offsets[keyIndex];
-                const int end = offsets[keyIndex+1];
-                const int num = end - begin;
 
-                for(int p = group.thread_rank(); p < num; p += group.size()){
-                    outValues[p] = values[begin + p];
+                if(status.has_any()){
+                    return 0;
+                }else{                
+                    const int begin = offsets[keyIndex];
+                    const int end = offsets[keyIndex+1];
+                    const int num = end - begin;
+
+                    for(int p = group.thread_rank(); p < num; p += group.size()){
+                        outValues[p] = values[begin + p];
+                    }
+
+                    return num;
                 }
-
-                return num;
             }
 
             DEVICEQUALIFIER
@@ -481,12 +485,16 @@ namespace gpu{
                     keyIndex,
                     group
                 );
-                
-                const int begin = offsets[keyIndex];
-                const int end = offsets[keyIndex+1];
-                const int num = end - begin;
 
-                return num;
+                if(status.has_any()){
+                    return 0;
+                }else{                
+                    const int begin = offsets[keyIndex];
+                    const int end = offsets[keyIndex+1];
+                    const int num = end - begin;
+
+                    return num;
+                }
             }
         
             HOSTDEVICEQUALIFIER
@@ -713,6 +721,16 @@ namespace gpu{
                 result.device[deviceId] = (sizeof(Key) + sizeof(int)) * warpcore::detail::get_valid_capacity((numKeys / load), CompactKeyIndexTable::cg_size()); //singlevalue hashtable
                 result.device[deviceId] += sizeof(int) * numKeys; //offsets
                 result.device[deviceId] += sizeof(Value) * numValues; //values
+
+                // std::cout << "lookup: "
+                //     << (sizeof(Key) + sizeof(int)) * warpcore::detail::get_valid_capacity((numKeys / load), CompactKeyIndexTable::cg_size())
+                //     << " bytes, "
+                //     << "offsets: "
+                //     << sizeof(int) * numKeys
+                //     << " bytes, "
+                //     << "values: "
+                //     << sizeof(Value) * numValues
+                //     << " bytes\n";
             }
 
             return result;
@@ -776,6 +794,29 @@ namespace gpu{
             );	
             cubTempStorageBytes = std::max(cubTempStorageBytes, cubbytes1);
 
+            cub::DeviceSelect::Flagged(
+                nullptr,
+                cubbytes1,
+                thrust::make_zip_iterator(
+                    (Key*)nullptr,
+                    (int*)nullptr
+                ),
+                thrust::make_transform_iterator(
+                    (int*)nullptr,
+                    []__device__(int num){
+                        return num > 0;
+                    }
+                ),
+                thrust::make_zip_iterator(
+                    (Key*)nullptr,
+                    (int*)nullptr
+                ),
+                (int*)nullptr,
+                numUniqueKeys,
+                stream
+            );	
+            cubTempStorageBytes = std::max(cubTempStorageBytes, cubbytes1);
+
             cub::DeviceScan::InclusiveSum(
                 nullptr,
                 cubbytes1,
@@ -786,15 +827,16 @@ namespace gpu{
             );
             cubTempStorageBytes = std::max(cubTempStorageBytes, cubbytes1);
 
-            void* temp_allocations[6];
-            std::size_t temp_allocation_sizes[6];
+            void* temp_allocations[7];
+            std::size_t temp_allocation_sizes[7];
             
             temp_allocation_sizes[0] = sizeof(Key) * numUniqueKeys; // h_uniqueKeys
             temp_allocation_sizes[1] = sizeof(Index) * (numUniqueKeys+1); // h_compactOffsetTmp
             temp_allocation_sizes[2] = sizeof(Value) * numValuesInTable; // h_compactValues
             temp_allocation_sizes[3] = sizeof(bool) * numValuesInTable; // value flags
             temp_allocation_sizes[4] = sizeof(int); // reduction sum
-            temp_allocation_sizes[5] = cubTempStorageBytes;            
+            temp_allocation_sizes[5] = cubTempStorageBytes;
+            temp_allocation_sizes[6] = sizeof(Key) * numUniqueKeys; // filtered unique keys
             
             std::size_t requiredbytes = d_temp == nullptr ? 0 : temp_bytes;
             cudaError_t cubstatus = cub::AliasTemporaries(
@@ -820,6 +862,7 @@ namespace gpu{
             bool* const d_tmp_valueflags = static_cast<bool*>(temp_allocations[3]);
             int* const d_reductionsum = static_cast<int*>(temp_allocations[4]);
             void* const d_cubTempStorage = static_cast<void*>(temp_allocations[5]);
+            Key* const d_filteredUniqueKeys = static_cast<Key*>(temp_allocations[6]);
 
             Index numUniqueKeys2 = 0;
    
@@ -849,24 +892,19 @@ namespace gpu{
             numKeys = 0;
             numValues = 0;
 
-            //construct new table
-            gpuKeyIndexTable = std::move(
-                std::make_unique<CompactKeyIndexTable>(
-                    numUniqueKeys / load
-                )
-            );
-
             d_compactOffsets.resize(numUniqueKeys + 1);
 
             auto maxValuesPerKeytmp = maxValuesPerKey;
             
             helpers::call_fill_kernel_async(d_tmp_valueflags, numValuesInTable, true, stream);
 
+            int* d_tmp_numValuesPerKey = d_compactOffsets.data();
+
             //disable large buckets, and buckets of size 1
             helpers::lambda_kernel<<<4096,256, 0, stream>>>(
                 [
                     d_tmp_compactOffset,
-                    d_compactOffsets = d_compactOffsets.data(),
+                    d_tmp_numValuesPerKey,
                     d_tmp_valueflags,
                     numUniqueKeys,
                     maxValuesPerKeytmp
@@ -886,19 +924,19 @@ namespace gpu{
                                 #ifdef MINHASHER_CLEAR_OVEROCCUPIED_BUCKETS
                                 beginOfRemove = 0;
                                 #endif
-                                d_compactOffsets[key+1] = numValuesForKey - (endOfRemove - beginOfRemove);
+                                d_tmp_numValuesPerKey[key] = numValuesForKey - (endOfRemove - beginOfRemove);
                                 for(std::size_t k = offsetBegin + beginOfRemove + threadIdx.x; k < offsetBegin + endOfRemove; k += blockDim.x){
                                     d_tmp_valueflags[k] = false;
                                 }
                             }else{
-                                d_compactOffsets[key+1] = numValuesForKey;
+                                d_tmp_numValuesPerKey[key] = numValuesForKey;
                             }
                         };
 
                         #ifdef MINHASHER_CLEAR_UNDEROCCUPIED_BUCKETS
                         const int lowerLimit = std::max(BucketSize(MINHASHER_MIN_VALUES_PER_KEY),BucketSize(1));
                         if(numValuesForKey < lowerLimit){
-                            d_compactOffsets[key+1] = 0;
+                            d_tmp_numValuesPerKey[key] = 0;
                             for(int i = threadIdx.x; i < numValuesForKey; i += blockDim.x){
                                 d_tmp_valueflags[offsetBegin + i] = false;
                             }
@@ -927,7 +965,6 @@ namespace gpu{
             CUDACHECK(cudaStreamSynchronize(stream));
 
             d_compactValues.resize(numRemainingValuesInTable);
-            
 
             CUDACHECK(cub::DeviceSelect::Flagged(
                 d_cubTempStorage,
@@ -940,26 +977,63 @@ namespace gpu{
                 stream
             ));
 
-            CUDACHECK(cub::DeviceScan::InclusiveSum(
+            //copy (key, numValuesPerKey) if numValuesPerKey > 0
+            CUDACHECK(cub::DeviceSelect::Flagged(
                 d_cubTempStorage,
                 cubTempStorageBytes,
-                d_compactOffsets.data() + 1, 
-                d_compactOffsets.data() + 1, 
-                numUniqueKeys, 
+                thrust::make_zip_iterator(
+                    d_tmp_uniqueKeys,
+                    d_tmp_numValuesPerKey
+                ),
+                thrust::make_transform_iterator(
+                    d_tmp_numValuesPerKey,
+                    []__device__(int num){
+                        return num > 0;
+                    }
+                ),
+                thrust::make_zip_iterator(
+                    d_filteredUniqueKeys,
+                    d_tmp_compactOffset
+                ),
+                d_reductionsum,
+                numUniqueKeys,
                 stream
             ));
 
+            int numRemainingKeysInTable = 0;
+            CUDACHECK(cudaMemcpyAsync(&numRemainingKeysInTable, d_reductionsum, sizeof(int), D2H, stream));
+            CUDACHECK(cudaStreamSynchronize(stream));
+
+            //this invalidates d_tmp_numValuesPerKey !
+            d_compactOffsets.destroy();
+            d_compactOffsets.resize(numRemainingKeysInTable+1);
+
+            CUDACHECK(cub::DeviceScan::InclusiveSum(
+                d_cubTempStorage,
+                cubTempStorageBytes,
+                d_tmp_compactOffset, 
+                d_compactOffsets.data() + 1, 
+                numRemainingKeysInTable,
+                stream
+            ));
             CUDACHECK(cudaMemsetAsync(d_compactOffsets.data(), 0, sizeof(int), stream));
+
+            gpuKeyIndexTable = std::move(
+                std::make_unique<CompactKeyIndexTable>(
+                    numRemainingKeysInTable / load
+                )
+            );
 
             gpuhashtablekernels::callInsertIotaValuesKernel(
                 *gpuKeyIndexTable,
-                d_tmp_uniqueKeys,
+                d_filteredUniqueKeys,
                 0,
-                numUniqueKeys,
+                numRemainingKeysInTable,
                 stream
             );
 
-            numKeys = numUniqueKeys;
+            //numKeys = numUniqueKeys;
+            numKeys = numRemainingKeysInTable;
             numValues = numRemainingValuesInTable;
             
             isCompact = true;
