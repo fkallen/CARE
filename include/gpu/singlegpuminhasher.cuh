@@ -607,6 +607,12 @@ namespace gpu{
 
         MemoryUsage getMemoryInfo() const noexcept override{
             MemoryUsage mem{};
+            // int i = 0;
+            // for(const auto& table : gpuHashTables){
+            //     //mem += table->getMemoryInfo();
+            //     auto info = table->getMemoryInfo();
+            //     std::cout << "gpu table " << i << ": " << info.device[0] << "\n";
+            // }
 
             for(const auto& table : gpuHashTables){
                 mem += table->getMemoryInfo();

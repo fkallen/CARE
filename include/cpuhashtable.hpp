@@ -531,6 +531,7 @@ namespace care{
                     nonEmtpyKeysCount++;
                 }
             }
+            //std::cout << "nonEmtpyKeysCount " << nonEmtpyKeysCount << ", loadfactor " << loadfactor << "\n";
 
             //lookup = std::move(AoSCpuSingleValueHashTable<Key, ValueIndex>(keys.size(), loadfactor));
             lookup = std::move(AoSCpuSingleValueHashTable<Key, ValueIndex>(nonEmtpyKeysCount, loadfactor));
@@ -611,6 +612,9 @@ namespace care{
             result.host += sizeof(Value) * buildvalues.capacity();
 
             result.device = lookup.getMemoryInfo().device;
+
+            // std::cout << "Values: " << sizeof(Value) * values.capacity() << " bytes, lookup: "
+            //     << lookup.getMemoryInfo().host << " bytes\n";
 
             //std::cerr << lookup.getMemoryInfo().host << " " << result.host << " bytes\n";
 
