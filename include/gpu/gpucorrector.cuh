@@ -211,7 +211,98 @@ namespace gpu{
                     }
                 }
             }
+        }
 
+        // inputs vectors must correspond to devices given by deviceIds
+        void multi_setIsCorrectedAsHQAnchor(
+            const std::vector<const bool*>& vec_d_flags,             
+            const std::vector<const read_number*> vec_d_readIds, //d_readIds must be unique
+            const std::vector<int> vec_numIds, 
+            const std::vector<cudaStream_t>& streams
+        ) noexcept{
+            assert(vec_d_flags.size() == deviceIds.size());
+
+            int oldId = 0;
+            CUDACHECK(cudaGetDevice(&oldId));
+
+            const int numGpus = deviceIds.size();
+            int maxNumIds = 0;
+            for(int g = 0; g < numGpus; g++){
+                maxNumIds += vec_numIds[g];
+            }
+
+            std::vector<rmm::device_uvector<bool>> vec_d_flags_remote;
+            std::vector<rmm::device_uvector<read_number>> vec_d_readIds_remote;
+
+            for(int g = 0; g < numGpus; g++){
+                CUDACHECK(cudaSetDevice(deviceIds[g]));
+                vec_d_flags_remote.emplace_back(maxNumIds, streams[g]);
+                vec_d_readIds_remote.emplace_back(maxNumIds, streams[g]);
+            }
+            //join the streams
+            for(int g = 0; g < numGpus; g++){
+                CUDACHECK(cudaSetDevice(deviceIds[g]));
+                CUDACHECK(cudaEventRecord(events[g], streams[g]));
+                for(int x = 0; x < numGpus; x++){
+                    if(x != g){
+                        CUDACHECK(cudaSetDevice(deviceIds[x]));
+                        CUDACHECK(cudaStreamWaitEvent(streams[x], events[g], 0));
+                    }
+                }
+            }
+
+            for(int src = 0; src < numGpus; src++){
+                const int numIds = vec_numIds[src];
+                if(numIds > 0){
+                    for(int dst = 0; dst < numGpus; dst++){
+                        CUDACHECK(cudaSetDevice(deviceIds[dst]));
+                        if(src != dst){
+                            CUDACHECK(cudaMemcpyPeerAsync(
+                                vec_d_flags_remote[dst].data(), 
+                                deviceIds[dst], 
+                                vec_d_flags[src], 
+                                deviceIds[src], 
+                                sizeof(bool) * numIds, 
+                                streams[dst]
+                            ));
+                            CUDACHECK(cudaMemcpyPeerAsync(
+                                vec_d_readIds_remote[dst].data(), 
+                                deviceIds[dst], 
+                                vec_d_readIds[src], 
+                                deviceIds[src], 
+                                sizeof(read_number) * numIds, 
+                                streams[dst]
+                            ));
+                        }
+                        setBitarray<<<SDIV(numIds, 128), 128, 0, streams[dst]>>>(
+                            vec_d_isHqAnchor[dst],
+                            src == dst ? vec_d_flags[src] : vec_d_flags_remote[dst].data(), 
+                            src == dst ? vec_d_readIds[src] : vec_d_readIds_remote[dst].data(),
+                            numIds
+                        );
+                        CUDACHECKASYNC;
+                    }
+                }
+            }
+
+            //join the streams
+            for(int g = 0; g < numGpus; g++){
+                CUDACHECK(cudaSetDevice(deviceIds[g]));
+                CUDACHECK(cudaEventRecord(events[g], streams[g]));
+                for(int x = 0; x < numGpus; x++){
+                    if(x != g){
+                        CUDACHECK(cudaSetDevice(deviceIds[x]));
+                        CUDACHECK(cudaStreamWaitEvent(streams[x], events[g], 0));
+                    }
+                }
+            }
+            for(int g = 0; g < numGpus; g++){
+                CUDACHECK(cudaSetDevice(deviceIds[g]));
+                vec_d_flags_remote[g].release();
+                vec_d_readIds_remote[g].release();
+            }
+
+            CUDACHECK(cudaSetDevice(oldId));
         }
 
     private:
@@ -741,6 +832,50 @@ namespace gpu{
                 currentOutput->nothingToDo = true;
                 return;
             }
+
+            // {
+            //     std::vector<int> h_candidates_per_anchor_prefixsum(currentNumAnchors+1);
+            //     CUDACHECK(cudaMemcpyAsync(
+            //         h_candidates_per_anchor_prefixsum.data(), 
+            //         currentInput->d_candidates_per_anchor_prefixsum.data(),
+            //         sizeof(int) * (currentNumAnchors+1),
+            //         D2H,
+            //         stream
+            //     ));
+            //     CUDACHECK(cudaStreamSynchronize(stream));
+
+            //     const int numgpus = 8;
+
+            //     std::vector<size_t> bucketLimits(1,0);
+            //     size_t currentBegin = 0;
+            //     const size_t end = currentNumCandidates;
+            //     while(currentBegin < end){
+            //         const size_t searchBegin = currentBegin + (currentNumCandidates / numgpus);
+            //         const auto it = std::upper_bound(
+            //             h_candidates_per_anchor_prefixsum.begin(), 
+            //             h_candidates_per_anchor_prefixsum.end(), 
+            //             searchBegin
+            //         );
+            //         if(it == h_candidates_per_anchor_prefixsum.end()){
+            //             bucketLimits.push_back(currentNumAnchors);
+            //             currentBegin = end;
+            //         }else{
+            //             const size_t dist = std::distance(h_candidates_per_anchor_prefixsum.begin(), it);
+            //             bucketLimits.push_back(dist);
+            //             currentBegin = h_candidates_per_anchor_prefixsum[dist];
+            //         }
+            //     }
+            //     for(auto x : bucketLimits){
+            //         std::cout << x << " ";
+            //     }
+            //     std::cout << "\n";
+            //     for(int i = 0; i < bucketLimits.size() - 1; i++){
+            //         const int from = h_candidates_per_anchor_prefixsum[bucketLimits[i]];
+            //         const int to = h_candidates_per_anchor_prefixsum[bucketLimits[i+1]];
+            //         std::cout << (to - from) << " ";
+            //     }
+            //     std::cout << "\n";
+            // }
             
             cub::SwitchDevice sd{deviceId};
 

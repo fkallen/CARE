@@ -1868,5 +1868,267 @@ namespace gpu{
     }
 
 
+    void callMsaCorrectAnchorsWithForestKernel_multiphase(
+        std::vector<char*>& vec_d_correctedAnchors,
+        std::vector<bool*>& vec_d_anchorIsCorrected,
+        std::vector<AnchorHighQualityFlag*>& vec_d_isHighQualityAnchor,
+        const std::vector<GPUMultiMSA>& vec_multiMSA,
+        const std::vector<GpuForest::Clf>& vec_gpuForest,
+        float forestThreshold,
+        const std::vector<unsigned int*>& vec_d_anchorSequencesData,
+        const std::vector<int*>& vec_d_indices_per_anchor,
+        const std::vector<int>& vec_numAnchors,
+        int encodedSequencePitchInInts,
+        size_t decodedSequencePitchInBytes,
+        int /*maximumSequenceLength*/,
+        float estimatedErrorrate,
+        float estimatedCoverage,
+        float avg_support_threshold,
+        float min_support_threshold,
+        float min_coverage_threshold,
+        const std::vector<cudaStream_t>& streams,
+        const std::vector<int>& deviceIds,
+        int* h_tempstorage // sizeof(int) * deviceIds.size()
+    ){
+
+        const int numGpus = deviceIds.size();
+        std::vector<int> vec_numSMs(numGpus);
+        std::vector<rmm::device_scalar<int>> vec_d_numMismatches;
+        std::vector<rmm::device_uvector<GpuMSAProperties>> vec_d_msaProperties;
+        std::vector<rmm::device_uvector<int>> vec_d_mismatchAnchorIndices;
+        std::vector<rmm::device_uvector<int>> vec_d_mismatchPositionsInAnchors;
+        std::vector<rmm::device_buffer> vec_gmemFeaturesTransposedExtract;
+
+        int* const h_numMismatchesPerGpu = h_tempstorage;
+
+
+        for(int g = 0; g < numGpus; g++){
+            cub::SwitchDevice sd{deviceIds[g]};
+            CUDACHECK(cudaDeviceGetAttribute(&vec_numSMs[g], cudaDevAttrMultiProcessorCount, deviceIds[g]));
+            vec_d_numMismatches.emplace_back(0, streams[g]);
+            vec_d_msaProperties.emplace_back(0, streams[g]);
+            vec_d_mismatchAnchorIndices.emplace_back(0, streams[g]);
+            vec_d_mismatchPositionsInAnchors.emplace_back(0, streams[g]);
+            vec_gmemFeaturesTransposedExtract.emplace_back(0, streams[g]);
+        }
+
+        for(int g = 0; g < numGpus; g++){
+            cub::SwitchDevice sd{deviceIds[g]};
+            const int numAnchors = vec_numAnchors[g];
+            if(numAnchors > 0){
+                constexpr int blocksizeinit = 128;
+                constexpr int groupsizeinit = 32;
+
+                const std::size_t smeminit = 0;        
+                int maxBlocksPerSMinit = 0;
+
+                CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                    &maxBlocksPerSMinit,
+                    msaCorrectAnchorsWithForestKernel_multiphase_initkernel<blocksizeinit, groupsizeinit>,
+                    blocksizeinit, 
+                    smeminit
+                ));
+
+                vec_d_msaProperties[g].resize(numAnchors, streams[g]);
+
+                dim3 blockinit(blocksizeinit);
+                dim3 gridinit(std::min(SDIV(numAnchors, blocksizeinit / groupsizeinit), maxBlocksPerSMinit * vec_numSMs[g]));
+
+                //helpers::GpuTimer timerinit(stream, "initkernel");
+
+                msaCorrectAnchorsWithForestKernel_multiphase_initkernel<blocksizeinit, groupsizeinit>
+                <<<gridinit, blockinit, smeminit, streams[g]>>>(
+                    vec_d_correctedAnchors[g],
+                    vec_d_anchorIsCorrected[g],
+                    vec_d_isHighQualityAnchor[g],
+                    vec_multiMSA[g],
+                    vec_d_anchorSequencesData[g],
+                    vec_d_indices_per_anchor[g],
+                    numAnchors,
+                    encodedSequencePitchInInts,
+                    decodedSequencePitchInBytes,
+                    estimatedErrorrate,
+                    estimatedCoverage,
+                    avg_support_threshold,
+                    min_support_threshold,
+                    min_coverage_threshold,
+                    vec_d_msaProperties[g].data(),
+                    vec_d_numMismatches[g].data()
+                );
+                CUDACHECKASYNC;
+                //timerinit.print();
+
+                CUDACHECK(cudaMemcpyAsync(
+                    h_numMismatchesPerGpu + g,
+                    vec_d_numMismatches[g].data(),
+                    sizeof(int),
+                    D2H,
+                    streams[g]
+                ));
+            }
+        }
+
+        for(int g = 0; g < numGpus; g++){
+            cub::SwitchDevice sd{deviceIds[g]};
+            const int numAnchors = vec_numAnchors[g];
+            if(numAnchors > 0){
+                CUDACHECK(cudaStreamSynchronize(streams[g]));
+
+                const int numMismatches = h_numMismatchesPerGpu[g];
+                if(numMismatches > 0){
+                    constexpr int blocksizegather = 128;
+                    constexpr int groupsizegather = 32;
+
+                    const std::size_t smemgather = 0;        
+                    int maxBlocksPerSMgather = 0;
+
+                    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                        &maxBlocksPerSMgather,
+                        msaCorrectAnchorsWithForestKernel_multiphase_initkernel<blocksizegather, groupsizegather>,
+                        blocksizegather, 
+                        smemgather
+                    ));
+
+                    vec_d_numMismatches[g].set_value_to_zero_async(streams[g]);
+                    vec_d_mismatchAnchorIndices[g].resize(numMismatches, streams[g]);
+                    vec_d_mismatchPositionsInAnchors[g].resize(numMismatches, streams[g]);
+
+                    dim3 blockgather(blocksizegather);
+                    dim3 gridgather(std::min(SDIV(numAnchors, blocksizegather / groupsizegather), maxBlocksPerSMgather * vec_numSMs[g]));
+
+                    //helpers::GpuTimer timergather(stream, "gatherkernel");        
+
+                    msaCorrectAnchorsWithForestKernel_multiphase_gathermismatcheskernel<blocksizegather, groupsizegather>
+                    <<<gridgather, blockgather, smemgather, streams[g]>>>(
+                        vec_d_isHighQualityAnchor[g],
+                        vec_multiMSA[g],
+                        vec_d_anchorSequencesData[g],
+                        numAnchors,
+                        encodedSequencePitchInInts,
+                        decodedSequencePitchInBytes,
+                        estimatedErrorrate,
+                        estimatedCoverage,
+                        avg_support_threshold,
+                        min_support_threshold,
+                        min_coverage_threshold,
+                        vec_d_numMismatches[g].data(),
+                        vec_d_mismatchAnchorIndices[g].data(),
+                        vec_d_mismatchPositionsInAnchors[g].data()
+                    );
+                    CUDACHECKASYNC;
+                    //timergather.print();
+                }
+            }
+        }
+
+
+        for(int g = 0; g < numGpus; g++){
+            cub::SwitchDevice sd{deviceIds[g]};
+            const int numAnchors = vec_numAnchors[g];
+            if(numAnchors > 0){
+                const int numMismatches = h_numMismatchesPerGpu[g];
+                if(numMismatches > 0){
+                    constexpr int blocksizeextract = 128;
+                    //constexpr std::size_t maxSmemextract = 32 * 1024;
+                    std::size_t featuresizeextract = numMismatches * anchor_extractor::numFeatures() * sizeof(float);
+
+                    int maxBlocksPerSMextract = 0;
+                    std::size_t smemextract = 0;
+
+                    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                        &maxBlocksPerSMextract,
+                        msaCorrectAnchorsWithForestKernel_multiphase_extractkernel<blocksizeextract, anchor_extractor>,
+                        blocksizeextract, 
+                        smemextract
+                    ));
+
+                    vec_gmemFeaturesTransposedExtract[g].resize(featuresizeextract, streams[g]);
+
+                    dim3 blockextract(blocksizeextract);
+                    dim3 gridextract(std::min(SDIV(numMismatches, blocksizeextract), maxBlocksPerSMextract * vec_numSMs[g]));
+
+                    //helpers::GpuTimer timerextract(stream, "extractkernel");
+
+                    msaCorrectAnchorsWithForestKernel_multiphase_extractkernel<blocksizeextract, anchor_extractor>
+                    <<<gridextract, blockextract, smemextract, streams[g]>>>(
+                        vec_multiMSA[g],
+                        vec_d_anchorSequencesData[g],
+                        encodedSequencePitchInInts,
+                        decodedSequencePitchInBytes,
+                        estimatedErrorrate,
+                        estimatedCoverage,
+                        avg_support_threshold,
+                        min_support_threshold,
+                        min_coverage_threshold,
+                        reinterpret_cast<float*>(vec_gmemFeaturesTransposedExtract[g].data()),
+                        numMismatches,
+                        vec_d_mismatchAnchorIndices[g].data(),
+                        vec_d_mismatchPositionsInAnchors[g].data(),
+                        vec_d_msaProperties[g].data()
+                    );
+                    CUDACHECKASYNC;
+                    //timerextract.print();
+                }
+            }
+        }
+
+
+        for(int g = 0; g < numGpus; g++){
+            cub::SwitchDevice sd{deviceIds[g]};
+            const int numAnchors = vec_numAnchors[g];
+            if(numAnchors > 0){
+                const int numMismatches = h_numMismatchesPerGpu[g];
+                if(numMismatches > 0){
+                    constexpr int blocksizecorrectgroup = 128;
+                    constexpr int groupsizecorrectgroup = 32;
+                    constexpr int maxSmemCorrectgroup = 32 * 1024;
+                    std::size_t smemcorrectgroup = blocksizecorrectgroup * anchor_extractor::numFeatures() * sizeof(float);
+                    if(maxSmemCorrectgroup < smemcorrectgroup){
+                        smemcorrectgroup = 0;
+                    }
+                    int maxBlocksPerSMcorrectgroup = 0;
+
+                    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                        &maxBlocksPerSMcorrectgroup,
+                        msaCorrectAnchorsWithForestKernel_multiphase_correctkernel_group<blocksizecorrectgroup, groupsizecorrectgroup, GpuForest::Clf>,
+                        blocksizecorrectgroup, 
+                        smemcorrectgroup
+                    ));
+
+                    dim3 blockcorrectgroup(blocksizecorrectgroup);
+                    dim3 gridcorrectgroup(std::min(SDIV(numMismatches, blocksizecorrectgroup / groupsizecorrectgroup), maxBlocksPerSMcorrectgroup * vec_numSMs[g]));
+
+                    //helpers::GpuTimer timercorrectgroup(stream, "correctgroupkernel");
+
+                    msaCorrectAnchorsWithForestKernel_multiphase_correctkernel_group<blocksizecorrectgroup, groupsizecorrectgroup, GpuForest::Clf>
+                    <<<gridcorrectgroup, blockcorrectgroup, smemcorrectgroup, streams[g]>>>(
+                        vec_d_correctedAnchors[g],
+                        vec_multiMSA[g],
+                        vec_gpuForest[g],
+                        forestThreshold,
+                        vec_d_anchorSequencesData[g],
+                        encodedSequencePitchInInts,
+                        decodedSequencePitchInBytes,
+                        estimatedErrorrate,
+                        estimatedCoverage,
+                        avg_support_threshold,
+                        min_support_threshold,
+                        min_coverage_threshold,
+                        anchor_extractor::numFeatures(),
+                        smemcorrectgroup == 0,
+                        reinterpret_cast<float*>(vec_gmemFeaturesTransposedExtract[g].data()),
+                        numMismatches,
+                        vec_d_mismatchAnchorIndices[g].data(),
+                        vec_d_mismatchPositionsInAnchors[g].data()
+                    );
+                    CUDACHECKASYNC;
+                    //timercorrectgroup.print();
+                }
+            }
+        }
+        
+    }
+
+
 }
 }

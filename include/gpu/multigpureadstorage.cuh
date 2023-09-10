@@ -923,6 +923,94 @@ public: //inherited GPUReadStorage interface
         nvtx::pop_range();
     }
 
+    void multi_gatherSequences(
+        std::vector<ReadStorageHandle>& vec_handle,
+        std::vector<unsigned int*>& vec_d_sequence_data,
+        size_t outSequencePitchInInts,
+        const std::vector<read_number*>& vec_d_readIds,
+        const std::vector<int>& vec_numSequences,
+        const std::vector<cudaStream_t>& streams,
+        const std::vector<int>& callerDeviceIds,
+        const std::vector<rmm::mr::device_memory_resource*>& mrs
+    ) const override{
+        nvtx::ScopedRange sr("multigpureadstorage::multi_gatherSequences", 4);
+        if(hasHostSequences()) throw std::runtime_error("multi_gatherSequences cannot be used if some sequences are stored on the host");
+
+        const int numGpus = callerDeviceIds.size();
+        int totalNumSequences = 0;
+        for(int g = 0; g < numGpus; g++){
+            totalNumSequences += vec_numSequences[g];
+        }
+        if(totalNumSequences == 0) return;
+
+        std::vector<size_t> vec_destRowPitchInBytes(numGpus, sizeof(unsigned int) * outSequencePitchInInts);
+        std::vector<size_t> vec_numSequences_sizet(numGpus);
+        std::vector<typename MultiGpu2dArray<unsigned int, IndexType>::Handle> vec_arrayhandle(numGpus);
+        for(int g = 0; g < numGpus; g++){
+            TempData* tempData = getTempDataFromHandle(vec_handle[g]);
+            assert(tempData->deviceId == callerDeviceIds[g]);
+
+            vec_arrayhandle[g] = tempData->handleSequences;
+            vec_numSequences_sizet[g] = vec_numSequences[g];
+        }
+
+        sequencesGpu.multi_gather(
+            vec_arrayhandle, 
+            vec_d_sequence_data, 
+            vec_destRowPitchInBytes, 
+            vec_d_readIds, 
+            vec_numSequences_sizet, 
+            streams,
+            callerDeviceIds
+        );
+
+    }
+
+    void multi_gatherQualities(
+        std::vector<ReadStorageHandle>& vec_handle,
+        std::vector<char*>& vec_d_quality_data,
+        size_t out_quality_pitch,
+        const std::vector<read_number*>& vec_d_readIds,
+        const std::vector<int>& vec_numSequences,
+        const std::vector<cudaStream_t>& streams,
+        const std::vector<int>& callerDeviceIds,
+        const std::vector<rmm::mr::device_memory_resource*>& mrs
+    ) const override{
+        nvtx::ScopedRange sr("multigpureadstorage::multi_gatherQualities", 4);
+        if(hasHostQualities()) throw std::runtime_error("multi_gatherQualities cannot be used if some sequences are stored on the host");
+
+        const int numGpus = callerDeviceIds.size();
+        int totalNumSequences = 0;
+        for(int g = 0; g < numGpus; g++){
+            totalNumSequences += vec_numSequences[g];
+        }
+        if(totalNumSequences == 0) return;
+
+        std::vector<size_t> vec_destRowPitchInBytes(numGpus, out_quality_pitch);
+        std::vector<size_t> vec_numSequences_sizet(numGpus);
+        std::vector<unsigned int*> vec_d_quality_data_as_uint(numGpus);
+        std::vector<typename MultiGpu2dArray<unsigned int, IndexType>::Handle> vec_arrayhandle(numGpus);
+        for(int g = 0; g < numGpus; g++){
+            TempData* tempData = getTempDataFromHandle(vec_handle[g]);
+            assert(tempData->deviceId == callerDeviceIds[g]);
+
+            vec_arrayhandle[g] = tempData->handleQualities;
+            vec_numSequences_sizet[g] = vec_numSequences[g];
+            vec_d_quality_data_as_uint[g] = reinterpret_cast<unsigned int*>(vec_d_quality_data[g]);
+        }
+
+        qualitiesGpu.multi_gather(
+            vec_arrayhandle, 
+            vec_d_quality_data_as_uint, 
+            vec_destRowPitchInBytes, 
+            vec_d_readIds, 
+            vec_numSequences_sizet, 
+            streams,
+            callerDeviceIds
+        );
+
+    }
+
     void gatherContiguousSequences(
         ReadStorageHandle& handle,
         unsigned int* d_sequence_data,
@@ -1612,6 +1700,15 @@ public: //inherited GPUReadStorage interface
 
         destroyTempData();
     }
+
+
+    bool hasHostSequences() const noexcept override{
+        return numHostSequences > 0;
+    }
+
+    bool hasHostQualities() const noexcept override{
+        return canUseQualityScores() && numHostQualities > 0;
+    }
     
 private:
     template<class T, class IndexGenerator>
@@ -1730,14 +1827,6 @@ private:
         assert(handle.getId() < int(tempdataVector.size()));
 
         return tempdataVector[handle.getId()].get();
-    }
-
-    bool hasHostSequences() const noexcept{
-        return numHostSequences > 0;
-    }
-
-    bool hasHostQualities() const noexcept{
-        return canUseQualityScores() && numHostQualities > 0;
     }
 
     bool hasGpuSequences() const noexcept{

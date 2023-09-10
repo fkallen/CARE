@@ -216,6 +216,10 @@ namespace care{
             result.warpcore = pr["warpcore"].as<int>();
         }
 
+        if(pr.count("pureGpu")){
+            result.pureGpu = pr["pureGpu"].as<bool>();
+        }
+
         if(pr.count("gpuCorrectorThreadConfig")){
             std::string configString = pr["gpuCorrectorThreadConfig"].as<std::string>();
 
@@ -416,6 +420,10 @@ namespace care{
     bool ProgramOptions::isValid() const noexcept{
         const ProgramOptions& opt = *this;
         bool valid = true;
+
+        if(opt.batchsize % 2 != 0){
+            std::cout << "Error: batchsize must be even\n";
+        }
 
         if(opt.maxErrorRate < 0.0f || opt.maxErrorRate > 1.0f){
             valid = false;
@@ -630,6 +638,8 @@ namespace care{
         stream << "pairedFilterThreshold: " << pairedFilterThreshold << "\n";
         stream << "maxForestTreesAnchor: " << maxForestTreesAnchor << "\n";
         stream << "maxForestTreesCands: " << maxForestTreesCands << "\n";
+
+        stream << "pureGpu: " << pureGpu << "\n";
     }
 
     void ProgramOptions::printAdditionalOptionsCorrectCpu(std::ostream& stream) const{
@@ -792,7 +802,10 @@ namespace care{
                 cxxopts::value<float>())
             ("pairedFilterThreshold", "Controls alignment quality of unpaired candidates which can pass the candidate alignment filter. Candidate alignments with (num_mismatches / overlap_size) > threshold are removed.", cxxopts::value<float>())
             ("maxForestTreesAnchor", "Max. no. of forests to load from anchor forest file. (-1 = all)", cxxopts::value<int>())
-            ("maxForestTreesCands", "Max. no. of forests to load from candidate forest file. (-1 = all)", cxxopts::value<int>());
+            ("maxForestTreesCands", "Max. no. of forests to load from candidate forest file. (-1 = all)", cxxopts::value<int>())
+
+            ("pureGpu", "No hybrid cpu gpu code path",
+            cxxopts::value<bool>()->implicit_value("true"));
     }
 
     void addAdditionalOptionsCorrectCpu(cxxopts::Options& commandLineOptions){

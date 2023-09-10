@@ -86,6 +86,20 @@ namespace care{
                 h_candidate_read_ids[i] = d_candidate_read_ids[i];
             }
         }
+
+        __global__ 
+        void copyMinhashResultsKernel(
+            int* __restrict__ d_numCandidates,
+            int* __restrict__ h_numCandidates,
+            const int* __restrict__ d_candidates_per_anchor_prefixsum,
+            const int numAnchors
+        ){            
+            if(threadIdx.x == 0){
+                const int numCandidates = d_candidates_per_anchor_prefixsum[numAnchors];
+                *d_numCandidates = numCandidates;
+                *h_numCandidates = numCandidates;
+            }
+        }
     
         __global__
         void setAnchorIndicesOfCandidateskernel(

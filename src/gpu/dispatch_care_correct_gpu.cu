@@ -169,7 +169,7 @@ namespace care{
         for(auto id : programOptions.deviceIds){
             cub::SwitchDevice sd(id);
 
-            auto pool = std::make_unique<rmm::cuda_stream_pool>(programOptions.threads);
+            auto pool = std::make_unique<rmm::cuda_stream_pool>(std::max(16, programOptions.threads));
             streampool::set_per_device_pool(rmm::cuda_device_id(id), pool.get());
             rmmStreamPools.push_back(std::move(pool));
         }
@@ -552,7 +552,7 @@ namespace care{
         for(auto id : programOptions.deviceIds){
             cub::SwitchDevice sd(id);
 
-            auto pool = std::make_unique<rmm::cuda_stream_pool>(programOptions.threads);
+            auto pool = std::make_unique<rmm::cuda_stream_pool>(std::max(16, programOptions.threads));
             streampool::set_per_device_pool(rmm::cuda_device_id(id), pool.get());
             rmmStreamPools.push_back(std::move(pool));
         }

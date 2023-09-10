@@ -371,6 +371,29 @@ void callMsaCorrectAnchorsWithForestKernel(
     cudaStream_t stream
 );
 
+void callMsaCorrectAnchorsWithForestKernel_multiphase(
+    std::vector<char*>& vec_d_correctedAnchors,
+    std::vector<bool*>& vec_d_anchorIsCorrected,
+    std::vector<AnchorHighQualityFlag*>& vec_d_isHighQualityAnchor,
+    const std::vector<GPUMultiMSA>& vec_multiMSA,
+    const std::vector<GpuForest::Clf>& vec_gpuForest,
+    float forestThreshold,
+    const std::vector<unsigned int*>& vec_d_anchorSequencesData,
+    const std::vector<int*>& vec_d_indices_per_anchor,
+    const std::vector<int>& vec_numAnchors,
+    int encodedSequencePitchInInts,
+    size_t decodedSequencePitchInBytes,
+    int /*maximumSequenceLength*/,
+    float estimatedErrorrate,
+    float estimatedCoverage,
+    float avg_support_threshold,
+    float min_support_threshold,
+    float min_coverage_threshold,
+    const std::vector<cudaStream_t>& streams,
+    const std::vector<int>& deviceIds,
+    int* h_tempstorage // sizeof(int) * deviceIds.size()
+);
+
 void callMsaCorrectCandidatesWithForestKernel(
     char* d_correctedCandidates,
     GPUMultiMSA multiMSA,
@@ -388,6 +411,27 @@ void callMsaCorrectCandidatesWithForestKernel(
     size_t decodedSequencePitchInBytes,
     int maximum_sequence_length,
     cudaStream_t stream
+);
+
+void callMsaCorrectCandidatesWithForestKernelMultiPhase(
+    std::vector<char*>& vec_d_correctedCandidates,
+    const std::vector<GPUMultiMSA>& vec_multiMSA,
+    const std::vector<GpuForest::Clf>& vec_gpuForest,
+    float forestThreshold,
+    float estimatedCoverage,
+    const std::vector<int*>& vec_d_shifts,
+    const std::vector<AlignmentOrientation*>& vec_d_bestAlignmentFlags,
+    const std::vector<unsigned int*>& vec_d_candidateSequencesData,
+    const std::vector<int*>& vec_d_candidateSequencesLengths,
+    const std::vector<int*>& vec_d_candidateIndicesOfCandidatesToBeCorrected,
+    const std::vector<int*>& vec_d_anchorIndicesOfCandidates,
+    const std::vector<int>& vec_numCandidatesToProcess,          
+    int encodedSequencePitchInInts,
+    size_t decodedSequencePitchInBytes,
+    int maximum_sequence_length,
+    const std::vector<cudaStream_t>& streams,
+    const std::vector<int>& deviceIds,
+    int* h_tempstorage // sizeof(int) * deviceIds.size()
 );
 
 void callConstructSequenceCorrectionResultsKernel(

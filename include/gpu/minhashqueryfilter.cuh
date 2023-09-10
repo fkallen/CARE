@@ -128,6 +128,110 @@ namespace gpu{
             // }); CUDACHECKASYNC;
             // CUDACHECK(cudaDeviceSynchronize());
         }
+
+        static void keepDistinctAndNotMatching(
+            const std::vector<const read_number*>& vec_d_dontMatchPerSegment,
+            std::vector<cub::DoubleBuffer<read_number>>& vec_d_items,
+            std::vector<cub::DoubleBuffer<int>>& vec_d_numItemsPerSegment,
+            std::vector<cub::DoubleBuffer<int>>& vec_d_numItemsPerSegmentPrefixSum, //numSegments + 1
+            const std::vector<int>& vec_numSegments,
+            const std::vector<int>& vec_numItems,
+            const std::vector<cudaStream_t>& streams,
+            const std::vector<int>& deviceIds,
+            int* h_tempstorage // 128 * deviceIds.size()
+        ){
+            nvtx::ScopedRange sr_("keepDistinctAndNotMatching",4);
+            const int numGpus = deviceIds.size();
+
+            std::vector<read_number*> vec_d_items_current;
+            std::vector<read_number*> vec_d_items_alternate;
+            std::vector<int*> vec_d_numItemsPerSegment_alternate;
+            std::vector<const int*> vec_d_numItemsPerSegmentPrefixSum_current;
+            std::vector<const int*> vec_d_numItemsPerSegmentPrefixSum_current_plus1;
+
+            for(int g = 0; g < numGpus; g++){
+                vec_d_items_current.push_back(vec_d_items[g].Current());
+                vec_d_items_alternate.push_back(vec_d_items[g].Alternate());
+                vec_d_numItemsPerSegment_alternate.push_back(vec_d_numItemsPerSegment[g].Alternate());
+                vec_d_numItemsPerSegmentPrefixSum_current.push_back(vec_d_numItemsPerSegmentPrefixSum[g].Current());
+                vec_d_numItemsPerSegmentPrefixSum_current_plus1.push_back(vec_d_numItemsPerSegmentPrefixSum[g].Current() + 1);
+            }
+
+            GpuSegmentedUnique::unique(
+                vec_d_items_current,
+                vec_numItems,
+                vec_d_items_alternate,
+                vec_d_numItemsPerSegment_alternate,
+                vec_numSegments,
+                vec_d_numItemsPerSegmentPrefixSum_current,
+                vec_d_numItemsPerSegmentPrefixSum_current_plus1,
+                streams,
+                deviceIds,
+                h_tempstorage
+            );
+
+
+            for(int g = 0; g < numGpus; g++){
+                if(vec_numItems[g] > 0 && vec_numSegments[g] > 0){
+                    cub::SwitchDevice sd{deviceIds[g]};
+                    if(vec_d_dontMatchPerSegment[g] != nullptr){
+                        //remove self read ids (inplace)
+                        //--------------------------------------------------------------------
+                        callFindAndRemoveFromSegmentKernel<read_number,128,4>(
+                            vec_d_dontMatchPerSegment[g],
+                            vec_d_items[g].Alternate(),
+                            vec_numSegments[g],
+                            vec_d_numItemsPerSegment[g].Alternate(),
+                            vec_d_numItemsPerSegmentPrefixSum[g].Current(),
+                            streams[g]
+                        );
+                    }
+
+                    CubCallWrapper(rmm::mr::get_current_device_resource()).cubInclusiveSum(
+                        vec_d_numItemsPerSegment[g].Alternate(),
+                        vec_d_numItemsPerSegmentPrefixSum[g].Alternate() + 1,
+                        vec_numSegments[g],
+                        streams[g]
+                    );
+                    CUDACHECK(cudaMemsetAsync(
+                        vec_d_numItemsPerSegmentPrefixSum[g].Alternate(), 
+                        0, 
+                        sizeof(int), 
+                        streams[g]
+                    ));
+
+                    //copy final remaining values into contiguous range
+                    helpers::lambda_kernel<<<vec_numSegments[g], 128, 0, streams[g]>>>(
+                        [
+                            d_items_in = vec_d_items[g].Alternate(),
+                            d_items_out = vec_d_items[g].Current(),
+                            numSegments = vec_numSegments[g],
+                            d_numItemsPerSegment = vec_d_numItemsPerSegment[g].Alternate(),
+                            d_offsets = vec_d_numItemsPerSegmentPrefixSum[g].Current(),
+                            d_newOffsets = vec_d_numItemsPerSegmentPrefixSum[g].Alternate()
+                        ] __device__ (){
+
+                            for(int s = blockIdx.x; s < numSegments; s += gridDim.x){
+                                const int numValues = d_numItemsPerSegment[s];
+                                const int inOffset = d_offsets[s];
+                                const int outOffset = d_newOffsets[s];
+
+                                for(int c = threadIdx.x; c < numValues; c += blockDim.x){
+                                    d_items_out[outOffset + c] = d_items_in[inOffset + c];    
+                                }
+                            }
+                        }
+                    ); CUDACHECKASYNC;
+
+                    vec_d_numItemsPerSegment[g].selector++;
+                    vec_d_numItemsPerSegmentPrefixSum[g].selector++;
+                }
+            }
+
+
+
+            
+        }
     
         static void keepDistinct(
             cub::DoubleBuffer<read_number>& d_items,
