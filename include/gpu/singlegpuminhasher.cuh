@@ -424,7 +424,7 @@ namespace gpu{
             std::vector<int> tmpNumbers(h_currentHashFunctionNumbers.begin(), h_currentHashFunctionNumbers.end());
 
             for(int i = 0; i < numAdditionalTables; i++){
-                auto ptr = std::make_unique<GpuTable>(std::size_t(maxNumKeys / getLoad()),
+                auto ptr = std::make_unique<GpuTable>(maxNumKeys,
                     getLoad(),
                     resultsPerMapThreshold,
                     stream
