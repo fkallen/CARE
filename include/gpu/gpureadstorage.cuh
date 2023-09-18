@@ -97,10 +97,34 @@ public:
         const std::vector<rmm::mr::device_memory_resource*>& mrs
     ) const = 0;
 
+    virtual void multi_gatherSequences(
+        std::vector<ReadStorageHandle>& vec_handle,
+        std::vector<unsigned int*>& vec_d_sequence_data,
+        size_t outSequencePitchInInts,
+        const std::vector<AsyncConstBufferWrapper<read_number>>& vec_h_readIds,
+        const std::vector<read_number*>& vec_d_readIds,
+        const std::vector<int>& vec_numSequences,
+        const std::vector<cudaStream_t>& streams,
+        const std::vector<int>& deviceIds,
+        const std::vector<rmm::mr::device_memory_resource*>& mrs
+    ) const = 0;
+
     virtual void multi_gatherQualities(
         std::vector<ReadStorageHandle>& vec_handle,
         std::vector<char*>& vec_d_quality_data,
         size_t out_quality_pitch,
+        const std::vector<read_number*>& vec_d_readIds,
+        const std::vector<int>& vec_numSequences,
+        const std::vector<cudaStream_t>& streams,
+        const std::vector<int>& deviceIds,
+        const std::vector<rmm::mr::device_memory_resource*>& mrs
+    ) const = 0;
+
+    virtual void multi_gatherQualities(
+        std::vector<ReadStorageHandle>& vec_handle,
+        std::vector<char*>& vec_d_quality_data,
+        size_t out_quality_pitch,
+        const std::vector<AsyncConstBufferWrapper<read_number>>& vec_h_readIds,
         const std::vector<read_number*>& vec_d_readIds,
         const std::vector<int>& vec_numSequences,
         const std::vector<cudaStream_t>& streams,

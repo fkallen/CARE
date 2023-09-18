@@ -10,6 +10,7 @@
 
 template<class T>
 struct AsyncConstBufferWrapper{
+    AsyncConstBufferWrapper() = default;
     explicit AsyncConstBufferWrapper(const T* buf) : AsyncConstBufferWrapper(buf, nullptr) {}
     AsyncConstBufferWrapper(const T* buf, cudaEvent_t event) : buffer(buf), readyEvent(event) {}
 

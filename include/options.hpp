@@ -91,6 +91,7 @@ namespace care
         float hashtableLoadfactor = 0.8f;
         std::size_t memoryForHashtables = 0;
         std::size_t memoryTotalLimit = 0;
+        std::size_t gpuMemoryLimitReads = std::numeric_limits<std::size_t>::max();
         SequencePairType pairType = SequencePairType::SingleEnd;
         uint32_t maxForestTreesAnchor = std::numeric_limits<uint32_t>::max();
         uint32_t maxForestTreesCands = std::numeric_limits<uint32_t>::max();

@@ -109,6 +109,33 @@ protected:
 
 };
 
+class GpuMinhasherWithMultiQuery{
+public:
+    virtual void multi_determineNumValues(
+        MinhasherHandle& queryHandle,
+        const std::vector<const unsigned int*>& vec_d_sequenceData2Bit,
+        std::size_t encodedSequencePitchInInts,
+        const std::vector<const int*>& vec_d_sequenceLengths,
+        const std::vector<int>& vec_numSequences,
+        const std::vector<int*>& vec_d_numValuesPerSequence,
+        const std::vector<int*>& vec_totalNumValues,
+        const std::vector<cudaStream_t>& callerStreams,
+        const std::vector<int>& callerDeviceIds,
+        const std::vector<rmm::mr::device_memory_resource*>& mrs
+    ) const = 0;
+
+    virtual void multi_retrieveValues(
+        MinhasherHandle& queryHandle,
+        const std::vector<int>& vec_numSequences,
+        const std::vector<const int*>& vec_totalNumValues,
+        const std::vector<read_number*>& vec_d_values,
+        const std::vector<const int*>& vec_d_numValuesPerSequence,
+        const std::vector<int*> vec_d_offsets, //numSequences + 1
+        const std::vector<cudaStream_t>& streams,
+        const std::vector<int> callerDeviceIds,
+        const std::vector<rmm::mr::device_memory_resource*>& mrs
+    ) const = 0;
+};
 
 
 } //namespace gpu

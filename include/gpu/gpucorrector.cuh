@@ -19,6 +19,7 @@
 #include <gpu/global_cuda_stream_pool.cuh>
 #include <gpu/minhashqueryfilter.cuh>
 #include <gpu/gpubitarray.cuh>
+#include <gpu/multigputransfers.cuh>
 
 #include <config.hpp>
 #include <util.hpp>
@@ -301,6 +302,145 @@ namespace gpu{
                 vec_d_flags_remote[g].release();
                 vec_d_readIds_remote[g].release();
             }
+
+            CUDACHECK(cudaSetDevice(oldId));
+        }
+
+        void multi_setIsCorrectedAsHQAnchor(
+            const std::vector<const bool*>& vec_d_flags,             
+            const std::vector<const read_number*> vec_d_readIds, //d_readIds must be unique
+            const std::vector<int> vec_numIds, 
+            const std::vector<cudaStream_t>& streams,
+            const std::vector<cudaStream_t>& allocStreams
+        ) noexcept{
+            assert(vec_d_flags.size() == deviceIds.size());
+
+            int oldId = 0;
+            CUDACHECK(cudaGetDevice(&oldId));
+
+            const int numGpus = deviceIds.size();
+
+            std::vector<int> numIdsPS(numGpus+1);
+            for(int i = 0; i < numGpus; i++){
+                numIdsPS[i+1] = numIdsPS[i] + vec_numIds[i];
+            }
+            const int totalNumIds = numIdsPS[numGpus];
+            if(totalNumIds == 0) return;
+
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     CUDACHECK(cudaStreamSynchronize(streams[g]));
+            // }
+
+            std::vector<rmm::device_uvector<bool>> vec_d_flags_remote;
+            std::vector<rmm::device_uvector<read_number>> vec_d_readIds_remote;
+
+            for(int g = 0; g < numGpus; g++){
+                CUDACHECK(cudaSetDevice(deviceIds[g]));
+                vec_d_flags_remote.emplace_back(totalNumIds, allocStreams[g]);
+                vec_d_readIds_remote.emplace_back(totalNumIds, allocStreams[g]);
+            }
+
+            // wait for allocation
+            for(int g = 0; g < numGpus; g++){
+                CUDACHECK(cudaSetDevice(deviceIds[g]));
+                CUDACHECK(cudaStreamSynchronize(allocStreams[g]));
+            }
+
+            {
+                std::vector<std::vector<const void*>> srcBuffers(numGpus, std::vector<const void*>(numGpus));
+                std::vector<std::vector<void*>> dstBuffers(numGpus, std::vector<void*>(numGpus));
+                std::vector<std::vector<size_t>> transferSizesBytes(numGpus, std::vector<size_t>(numGpus));
+                //broadcast flags
+                for(int g = 0; g < numGpus; g++){
+                    for(int d = 0; d < numGpus; d++){
+                        srcBuffers[g][d] = vec_d_flags[g];
+                        transferSizesBytes[g][d] = sizeof(bool) * vec_numIds[g];
+                        dstBuffers[g][d] = vec_d_flags_remote[d].data() + numIdsPS[g];
+                    }
+                }
+                multigpu_transfer(
+                    deviceIds,
+                    srcBuffers,
+                    transferSizesBytes,
+                    streams,
+                    deviceIds,
+                    dstBuffers
+                );
+
+                //broadcast readids
+                for(int g = 0; g < numGpus; g++){
+                    for(int d = 0; d < numGpus; d++){
+                        srcBuffers[g][d] = vec_d_readIds[g];
+                        transferSizesBytes[g][d] = sizeof(read_number) * vec_numIds[g];
+                        dstBuffers[g][d] = vec_d_readIds_remote[d].data() + numIdsPS[g];
+                    }
+                }
+                multigpu_transfer(
+                    deviceIds,
+                    srcBuffers,
+                    transferSizesBytes,
+                    streams,
+                    deviceIds,
+                    dstBuffers
+                );
+            }
+
+            //join all streams
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     CUDACHECK(cudaEventRecord(events[g], streams[g]));
+            //     for(int x = 0; x < numGpus; x++){
+            //         if(x != g){
+            //             CUDACHECK(cudaSetDevice(deviceIds[x]));
+            //             CUDACHECK(cudaStreamWaitEvent(streams[x], events[g], 0));
+            //         }
+            //     }
+            // }
+            for(int g = 0; g < numGpus; g++){
+                CUDACHECK(cudaSetDevice(deviceIds[g]));
+                CUDACHECK(cudaEventRecord(events[g], streams[g]));
+            }
+
+            for(int g = 0; g < numGpus; g++){
+                for(int x = 0; x < numGpus; x++){
+                    CUDACHECK(cudaSetDevice(deviceIds[x]));
+                    CUDACHECK(cudaStreamWaitEvent(streams[x], events[g], 0));
+                }
+            }
+
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     CUDACHECK(cudaStreamSynchronize(streams[g]));
+            // }
+
+            //set array
+            for(int g = 0; g < numGpus; g++){
+                CUDACHECK(cudaSetDevice(deviceIds[g]));
+                setBitarray<<<SDIV(totalNumIds, 128), 128, 0, streams[g]>>>(
+                    vec_d_isHqAnchor[g],
+                    vec_d_flags_remote[g].data(), 
+                    vec_d_readIds_remote[g].data(),
+                    totalNumIds
+                );
+                CUDACHECKASYNC;
+            }
+
+            for(int g = 0; g < numGpus; g++){
+                CUDACHECK(cudaSetDevice(deviceIds[g]));
+                CUDACHECK(cudaStreamSynchronize(streams[g]));
+                vec_d_flags_remote[g].release();
+                vec_d_readIds_remote[g].release();
+            }
+
+
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     vec_d_flags_remote[g].set_stream(streams[g]);
+            //     vec_d_flags_remote[g].release();
+            //     vec_d_readIds_remote[g].set_stream(streams[g]);
+            //     vec_d_readIds_remote[g].release();
+            // }
 
             CUDACHECK(cudaSetDevice(oldId));
         }

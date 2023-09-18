@@ -7,7 +7,7 @@
 #include <hpc_helpers/include/nvtx_markers.cuh>
 
 #include <gpu/gpuminhasher.cuh>
-#include <gpu/multigpuminhasher.cuh>
+//#include <gpu/multigpuminhasher.cuh>
 
 #include <gpu/kernels.hpp>
 #include <gpu/gpucorrectorkernels.cuh>
@@ -67,6 +67,8 @@ namespace gpu{
 
         std::vector<int> deviceIds;
         std::vector<CudaEvent> vec_event;
+        std::vector<CudaEvent> vec_h_candidate_read_ids_readyEvent;
+        std::vector<CudaStream> vec_d2hstream;
 
         std::vector<PinnedBuffer<int>> vec_h_numAnchors;
         std::vector<PinnedBuffer<int>> vec_h_numCandidates;
@@ -93,6 +95,8 @@ namespace gpu{
                 cudaStream_t stream = streams[g];
 
                 vec_event.emplace_back(cudaEventDisableTiming);
+                vec_h_candidate_read_ids_readyEvent.emplace_back(cudaEventDisableTiming);
+                vec_d2hstream.emplace_back();
                 vec_h_numAnchors.emplace_back(0);
                 vec_h_numCandidates.emplace_back(0);
                 vec_h_anchorReadIds.emplace_back(0);
@@ -113,6 +117,26 @@ namespace gpu{
                 cub::SwitchDevice sd{deviceIds[g]};
                 cudaStream_t stream = streams[g];
                 CUDACHECK(cudaStreamSynchronize(stream));
+            }
+        }
+
+        ~MultiGpuErrorCorrectorInput(){
+            //ensure release of memory on the correct device
+            const int numGpus = deviceIds.size();
+            for(int g = 0; g < numGpus; g++){
+                cub::SwitchDevice sd(deviceIds[g]);
+                CUDACHECK(cudaDeviceSynchronize());
+                vec_d_numAnchors[g].release();
+                vec_d_numCandidates[g].release();
+                vec_d_anchorReadIds[g].release();
+                vec_d_anchor_sequences_data[g].release();
+                vec_d_anchor_sequences_lengths[g].release();
+                vec_d_candidate_read_ids[g].release();
+                vec_d_candidate_sequences_data[g].release();
+                vec_d_candidate_sequences_lengths[g].release();
+                vec_d_candidates_per_anchor[g].release();
+                vec_d_candidates_per_anchor_prefixsum[g].release();
+                CUDACHECK(cudaDeviceSynchronize());
             }
         }
 
@@ -165,9 +189,9 @@ namespace gpu{
             gpuReadStorage{&gpuReadStorage_},
             gpuMinhasher{&gpuMinhasher_}
         {
-            assert(gpuMinhasher->hasGpuTables());
-            assert(!gpuReadStorage->hasHostSequences());
-            assert(!gpuReadStorage->hasHostQualities());
+            //assert(gpuMinhasher->hasGpuTables());
+            // assert(!gpuReadStorage->hasHostSequences());
+            // assert(!gpuReadStorage->hasHostQualities());
 
             maxCandidatesPerRead = gpuMinhasher->getNumResultsPerMapThreshold() * gpuMinhasher->getNumberOfMaps();
             encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(gpuReadStorage->getSequenceLengthUpperBound());
@@ -375,10 +399,11 @@ namespace gpu{
                 }
             }
 
-            std::vector<unsigned int*> vec_d_sequence_data(numGpus);
-            std::vector<read_number*> vec_d_readIds(numGpus);
-            std::vector<int> vec_numSequences(numGpus);
-            std::vector<rmm::mr::device_memory_resource*> mrs(numGpus);
+            std::vector<unsigned int*> vec_d_sequence_data(numGpus, nullptr);
+            std::vector<read_number*> vec_d_readIds(numGpus, nullptr);
+            std::vector<AsyncConstBufferWrapper<read_number>> vec_h_readIdsAsync(numGpus);
+            std::vector<int> vec_numSequences(numGpus, 0);
+            std::vector<rmm::mr::device_memory_resource*> mrs(numGpus, nullptr);
 
             for(int g = 0; g < numGpus; g++){
                 cub::SwitchDevice sd{deviceIds[g]};
@@ -389,18 +414,45 @@ namespace gpu{
                 vec_d_readIds[g] = ecinput.vec_d_candidate_read_ids[g].data();
                 vec_numSequences[g] = numCandidates;
                 mrs[g] = rmm::mr::get_current_device_resource();
+
+                //h_candidate_read_ids will only be valid if readstorage has host sequences or host qualities
+                vec_h_readIdsAsync[g] = makeAsyncConstBufferWrapper(
+                    ecinput.vec_h_candidate_read_ids[g].data(),
+                    ecinput.vec_h_candidate_read_ids_readyEvent[g]
+                );
             }
 
+            
             gpuReadStorage->multi_gatherSequences(
                 vec_readstorageHandle,
                 vec_d_sequence_data,
                 encodedSequencePitchInInts,
+                vec_h_readIdsAsync,
                 vec_d_readIds,
                 vec_numSequences,
                 streams,
                 deviceIds,
                 mrs
             );
+            // {
+            //     int N = 0;
+            //     CUDACHECK(cudaGetDeviceCount(&N));
+            //     for(int i = 0; i < N; i++){
+            //         cub::SwitchDevice sd(cudaSetDevice(i));
+            //         CUDACHECK(cudaDeviceSynchronize());
+            //     }
+            // }
+
+            // gpuReadStorage->multi_gatherSequences(
+            //     vec_readstorageHandle,
+            //     vec_d_sequence_data,
+            //     encodedSequencePitchInInts,
+            //     vec_d_readIds,
+            //     vec_numSequences,
+            //     streams,
+            //     deviceIds,
+            //     mrs
+            // );
         }
 
         void getCandidateReadIdsWithMinhashing(
@@ -417,9 +469,13 @@ namespace gpu{
             }
 
             int* h_pinned_totalNumValuesTmp = h_tempstorage.data();
+            std::fill(h_pinned_totalNumValuesTmp, h_pinned_totalNumValuesTmp + numGpus, 0);
 
             //determine num values
-            const auto* multiGpuMinhasher = dynamic_cast<const care::gpu::MultiGpuMinhasher*>(gpuMinhasher);
+            //const auto* multiGpuMinhasher = dynamic_cast<const care::gpu::MultiGpuMinhasher*>(gpuMinhasher);
+            const auto* multiGpuMinhasher = dynamic_cast<const care::gpu::GpuMinhasherWithMultiQuery*>(gpuMinhasher);
+
+            
             if(multiGpuMinhasher != nullptr){
                 std::vector<const unsigned int*> vec_d_sequenceData2Bit(numGpus, nullptr);
                 std::vector<const int*> vec_d_sequenceLengths(numGpus, nullptr);
@@ -435,7 +491,7 @@ namespace gpu{
                     mrs[g] = rmm::mr::get_per_device_resource(rmm::cuda_device_id(deviceIds[g]));
                 }
 
-                multiGpuMinhasher->multi_determineNumValues_3(
+                multiGpuMinhasher->multi_determineNumValues(
                     vec_minhashHandle[0],
                     vec_d_sequenceData2Bit,
                     encodedSequencePitchInInts,
@@ -547,8 +603,14 @@ namespace gpu{
                 cub::SwitchDevice sd{deviceIds[g]};
 
                 ecinput.vec_d_candidate_read_ids[g].resize(totalNumValuesPerGpu[g], streams[g]);
-                //ecinput.vec_h_candidate_read_ids[g].resize(totalNumValuesPerGpu[g]);
+
+                if(gpuReadStorage->hasHostSequences() || gpuReadStorage->hasHostQualities()){
+                    ecinput.vec_h_candidate_read_ids[g].resize(totalNumValuesPerGpu[g]);                
+                }
+
+                //std::cout << totalNumValuesPerGpu[g] << " ";
             }
+            //std::cout << "\n";
 
             for(int g = 0; g < numGpus; g++){
                 *ecinput.vec_h_numCandidates[g] = 0;
@@ -580,7 +642,7 @@ namespace gpu{
                 //     deviceIds,
                 //     mrs
                 // );
-                multiGpuMinhasher->multi_retrieveValues_3(
+                multiGpuMinhasher->multi_retrieveValues(
                     vec_minhashHandle[0],
                     numAnchorsPerGpu,
                     vec_totalNumValues,
@@ -704,7 +766,7 @@ namespace gpu{
                     if(totalNumValuesPerGpu[g] == 0){
                         CUDACHECK(cudaMemsetAsync(ecinput.vec_d_numCandidates[g].data(), 0, sizeof(int), streams[g]));
                         CUDACHECK(cudaMemsetAsync(ecinput.vec_d_candidates_per_anchor[g].data(), 0, sizeof(int) * numAnchors, streams[g]));
-                        CUDACHECK(cudaMemsetAsync(ecinput.vec_d_candidates_per_anchor_prefixsum.data(), 0, sizeof(int) * (1 + numAnchors), streams[g]));
+                        CUDACHECK(cudaMemsetAsync(ecinput.vec_d_candidates_per_anchor_prefixsum[g].data(), 0, sizeof(int) * (1 + numAnchors), streams[g]));
                     }else{
                         gpuMinhasher->retrieveValues(
                             vec_minhashHandle[g],
@@ -788,23 +850,27 @@ namespace gpu{
                     numAnchorsPerGpu[g]
                 ); CUDACHECKASYNC;
             }
-            // for(int g = 0; g < numGpus; g++){
-            //     cub::SwitchDevice sd{deviceIds[g]};
 
-            //     CUDACHECK(cudaStreamSynchronize(streams[g]));
-            //     CUDACHECK(cudaMemcpyAsync(
-            //         ecinput.vec_h_candidate_read_ids[g].data(),
-            //         ecinput.vec_d_candidate_read_ids[g].data(),
-            //         sizeof(read_number) * ecinput.vec_h_numCandidates[g][0],
-            //         D2H,
-            //         streams[g]
-            //     ));
-            // }
-
-            //wait for copyMinhashResultsKernel
             for(int g = 0; g < numGpus; g++){
+                //wait for copyMinhashResultsKernel (writes ecinput.vec_h_numCandidates[g])
                 cub::SwitchDevice sd{deviceIds[g]};
                 CUDACHECK(cudaStreamSynchronize(streams[g]));
+
+                //ensure release of memory on the correct device
+                vec_d_candidate_read_ids2[g].release();
+                vec_d_candidates_per_anchor2[g].release();
+                vec_d_candidates_per_anchor_prefixsum2[g].release();
+
+                if(gpuReadStorage->hasHostSequences() || gpuReadStorage->hasHostQualities()){
+                    CUDACHECK(cudaMemcpyAsync(
+                        ecinput.vec_h_candidate_read_ids[g].data(),
+                        ecinput.vec_d_candidate_read_ids[g].data(),
+                        sizeof(read_number) * ecinput.vec_h_numCandidates[g][0],
+                        D2H,
+                        ecinput.vec_d2hstream[g]
+                    ));
+                    CUDACHECK(cudaEventRecord(ecinput.vec_h_candidate_read_ids_readyEvent[g], ecinput.vec_d2hstream[g]));
+                }
             }
 
 
@@ -850,7 +916,7 @@ namespace gpu{
             std::vector<int> deviceIds_,
             std::vector<const GpuForest*> vec_gpuForestAnchor_,
             std::vector<const GpuForest*> vec_gpuForestCandidate_,
-            const std::vector<cudaStream_t> streams
+            const std::vector<cudaStream_t>& streams
         ) : 
             maxAnchors{maxAnchorsPerCall},
             correctionFlags{&correctionFlags_},
@@ -870,6 +936,7 @@ namespace gpu{
                 std::array<CudaEvent, 2> events{cudaEventDisableTiming,cudaEventDisableTiming};
                 vec_events.push_back(std::move(events));
                 vec_previousBatchFinishedEvent.emplace_back(cudaEventDisableTiming);
+                vec_inputCandidateDataIsReadyEvent.emplace_back(cudaEventDisableTiming);                
             }
 
             h_tempstorage.resize(128 * numGpus);
@@ -897,17 +964,13 @@ namespace gpu{
             for(int g = 0; g < numGpus; g++){
                 cub::SwitchDevice sd{deviceIds[g]};
 
-                vec_extraStream.push_back(streampool::get_current_device_pool()->get_stream());
+                //vec_extraStream.push_back(streampool::get_current_device_pool()->get_stream());
+                vec_extraStream.emplace_back();
 
                 vec_h_num_total_corrected_candidates.emplace_back(0);
                 vec_h_num_indices.emplace_back(0);
                 vec_h_numSelected.emplace_back(0);
                 vec_h_managedmsa_tmp.emplace_back(0);
-                vec_h_indicesForGather.emplace_back(0);
-                vec_h_isPairedCandidate.emplace_back(0);
-                vec_h_candidates_per_anchor_prefixsum.emplace_back(0);
-                vec_h_indices.emplace_back(0);
-                vec_h_flagsCandidates.emplace_back(0);
 
                 vec_d_alignment_overlaps.emplace_back();
                 vec_d_alignment_shifts.emplace_back();
@@ -981,6 +1044,53 @@ namespace gpu{
             for(int g = 0; g < numGpus; g++){
                 cub::SwitchDevice sd{deviceIds[g]};
                 gpuReadStorage->destroyHandle(vec_readstorageHandle[g]);
+
+                //ensure release of memory on the correct device
+
+                vec_managedgpumsa[g] = nullptr;
+
+                vec_d_indicesForGather[g].release();
+                vec_d_anchorContainsN[g].release();
+                vec_d_candidateContainsN_[g].release();
+                vec_d_candidate_sequences_lengths_[g].release();
+                vec_d_candidate_sequences_data_[g].release();
+                vec_d_anchorIndicesOfCandidates_[g].release();
+                vec_d_alignment_overlaps_[g].release();
+                vec_d_alignment_shifts_[g].release();
+                vec_d_alignment_nOps_[g].release();
+                vec_d_alignment_best_alignment_flags_[g].release(); 
+                vec_d_indices[g].release();
+                vec_d_indices_per_anchor[g].release();
+                vec_d_indices_per_anchor_prefixsum[g].release();
+                vec_d_num_indices[g].release();
+                vec_d_corrected_anchors[g].release();
+                vec_d_corrected_candidates[g].release();
+                vec_d_num_corrected_candidates_per_anchor[g].release();
+                vec_d_num_corrected_candidates_per_anchor_prefixsum[g].release();
+                vec_d_num_total_corrected_candidates[g].release();
+                vec_d_anchor_is_corrected[g].release();
+                vec_d_is_high_quality_anchor[g].release();
+                vec_d_high_quality_anchor_indices[g].release();
+                vec_d_num_high_quality_anchor_indices[g].release(); 
+                vec_d_editsPerCorrectedanchor[g].release();
+                vec_d_numEditsPerCorrectedanchor[g].release();
+                vec_d_editsPerCorrectedCandidate[g].release();
+                vec_d_hqAnchorCorrectionOfCandidateExists_[g].release();
+                vec_d_allCandidateData[g].release();
+                vec_d_numEditsPerCorrectedCandidate[g].release();
+                vec_d_indices_of_corrected_anchors[g].release();
+                vec_d_num_indices_of_corrected_anchors[g].release();
+                vec_d_indices_of_corrected_candidates_[g].release();
+                vec_d_totalNumEdits[g].release();
+                vec_d_isPairedCandidate_[g].release();
+                vec_d_numAnchors[g].release();
+                vec_d_numCandidates[g].release();
+                vec_d_anchorReadIds[g].release();
+                vec_d_anchor_sequences_data[g].release();
+                vec_d_anchor_sequences_lengths[g].release();
+                vec_d_candidate_read_ids_[g].release();
+                vec_d_candidates_per_anchor[g].release();
+                vec_d_candidates_per_anchor_prefixsum[g].release();
             }
         }
 
@@ -1126,6 +1236,8 @@ namespace gpu{
                     stream
                 ));
 
+                CUDACHECK(cudaEventRecord(vec_inputCandidateDataIsReadyEvent[g], stream));
+
                 gpucorrectorkernels::setAnchorIndicesOfCandidateskernel
                         <<<std::max(1, currentNumAnchors), 128, 0, stream>>>(
                     vec_d_anchorIndicesOfCandidates[g],
@@ -1185,8 +1297,12 @@ namespace gpu{
                 nvtx::pop_range();   
             }
 
-            vec_managedgpumsa.clear();
-            vec_managedgpumsa.resize(numGpus);
+            for(int g = 0; g < numGpus; g++){
+                cub::SwitchDevice sd{deviceIds[g]};
+
+                //ensure release of memory on the correct device
+                vec_managedgpumsa[g] = nullptr;
+            }
 
             for(int g = 0; g < numGpus; g++){
                 cub::SwitchDevice sd{deviceIds[g]};
@@ -1219,12 +1335,6 @@ namespace gpu{
                 handleHost(vec_h_num_indices[g]);
                 handleHost(vec_h_numSelected[g]);
                 handleHost(vec_h_managedmsa_tmp[g]);
-
-                handleHost(vec_h_indicesForGather[g]);
-                handleHost(vec_h_isPairedCandidate[g]);
-                handleHost(vec_h_candidates_per_anchor_prefixsum[g]);
-                handleHost(vec_h_indices[g]);
-                handleHost(vec_h_flagsCandidates[g]);
 
                 handleDevice(vec_d_anchorContainsN[g]);
                 handleDevice(vec_d_candidateContainsN_[g]);
@@ -1273,7 +1383,7 @@ namespace gpu{
             return info;
         } 
 
-        void releaseMemory(const std::vector<cudaStream_t> streams){
+        void releaseMemory(const std::vector<cudaStream_t>& streams){
             const int numGpus = deviceIds.size();
             for(int g = 0; g < numGpus; g++){
                 cub::SwitchDevice sd{deviceIds[g]};
@@ -1398,7 +1508,6 @@ namespace gpu{
                 vec_d_anchor_sequences_data[g].resize(encodedSequencePitchInInts * maxAnchors, stream);
                 vec_d_anchor_sequences_lengths[g].resize(maxAnchors, stream);
                 vec_d_candidates_per_anchor[g].resize(maxAnchors, stream);
-                vec_h_candidates_per_anchor_prefixsum[g].resize(maxAnchors + 1);
                 vec_d_candidates_per_anchor_prefixsum[g].resize(maxAnchors + 1, stream);
                 vec_d_totalNumEdits[g].resize(1, stream);
             }
@@ -1416,9 +1525,6 @@ namespace gpu{
                 cub::SwitchDevice sd{deviceIds[g]};
                 const int numCandidates = vec_numCandidates[g];
                 cudaStream_t stream = streams[g];
-
-                vec_h_isPairedCandidate[g].resize(numCandidates);
-                vec_h_flagsCandidates[g].resize(numCandidates);
                 
                 vec_d_indices[g].resize(numCandidates + 1, stream);
             }
@@ -1617,6 +1723,13 @@ namespace gpu{
                 vec_d_tmp.push_back(std::move(d_tmp));
 
                 if(hasAnchorsAndCandidates(g)){
+                    CUDACHECK(cudaMemsetAsync(
+                        vec_d_numBytesPerSerializedAnchor[g],
+                        0,
+                        sizeof(std::uint32_t) * vec_currentNumAnchors[g],
+                        streams[g]
+                    ));
+
                     //compute bytes per anchor
                     helpers::lambda_kernel<<<SDIV(vec_currentNumAnchors[g], 128), 128, 0, streams[g]>>>(
                         [
@@ -1668,12 +1781,34 @@ namespace gpu{
                         }
                     ); CUDACHECKASYNC;
 
+                    
+
                     thrust::inclusive_scan(
                         rmm::exec_policy_nosync(streams[g]),
                         vec_d_numBytesPerSerializedAnchor[g],
                         vec_d_numBytesPerSerializedAnchor[g] + vec_currentNumAnchors[g],
                         vec_d_numBytesPerSerializedAnchorPrefixSum[g] + 1
-                    );           
+                    );
+                    // helpers::lambda_kernel<<<1,1,0,streams[g]>>>(
+                    //     [
+                    //         num = vec_currentNumAnchors[g],
+                    //         d_numBytesPerSerializedAnchorPrefixSum = vec_d_numBytesPerSerializedAnchorPrefixSum[g]
+                    //     ] __device__ (){
+                    //         printf("d_numBytesPerSerializedAnchorPrefixSum %u\n", d_numBytesPerSerializedAnchorPrefixSum[num]);
+                    //     }
+                    // ); CUDACHECKASYNC
+
+                    // std::uint32_t totalRequiredBytesAnchors = 0;
+                    // CUDACHECK(cudaMemcpyAsync(
+                    //     &totalRequiredBytesAnchors,
+                    //     vec_d_numBytesPerSerializedAnchorPrefixSum[g] + vec_currentNumAnchors[g],
+                    //     sizeof(std::uint32_t),
+                    //     D2H,
+                    //     streams[g]
+                    // ));
+                    // CUDACHECK(cudaStreamSynchronize(streams[g]));
+                    // std::cout << "totalRequiredBytesAnchors " << totalRequiredBytesAnchors << "\n";
+
 
                     //compute serialized anchors
                     helpers::lambda_kernel<<<std::max(1, SDIV(vec_currentNumAnchors[g], 128)), 128, 0, streams[g]>>>(
@@ -1764,6 +1899,15 @@ namespace gpu{
                                     ptr += sizeof(char) * sequenceLength;
                                 }
 
+                                // if(! (ptr == d_serializedAnchorResults + d_numBytesPerSerializedAnchorPrefixSum[outputIndex+1]) ){
+                                //     printf("A: outputIndex %d, useEdits %d, ser begin %p, ser end %p, expected ser end %p\n", 
+                                //         outputIndex,
+                                //         useEdits,
+                                //         d_serializedAnchorResults + d_numBytesPerSerializedAnchorPrefixSum[outputIndex],
+                                //         ptr,
+                                //         d_serializedAnchorResults + d_numBytesPerSerializedAnchorPrefixSum[outputIndex+1]
+                                //     );
+                                // }
                                 assert(ptr == d_serializedAnchorResults + d_numBytesPerSerializedAnchorPrefixSum[outputIndex+1]);
                             }
                         }
@@ -1836,6 +1980,13 @@ namespace gpu{
 
                 }
             }
+
+            for(int g = 0; g < numGpus; g++){
+                cub::SwitchDevice sd{deviceIds[g]};
+
+                //ensure release of memory on the correct device
+                vec_d_tmp[g].release();
+            }
         }
 
         void copyAnchorResultsFromDeviceToHostClassic(const std::vector<cudaStream_t>& streams){
@@ -1863,9 +2014,9 @@ namespace gpu{
 
             const int numGpus = deviceIds.size();
 
-            std::vector<std::uint32_t*> vec_d_numBytesPerSerializedCandidate(numGpus);
-            std::vector<std::uint32_t*> vec_d_numBytesPerSerializedCandidatePrefixSum(numGpus);
-            std::vector<std::uint8_t*> vec_d_serializedCandidateResults(numGpus);
+            std::vector<std::uint32_t*> vec_d_numBytesPerSerializedCandidate(numGpus, nullptr);
+            std::vector<std::uint32_t*> vec_d_numBytesPerSerializedCandidatePrefixSum(numGpus, nullptr);
+            std::vector<std::uint8_t*> vec_d_serializedCandidateResults(numGpus, nullptr);
             std::vector<rmm::device_uvector<char>> vec_d_tmp;
 
             for(int g = 0; g < numGpus; g++){
@@ -2062,6 +2213,15 @@ namespace gpu{
                                 std::memcpy(ptr, &shiftShort, sizeof(short));
                                 ptr += sizeof(short);
 
+                                // if(! (ptr == d_serializedCandidateResults + d_numBytesPerSerializedCandidatePrefixSum[outputIndex+1]) ){
+                                //     printf("C: outputIndex %d, ser begin %p, ser end %p, expected ser end %p\n", 
+                                //         outputIndex,
+                                //         d_serializedCandidateResults + d_numBytesPerSerializedCandidatePrefixSum[outputIndex],
+                                //         ptr,
+                                //         d_serializedCandidateResults + d_numBytesPerSerializedCandidatePrefixSum[outputIndex+1]
+                                //     );
+                                // }
+
                                 assert(ptr == d_serializedCandidateResults + d_numBytesPerSerializedCandidatePrefixSum[outputIndex+1]);
                             }
                         }
@@ -2186,6 +2346,13 @@ namespace gpu{
 
             //     }
             // }
+
+            for(int g = 0; g < numGpus; g++){
+                cub::SwitchDevice sd{deviceIds[g]};
+
+                //ensure release of memory on the correct device
+                vec_d_tmp[g].release();
+            }
         }
 
         void copyCandidateResultsFromDeviceToHostClassic(const std::vector<cudaStream_t>& streams){
@@ -2338,7 +2505,7 @@ namespace gpu{
             }
 
             for(int g = 0; g < numGpus; g++){
-                if(hasAnchorsAndCandidates(g)){
+                if(hasCandidates(g)){
                     cub::SwitchDevice sd{deviceIds[g]};
 
                     callSelectIndicesOfGoodCandidatesKernelAsync(
@@ -2353,6 +2520,19 @@ namespace gpu{
                         vec_currentNumCandidates[g],
                         streams[g]
                     );
+                }else{
+                    CUDACHECK(cudaMemsetAsync(
+                        vec_d_indices_per_anchor[g].data(),
+                        0,
+                        sizeof(int) * vec_currentNumAnchors[g],
+                        streams[g]
+                    ));
+                    CUDACHECK(cudaMemsetAsync(
+                        vec_d_num_indices[g].data(),
+                        0,
+                        sizeof(int),
+                        streams[g]
+                    ));
                 }
             }
         }
@@ -2370,6 +2550,8 @@ namespace gpu{
                     cub::SwitchDevice sd{deviceIds[g]};
                     
                     cudaStream_t qualityStream = vec_extraStream[g];
+
+                    CUDACHECK(cudaStreamWaitEvent(qualityStream, vec_inputCandidateDataIsReadyEvent[g], 0));
 
                     size_t allocation_sizes[2]{};
                     allocation_sizes[0] = vec_currentNumAnchors[g] * qualityPitchInBytes; // d_anchor_qual
@@ -2413,23 +2595,43 @@ namespace gpu{
                     }
                 }
 
-                std::vector<rmm::mr::device_memory_resource*> mrs(numGpus);
+                std::vector<rmm::mr::device_memory_resource*> mrs(numGpus, nullptr);
+                std::vector<cudaStream_t> extraStreams(numGpus, nullptr);
+                std::vector<AsyncConstBufferWrapper<read_number>> vec_h_readIdsAsync(numGpus);
 
                 for(int g = 0; g < numGpus; g++){
                     cub::SwitchDevice sd{deviceIds[g]};
                     mrs[g] = rmm::mr::get_current_device_resource();
+                    extraStreams[g] = vec_extraStream[g];
+    
+                    //h_candidate_read_ids will only be valid if readstorage has host sequences or host qualities
+                    vec_h_readIdsAsync[g] = makeAsyncConstBufferWrapper(
+                        currentInput->vec_h_candidate_read_ids[g].data(),
+                        currentInput->vec_h_candidate_read_ids_readyEvent[g]
+                    );
                 }
-
                 gpuReadStorage->multi_gatherQualities(
                     vec_readstorageHandle,
                     vec_d_cand_qual,
                     qualityPitchInBytes,
+                    vec_h_readIdsAsync,
                     vec_d_candidate_read_ids,
                     vec_currentNumCandidates,
-                    vec_extraStream,
+                    extraStreams,
                     deviceIds,
                     mrs
                 );
+
+                // gpuReadStorage->multi_gatherQualities(
+                //     vec_readstorageHandle,
+                //     vec_d_cand_qual,
+                //     qualityPitchInBytes,
+                //     vec_d_candidate_read_ids,
+                //     vec_currentNumCandidates,
+                //     extraStreams,
+                //     deviceIds,
+                //     mrs
+                // );
 
                 for(int g = 0; g < numGpus; g++){
                     if(hasAnchors(g) || hasAnchorsAndCandidates(g)){
@@ -2443,7 +2645,7 @@ namespace gpu{
             }
 
             for(int g = 0; g < numGpus; g++){
-                if(hasAnchorsAndCandidates(g)){
+                //if(hasAnchors(g)){
                     cub::SwitchDevice sd{deviceIds[g]};
 
                     vec_managedgpumsa[g] = std::make_unique<ManagedGPUMultiMSA>(
@@ -2451,7 +2653,7 @@ namespace gpu{
                         rmm::mr::get_current_device_resource(), 
                         vec_h_managedmsa_tmp[g].data()
                     );
-                }
+                //}
             }
 
 
@@ -2642,25 +2844,22 @@ namespace gpu{
                 programOptions->m_coverage / 6.0f * programOptions->estimatedCoverage);
             const float max_coverage_threshold = 0.5 * programOptions->estimatedCoverage;
 
-            std::vector<char*> vec_d_corrected_anchors_ptrs(numGpus);
-            std::vector<bool*> vec_d_anchor_is_corrected_ptrs(numGpus);
-            std::vector<AnchorHighQualityFlag*> vec_d_is_high_quality_anchor_ptrs(numGpus);
+            std::vector<char*> vec_d_corrected_anchors_ptrs(numGpus, nullptr);
+            std::vector<bool*> vec_d_anchor_is_corrected_ptrs(numGpus, nullptr);
+            std::vector<AnchorHighQualityFlag*> vec_d_is_high_quality_anchor_ptrs(numGpus, nullptr);
             std::vector<GPUMultiMSA> vec_multiMSA_views(numGpus);
             std::vector<GpuForest::Clf> vec_gpuForest_classifierviews(numGpus);
-            std::vector<unsigned int*> vec_d_anchor_sequences_data_ptrs(numGpus);
-            std::vector<int*> vec_d_indices_per_anchor_ptrs(numGpus);
+            std::vector<unsigned int*> vec_d_anchor_sequences_data_ptrs(numGpus, nullptr);
+            std::vector<int*> vec_d_indices_per_anchor_ptrs(numGpus, nullptr);
 
             for(int g = 0; g < numGpus; g++){
-                if(hasAnchorsAndCandidates(g)){
-
-                    vec_d_corrected_anchors_ptrs[g] = vec_d_corrected_anchors[g].data();
-                    vec_d_anchor_is_corrected_ptrs[g] = vec_d_anchor_is_corrected[g].data();
-                    vec_d_is_high_quality_anchor_ptrs[g] = vec_d_is_high_quality_anchor[g].data();
-                    vec_multiMSA_views[g] = vec_managedgpumsa[g]->multiMSAView();
-                    vec_gpuForest_classifierviews[g] = vec_gpuForestAnchor[g]->getClf();
-                    vec_d_anchor_sequences_data_ptrs[g] = vec_d_anchor_sequences_data[g].data();
-                    vec_d_indices_per_anchor_ptrs[g] = vec_d_indices_per_anchor[g].data();
-                }
+                vec_d_corrected_anchors_ptrs[g] = vec_d_corrected_anchors[g].data();
+                vec_d_anchor_is_corrected_ptrs[g] = vec_d_anchor_is_corrected[g].data();
+                vec_d_is_high_quality_anchor_ptrs[g] = vec_d_is_high_quality_anchor[g].data();
+                vec_multiMSA_views[g] = vec_managedgpumsa[g]->multiMSAView();
+                vec_gpuForest_classifierviews[g] = vec_gpuForestAnchor[g]->getClf();
+                vec_d_anchor_sequences_data_ptrs[g] = vec_d_anchor_sequences_data[g].data();
+                vec_d_indices_per_anchor_ptrs[g] = vec_d_indices_per_anchor[g].data();
             }
 
             // correct anchors
@@ -2919,6 +3118,13 @@ namespace gpu{
                 }
             }
 
+            for(int g = 0; g < numGpus; g++){
+                cub::SwitchDevice sd{deviceIds[g]};
+
+                //ensure release of memory on the correct device
+                vec_d_candidateCanBeCorrected[g].release();
+            }
+
         }
 
         void correctCandidatesForestGpu(const std::vector<cudaStream_t>& streams){
@@ -3035,24 +3241,20 @@ namespace gpu{
                 }
             }
 
-            std::vector<char*> vec_d_correctedCandidates_ptrs(numGpus);
+            std::vector<char*> vec_d_correctedCandidates_ptrs(numGpus, nullptr);
             std::vector<GPUMultiMSA> vec_multiMSA_views(numGpus);
             std::vector<GpuForest::Clf> vec_gpuForest_classifierviews(numGpus);
-            std::vector<int> vec_numCandidatesToProcess(numGpus);
+            std::vector<int> vec_numCandidatesToProcess(numGpus, 0);
 
             for(int g = 0; g < numGpus; g++){
-                if(hasAnchorsAndCandidates(g)){
-                    cub::SwitchDevice sd{deviceIds[g]};
-                    CUDACHECK(cudaStreamSynchronize(streams[g]));
+                cub::SwitchDevice sd{deviceIds[g]};
+                CUDACHECK(cudaStreamSynchronize(streams[g]));
 
-                    if((*vec_h_num_total_corrected_candidates[g]) > 0){
-                        vec_d_corrected_candidates[g].resize(decodedSequencePitchInBytes * (*vec_h_num_total_corrected_candidates[g]), streams[g]);
-                        vec_d_correctedCandidates_ptrs[g] = vec_d_corrected_candidates[g].data();
-                        vec_multiMSA_views[g] = vec_managedgpumsa[g]->multiMSAView();
-                        vec_gpuForest_classifierviews[g] = vec_gpuForestCandidate[g]->getClf();
-                        vec_numCandidatesToProcess[g] = *vec_h_num_total_corrected_candidates[g];
-                    }
-                }
+                vec_d_corrected_candidates[g].resize(decodedSequencePitchInBytes * (*vec_h_num_total_corrected_candidates[g]), streams[g]);
+                vec_d_correctedCandidates_ptrs[g] = vec_d_corrected_candidates[g].data();
+                vec_multiMSA_views[g] = vec_managedgpumsa[g]->multiMSAView();
+                vec_gpuForest_classifierviews[g] = vec_gpuForestCandidate[g]->getClf();
+                vec_numCandidatesToProcess[g] = *vec_h_num_total_corrected_candidates[g];
             }
             callMsaCorrectCandidatesWithForestKernelMultiPhase(
                 vec_d_correctedCandidates_ptrs,
@@ -3106,6 +3308,13 @@ namespace gpu{
                     }
                 }
             }
+
+            for(int g = 0; g < numGpus; g++){
+                cub::SwitchDevice sd{deviceIds[g]};
+
+                //ensure release of memory on the correct device
+                vec_d_candidateCanBeCorrected[g].release();
+            }
             
         }
 
@@ -3117,18 +3326,46 @@ namespace gpu{
             const int numGpus = deviceIds.size();
             std::vector<const bool*> vec_d_flags(numGpus, nullptr);
             std::vector<const read_number*> vec_d_readIds(numGpus, nullptr);
+            std::vector<cudaStream_t> allocStreams(numGpus, nullptr);
 
             for(int g = 0; g < numGpus; g++){
                 vec_d_flags[g] = reinterpret_cast<const bool*>(vec_d_is_high_quality_anchor[g].data());
                 vec_d_readIds[g] = vec_d_anchorReadIds[g].data();
+                allocStreams[g] = vec_extraStream[g];
             }
 
+            // correctionFlags->multi_setIsCorrectedAsHQAnchor(
+            //     vec_d_flags,             
+            //     vec_d_readIds, //d_readIds must be unique
+            //     vec_currentNumAnchors, 
+            //     streams
+            // );
+
+            //works with this sync
+            // {
+            //     int N = 0;
+            //     CUDACHECK(cudaGetDeviceCount(&N));
+            //     for(int i = 0; i < N; i++){
+            //         cub::SwitchDevice sd(cudaSetDevice(i));
+            //         CUDACHECK(cudaDeviceSynchronize());
+            //     }
+            // }
             correctionFlags->multi_setIsCorrectedAsHQAnchor(
                 vec_d_flags,             
                 vec_d_readIds, //d_readIds must be unique
                 vec_currentNumAnchors, 
-                streams
+                streams,
+                allocStreams
             );
+
+            // {
+            //     int N = 0;
+            //     CUDACHECK(cudaGetDeviceCount(&N));
+            //     for(int i = 0; i < N; i++){
+            //         cub::SwitchDevice sd(cudaSetDevice(i));
+            //         CUDACHECK(cudaDeviceSynchronize());
+            //     }
+            // }
         }
 
     private:
@@ -3143,9 +3380,11 @@ namespace gpu{
         }
 
         std::vector<std::array<CudaEvent, 2>> vec_events;
-        std::vector<cudaStream_t> vec_extraStream;
+        //std::vector<cudaStream_t> vec_extraStream;
+        std::vector<CudaStream> vec_extraStream;
 
         std::vector<CudaEvent> vec_previousBatchFinishedEvent;
+        std::vector<CudaEvent> vec_inputCandidateDataIsReadyEvent;
 
         std::size_t msaColumnPitchInElements;
         std::size_t encodedSequencePitchInInts;
@@ -3180,7 +3419,6 @@ namespace gpu{
         std::vector<PinnedBuffer<int>> vec_h_numSelected;
         std::vector<PinnedBuffer<int>> vec_h_managedmsa_tmp;
 
-        std::vector<PinnedBuffer<read_number>> vec_h_indicesForGather;
         std::vector<rmm::device_uvector<read_number>> vec_d_indicesForGather;
 
         std::vector<rmm::device_uvector<bool>> vec_d_anchorContainsN;
@@ -3232,7 +3470,6 @@ namespace gpu{
         std::vector<rmm::device_uvector<int>> vec_d_indices_of_corrected_candidates_;
         std::vector<rmm::device_uvector<int>> vec_d_totalNumEdits;
         std::vector<rmm::device_uvector<bool>> vec_d_isPairedCandidate_;
-        std::vector<PinnedBuffer<bool>> vec_h_isPairedCandidate;
 
         std::vector<rmm::device_uvector<int>> vec_d_numAnchors;
         std::vector<rmm::device_uvector<int>> vec_d_numCandidates;
@@ -3242,11 +3479,6 @@ namespace gpu{
         std::vector<rmm::device_uvector<read_number>> vec_d_candidate_read_ids_;
         std::vector<rmm::device_uvector<int>> vec_d_candidates_per_anchor;
         std::vector<rmm::device_uvector<int>> vec_d_candidates_per_anchor_prefixsum; 
-
-        std::vector<PinnedBuffer<int>> vec_h_candidates_per_anchor_prefixsum; 
-        std::vector<PinnedBuffer<int>> vec_h_indices;
-
-        std::vector<PinnedBuffer<bool>> vec_h_flagsCandidates;
 
         std::vector<std::unique_ptr<ManagedGPUMultiMSA>> vec_managedgpumsa;
 

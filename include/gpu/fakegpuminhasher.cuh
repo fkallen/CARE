@@ -54,7 +54,7 @@ namespace gpu{
         Minhasher which can store query results in gpu memory and uses the gpu to parallelize some portions of the code
         However, hash tables reside on the host
     */
-    class FakeGpuMinhasher : public GpuMinhasher{
+    class FakeGpuMinhasher : public GpuMinhasher, public GpuMinhasherWithMultiQuery{
     public:
         using Key_t = GpuMinhasher::Key;
         using Value_t = read_number;
@@ -68,6 +68,8 @@ namespace gpu{
             
             template<class T>
             using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T, overprovisioningPercent>;
+            template<class T>
+            using DeviceBuffer = helpers::SimpleAllocationDevice<T, overprovisioningPercent>;
 
             enum class Stage{
                 None,
@@ -78,6 +80,7 @@ namespace gpu{
 
             bool isInitialized = false;
             int deviceId;
+            int numMaps = 0;
             Stage previousStage = Stage::None;
 
             SetUnionHandle suHandle{};
@@ -91,6 +94,46 @@ namespace gpu{
 
             std::vector<Range_t> allRanges{};
             thrust::device_vector<int> d_hashFunctionNumbers{};
+
+
+            std::vector<PinnedBuffer<kmer_type>> vec_h_minhashSignatures{};
+            std::vector<PinnedBuffer<read_number>> vec_h_candidate_read_ids_tmp{};
+            std::vector<PinnedBuffer<read_number>> vec_h_anchorReadIds{};
+            std::vector<PinnedBuffer<int>> vec_h_begin_offsets{};
+            std::vector<PinnedBuffer<int>> vec_h_numValuesPerSequence{};
+            std::vector<PinnedBuffer<bool>> vec_h_isValid{};
+            std::vector<std::vector<Range_t>> vec_allRanges{};
+            std::map<int, DeviceBuffer<int>> map_d_hashFunctionNumbers;
+
+            void setNumCallerIds(int num){
+                vec_h_minhashSignatures.resize(num);
+                vec_h_candidate_read_ids_tmp.resize(num);
+                vec_h_anchorReadIds.resize(num);
+                vec_h_begin_offsets.resize(num);
+                vec_h_numValuesPerSequence.resize(num);
+                vec_h_isValid.resize(num);
+                vec_allRanges.resize(num);
+            }
+
+            int* getDeviceHashFunctionNumbers(int id){
+                auto it = map_d_hashFunctionNumbers.find(id);
+                if(it != map_d_hashFunctionNumbers.end()){
+                    return it->second.data();
+                }else{
+                    cub::SwitchDevice sd(id);
+                    DeviceBuffer<int> newhashFunctionNumbers(numMaps);
+                    int* ptr = newhashFunctionNumbers.data();
+                    thrust::sequence(
+                        thrust::device, 
+                        newhashFunctionNumbers.begin(), 
+                        newhashFunctionNumbers.end(), 
+                        0
+                    );
+                    map_d_hashFunctionNumbers[id] = std::move(newhashFunctionNumbers);
+                    return ptr;
+                }
+
+            }
 
             MemoryUsage getMemoryInfo() const{
                 MemoryUsage info;
@@ -119,6 +162,20 @@ namespace gpu{
     
                 handlevector(allRanges);
                 handledevice(d_hashFunctionNumbers);
+
+                for(int i = 0; i < int(vec_h_minhashSignatures.size()); i++){
+                    handlehost(vec_h_minhashSignatures[i]);
+                    handlehost(vec_h_candidate_read_ids_tmp[i]);
+                    handlehost(vec_h_anchorReadIds[i]);
+                    handlehost(vec_h_begin_offsets[i]);
+                    handlehost(vec_h_numValuesPerSequence[i]);
+                    handlehost(vec_h_isValid[i]);
+                    handlevector(vec_allRanges[i]);
+                }
+
+                for(const auto& pair : map_d_hashFunctionNumbers){
+                    info.device[pair.first] += pair.second.capacityInBytes();
+                }
     
                 return info;
             }
@@ -137,6 +194,16 @@ namespace gpu{
 
                 d_hashFunctionNumbers.clear();
                 d_hashFunctionNumbers.shrink_to_fit();
+
+
+                vec_h_minhashSignatures.clear();
+                vec_h_candidate_read_ids_tmp.clear();
+                vec_h_anchorReadIds.clear();
+                vec_h_begin_offsets.clear();
+                vec_h_numValuesPerSequence.clear();
+                vec_h_isValid.clear();
+                vec_allRanges.clear();
+                map_d_hashFunctionNumbers.clear();
 
                 isInitialized = false;
             }
@@ -161,13 +228,7 @@ namespace gpu{
    
 
         MinhasherHandle makeMinhasherHandle() const override {
-            auto data = std::make_unique<QueryData>();
-            data->d_hashFunctionNumbers.resize(getNumberOfMaps());
-
-            thrust::sequence(thrust::device, data->d_hashFunctionNumbers.begin(), data->d_hashFunctionNumbers.end(), 0);
-
-            CUDACHECK(cudaGetDevice(&data->deviceId));
-            data->isInitialized = true;
+            auto data = createQueryData();
 
             //std::unique_lock<std::shared_mutex> lock(sharedmutex);
             std::unique_lock<SharedMutex> lock(sharedmutex);
@@ -207,17 +268,12 @@ namespace gpu{
             assert(queryData->isInitialized);
             if(numSequences == 0) return;
 
-            int numThreads = omp_get_max_threads();
-
             queryData->h_minhashSignatures.resize(getNumberOfMaps() * numSequences);
             queryData->h_numValuesPerSequence.resize(numSequences);
 
             std::vector<Range_t>& allRanges = queryData->allRanges;
 
             allRanges.resize(getNumberOfMaps() * numSequences);
-
-            const std::size_t hashValuesPitchInElements = getNumberOfMaps();
-            //const int firstHashFunc = 0;
 
             GPUSequenceHasher<kmer_type> hasher;
             auto hashResult = hasher.hash(
@@ -254,7 +310,6 @@ namespace gpu{
 
             nvtx::push_range("queryPrecalculatedSignatures", 6);
 
-            const std::uint64_t kmer_mask = getKmerMask();
 
             int* h_numValuesPerSequence = queryData->h_numValuesPerSequence.data();
 
@@ -300,6 +355,142 @@ namespace gpu{
             CUDACHECK(cudaMemcpyAsync(d_numValuesPerSequence, h_numValuesPerSequence, sizeof(int) * numSequences, H2D, stream));
 
             queryData->previousStage = QueryData::Stage::NumValues;
+        }
+
+        // collective execution
+        void multi_determineNumValues(
+            MinhasherHandle& queryHandle,
+            const std::vector<const unsigned int*>& vec_d_sequenceData2Bit,
+            std::size_t encodedSequencePitchInInts,
+            const std::vector<const int*>& vec_d_sequenceLengths,
+            const std::vector<int>& vec_numSequences,
+            const std::vector<int*>& vec_d_numValuesPerSequence,
+            const std::vector<int*>& vec_totalNumValues,
+            const std::vector<cudaStream_t>& streams,
+            const std::vector<int>& callerDeviceIds,
+            const std::vector<rmm::mr::device_memory_resource*>& mrs
+        ) const override {
+            nvtx::ScopedRange sr_("multi_determineNumValues", 3);
+            int oldDeviceId = 0;
+            CUDACHECK(cudaGetDevice(&oldDeviceId));
+
+            const int numCallerGpus = callerDeviceIds.size();
+
+            QueryData* const queryData = getQueryDataFromHandle(queryHandle);
+            assert(queryData->isInitialized);
+            queryData->setNumCallerIds(numCallerGpus);
+
+            int totalNumSequencesForAllGpus = 0;
+            for(int g = 0; g < numCallerGpus; g++){
+                totalNumSequencesForAllGpus += vec_numSequences[g];
+
+                *vec_totalNumValues[g] = 0;
+            }
+            if(totalNumSequencesForAllGpus == 0){
+                return;
+            }
+
+
+            for(int g = 0; g < numCallerGpus; g++){
+                CUDACHECK(cudaSetDevice(callerDeviceIds[g]));
+                const int numSequences = vec_numSequences[g];
+                if(numSequences > 0){
+                    queryData->vec_h_minhashSignatures[g].resize(getNumberOfMaps() * numSequences);
+                    queryData->vec_h_isValid[g].resize(getNumberOfMaps() * numSequences);
+
+                    GPUSequenceHasher<kmer_type> hasher;
+                    auto hashResult = hasher.hash(
+                        vec_d_sequenceData2Bit[g],
+                        encodedSequencePitchInInts,
+                        numSequences,
+                        vec_d_sequenceLengths[g],
+                        getKmerSize(),
+                        getNumberOfMaps(),
+                        queryData->getDeviceHashFunctionNumbers(callerDeviceIds[g]),
+                        streams[g],
+                        mrs[g]
+                    );
+
+                    CUDACHECK(cudaMemcpyAsync(
+                        queryData->vec_h_minhashSignatures[g].data(),
+                        hashResult.d_hashvalues.data(),
+                        queryData->vec_h_minhashSignatures[g].sizeInBytes(),
+                        D2H,
+                        streams[g]
+                    ));
+
+                    CUDACHECK(cudaMemcpyAsync(
+                        queryData->vec_h_isValid[g].data(),
+                        hashResult.d_isValid.data(),
+                        sizeof(bool) * hashResult.d_isValid.size(),
+                        D2H,
+                        streams[g]
+                    ));
+                }
+            }
+
+            nvtx::ScopedRange sr("queryPrecalculatedSignatures", 6);
+            for(int g = 0; g < numCallerGpus; g++){
+                CUDACHECK(cudaSetDevice(callerDeviceIds[g]));
+                const int numSequences = vec_numSequences[g];
+                if(numSequences > 0){
+                    queryData->vec_h_numValuesPerSequence[g].resize(numSequences);
+
+                    std::vector<Range_t>& allRanges = queryData->vec_allRanges[g];
+                    allRanges.resize(getNumberOfMaps() * numSequences);
+                    CUDACHECK(cudaStreamSynchronize(streams[g]));
+
+                    int* const h_numValuesPerSequence = queryData->vec_h_numValuesPerSequence[g].data();
+                    const bool* const h_isValid = queryData->vec_h_isValid[g].data();
+                    const kmer_type* const h_minhashSignatures = queryData->vec_h_minhashSignatures[g].data();
+
+                    auto process_sequence_i = [&](int i){
+                        int numValues = 0;
+                        for(int map = 0; map < getNumberOfMaps(); ++map){
+                            FakeGpuMinhasher::Range_t* const range = &allRanges[i * getNumberOfMaps()];
+
+                            const bool valid = h_isValid[i * getNumberOfMaps() + map];
+
+                            if(valid){
+                        
+                                kmer_type key = h_minhashSignatures[i * getNumberOfMaps() + map];
+                                auto entries_range = queryMap(map, key);
+                                const int num = std::distance(entries_range.first, entries_range.second);
+                                if(num <= getNumResultsPerMapThreshold()){
+                                    numValues += num;
+                                }else{
+                                    //set range to empty range
+                                    entries_range.second = entries_range.first;
+                                }
+                                allRanges[i * getNumberOfMaps() + map] = entries_range;
+                            }else{
+                                allRanges[i * getNumberOfMaps() + map].first = nullptr;
+                                allRanges[i * getNumberOfMaps() + map].second = nullptr;
+                            }
+                        }
+                        h_numValuesPerSequence[i] = numValues;
+                    };
+
+                    #ifdef FAKEGPUMINHASHER_USE_OMP_FOR_QUERY
+                    #pragma omp parallel for schedule(dynamic, 16)
+                    #endif
+                    for(int i = 0; i < numSequences; i++){
+                        process_sequence_i(i);
+                    }
+                    *vec_totalNumValues[g] = std::reduce(h_numValuesPerSequence, h_numValuesPerSequence + numSequences);
+
+                    CUDACHECK(cudaMemcpyAsync(
+                        vec_d_numValuesPerSequence[g], 
+                        h_numValuesPerSequence, 
+                        sizeof(int) * numSequences, 
+                        H2D, 
+                        streams[g]
+                    ));
+                }
+            }
+            queryData->previousStage = QueryData::Stage::NumValues;
+
+            CUDACHECK(cudaSetDevice(oldDeviceId));
         }
 
         void retrieveValues(
@@ -382,6 +573,102 @@ namespace gpu{
                 H2D,
                 stream
             ));
+        }
+
+        void multi_retrieveValues(
+            MinhasherHandle& queryHandle,
+            const std::vector<int>& vec_numSequences,
+            const std::vector<const int*>& vec_totalNumValues,
+            const std::vector<read_number*>& vec_d_values,
+            const std::vector<const int*>& vec_d_numValuesPerSequence,
+            const std::vector<int*> vec_d_offsets, //numSequences + 1
+            const std::vector<cudaStream_t>& streams,
+            const std::vector<int> callerDeviceIds,
+            const std::vector<rmm::mr::device_memory_resource*>& mrs
+        ) const override{
+            nvtx::ScopedRange sr_("multi_retrieveValues", 3);
+
+            int oldDeviceId = 0;
+            CUDACHECK(cudaGetDevice(&oldDeviceId));
+
+            QueryData* const queryData = getQueryDataFromHandle(queryHandle);
+            assert(queryData->isInitialized);
+            assert(queryData->previousStage == QueryData::Stage::NumValues);
+            queryData->previousStage = QueryData::Stage::Retrieve;
+
+            const int numCallerGpus = callerDeviceIds.size();
+
+            for(int g = 0; g < numCallerGpus; g++){
+                CUDACHECK(cudaSetDevice(callerDeviceIds[g]));
+                const int numSequences = vec_numSequences[g];
+                if(numSequences > 0){
+                    const int totalNumValues = *vec_totalNumValues[g];
+                    if(totalNumValues == 0){
+                        CUDACHECK(cudaMemsetAsync(
+                            vec_d_offsets[g], 
+                            0, 
+                            sizeof(int) * (numSequences + 1), 
+                            streams[g]
+                        ));
+                    }else{
+                        CubCallWrapper(mrs[g]).cubInclusiveSum(
+                            vec_d_numValuesPerSequence[g],
+                            vec_d_offsets[g] + 1,
+                            numSequences,
+                            streams[g]
+                        );
+
+                        CUDACHECK(cudaMemsetAsync(vec_d_offsets[g], 0, sizeof(int), streams[g]));
+
+                        constexpr int roundUpTo = 10000;
+                        const int roundedTotalNum = SDIV(totalNumValues, roundUpTo) * roundUpTo;
+                        queryData->vec_h_candidate_read_ids_tmp[g].resize(roundedTotalNum);
+
+                        queryData->vec_h_begin_offsets[g].resize(numSequences+1);
+
+                        std::exclusive_scan(
+                            queryData->vec_h_numValuesPerSequence[g].data(), 
+                            queryData->vec_h_numValuesPerSequence[g].data() + numSequences, 
+                            queryData->vec_h_begin_offsets[g].begin(),
+                            0
+                        );
+
+                        auto process_sequence_i = [&](int i){
+                            const int numMaps = getNumberOfMaps();
+                            const int segmentoffset = queryData->vec_h_begin_offsets[g][i];
+                            int processed = 0;
+                            for(int map = 0; map < numMaps; ++map){
+                                const auto& range = queryData->vec_allRanges[g][i * numMaps + map];
+
+                                std::copy(
+                                    range.first, 
+                                    range.second, 
+                                    queryData->vec_h_candidate_read_ids_tmp[g].data() 
+                                        + segmentoffset + processed
+                                );
+
+                                processed += std::distance(range.first, range.second);
+                            }
+                        };
+
+                        #ifdef FAKEGPUMINHASHER_USE_OMP_FOR_QUERY
+                        #pragma omp parallel for schedule(dynamic, 16)
+                        #endif
+                        for(int i = 0; i < numSequences; i++){
+                            process_sequence_i(i);
+                        }
+
+                        CUDACHECK(cudaMemcpyAsync(
+                            vec_d_values[g],
+                            queryData->vec_h_candidate_read_ids_tmp[g].data(),
+                            sizeof(read_number) * totalNumValues,
+                            H2D,
+                            streams[g]
+                        ));
+                    }
+                }
+            }
+            CUDACHECK(cudaSetDevice(oldDeviceId));
         }
 
         void compact(cudaStream_t /*stream*/) override{
@@ -748,12 +1035,26 @@ namespace gpu{
             insertTemp.numSequences = 0;
         }
 
-    private:        
+    private:
+
+        std::unique_ptr<QueryData> createQueryData() const {
+            auto data = std::make_unique<QueryData>();
+            data->d_hashFunctionNumbers.resize(getNumberOfMaps());
+
+            thrust::sequence(thrust::device, data->d_hashFunctionNumbers.begin(), data->d_hashFunctionNumbers.end(), 0);
+
+            CUDACHECK(cudaGetDevice(&data->deviceId));
+            data->numMaps = getNumberOfMaps();
+            data->isInitialized = true;
+
+            return data;
+        }
+
         QueryData* getQueryDataFromHandle(const MinhasherHandle& queryHandle) const{
             std::shared_lock<SharedMutex> lock(sharedmutex);
 
             return tempdataVector[queryHandle.getId()].get();
-        }        
+        }       
 
         Range_t queryMap(int id, const Key_t& key) const{
             HashTable::QueryResult qr = minhashTables[id]->query(key);
@@ -782,6 +1083,7 @@ namespace gpu{
         InsertTemp insertTemp{};
         std::vector<std::unique_ptr<HashTable>> minhashTables{};
         mutable std::vector<std::unique_ptr<QueryData>> tempdataVector{};
+        
     };
 
 

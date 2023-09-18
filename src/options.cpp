@@ -341,6 +341,11 @@ namespace care{
 
         result.memoryForHashtables = std::min(result.memoryForHashtables, result.memoryTotalLimit);
 
+        if(pr.count("gpuMemoryLimitReads")){
+            const auto gpuMemoryLimitReadsString = pr["gpuMemoryLimitReads"].as<std::string>();
+            result.gpuMemoryLimitReads = parseMemoryString(gpuMemoryLimitReadsString);
+        }
+
         if(pr.count("hashloadfactor")){
             result.hashtableLoadfactor = pr["hashloadfactor"].as<float>();
         }
@@ -618,7 +623,7 @@ namespace care{
         stream << "Save hash tables to file: " << save_hashtables_to << "\n";
         stream << "Load hash tables from file: " << load_hashtables_from << "\n";
         stream << "Maximum memory for hash tables: " << memoryForHashtables << "\n";
-        stream << "Maximum memory total: " << memoryTotalLimit << "\n";
+        stream << "Maximum memory total: " << memoryTotalLimit << "\n";     
         stream << "Hashtable load factor: " << hashtableLoadfactor << "\n";
         stream << "Fixed number of reads: " << fixedNumberOfReads << "\n";
         stream << "GZ compressed output: " << gzoutput << "\n";
@@ -638,8 +643,6 @@ namespace care{
         stream << "pairedFilterThreshold: " << pairedFilterThreshold << "\n";
         stream << "maxForestTreesAnchor: " << maxForestTreesAnchor << "\n";
         stream << "maxForestTreesCands: " << maxForestTreesCands << "\n";
-
-        stream << "pureGpu: " << pureGpu << "\n";
     }
 
     void ProgramOptions::printAdditionalOptionsCorrectCpu(std::ostream& stream) const{
@@ -659,6 +662,8 @@ namespace care{
         }else{
             stream << "GPU corrector thread config: " << gpuCorrectorThreadConfig.numCorrectors << ":" << gpuCorrectorThreadConfig.numHashers << "\n";
         }
+        stream << "Maximum gpu memory for reads (per gpu): " << gpuMemoryLimitReads << "\n";   
+        stream << "pureGpu: " << pureGpu << "\n";
     }
 
 
@@ -802,10 +807,8 @@ namespace care{
                 cxxopts::value<float>())
             ("pairedFilterThreshold", "Controls alignment quality of unpaired candidates which can pass the candidate alignment filter. Candidate alignments with (num_mismatches / overlap_size) > threshold are removed.", cxxopts::value<float>())
             ("maxForestTreesAnchor", "Max. no. of forests to load from anchor forest file. (-1 = all)", cxxopts::value<int>())
-            ("maxForestTreesCands", "Max. no. of forests to load from candidate forest file. (-1 = all)", cxxopts::value<int>())
+            ("maxForestTreesCands", "Max. no. of forests to load from candidate forest file. (-1 = all)", cxxopts::value<int>());
 
-            ("pureGpu", "No hybrid cpu gpu code path",
-            cxxopts::value<bool>()->implicit_value("true"));
     }
 
     void addAdditionalOptionsCorrectCpu(cxxopts::Options& commandLineOptions){
@@ -832,7 +835,11 @@ namespace care{
             ("gpuHashtableLayout", "GPU hash table layout. 0: first fit, 1: even share", cxxopts::value<int>())
             ("gpuCorrectorThreadConfig", "Per-GPU thread configuration for correction. Format numCorrectors(int):numHashers(int)."
                 "Default: automatic configuration (0:0). When numCorrectors:0 is used, each corrector performs hashing itself. Recommended with gpu hashtables."
-                " Example: 2:8 . ", cxxopts::value<std::string>());
+                " Example: 2:8 . ", cxxopts::value<std::string>())
+            ("gpuMemoryLimitReads", "Per-gpu memory limit in bytes to store the reads. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: All free memory.",
+            cxxopts::value<std::string>())
+            ("pureGpu", "No hybrid cpu gpu code path",
+            cxxopts::value<bool>()->implicit_value("true"));
             
     }
 

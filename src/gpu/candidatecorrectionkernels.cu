@@ -2375,6 +2375,15 @@ namespace gpu{
             }
         }
 
+        for(int g = 0; g < numGpus; g++){
+            cub::SwitchDevice sd{deviceIds[g]};
+
+            //ensure release of memory on the correct device
+            MismatchPositions toDeallocate = std::move(vec_mismatchPositions[g]);
+            vec_d_msaPropertiesPerPosition[g].release();
+            vec_d_featuresTransposed[g].release();
+        }
+
 
 
 

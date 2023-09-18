@@ -2109,7 +2109,17 @@ SerializedObjectStorage correct_gpu_impl(
     };
 
     if(programOptions.pureGpu){
-        runSimpleMultiGpuPipeline();
+        const int numPipelines = std::max(1, programOptions.gpuCorrectorThreadConfig.numCorrectors);
+        std::vector<std::future<void>> futures;
+        for(int i = 0; i < numPipelines; i++){
+            futures.emplace_back(
+                std::async(std::launch::async, runSimpleMultiGpuPipeline)
+            );
+        }
+        for(auto& f : futures){
+            f.wait();
+        } 
+
     }else{
 
 

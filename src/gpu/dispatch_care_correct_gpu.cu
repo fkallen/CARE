@@ -544,7 +544,7 @@ namespace care{
         //debug buffer printf
         //CUDACHECK(cudaDeviceSetLimit(cudaLimitPrintfFifoSize, 1024*1024*512));
 
-        helpers::PeerAccessDebug peerAccess(programOptions.deviceIds, true);
+        helpers::PeerAccess peerAccess(programOptions.deviceIds, true);
         peerAccess.enableAllPeerAccesses();
 
         //Set up stream pool
@@ -567,7 +567,7 @@ namespace care{
         for(auto id : programOptions.deviceIds){
             cub::SwitchDevice sd(id);
 
-            auto resource = std::make_unique<rmm::mr::cuda_async_memory_resource>();
+            auto resource = std::make_unique<rmm::mr::cuda_async_memory_resource>(0);
             //auto resource = std::make_unique<rmm::mr::CudaAsyncDefaultPoolResource>();
             auto devicecheckadapter = std::make_unique<rmm::mr::DeviceCheckResourceAdapter>(resource.get());
             auto streamcheckadapter = std::make_unique<rmm::mr::StreamCheckResourceAdapter>(devicecheckadapter.get());
@@ -801,6 +801,14 @@ namespace care{
         // std::vector<std::size_t> templimits(2, 10ull*1024ull*1024ull*1024ull);
         // std::vector<int> tempids = {0,1};
         // templimits[0] = 0;
+        std::vector<std::size_t> gpuMemoryLimitReads(programOptions.deviceIds.size(), programOptions.gpuMemoryLimitReads);
+        {
+            auto currentGpuMemLimits = getGpuMemoryLimits();
+            for(size_t i = 0; i < programOptions.deviceIds.size(); i++){
+                gpuMemoryLimitReads[i] = std::min(gpuMemoryLimitReads[i], currentGpuMemLimits[i]);
+            }
+        }
+        //std::vector<std::size_t> templimits(programOptions.deviceIds.size(), 2ull * 1024ull * 1024ull * 1024ull);
 
         helpers::CpuTimer cpugputimer("cpu->gpu reads");
         cpugputimer.start();
@@ -808,8 +816,8 @@ namespace care{
             *cpuReadStorage,
             programOptions.deviceIds, 
             //tempids,
-            gpumemorylimits,
-            //templimits,
+            //gpumemorylimits,
+            gpuMemoryLimitReads,
             memoryLimitHost,
             numQualityBits,
             programOptions.gpuReadDataLayout == GpuDataLayout::FirstFit ? gpu::MultiGpuReadStorage::Layout::FirstFit : gpu::MultiGpuReadStorage::Layout::EvenShare

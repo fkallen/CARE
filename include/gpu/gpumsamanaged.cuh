@@ -63,12 +63,30 @@ namespace gpu{
             d_columnProperties_(0, stream, mr){
             #endif
 
+            CUDACHECK(cudaGetDevice(&deviceId));
+
             if(h_tempstorage != nullptr){
                 tempvalue = h_tempstorage;
             }else{
                 pinnedValue.resize(1);
                 tempvalue = pinnedValue.data();
             }
+        }
+
+        ~ManagedGPUMultiMSA(){
+            cub::SwitchDevice sd(deviceId);
+            #ifdef GPUMSAMANAGED_SINGLE_DATA_BUFFER
+            d_data.release();
+            #else
+            d_consensusEncoded_.release();
+            d_counts_.release();
+            d_coverages_.release();
+            d_origCoverages_.release();
+            d_weights_.release();
+            d_support_.release();
+            d_origWeights_.release();
+            d_columnProperties_.release();
+            #endif
         }
 
         void constructAndRefine(
@@ -306,8 +324,6 @@ namespace gpu{
         }
 
         MemoryUsage getMemoryInfo() const{
-            int deviceId;
-            CUDACHECK(cudaGetDevice(&deviceId));
 
             MemoryUsage info{};
             // auto handleHost = [&](const auto& h){
@@ -527,6 +543,7 @@ namespace gpu{
             #endif
         }
 
+        int deviceId = 0;
         int numMSAs{};
         int columnPitchInElements{};
         int* tempvalue{};
