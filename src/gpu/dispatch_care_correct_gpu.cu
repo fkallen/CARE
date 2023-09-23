@@ -527,7 +527,9 @@ namespace care{
 
         std::cout << "Running CARE GPU" << std::endl;
 
-        if(programOptions.deviceIds.size() == 0){
+        const int numGpus = programOptions.deviceIds.size();
+
+        if(numGpus == 0){
             std::cout << "No device ids found. Abort!" << std::endl;
             return;
         }
@@ -547,6 +549,26 @@ namespace care{
         helpers::PeerAccess peerAccess(programOptions.deviceIds, true);
         peerAccess.enableAllPeerAccesses();
 
+        if(programOptions.directPeerAccess){
+            std::vector<int> accessMatrix = peerAccess.getEnabledPeerAccesses();
+            bool allOk = true;
+            for(int i = 0; i < numGpus && allOk; i++){
+                for(int k = 0; k < numGpus && allOk; k++){
+                    if(i != k){
+                        const bool ok = accessMatrix[i * numGpus + k];
+                        if(!ok){
+                            std::cout << "Warning: Peer access " << programOptions.deviceIds[i] << " -> " << programOptions.deviceIds[k] << " could not be enabled. ";
+                            allOk = false;
+                        }
+                    }
+                }
+            }
+            if(!allOk){
+                std::cout << "Will disable option directPeerAccess!\n";
+                programOptions.directPeerAccess = false;
+            }
+        }
+
         //Set up stream pool
         std::vector<std::unique_ptr<rmm::cuda_stream_pool>> rmmStreamPools;
         for(auto id : programOptions.deviceIds){
@@ -563,6 +585,8 @@ namespace care{
         //std::vector<std::unique_ptr<rmm::mr::CudaAsyncDefaultPoolResource>> rmmCudaAsyncResources;
         std::vector<std::unique_ptr<rmm::mr::DeviceCheckResourceAdapter>> rmmDeviceCheckAdapters;
         std::vector<std::unique_ptr<rmm::mr::StreamCheckResourceAdapter>> rmmStreamCheckAdapters;
+
+        std::vector<std::unique_ptr<rmm::mr::logging_resource_adaptor<rmm::mr::cuda_async_memory_resource>>> rmmLoggingAdapters;
         
         for(auto id : programOptions.deviceIds){
             cub::SwitchDevice sd(id);
@@ -571,9 +595,13 @@ namespace care{
             //auto resource = std::make_unique<rmm::mr::CudaAsyncDefaultPoolResource>();
             auto devicecheckadapter = std::make_unique<rmm::mr::DeviceCheckResourceAdapter>(resource.get());
             auto streamcheckadapter = std::make_unique<rmm::mr::StreamCheckResourceAdapter>(devicecheckadapter.get());
+
+            auto loggingAdapter = std::make_unique<rmm::mr::logging_resource_adaptor<rmm::mr::cuda_async_memory_resource>>(resource.get(), "rmm" + std::to_string(id) + ".txt", true);
             
 
             rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), resource.get());
+            //rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), streamcheckadapter.get());
+            //rmm::mr::set_per_device_resource(rmm::cuda_device_id(id), loggingAdapter.get());
 
             for(auto otherId : programOptions.deviceIds){
                 if(otherId != id){
@@ -588,9 +616,9 @@ namespace care{
                 }
             }
 
-            //int val = 0;
+            // int val = 0;
             // CUDACHECK(cudaMemPoolSetAttribute(resource->pool_handle(), cudaMemPoolReuseFollowEventDependencies, &val));
-            //CUDACHECK(cudaMemPoolSetAttribute(resource->pool_handle(), cudaMemPoolReuseAllowOpportunistic, &val));
+            // CUDACHECK(cudaMemPoolSetAttribute(resource->pool_handle(), cudaMemPoolReuseAllowOpportunistic, &val));
             // CUDACHECK(cudaMemPoolSetAttribute(resource->pool_handle(), cudaMemPoolReuseAllowInternalDependencies, &val));
             
             //std::size_t releaseThreshold = std::numeric_limits<std::size_t>::max();
@@ -599,6 +627,7 @@ namespace care{
             rmmCudaAsyncResources.push_back(std::move(resource));
             rmmDeviceCheckAdapters.push_back(std::move(devicecheckadapter));
             rmmStreamCheckAdapters.push_back(std::move(streamcheckadapter));
+            rmmLoggingAdapters.push_back(std::move(loggingAdapter));
         }
 
         #if 0
@@ -694,7 +723,8 @@ namespace care{
             gpumemorylimits,
             0,
             numQualityBits,
-            gpu::MultiGpuReadStorage::Layout::FirstFit
+            gpu::MultiGpuReadStorage::Layout::FirstFit,
+            programOptions.directPeerAccess
         );
 
         std::vector<gpu::GpuForest> anchorForests;
@@ -771,10 +801,9 @@ namespace care{
         //After minhasher is constructed, remaining gpu memory can be used to store reads
 
         auto getGpuMemoryLimits = [&](){
-            const std::size_t numGpus = programOptions.deviceIds.size();
             std::vector<std::size_t> limits(numGpus, 0);
 
-            for(std::size_t i = 0; i < numGpus; i++){
+            for(int i = 0; i < numGpus; i++){
                 cub::SwitchDevice sd{programOptions.deviceIds[i]};
                 
                 std::size_t total = 0;
@@ -863,6 +892,9 @@ namespace care{
     
         std::cerr << "Constructed " << partialResults.size() << " corrections. ";
         std::cerr << "They occupy a total of " << (partialResults.dataBytes() + partialResults.offsetBytes()) << " bytes\n";
+
+
+        //std::exit(0);
 
         //compareMaxRssToLimit(programOptions.memoryTotalLimit, "Error memorylimit after correction");
 

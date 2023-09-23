@@ -196,8 +196,11 @@ public:
         std::vector<std::size_t> memoryLimitsPerDevice_,
         std::size_t memoryLimitHost,
         int numQualBits,
-        Layout gpuDataLayout
-    ){
+        Layout gpuDataLayout,
+        bool directPeerAccess_
+    ) 
+        : directPeerAccess(directPeerAccess_)
+    {
 
         rebuild(
             cpuReadStorage_,
@@ -349,6 +352,7 @@ public:
                 sizeof(unsigned int),
                 deviceIds,
                 memoryLimitsPerDevice,
+                directPeerAccess,
                 dataLayout,
                 MultiGpu2dArrayInitMode::CanDiscardRows
             )
@@ -454,6 +458,7 @@ public:
                     sizeof(unsigned int),
                     deviceIds,
                     memoryLimitsPerDevice,
+                    directPeerAccess,
                     dataLayout,
                     MultiGpu2dArrayInitMode::CanDiscardRows
                 )
@@ -2523,6 +2528,7 @@ private:
         deallocVector(tempdataVector);
     }
     
+    bool directPeerAccess{};
     bool pairedEnd{};
     bool useQualityScores{};
     int sequenceLengthLowerBound{};

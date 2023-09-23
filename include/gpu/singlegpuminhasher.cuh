@@ -298,9 +298,11 @@ namespace gpu{
     }
 
     class MultiGpuMinhasher; //forward declaration
+    class ReplicatedSingleGpuMinhasher; //forward declaration
 
     class SingleGpuMinhasher : public GpuMinhasher{
         friend class MultiGpuMinhasher;
+        friend class ReplicatedSingleGpuMinhasher;
     public:
         using Key = kmer_type;
         using Value = read_number;
@@ -977,6 +979,7 @@ namespace gpu{
                 D2H,
                 stream
             ));
+            CUDACHECK(cudaStreamSynchronize(stream));
         }
 
         void retrieveValues(
@@ -1094,7 +1097,8 @@ namespace gpu{
                 resultsPerMapThreshold,
                 numSequences,
                 d_values
-            );
+            ); CUDACHECKASYNC;
+
             }
             #else
 

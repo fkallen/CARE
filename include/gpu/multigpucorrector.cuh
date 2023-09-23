@@ -86,7 +86,7 @@ namespace gpu{
         std::vector<rmm::device_uvector<int>> vec_d_candidates_per_anchor;
         std::vector<rmm::device_uvector<int>> vec_d_candidates_per_anchor_prefixsum;
 
-        MultiGpuErrorCorrectorInput(std::vector<int> deviceIds_, const std::vector<cudaStream_t> streams)
+        MultiGpuErrorCorrectorInput(std::vector<int> deviceIds_, const std::vector<cudaStream_t>& streams)
         : deviceIds(std::move(deviceIds_))
         {
             const int numGpus = deviceIds.size();
@@ -592,10 +592,10 @@ namespace gpu{
             }
 
             //sync
-            for(int g = 0; g < numGpus; g++){
-                cub::SwitchDevice sd{deviceIds[g]};
-                CUDACHECK(cudaStreamSynchronize(streams[g]));
-            }
+            // for(int g = 0; g < numGpus; g++){
+            //     cub::SwitchDevice sd{deviceIds[g]};
+            //     CUDACHECK(cudaStreamSynchronize(streams[g]));
+            // }
 
             std::vector<int> totalNumValuesPerGpu(h_pinned_totalNumValuesTmp, h_pinned_totalNumValuesTmp + numGpus);
 
@@ -924,8 +924,8 @@ namespace gpu{
             programOptions{&programOptions_},
             deviceIds{std::move(deviceIds_)},
             vec_gpuForestAnchor{std::move(vec_gpuForestAnchor_)},
-            vec_gpuForestCandidate{std::move(vec_gpuForestCandidate_)}
-            
+            vec_gpuForestCandidate{std::move(vec_gpuForestCandidate_)},
+            correctorthreadnumber(std::hash<std::thread::id>{}(std::this_thread::get_id()))
         {
             std::cout << "MultiGpuErrorCorrector\n";
             const int numGpus = deviceIds.size();
@@ -1100,6 +1100,20 @@ namespace gpu{
             const std::vector<cudaStream_t>& streams
         ){
             const int numGpus = deviceIds.size();
+
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     CUDACHECK(cudaEventRecord(vec_events[g][0], streams[g]));
+            // }
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     for(int x = 0; x < numGpus; x++){
+            //         if(g != x){
+            //             CUDACHECK(cudaStreamWaitEvent(streams[g], vec_events[x][0], 0));
+            //         }
+            //     }
+            // }
+            
             for(int g = 0; g < numGpus; g++){
                 cub::SwitchDevice sd{deviceIds[g]};
                 CUDACHECK(cudaEventSynchronize(vec_previousBatchFinishedEvent[g]));
@@ -1111,9 +1125,16 @@ namespace gpu{
             vec_currentNumCandidates.resize(numGpus);
             vec_currentOutput.resize(numGpus);
 
+
             // for(int g = 0; g < numGpus; g++){
             //     std::cout << "gpu " << g << ", numAnchors " << currentInput->vec_h_numAnchors[g][0] << ", numCandidates " << currentInput->vec_h_numCandidates[g][0] << "\n";
+            //     std::cout << currentInput->vec_h_anchorReadIds[g][0] << "\n";
             // }
+            // std::cout << correctorthreadnumber << " num candidates\n";
+            // for(int g = 0; g < numGpus; g++){
+            //     std::cout << currentInput->vec_h_numCandidates[g][0] << " ";
+            // }
+            // std::cout << "\n";
 
             for(int g = 0; g < numGpus; g++){
 
@@ -1189,7 +1210,33 @@ namespace gpu{
             //fixed size memory should already be allocated. However, this will also set the correct working stream for stream-ordered allocations which is important.
             initFixedSizeBuffers(streams); 
 
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     CUDACHECK(cudaEventRecord(vec_events[g][0], streams[g]));
+            // }
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     for(int x = 0; x < numGpus; x++){
+            //         if(g != x){
+            //             CUDACHECK(cudaStreamWaitEvent(streams[g], vec_events[x][0], 0));
+            //         }
+            //     }
+            // }
+
             resizeBuffers(vec_currentNumAnchors, vec_currentNumCandidates, streams);
+
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     CUDACHECK(cudaEventRecord(vec_events[g][0], streams[g]));
+            // }
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     for(int x = 0; x < numGpus; x++){
+            //         if(g != x){
+            //             CUDACHECK(cudaStreamWaitEvent(streams[g], vec_events[x][0], 0));
+            //         }
+            //     }
+            // }
 
             for(int g = 0; g < numGpus; g++){
                 cub::SwitchDevice sd{deviceIds[g]};
@@ -1249,8 +1296,48 @@ namespace gpu{
 
             flagPairedCandidates(streams);
 
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     CUDACHECK(cudaEventRecord(vec_events[g][0], streams[g]));
+            // }
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     for(int x = 0; x < numGpus; x++){
+            //         if(g != x){
+            //             CUDACHECK(cudaStreamWaitEvent(streams[g], vec_events[x][0], 0));
+            //         }
+            //     }
+            // }
+
             getAmbiguousFlagsOfAnchors(streams);
+
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     CUDACHECK(cudaEventRecord(vec_events[g][0], streams[g]));
+            // }
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     for(int x = 0; x < numGpus; x++){
+            //         if(g != x){
+            //             CUDACHECK(cudaStreamWaitEvent(streams[g], vec_events[x][0], 0));
+            //         }
+            //     }
+            // }
+
             getAmbiguousFlagsOfCandidates(streams);
+
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     CUDACHECK(cudaEventRecord(vec_events[g][0], streams[g]));
+            // }
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     for(int x = 0; x < numGpus; x++){
+            //         if(g != x){
+            //             CUDACHECK(cudaStreamWaitEvent(streams[g], vec_events[x][0], 0));
+            //         }
+            //     }
+            // }
 
 
             // nvtx::push_range("getCandidateSequenceData", 3);
@@ -1261,12 +1348,52 @@ namespace gpu{
             getCandidateAlignments(streams); 
             nvtx::pop_range();
 
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     CUDACHECK(cudaEventRecord(vec_events[g][0], streams[g]));
+            // }
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     for(int x = 0; x < numGpus; x++){
+            //         if(g != x){
+            //             CUDACHECK(cudaStreamWaitEvent(streams[g], vec_events[x][0], 0));
+            //         }
+            //     }
+            // }
+
+
             nvtx::push_range("buildMultipleSequenceAlignment", 6);
             buildAndRefineMultipleSequenceAlignment(streams);
             nvtx::pop_range();
 
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     CUDACHECK(cudaEventRecord(vec_events[g][0], streams[g]));
+            // }
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     for(int x = 0; x < numGpus; x++){
+            //         if(g != x){
+            //             CUDACHECK(cudaStreamWaitEvent(streams[g], vec_events[x][0], 0));
+            //         }
+            //     }
+            // }
+
             nvtx::push_range("correctanchors", 8);
             correctAnchors(streams);
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     CUDACHECK(cudaEventRecord(vec_events[g][0], streams[g]));
+            // }
+            // for(int g = 0; g < numGpus; g++){
+            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
+            //     for(int x = 0; x < numGpus; x++){
+            //         if(g != x){
+            //             CUDACHECK(cudaStreamWaitEvent(streams[g], vec_events[x][0], 0));
+            //         }
+            //     }
+            // }
+
             updateCorrectionFlags(streams);
             nvtx::pop_range();
             
@@ -1528,6 +1655,11 @@ namespace gpu{
                 
                 vec_d_indices[g].resize(numCandidates + 1, stream);
             }
+            // std::cout << correctorthreadnumber << " vec_d_indices after resize\n";
+            // for(int g = 0; g < numGpus; g++){
+            //     std::cout << vec_d_indices[g].data() << " ";
+            // }
+            // std::cout << "\n";
 
             #if 0
 
@@ -2634,13 +2766,11 @@ namespace gpu{
                 // );
 
                 for(int g = 0; g < numGpus; g++){
-                    if(hasAnchors(g) || hasAnchorsAndCandidates(g)){
-                        cub::SwitchDevice sd{deviceIds[g]};
-                        cudaStream_t qualityStream = vec_extraStream[g];
-                    
-                        CUDACHECK(cudaEventRecord(vec_events[g][0], qualityStream));
-                        CUDACHECK(cudaStreamWaitEvent(streams[g], vec_events[g][0], 0));
-                    }
+                    cub::SwitchDevice sd{deviceIds[g]};
+                    cudaStream_t qualityStream = vec_extraStream[g];
+                
+                    CUDACHECK(cudaEventRecord(vec_events[g][0], qualityStream));
+                    CUDACHECK(cudaStreamWaitEvent(streams[g], vec_events[g][0], 0));
                 }
             }
 
@@ -2729,12 +2859,18 @@ namespace gpu{
                         std::swap(d_num_indices_tmp, vec_d_num_indices[g]);
                     }
                 }
+                // std::cout << correctorthreadnumber << "vec_d_indices after msa\n";
+                // for(int g = 0; g < numGpus; g++){
+                //     std::cout << vec_d_indices[g].data() << " ";
+                // }
+                // std::cout << "\n";
 
             }
 
             if(programOptions->useQualityScores){
                 for(int g = 0; g < numGpus; g++){
                     cub::SwitchDevice sd{deviceIds[g]};
+                    //CUDACHECK(cudaStreamSynchronize(streams[g]));
                     rmm::mr::get_current_device_resource()->deallocate(vec_d_allQualData[g], vec_allQualDataBytes[g], streams[g]);
                 }
             }
@@ -2787,6 +2923,8 @@ namespace gpu{
                 }
             }
 
+            
+
             for(int g = 0; g < numGpus; g++){
                 if(hasAnchorsAndCandidates(g)){
                     cub::SwitchDevice sd{deviceIds[g]};
@@ -2832,6 +2970,11 @@ namespace gpu{
                     );
                 }
             }
+
+            // for(int g = 0; g < numGpus; g++){
+            //     cub::SwitchDevice sd{deviceIds[g]};
+            //     CUDACHECK(cudaStreamSynchronize(streams[g]));
+            // }
             
         }
 
@@ -3327,45 +3470,23 @@ namespace gpu{
             std::vector<const bool*> vec_d_flags(numGpus, nullptr);
             std::vector<const read_number*> vec_d_readIds(numGpus, nullptr);
             std::vector<cudaStream_t> allocStreams(numGpus, nullptr);
+            std::vector<cudaEvent_t> joinEvents(numGpus, nullptr);
 
             for(int g = 0; g < numGpus; g++){
                 vec_d_flags[g] = reinterpret_cast<const bool*>(vec_d_is_high_quality_anchor[g].data());
                 vec_d_readIds[g] = vec_d_anchorReadIds[g].data();
                 allocStreams[g] = vec_extraStream[g];
+                joinEvents[g] = vec_events[g][0];
             }
 
-            // correctionFlags->multi_setIsCorrectedAsHQAnchor(
-            //     vec_d_flags,             
-            //     vec_d_readIds, //d_readIds must be unique
-            //     vec_currentNumAnchors, 
-            //     streams
-            // );
-
-            //works with this sync
-            // {
-            //     int N = 0;
-            //     CUDACHECK(cudaGetDeviceCount(&N));
-            //     for(int i = 0; i < N; i++){
-            //         cub::SwitchDevice sd(cudaSetDevice(i));
-            //         CUDACHECK(cudaDeviceSynchronize());
-            //     }
-            // }
             correctionFlags->multi_setIsCorrectedAsHQAnchor(
                 vec_d_flags,             
                 vec_d_readIds, //d_readIds must be unique
                 vec_currentNumAnchors, 
                 streams,
-                allocStreams
+                allocStreams,
+                joinEvents
             );
-
-            // {
-            //     int N = 0;
-            //     CUDACHECK(cudaGetDeviceCount(&N));
-            //     for(int i = 0; i < N; i++){
-            //         cub::SwitchDevice sd(cudaSetDevice(i));
-            //         CUDACHECK(cudaDeviceSynchronize());
-            //     }
-            // }
         }
 
     private:
@@ -3483,6 +3604,8 @@ namespace gpu{
         std::vector<std::unique_ptr<ManagedGPUMultiMSA>> vec_managedgpumsa;
 
         PinnedBuffer<char> h_tempstorage;
+
+        size_t correctorthreadnumber = 0;
     };
 
 #endif

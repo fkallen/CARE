@@ -118,8 +118,8 @@ namespace gpu{
 
     class GpuReadCorrectionFlags{
     public:
-        GpuReadCorrectionFlags(std::vector<int> deviceIds_, std::size_t numReads_)
-            : deviceIds(deviceIds_), size(numReads_){
+        GpuReadCorrectionFlags(std::vector<int> deviceIds_, std::size_t numReads_, bool directPeerAccess_)
+            : directPeerAccess(directPeerAccess_), size(numReads_), deviceIds(deviceIds_){
 
             const int numDevices = deviceIds.size();
             for(int d = 0; d < numDevices; d++){
@@ -214,106 +214,98 @@ namespace gpu{
             }
         }
 
-        // inputs vectors must correspond to devices given by deviceIds
         void multi_setIsCorrectedAsHQAnchor(
             const std::vector<const bool*>& vec_d_flags,             
             const std::vector<const read_number*> vec_d_readIds, //d_readIds must be unique
             const std::vector<int> vec_numIds, 
-            const std::vector<cudaStream_t>& streams
+            const std::vector<cudaStream_t>& streams,
+            const std::vector<cudaStream_t>& allocStreams,
+            const std::vector<cudaEvent_t>& joinEvents
+        ){
+            if(directPeerAccess){
+                multi_setIsCorrectedAsHQAnchor_directPeerAccess(
+                    vec_d_flags,             
+                    vec_d_readIds, 
+                    vec_numIds, 
+                    streams,
+                    joinEvents
+                );
+            }else{
+                multi_setIsCorrectedAsHQAnchor_peerCopy(
+                    vec_d_flags,             
+                    vec_d_readIds,
+                    vec_numIds, 
+                    streams,
+                    allocStreams,
+                    joinEvents
+                );
+            }
+        }
+
+        void multi_setIsCorrectedAsHQAnchor_directPeerAccess(
+            const std::vector<const bool*>& vec_d_flags,             
+            const std::vector<const read_number*> vec_d_readIds, //d_readIds must be unique
+            const std::vector<int> vec_numIds, 
+            const std::vector<cudaStream_t>& streams,
+            const std::vector<cudaEvent_t>& joinEvents
         ) noexcept{
             assert(vec_d_flags.size() == deviceIds.size());
+            size_t correctorthreadnumber = std::hash<std::thread::id>{}(std::this_thread::get_id());
 
             int oldId = 0;
             CUDACHECK(cudaGetDevice(&oldId));
 
             const int numGpus = deviceIds.size();
-            int maxNumIds = 0;
-            for(int g = 0; g < numGpus; g++){
-                maxNumIds += vec_numIds[g];
-            }
 
-            std::vector<rmm::device_uvector<bool>> vec_d_flags_remote;
-            std::vector<rmm::device_uvector<read_number>> vec_d_readIds_remote;
+            const int totalNumIds = std::reduce(vec_numIds.begin(), vec_numIds.end());
+            if(totalNumIds == 0) return;
 
+            //join all streams and fork again
             for(int g = 0; g < numGpus; g++){
                 CUDACHECK(cudaSetDevice(deviceIds[g]));
-                vec_d_flags_remote.emplace_back(maxNumIds, streams[g]);
-                vec_d_readIds_remote.emplace_back(maxNumIds, streams[g]);
+                CUDACHECK(cudaEventRecord(joinEvents[g], streams[g]));
             }
-            //join the streams
-            for(int g = 0; g < numGpus; g++){
-                CUDACHECK(cudaSetDevice(deviceIds[g]));
-                CUDACHECK(cudaEventRecord(events[g], streams[g]));
-                for(int x = 0; x < numGpus; x++){
-                    if(x != g){
-                        CUDACHECK(cudaSetDevice(deviceIds[x]));
-                        CUDACHECK(cudaStreamWaitEvent(streams[x], events[g], 0));
-                    }
-                }
+            CUDACHECK(cudaSetDevice(deviceIds[0]));
+            for(int x = 1; x < numGpus; x++){
+                CUDACHECK(cudaStreamWaitEvent(streams[0], joinEvents[x], 0));
+            }
+            CUDACHECK(cudaEventRecord(joinEvents[0], streams[0]));
+            for(int x = 1; x < numGpus; x++){
+                CUDACHECK(cudaSetDevice(deviceIds[x]));
+                CUDACHECK(cudaStreamWaitEvent(streams[x], joinEvents[0], 0));
             }
 
-            for(int src = 0; src < numGpus; src++){
-                const int numIds = vec_numIds[src];
-                if(numIds > 0){
-                    for(int dst = 0; dst < numGpus; dst++){
-                        CUDACHECK(cudaSetDevice(deviceIds[dst]));
-                        if(src != dst){
-                            CUDACHECK(cudaMemcpyPeerAsync(
-                                vec_d_flags_remote[dst].data(), 
-                                deviceIds[dst], 
-                                vec_d_flags[src], 
-                                deviceIds[src], 
-                                sizeof(bool) * numIds, 
-                                streams[dst]
-                            ));
-                            CUDACHECK(cudaMemcpyPeerAsync(
-                                vec_d_readIds_remote[dst].data(), 
-                                deviceIds[dst], 
-                                vec_d_readIds[src], 
-                                deviceIds[src], 
-                                sizeof(read_number) * numIds, 
-                                streams[dst]
-                            ));
-                        }
-                        setBitarray<<<SDIV(numIds, 128), 128, 0, streams[dst]>>>(
-                            vec_d_isHqAnchor[dst],
-                            src == dst ? vec_d_flags[src] : vec_d_flags_remote[dst].data(), 
-                            src == dst ? vec_d_readIds[src] : vec_d_readIds_remote[dst].data(),
-                            numIds
+            //for each gpu add flags of all gpus
+            for(int distance = 0; distance < numGpus; distance++){
+                for(int g = 0; g < numGpus; g++){
+                    if(vec_numIds[g] > 0){
+                        const int d = (g + distance) % numGpus;
+                        CUDACHECK(cudaSetDevice(deviceIds[d]));
+
+                        setBitarray<<<SDIV(vec_numIds[g], 128), 128, 0, streams[d]>>>(
+                            vec_d_isHqAnchor[d],
+                            vec_d_flags[g], 
+                            vec_d_readIds[g],
+                            vec_numIds[g]
                         );
                         CUDACHECKASYNC;
                     }
                 }
             }
 
-            //join the streams
-            for(int g = 0; g < numGpus; g++){
-                CUDACHECK(cudaSetDevice(deviceIds[g]));
-                CUDACHECK(cudaEventRecord(events[g], streams[g]));
-                for(int x = 0; x < numGpus; x++){
-                    if(x != g){
-                        CUDACHECK(cudaSetDevice(deviceIds[x]));
-                        CUDACHECK(cudaStreamWaitEvent(streams[x], events[g], 0));
-                    }
-                }
-            }
-            for(int g = 0; g < numGpus; g++){
-                CUDACHECK(cudaSetDevice(deviceIds[g]));
-                vec_d_flags_remote[g].release();
-                vec_d_readIds_remote[g].release();
-            }
-
             CUDACHECK(cudaSetDevice(oldId));
         }
 
-        void multi_setIsCorrectedAsHQAnchor(
+        void multi_setIsCorrectedAsHQAnchor_peerCopy(
             const std::vector<const bool*>& vec_d_flags,             
             const std::vector<const read_number*> vec_d_readIds, //d_readIds must be unique
             const std::vector<int> vec_numIds, 
             const std::vector<cudaStream_t>& streams,
-            const std::vector<cudaStream_t>& allocStreams
+            const std::vector<cudaStream_t>& allocStreams,
+            const std::vector<cudaEvent_t>& joinEvents
         ) noexcept{
             assert(vec_d_flags.size() == deviceIds.size());
+            size_t correctorthreadnumber = std::hash<std::thread::id>{}(std::this_thread::get_id());
 
             int oldId = 0;
             CUDACHECK(cudaGetDevice(&oldId));
@@ -326,11 +318,6 @@ namespace gpu{
             }
             const int totalNumIds = numIdsPS[numGpus];
             if(totalNumIds == 0) return;
-
-            // for(int g = 0; g < numGpus; g++){
-            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
-            //     CUDACHECK(cudaStreamSynchronize(streams[g]));
-            // }
 
             std::vector<rmm::device_uvector<bool>> vec_d_flags_remote;
             std::vector<rmm::device_uvector<read_number>> vec_d_readIds_remote;
@@ -346,6 +333,7 @@ namespace gpu{
                 CUDACHECK(cudaSetDevice(deviceIds[g]));
                 CUDACHECK(cudaStreamSynchronize(allocStreams[g]));
             }
+
 
             {
                 std::vector<std::vector<const void*>> srcBuffers(numGpus, std::vector<const void*>(numGpus));
@@ -376,6 +364,7 @@ namespace gpu{
                         dstBuffers[g][d] = vec_d_readIds_remote[d].data() + numIdsPS[g];
                     }
                 }
+
                 multigpu_transfer(
                     deviceIds,
                     srcBuffers,
@@ -386,37 +375,27 @@ namespace gpu{
                 );
             }
 
-            //join all streams
-            // for(int g = 0; g < numGpus; g++){
-            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
-            //     CUDACHECK(cudaEventRecord(events[g], streams[g]));
-            //     for(int x = 0; x < numGpus; x++){
-            //         if(x != g){
-            //             CUDACHECK(cudaSetDevice(deviceIds[x]));
-            //             CUDACHECK(cudaStreamWaitEvent(streams[x], events[g], 0));
-            //         }
-            //     }
-            // }
+            //join all streams and fork again
             for(int g = 0; g < numGpus; g++){
                 CUDACHECK(cudaSetDevice(deviceIds[g]));
-                CUDACHECK(cudaEventRecord(events[g], streams[g]));
+                CUDACHECK(cudaEventRecord(joinEvents[g], streams[g]));
+            }
+            CUDACHECK(cudaSetDevice(deviceIds[0]));
+            for(int x = 1; x < numGpus; x++){
+                CUDACHECK(cudaStreamWaitEvent(streams[0], joinEvents[x], 0));
+            }
+            CUDACHECK(cudaEventRecord(joinEvents[0], streams[0]));
+            for(int x = 1; x < numGpus; x++){
+                CUDACHECK(cudaSetDevice(deviceIds[x]));
+                CUDACHECK(cudaStreamWaitEvent(streams[x], joinEvents[0], 0));
             }
 
-            for(int g = 0; g < numGpus; g++){
-                for(int x = 0; x < numGpus; x++){
-                    CUDACHECK(cudaSetDevice(deviceIds[x]));
-                    CUDACHECK(cudaStreamWaitEvent(streams[x], events[g], 0));
-                }
-            }
 
-            // for(int g = 0; g < numGpus; g++){
-            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
-            //     CUDACHECK(cudaStreamSynchronize(streams[g]));
-            // }
 
             //set array
             for(int g = 0; g < numGpus; g++){
                 CUDACHECK(cudaSetDevice(deviceIds[g]));
+
                 setBitarray<<<SDIV(totalNumIds, 128), 128, 0, streams[g]>>>(
                     vec_d_isHqAnchor[g],
                     vec_d_flags_remote[g].data(), 
@@ -433,19 +412,11 @@ namespace gpu{
                 vec_d_readIds_remote[g].release();
             }
 
-
-            // for(int g = 0; g < numGpus; g++){
-            //     CUDACHECK(cudaSetDevice(deviceIds[g]));
-            //     vec_d_flags_remote[g].set_stream(streams[g]);
-            //     vec_d_flags_remote[g].release();
-            //     vec_d_readIds_remote[g].set_stream(streams[g]);
-            //     vec_d_readIds_remote[g].release();
-            // }
-
             CUDACHECK(cudaSetDevice(oldId));
         }
 
     private:
+        bool directPeerAccess{};
         std::size_t size{};
         std::vector<CudaEvent> events{};
         std::vector<int> deviceIds{};

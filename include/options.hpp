@@ -49,6 +49,7 @@ namespace care
 
     struct ProgramOptions{
         bool pureGpu = false;
+        bool directPeerAccess = false;
         int min_overlap = 30;
         float maxErrorRate = 0.2f;
         float min_overlap_ratio = 0.30f;

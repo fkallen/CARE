@@ -322,7 +322,8 @@ namespace gpu{
                             calculateResultsPerMapThreshold(programOptions.estimatedCoverage), 
                             programOptions.kmerlength,
                             programOptions.hashtableLoadfactor,
-                            programOptions.deviceIds
+                            programOptions.deviceIds,
+                            programOptions.directPeerAccess
                         );
 
                         gpuMinhasherType = GpuMinhasherType::Multi;
