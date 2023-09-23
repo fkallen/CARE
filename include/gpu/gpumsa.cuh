@@ -394,6 +394,8 @@ namespace gpu{
             const int lastColumn_excl = columnProperties->lastColumn_excl;
             const int numColumnsToCheck = lastColumn_excl - firstColumn_incl;
 
+            group.sync();
+
             int newFirstColumn_incl = -1;
             int newLastColumn_excl = -1;
 
