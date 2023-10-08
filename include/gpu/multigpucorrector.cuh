@@ -984,23 +984,21 @@ namespace gpu{
                 vec_d_candidate_read_ids.emplace_back();
                 vec_d_candidate_sequences_lengths.emplace_back();
                 vec_d_candidate_sequences_data.emplace_back();
+                vec_d_candidateCanBeCorrected.emplace_back();
+                vec_d_candidatesCubTemp.emplace_back();
+                
 
                 vec_managedgpumsa.emplace_back();
                 vec_readstorageHandle.emplace_back(gpuReadStorage->makeHandle());
                 vec_d_indicesForGather.emplace_back(0, streams[g]);
                 vec_d_anchorContainsN.emplace_back(0, streams[g]);
-                vec_d_candidateContainsN_.emplace_back(0, streams[g]);
-                vec_d_candidate_sequences_lengths_.emplace_back(0, streams[g]);
-                vec_d_candidate_sequences_data_.emplace_back(0, streams[g]);
-                vec_d_anchorIndicesOfCandidates_.emplace_back(0, streams[g]);
-                vec_d_alignment_overlaps_.emplace_back(0, streams[g]);
-                vec_d_alignment_shifts_.emplace_back(0, streams[g]);
-                vec_d_alignment_nOps_.emplace_back(0, streams[g]);
-                vec_d_alignment_best_alignment_flags_.emplace_back(0, streams[g]); 
                 vec_d_indices.emplace_back(0, streams[g]);
+                vec_d_indices_tmp.emplace_back(0, streams[g]);
                 vec_d_indices_per_anchor.emplace_back(0, streams[g]);
+                vec_d_indices_per_anchor_tmp.emplace_back(0, streams[g]);
                 vec_d_indices_per_anchor_prefixsum.emplace_back(0, streams[g]);
                 vec_d_num_indices.emplace_back(0, streams[g]);
+                vec_d_num_indices_tmp.emplace_back(0, streams[g]);
                 vec_d_corrected_anchors.emplace_back(0, streams[g]);
                 vec_d_corrected_candidates.emplace_back(0, streams[g]);
                 vec_d_num_corrected_candidates_per_anchor.emplace_back(0, streams[g]);
@@ -1013,22 +1011,31 @@ namespace gpu{
                 vec_d_editsPerCorrectedanchor.emplace_back(0, streams[g]);
                 vec_d_numEditsPerCorrectedanchor.emplace_back(0, streams[g]);
                 vec_d_editsPerCorrectedCandidate.emplace_back(0, streams[g]);
-                vec_d_hqAnchorCorrectionOfCandidateExists_.emplace_back(0, streams[g]);
                 vec_d_allCandidateData.emplace_back(0, streams[g]);
                 vec_d_numEditsPerCorrectedCandidate.emplace_back(0, streams[g]);
                 vec_d_indices_of_corrected_anchors.emplace_back(0, streams[g]);
                 vec_d_num_indices_of_corrected_anchors.emplace_back(0, streams[g]);
-                vec_d_indices_of_corrected_candidates_.emplace_back(0, streams[g]);
                 vec_d_totalNumEdits.emplace_back(0, streams[g]);
-                vec_d_isPairedCandidate_.emplace_back(0, streams[g]);
                 vec_d_numAnchors.emplace_back(0, streams[g]);
                 vec_d_numCandidates.emplace_back(0, streams[g]);
                 vec_d_anchorReadIds.emplace_back(0, streams[g]);
                 vec_d_anchor_sequences_data.emplace_back(0, streams[g]);
                 vec_d_anchor_sequences_lengths.emplace_back(0, streams[g]);
-                vec_d_candidate_read_ids_.emplace_back(0, streams[g]);
                 vec_d_candidates_per_anchor.emplace_back(0, streams[g]);
                 vec_d_candidates_per_anchor_prefixsum.emplace_back(0, streams[g]);
+                vec_d_tempSerializedCorrectedSequences.emplace_back(0, streams[g]);
+                vec_anchorForestCorrectionTemp.emplace_back(streams[g]);
+                vec_candidateForestCorrectionTemp.emplace_back(streams[g]);
+            }
+
+            for(int g = 0; g < numGpus; g++){
+                cub::SwitchDevice sd{deviceIds[g]};
+
+                vec_managedgpumsa[g] = std::make_unique<ManagedGPUMultiMSA>(
+                    streams[g],
+                    rmm::mr::get_current_device_resource(), 
+                    vec_h_managedmsa_tmp[g].data()
+                );
             }
 
             initFixedSizeBuffers(streams);
@@ -1051,18 +1058,13 @@ namespace gpu{
 
                 vec_d_indicesForGather[g].release();
                 vec_d_anchorContainsN[g].release();
-                vec_d_candidateContainsN_[g].release();
-                vec_d_candidate_sequences_lengths_[g].release();
-                vec_d_candidate_sequences_data_[g].release();
-                vec_d_anchorIndicesOfCandidates_[g].release();
-                vec_d_alignment_overlaps_[g].release();
-                vec_d_alignment_shifts_[g].release();
-                vec_d_alignment_nOps_[g].release();
-                vec_d_alignment_best_alignment_flags_[g].release(); 
                 vec_d_indices[g].release();
+                vec_d_indices_tmp[g].release();
                 vec_d_indices_per_anchor[g].release();
+                vec_d_indices_per_anchor_tmp[g].release();
                 vec_d_indices_per_anchor_prefixsum[g].release();
                 vec_d_num_indices[g].release();
+                vec_d_num_indices_tmp[g].release();
                 vec_d_corrected_anchors[g].release();
                 vec_d_corrected_candidates[g].release();
                 vec_d_num_corrected_candidates_per_anchor[g].release();
@@ -1075,22 +1077,22 @@ namespace gpu{
                 vec_d_editsPerCorrectedanchor[g].release();
                 vec_d_numEditsPerCorrectedanchor[g].release();
                 vec_d_editsPerCorrectedCandidate[g].release();
-                vec_d_hqAnchorCorrectionOfCandidateExists_[g].release();
                 vec_d_allCandidateData[g].release();
                 vec_d_numEditsPerCorrectedCandidate[g].release();
                 vec_d_indices_of_corrected_anchors[g].release();
                 vec_d_num_indices_of_corrected_anchors[g].release();
-                vec_d_indices_of_corrected_candidates_[g].release();
                 vec_d_totalNumEdits[g].release();
-                vec_d_isPairedCandidate_[g].release();
                 vec_d_numAnchors[g].release();
                 vec_d_numCandidates[g].release();
                 vec_d_anchorReadIds[g].release();
                 vec_d_anchor_sequences_data[g].release();
                 vec_d_anchor_sequences_lengths[g].release();
-                vec_d_candidate_read_ids_[g].release();
                 vec_d_candidates_per_anchor[g].release();
                 vec_d_candidates_per_anchor_prefixsum[g].release();
+                vec_d_tempSerializedCorrectedSequences[g].release();
+
+                auto aaa1 = std::move(vec_anchorForestCorrectionTemp[g]);
+                auto aaa2 = std::move(vec_candidateForestCorrectionTemp[g]);
             }
         }
 
@@ -1424,12 +1426,12 @@ namespace gpu{
                 nvtx::pop_range();   
             }
 
-            for(int g = 0; g < numGpus; g++){
-                cub::SwitchDevice sd{deviceIds[g]};
+            // for(int g = 0; g < numGpus; g++){
+            //     cub::SwitchDevice sd{deviceIds[g]};
 
-                //ensure release of memory on the correct device
-                vec_managedgpumsa[g] = nullptr;
-            }
+            //     //ensure release of memory on the correct device
+            //     vec_managedgpumsa[g] = nullptr;
+            // }
 
             for(int g = 0; g < numGpus; g++){
                 cub::SwitchDevice sd{deviceIds[g]};
@@ -1464,22 +1466,17 @@ namespace gpu{
                 handleHost(vec_h_managedmsa_tmp[g]);
 
                 handleDevice(vec_d_anchorContainsN[g]);
-                handleDevice(vec_d_candidateContainsN_[g]);
-                handleDevice(vec_d_candidate_sequences_lengths_[g]);
-                handleDevice(vec_d_candidate_sequences_data_[g]);
-                handleDevice(vec_d_anchorIndicesOfCandidates_[g]);
 
                 handleDevice(vec_d_allCandidateData[g]);
 
-                handleDevice(vec_d_alignment_overlaps_[g]);
-                handleDevice(vec_d_alignment_shifts_[g]);
-                handleDevice(vec_d_alignment_nOps_[g]);
-                handleDevice(vec_d_alignment_best_alignment_flags_[g]);
 
                 handleDevice(vec_d_indices[g]);
+                handleDevice(vec_d_indices_tmp[g]);
                 handleDevice(vec_d_indices_per_anchor[g]);
+                handleDevice(vec_d_indices_per_anchor_tmp[g]);
                 handleDevice(vec_d_indices_per_anchor_prefixsum[g]);
                 handleDevice(vec_d_num_indices[g]);
+                handleDevice(vec_d_num_indices_tmp[g]);
                 handleDevice(vec_d_corrected_anchors[g]);
                 handleDevice(vec_d_corrected_candidates[g]);
                 handleDevice(vec_d_num_corrected_candidates_per_anchor[g]);
@@ -1491,20 +1488,21 @@ namespace gpu{
                 handleDevice(vec_d_num_high_quality_anchor_indices[g]);
                 handleDevice(vec_d_editsPerCorrectedanchor[g]);
                 handleDevice(vec_d_numEditsPerCorrectedanchor[g]);
-                handleDevice(vec_d_editsPerCorrectedCandidate[g]);
-                handleDevice(vec_d_hqAnchorCorrectionOfCandidateExists_[g]);            
+                handleDevice(vec_d_editsPerCorrectedCandidate[g]);          
                 handleDevice(vec_d_numEditsPerCorrectedCandidate[g]);
                 handleDevice(vec_d_indices_of_corrected_anchors[g]);
                 handleDevice(vec_d_num_indices_of_corrected_anchors[g]);
-                handleDevice(vec_d_indices_of_corrected_candidates_[g]);
                 handleDevice(vec_d_numAnchors[g]);
                 handleDevice(vec_d_numCandidates[g]);
                 handleDevice(vec_d_anchorReadIds[g]);
                 handleDevice(vec_d_anchor_sequences_data[g]);
                 handleDevice(vec_d_anchor_sequences_lengths[g]);
-                handleDevice(vec_d_candidate_read_ids_[g]);
                 handleDevice(vec_d_candidates_per_anchor[g]);
                 handleDevice(vec_d_candidates_per_anchor_prefixsum[g]);
+                handleDevice(vec_d_tempSerializedCorrectedSequences[g]);
+
+                //vec_anchorForestCorrectionTemp[g];
+                //vec_candidateForestCorrectionTemp[g]                
             }
 
             return info;
@@ -1519,22 +1517,15 @@ namespace gpu{
                     ::destroy(d, streams[g]);
                 };
 
-                handleDevice(vec_d_anchorContainsN[g]);
-                handleDevice(vec_d_candidateContainsN_[g]);
-                handleDevice(vec_d_candidate_sequences_lengths_[g]);
-                handleDevice(vec_d_candidate_sequences_data_[g]);
-                handleDevice(vec_d_anchorIndicesOfCandidates_[g]);
-
                 handleDevice(vec_d_allCandidateData[g]);
-
-                handleDevice(vec_d_alignment_overlaps_[g]);
-                handleDevice(vec_d_alignment_shifts_[g]);
-                handleDevice(vec_d_alignment_nOps_[g]);
-                handleDevice(vec_d_alignment_best_alignment_flags_[g]);
+                handleDevice(vec_d_anchorContainsN[g]);
                 handleDevice(vec_d_indices[g]);
+                handleDevice(vec_d_indices_tmp[g]);
                 handleDevice(vec_d_indices_per_anchor[g]);
+                handleDevice(vec_d_indices_per_anchor_tmp[g]);
                 handleDevice(vec_d_indices_per_anchor_prefixsum[g]);
                 handleDevice(vec_d_num_indices[g]);
+                handleDevice(vec_d_num_indices_tmp[g]);
                 handleDevice(vec_d_corrected_anchors[g]);
                 handleDevice(vec_d_corrected_candidates[g]);
                 handleDevice(vec_d_num_corrected_candidates_per_anchor[g]);
@@ -1547,18 +1538,19 @@ namespace gpu{
                 handleDevice(vec_d_editsPerCorrectedanchor[g]);
                 handleDevice(vec_d_numEditsPerCorrectedanchor[g]);
                 handleDevice(vec_d_editsPerCorrectedCandidate[g]);
-                handleDevice(vec_d_hqAnchorCorrectionOfCandidateExists_[g]);
                 handleDevice(vec_d_numEditsPerCorrectedCandidate[g]);
                 handleDevice(vec_d_indices_of_corrected_anchors[g]);
                 handleDevice(vec_d_num_indices_of_corrected_anchors[g]);
-                handleDevice(vec_d_indices_of_corrected_candidates_[g]);
                 handleDevice(vec_d_numEditsPerCorrectedanchor[g]);
                 handleDevice(vec_d_numAnchors[g]);
                 handleDevice(vec_d_numCandidates[g]);
                 handleDevice(vec_d_anchorReadIds[g]);
                 handleDevice(vec_d_anchor_sequences_data[g]);
                 handleDevice(vec_d_anchor_sequences_lengths[g]);
-                handleDevice(vec_d_candidate_read_ids_[g]);
+                handleDevice(vec_d_tempSerializedCorrectedSequences[g]);
+
+                auto aaa1 = std::move(vec_anchorForestCorrectionTemp[g]);
+                auto aaa2 = std::move(vec_candidateForestCorrectionTemp[g]);
             }
         } 
 
@@ -1572,24 +1564,12 @@ namespace gpu{
                     ::destroy(d, streams[g]);
                 };
 
-                handleDevice(vec_d_candidateContainsN_[g]);
-                handleDevice(vec_d_candidate_sequences_lengths_[g]);
-                handleDevice(vec_d_candidate_sequences_data_[g]);
-                handleDevice(vec_d_anchorIndicesOfCandidates_[g]);
-
                 handleDevice(vec_d_allCandidateData[g]);
-
-                handleDevice(vec_d_alignment_overlaps_[g]);
-                handleDevice(vec_d_alignment_shifts_[g]);
-                handleDevice(vec_d_alignment_nOps_[g]);
-                handleDevice(vec_d_alignment_best_alignment_flags_[g]);
                 handleDevice(vec_d_indices[g]);
+                handleDevice(vec_d_indices_tmp[g]);
                 handleDevice(vec_d_corrected_candidates[g]);
                 handleDevice(vec_d_editsPerCorrectedCandidate[g]);
-                handleDevice(vec_d_hqAnchorCorrectionOfCandidateExists_[g]);
                 handleDevice(vec_d_numEditsPerCorrectedCandidate[g]);
-                handleDevice(vec_d_indices_of_corrected_candidates_[g]);
-                handleDevice(vec_d_candidate_read_ids_[g]);
             }
         } 
 
@@ -1614,7 +1594,9 @@ namespace gpu{
                 vec_d_anchorContainsN[g].resize(maxAnchors, stream);
 
                 vec_d_indices_per_anchor[g].resize(maxAnchors, stream);
+                vec_d_indices_per_anchor_tmp[g].resize(maxAnchors, stream);
                 vec_d_num_indices[g].resize(1, stream);
+                vec_d_num_indices_tmp[g].resize(1, stream);
                 vec_d_indices_per_anchor_prefixsum[g].resize(maxAnchors, stream);
                 vec_d_corrected_anchors[g].resize(maxAnchors * decodedSequencePitchInBytes, stream);
                 vec_d_num_corrected_candidates_per_anchor[g].resize(maxAnchors, stream);
@@ -1637,6 +1619,8 @@ namespace gpu{
                 vec_d_candidates_per_anchor[g].resize(maxAnchors, stream);
                 vec_d_candidates_per_anchor_prefixsum[g].resize(maxAnchors + 1, stream);
                 vec_d_totalNumEdits[g].resize(1, stream);
+
+                vec_anchorForestCorrectionTemp[g].setNumAnchors(maxAnchors, stream);
             }
         }
  
@@ -1651,9 +1635,11 @@ namespace gpu{
             for(int g = 0; g < numGpus; g++){
                 cub::SwitchDevice sd{deviceIds[g]};
                 const int numCandidates = vec_numCandidates[g];
+                const int numRoundedCandidates = getRoundedNumCandidates(numCandidates);
                 cudaStream_t stream = streams[g];
                 
-                vec_d_indices[g].resize(numCandidates + 1, stream);
+                vec_d_indices[g].resize(numRoundedCandidates + 1, stream);
+                vec_d_indices_tmp[g].resize(numRoundedCandidates + 1, stream);
             }
             // std::cout << correctorthreadnumber << " vec_d_indices after resize\n";
             // for(int g = 0; g < numGpus; g++){
@@ -1661,62 +1647,40 @@ namespace gpu{
             // }
             // std::cout << "\n";
 
-            #if 0
 
             for(int g = 0; g < numGpus; g++){
                 cub::SwitchDevice sd{deviceIds[g]};
                 const int numCandidates = vec_numCandidates[g];
+                const int numRoundedCandidates = getRoundedNumCandidates(numCandidates);
                 cudaStream_t stream = streams[g];
 
-                vec_d_alignment_overlaps_[g].resize(numCandidates, stream);
-                vec_d_alignment_shifts_[g].resize(numCandidates, stream);
-                vec_d_alignment_nOps_[g].resize(numCandidates, stream);
-                vec_d_alignment_best_alignment_flags_[g].resize(numCandidates, stream);            
-                vec_d_anchorIndicesOfCandidates_[g].resize(numCandidates, stream);
-                vec_d_candidateContainsN_[g].resize(numCandidates, stream);
-                vec_d_isPairedCandidate_[g].resize(numCandidates, stream);
-                vec_d_indices_of_corrected_candidates_[g].resize(numCandidates, stream);
-                vec_d_hqAnchorCorrectionOfCandidateExists_[g].resize(numCandidates, stream);
-                vec_d_candidate_read_ids_[g].resize(numCandidates, stream);
-                vec_d_candidate_sequences_lengths_[g].resize(numCandidates, stream);
-                vec_d_candidate_sequences_data_[g].resize(numCandidates * encodedSequencePitchInInts, stream);
+                size_t allocation_sizes[14];
+                allocation_sizes[0] = sizeof(int) * numRoundedCandidates; // d_alignment_overlaps
+                allocation_sizes[1] = sizeof(int) * numRoundedCandidates; // d_alignment_shifts
+                allocation_sizes[2] = sizeof(int) * numRoundedCandidates; // d_alignment_nOps
+                allocation_sizes[3] = sizeof(AlignmentOrientation) * numRoundedCandidates; // d_alignment_best_alignment_flags
+                allocation_sizes[4] = sizeof(int) * numRoundedCandidates; // d_anchorIndicesOfCandidates
+                allocation_sizes[5] = sizeof(bool) * numRoundedCandidates; // d_candidateContainsN
+                allocation_sizes[6] = sizeof(bool) * numRoundedCandidates; // d_isPairedCandidate
+                allocation_sizes[7] = sizeof(int) * numRoundedCandidates; // d_indices_of_corrected_candidates
+                allocation_sizes[8] = sizeof(bool) * numRoundedCandidates; // d_hqAnchorCorrectionOfCandidateExists
+                allocation_sizes[9] = sizeof(read_number) * numRoundedCandidates; // d_candidate_read_ids
+                allocation_sizes[10] = sizeof(int) * numRoundedCandidates; // d_candidate_sequences_lengths
+                allocation_sizes[11] = sizeof(unsigned int) * encodedSequencePitchInInts * numRoundedCandidates; // d_candidate_sequences_data
+                allocation_sizes[12] = sizeof(bool) * numRoundedCandidates; // d_candidateCanBeCorrected
+                
+                CUDACHECK(cub::DeviceSelect::Flagged(
+                    nullptr,
+                    allocation_sizes[13],
+                    cub::CountingInputIterator<int>(0),
+                    (bool*)nullptr,
+                    (int*)nullptr,
+                    (int*)nullptr,
+                    numRoundedCandidates,
+                    streams[g]
+                ));
 
-                d_alignment_overlaps[g] = vec_d_alignment_overlaps_[g].data();
-                d_alignment_shifts[g] = vec_d_alignment_shifts_[g].data();
-                d_alignment_nOps[g] = vec_d_alignment_nOps_[g].data();
-                d_alignment_best_alignment_flags[g] = vec_d_alignment_best_alignment_flags_[g].data();
-                d_anchorIndicesOfCandidates[g] = vec_d_anchorIndicesOfCandidates_[g].data();
-                d_candidateContainsN[g] = vec_d_candidateContainsN_[g].data();
-                d_isPairedCandidate[g] = vec_d_isPairedCandidate_[g].data();
-                d_indices_of_corrected_candidates[g] = vec_d_indices_of_corrected_candidates_[g].data();
-                d_hqAnchorCorrectionOfCandidateExists[g] = vec_d_hqAnchorCorrectionOfCandidateExists_[g].data();
-                d_candidate_read_ids[g] = vec_d_candidate_read_ids_[g].data();
-                d_candidate_sequences_lengths[g] = vec_d_candidate_sequences_lengths_[g].data();
-                d_candidate_sequences_data[g] = vec_d_candidate_sequences_data_[g].data();
-            }
-
-            #else 
-
-            for(int g = 0; g < numGpus; g++){
-                cub::SwitchDevice sd{deviceIds[g]};
-                const int numCandidates = vec_numCandidates[g];
-                cudaStream_t stream = streams[g];
-
-                size_t allocation_sizes[12];
-                allocation_sizes[0] = sizeof(int) * numCandidates; // d_alignment_overlaps
-                allocation_sizes[1] = sizeof(int) * numCandidates; // d_alignment_shifts
-                allocation_sizes[2] = sizeof(int) * numCandidates; // d_alignment_nOps
-                allocation_sizes[3] = sizeof(AlignmentOrientation) * numCandidates; // d_alignment_best_alignment_flags
-                allocation_sizes[4] = sizeof(int) * numCandidates; // d_anchorIndicesOfCandidates
-                allocation_sizes[5] = sizeof(bool) * numCandidates; // d_candidateContainsN
-                allocation_sizes[6] = sizeof(bool) * numCandidates; // d_isPairedCandidate
-                allocation_sizes[7] = sizeof(int) * numCandidates; // d_indices_of_corrected_candidates
-                allocation_sizes[8] = sizeof(bool) * numCandidates; // d_hqAnchorCorrectionOfCandidateExists
-                allocation_sizes[9] = sizeof(read_number) * numCandidates; // d_candidate_read_ids
-                allocation_sizes[10] = sizeof(int) * numCandidates; // d_candidate_sequences_lengths
-                allocation_sizes[11] = sizeof(unsigned int) * encodedSequencePitchInInts * numCandidates; // d_candidate_sequences_data
-
-                void* allocations[12]{};
+                void* allocations[14]{};
 
                 size_t temp_storage_bytes = 0;
 
@@ -1748,8 +1712,8 @@ namespace gpu{
                 vec_d_candidate_read_ids[g] = reinterpret_cast<read_number*>(allocations[9]);
                 vec_d_candidate_sequences_lengths[g] = reinterpret_cast<int*>(allocations[10]);
                 vec_d_candidate_sequences_data[g] = reinterpret_cast<unsigned int*>(allocations[11]);
-
-                #endif
+                vec_d_candidateCanBeCorrected[g] = reinterpret_cast<bool*>(allocations[12]);
+                vec_d_candidatesCubTemp[g] = reinterpret_cast<char*>(allocations[13]);
             }            
         }
 
@@ -1813,24 +1777,29 @@ namespace gpu{
             std::vector<std::uint32_t*> vec_d_numBytesPerSerializedAnchor(numGpus);
             std::vector<std::uint32_t*> vec_d_numBytesPerSerializedAnchorPrefixSum(numGpus);
             std::vector<std::uint8_t*> vec_d_serializedAnchorResults(numGpus);
-            std::vector<rmm::device_uvector<char>> vec_d_tmp;
+            std::vector<char*> vec_d_cubScan(numGpus);
+            std::vector<size_t> vec_d_cubScanBytes(numGpus);
 
             for(int g = 0; g < numGpus; g++){
                 cub::SwitchDevice sd{deviceIds[g]};
 
-                const std::uint32_t maxSerializedBytesPerAnchor = 
-                    sizeof(read_number) 
-                    + sizeof(std::uint32_t) 
-                    + sizeof(short) 
-                    + sizeof(char) * gpuReadStorage->getSequenceLengthUpperBound();
+                const std::uint32_t maxResultBytes = getMaxSerializedBytesPerAnchor() * vec_currentNumAnchors[g];
 
-                const std::uint32_t maxResultBytes = maxSerializedBytesPerAnchor * vec_currentNumAnchors[g];
-
-                size_t allocation_sizes[3]{};
+                size_t allocation_sizes[4]{};
                 allocation_sizes[0] = sizeof(std::uint32_t) * vec_currentNumAnchors[g]; // d_numBytesPerSerializedAnchor
                 allocation_sizes[1] = sizeof(std::uint32_t) * (vec_currentNumAnchors[g]+1); // d_numBytesPerSerializedAnchorPrefixSum
                 allocation_sizes[2] = sizeof(uint8_t) * maxResultBytes; // d_serializedAnchorResults
-                void* allocations[3]{};
+
+                CUDACHECK(cub::DeviceScan::InclusiveSum(
+                    nullptr,
+                    allocation_sizes[3],
+                    (int*)nullptr,
+                    (int*)nullptr,
+                    vec_currentNumAnchors[g],
+                    streams[g]
+                ));
+
+                void* allocations[4]{};
                 std::size_t tempbytes = 0;
 
                 CUDACHECK(cub::AliasTemporaries(
@@ -1840,10 +1809,10 @@ namespace gpu{
                     allocation_sizes
                 ));
 
-                rmm::device_uvector<char> d_tmp(tempbytes, streams[g]);
+                resizeUninitialized(vec_d_tempSerializedCorrectedSequences[g], tempbytes, streams[g]);
 
                 CUDACHECK(cub::AliasTemporaries(
-                    d_tmp.data(),
+                    vec_d_tempSerializedCorrectedSequences[g].data(),
                     tempbytes,
                     allocations,
                     allocation_sizes
@@ -1852,7 +1821,8 @@ namespace gpu{
                 vec_d_numBytesPerSerializedAnchor[g] = reinterpret_cast<std::uint32_t*>(allocations[0]);
                 vec_d_numBytesPerSerializedAnchorPrefixSum[g] = reinterpret_cast<std::uint32_t*>(allocations[1]);
                 vec_d_serializedAnchorResults[g] = reinterpret_cast<std::uint8_t*>(allocations[2]);
-                vec_d_tmp.push_back(std::move(d_tmp));
+                vec_d_cubScan[g] = reinterpret_cast<char*>(allocations[3]);
+                vec_d_cubScanBytes[g] = allocation_sizes[3];
 
                 if(hasAnchorsAndCandidates(g)){
                     CUDACHECK(cudaMemsetAsync(
@@ -1873,7 +1843,7 @@ namespace gpu{
                             dontUseEditsValue = getDoNotUseEditsValue(),
                             d_num_indices_of_corrected_anchors = vec_d_num_indices_of_corrected_anchors[g].data(),
                             d_indices_of_corrected_anchors = vec_d_indices_of_corrected_anchors[g].data(),
-                            maxSerializedBytesPerAnchor
+                            maxSerializedBytesPerAnchor = getMaxSerializedBytesPerAnchor()
                         ] __device__ (){
                             const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                             const int stride = blockDim.x * gridDim.x;
@@ -1913,34 +1883,14 @@ namespace gpu{
                         }
                     ); CUDACHECKASYNC;
 
-                    
-
-                    thrust::inclusive_scan(
-                        rmm::exec_policy_nosync(streams[g]),
+                    CUDACHECK(cub::DeviceScan::InclusiveSum(
+                        vec_d_cubScan[g],
+                        vec_d_cubScanBytes[g],
                         vec_d_numBytesPerSerializedAnchor[g],
-                        vec_d_numBytesPerSerializedAnchor[g] + vec_currentNumAnchors[g],
-                        vec_d_numBytesPerSerializedAnchorPrefixSum[g] + 1
-                    );
-                    // helpers::lambda_kernel<<<1,1,0,streams[g]>>>(
-                    //     [
-                    //         num = vec_currentNumAnchors[g],
-                    //         d_numBytesPerSerializedAnchorPrefixSum = vec_d_numBytesPerSerializedAnchorPrefixSum[g]
-                    //     ] __device__ (){
-                    //         printf("d_numBytesPerSerializedAnchorPrefixSum %u\n", d_numBytesPerSerializedAnchorPrefixSum[num]);
-                    //     }
-                    // ); CUDACHECKASYNC
-
-                    // std::uint32_t totalRequiredBytesAnchors = 0;
-                    // CUDACHECK(cudaMemcpyAsync(
-                    //     &totalRequiredBytesAnchors,
-                    //     vec_d_numBytesPerSerializedAnchorPrefixSum[g] + vec_currentNumAnchors[g],
-                    //     sizeof(std::uint32_t),
-                    //     D2H,
-                    //     streams[g]
-                    // ));
-                    // CUDACHECK(cudaStreamSynchronize(streams[g]));
-                    // std::cout << "totalRequiredBytesAnchors " << totalRequiredBytesAnchors << "\n";
-
+                        vec_d_numBytesPerSerializedAnchorPrefixSum[g] + 1,
+                        vec_currentNumAnchors[g],
+                        streams[g]
+                    ));
 
                     //compute serialized anchors
                     helpers::lambda_kernel<<<std::max(1, SDIV(vec_currentNumAnchors[g], 128)), 128, 0, streams[g]>>>(
@@ -2050,13 +2000,7 @@ namespace gpu{
             for(int g = 0; g < numGpus; g++){
                 cub::SwitchDevice sd{deviceIds[g]};
 
-                const std::uint32_t maxSerializedBytesPerAnchor = 
-                    sizeof(read_number) 
-                    + sizeof(std::uint32_t) 
-                    + sizeof(short) 
-                    + sizeof(char) * gpuReadStorage->getSequenceLengthUpperBound();
-
-                const std::uint32_t maxResultBytes = maxSerializedBytesPerAnchor * vec_currentNumAnchors[g];
+                const std::uint32_t maxResultBytes = getMaxSerializedBytesPerAnchor() * vec_currentNumAnchors[g];
 
                 vec_currentOutput[g]->serializedAnchorResults.resize(maxResultBytes);
                 vec_currentOutput[g]->serializedAnchorOffsets.resize(vec_currentNumAnchors[g] + 1);
@@ -2112,13 +2056,6 @@ namespace gpu{
 
                 }
             }
-
-            for(int g = 0; g < numGpus; g++){
-                cub::SwitchDevice sd{deviceIds[g]};
-
-                //ensure release of memory on the correct device
-                vec_d_tmp[g].release();
-            }
         }
 
         void copyAnchorResultsFromDeviceToHostClassic(const std::vector<cudaStream_t>& streams){
@@ -2149,27 +2086,32 @@ namespace gpu{
             std::vector<std::uint32_t*> vec_d_numBytesPerSerializedCandidate(numGpus, nullptr);
             std::vector<std::uint32_t*> vec_d_numBytesPerSerializedCandidatePrefixSum(numGpus, nullptr);
             std::vector<std::uint8_t*> vec_d_serializedCandidateResults(numGpus, nullptr);
-            std::vector<rmm::device_uvector<char>> vec_d_tmp;
+
+            std::vector<char*> vec_d_cubScan(numGpus);
+            std::vector<size_t> vec_d_cubScanBytes(numGpus);
 
             for(int g = 0; g < numGpus; g++){
                 cub::SwitchDevice sd{deviceIds[g]};
 
                 const int numCorrectedCandidates = (*vec_h_num_total_corrected_candidates[g]);
+                const int numCorrectedCandidates_rounded = getRoundedNumCorrectedCandidates(numCorrectedCandidates);
 
-                const std::uint32_t maxSerializedBytesPerCandidate = 
-                    sizeof(read_number) 
-                    + sizeof(std::uint32_t) 
-                    + sizeof(short) 
-                    + sizeof(char) * gpuReadStorage->getSequenceLengthUpperBound()
-                    + sizeof(short);
+                const std::uint32_t maxResultBytes = getMaxSerializedBytesPerCandidate() * numCorrectedCandidates_rounded;
 
-                const std::uint32_t maxResultBytes = maxSerializedBytesPerCandidate * numCorrectedCandidates;
-
-                size_t allocation_sizes[3]{};
-                allocation_sizes[0] = sizeof(std::uint32_t) * numCorrectedCandidates; // d_numBytesPerSerializedAnchor
-                allocation_sizes[1] = sizeof(std::uint32_t) * (numCorrectedCandidates+1); // d_numBytesPerSerializedAnchorPrefixSum
+                size_t allocation_sizes[4]{};
+                allocation_sizes[0] = sizeof(std::uint32_t) * numCorrectedCandidates_rounded; // d_numBytesPerSerializedAnchor
+                allocation_sizes[1] = sizeof(std::uint32_t) * (numCorrectedCandidates_rounded+1); // d_numBytesPerSerializedAnchorPrefixSum
                 allocation_sizes[2] = sizeof(uint8_t) * maxResultBytes; // d_serializedAnchorResults
-                void* allocations[3]{};
+                CUDACHECK(cub::DeviceScan::InclusiveSum(
+                    nullptr,
+                    allocation_sizes[3],
+                    (int*)nullptr,
+                    (int*)nullptr,
+                    numCorrectedCandidates_rounded,
+                    streams[g]
+                ));
+
+                void* allocations[4]{};
                 std::size_t tempbytes = 0;
 
                 CUDACHECK(cub::AliasTemporaries(
@@ -2179,19 +2121,20 @@ namespace gpu{
                     allocation_sizes
                 ));
 
-                rmm::device_uvector<char> d_tmp(tempbytes, streams[g]);
+                resizeUninitialized(vec_d_tempSerializedCorrectedSequences[g], tempbytes, streams[g]);
 
                 CUDACHECK(cub::AliasTemporaries(
-                    d_tmp.data(),
+                    vec_d_tempSerializedCorrectedSequences[g].data(),
                     tempbytes,
                     allocations,
-                    allocation_sizes
+                    allocation_sizes    
                 ));
 
                 vec_d_numBytesPerSerializedCandidate[g] = reinterpret_cast<std::uint32_t*>(allocations[0]);
                 vec_d_numBytesPerSerializedCandidatePrefixSum[g] = reinterpret_cast<std::uint32_t*>(allocations[1]);
                 vec_d_serializedCandidateResults[g] = reinterpret_cast<std::uint8_t*>(allocations[2]);
-                vec_d_tmp.push_back(std::move(d_tmp));
+                vec_d_cubScan[g] = reinterpret_cast<char*>(allocations[3]);
+                vec_d_cubScanBytes[g] = allocation_sizes[3];
 
                 if(hasAnchorsAndCandidates(g)){
                     //compute bytes per numCorrectedCandidates
@@ -2204,7 +2147,7 @@ namespace gpu{
                             numCorrectedCandidates = numCorrectedCandidates,
                             dontUseEditsValue = getDoNotUseEditsValue(),
                             d_indices_of_corrected_candidates = vec_d_indices_of_corrected_candidates[g],
-                            maxSerializedBytesPerCandidate
+                            maxSerializedBytesPerCandidate = getMaxSerializedBytesPerCandidate()
                         ] __device__ (){
                             const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                             const int stride = blockDim.x * gridDim.x;
@@ -2245,12 +2188,14 @@ namespace gpu{
                         }
                     ); CUDACHECKASYNC;
 
-                    thrust::inclusive_scan(
-                        rmm::exec_policy_nosync(streams[g]),
+                    CUDACHECK(cub::DeviceScan::InclusiveSum(
+                        vec_d_cubScan[g],
+                        vec_d_cubScanBytes[g],
                         vec_d_numBytesPerSerializedCandidate[g],
-                        vec_d_numBytesPerSerializedCandidate[g] + numCorrectedCandidates,
-                        vec_d_numBytesPerSerializedCandidatePrefixSum[g] + 1
-                    );
+                        vec_d_numBytesPerSerializedCandidatePrefixSum[g] + 1,
+                        numCorrectedCandidates,
+                        streams[g]
+                    ));
 
                     //compute serialized candidates
                     helpers::lambda_kernel<<<std::max(1, SDIV(numCorrectedCandidates, 128)), 128, 0, streams[g]>>>(
@@ -2365,20 +2310,12 @@ namespace gpu{
                 cub::SwitchDevice sd{deviceIds[g]};
 
                 const int numCorrectedCandidates = (*vec_h_num_total_corrected_candidates[g]);
+                const int numCorrectedCandidates_rounded = getRoundedNumCorrectedCandidates(numCorrectedCandidates);
 
-                const std::uint32_t maxSerializedBytesPerCandidate = 
-                    sizeof(read_number) 
-                    + sizeof(std::uint32_t) 
-                    + sizeof(short) 
-                    + sizeof(char) * gpuReadStorage->getSequenceLengthUpperBound()
-                    + sizeof(short);
-
-                const std::uint32_t maxResultBytes = maxSerializedBytesPerCandidate * numCorrectedCandidates;
-
-                vec_currentOutput[g]->serializedCandidateResults.resize(maxResultBytes);
-                vec_currentOutput[g]->serializedCandidateOffsets.resize(numCorrectedCandidates + 1);
+                vec_currentOutput[g]->serializedCandidateResults.resize(getMaxSerializedBytesPerCandidate() * numCorrectedCandidates_rounded);
+                vec_currentOutput[g]->serializedCandidateOffsets.resize(numCorrectedCandidates_rounded + 1);
                 vec_currentOutput[g]->numCorrectedCandidates = numCorrectedCandidates;
-        }
+            }
 
             for(int g = 0; g < numGpus; g++){
                 cub::SwitchDevice sd{deviceIds[g]};
@@ -2478,13 +2415,6 @@ namespace gpu{
 
             //     }
             // }
-
-            for(int g = 0; g < numGpus; g++){
-                cub::SwitchDevice sd{deviceIds[g]};
-
-                //ensure release of memory on the correct device
-                vec_d_tmp[g].release();
-            }
         }
 
         void copyCandidateResultsFromDeviceToHostClassic(const std::vector<cudaStream_t>& streams){
@@ -2775,19 +2705,6 @@ namespace gpu{
             }
 
             for(int g = 0; g < numGpus; g++){
-                //if(hasAnchors(g)){
-                    cub::SwitchDevice sd{deviceIds[g]};
-
-                    vec_managedgpumsa[g] = std::make_unique<ManagedGPUMultiMSA>(
-                        streams[g],
-                        rmm::mr::get_current_device_resource(), 
-                        vec_h_managedmsa_tmp[g].data()
-                    );
-                //}
-            }
-
-
-            for(int g = 0; g < numGpus; g++){
                 if(hasAnchorsAndCandidates(g)){
                     cub::SwitchDevice sd{deviceIds[g]};
                     vec_managedgpumsa[g]->construct(
@@ -2821,14 +2738,12 @@ namespace gpu{
                     if(hasAnchorsAndCandidates(g)){
                         cub::SwitchDevice sd{deviceIds[g]};
 
-                        rmm::device_uvector<int> d_indices_tmp(vec_currentNumCandidates[g]+1, streams[g]);
-                        rmm::device_uvector<int> d_indices_per_anchor_tmp(maxAnchors+1, streams[g]);
-                        rmm::device_uvector<int> d_num_indices_tmp(1, streams[g]);
-
+                        char* d_temp = reinterpret_cast<char*>(vec_d_candidateCanBeCorrected[g]); //alias
                         vec_managedgpumsa[g]->refine(
-                            d_indices_tmp.data(),
-                            d_indices_per_anchor_tmp.data(),
-                            d_num_indices_tmp.data(),
+                            d_temp,
+                            vec_d_indices_tmp[g].data(),
+                            vec_d_indices_per_anchor_tmp[g].data(),
+                            vec_d_num_indices_tmp[g].data(),
                             vec_d_alignment_overlaps[g],
                             vec_d_alignment_shifts[g],
                             vec_d_alignment_nOps[g],
@@ -2854,9 +2769,9 @@ namespace gpu{
                             streams[g]
                         );
 
-                        std::swap(d_indices_tmp, vec_d_indices[g]);
-                        std::swap(d_indices_per_anchor_tmp, vec_d_indices_per_anchor[g]);
-                        std::swap(d_num_indices_tmp, vec_d_num_indices[g]);
+                        std::swap(vec_d_indices_tmp[g], vec_d_indices[g]);
+                        std::swap(vec_d_indices_per_anchor_tmp[g], vec_d_indices_per_anchor[g]);
+                        std::swap(vec_d_num_indices_tmp[g], vec_d_num_indices[g]);
                     }
                 }
                 // std::cout << correctorthreadnumber << "vec_d_indices after msa\n";
@@ -3007,6 +2922,7 @@ namespace gpu{
 
             // correct anchors
             callMsaCorrectAnchorsWithForestKernel_multiphase(
+                vec_anchorForestCorrectionTemp,
                 vec_d_corrected_anchors_ptrs,
                 vec_d_anchor_is_corrected_ptrs,
                 vec_d_is_high_quality_anchor_ptrs,
@@ -3096,13 +3012,6 @@ namespace gpu{
                 programOptions->m_coverage / 6.0f * programOptions->estimatedCoverage);
             const int new_columns_to_correct = programOptions->new_columns_to_correct;
 
-            std::vector<rmm::device_uvector<bool>> vec_d_candidateCanBeCorrected;
-            for(int g = 0; g < numGpus; g++){
-                cub::SwitchDevice sd{deviceIds[g]};
-
-                vec_d_candidateCanBeCorrected.emplace_back(vec_currentNumCandidates[g], streams[g]);
-            }
-
             for(int g = 0; g < numGpus; g++){
                 if(hasAnchorsAndCandidates(g)){
                     cub::SwitchDevice sd{deviceIds[g]};
@@ -3121,7 +3030,7 @@ namespace gpu{
                         vec_currentNumCandidates[g],
                         vec_d_numAnchors[g].data(),
                         vec_d_num_corrected_candidates_per_anchor[g].data(),
-                        vec_d_candidateCanBeCorrected[g].data()
+                        vec_d_candidateCanBeCorrected[g]
                     ); CUDACHECKASYNC;
                 }
             }
@@ -3134,7 +3043,7 @@ namespace gpu{
                     bool* d_excludeFlags = vec_d_hqAnchorCorrectionOfCandidateExists[g];
 
                     callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
-                        vec_d_candidateCanBeCorrected[g].data(),
+                        vec_d_candidateCanBeCorrected[g],
                         vec_d_num_corrected_candidates_per_anchor[g].data(),
                         vec_managedgpumsa[g]->multiMSAView(),
                         d_excludeFlags,
@@ -3179,14 +3088,28 @@ namespace gpu{
                 if(hasAnchorsAndCandidates(g)){
                     cub::SwitchDevice sd{deviceIds[g]};
 
-                    CubCallWrapper(rmm::mr::get_current_device_resource()).cubSelectFlagged(
+                    size_t cubbytes = 0;
+                    CUDACHECK(cub::DeviceSelect::Flagged(
+                        nullptr,
+                        cubbytes,
                         cub::CountingInputIterator<int>(0),
-                        vec_d_candidateCanBeCorrected[g].data(),
+                        vec_d_candidateCanBeCorrected[g],
                         vec_d_indices_of_corrected_candidates[g],
                         vec_d_num_total_corrected_candidates[g].data(),
                         vec_currentNumCandidates[g],
                         streams[g]
-                    );
+                    ));
+                    //cub temp is already allocated
+                    CUDACHECK(cub::DeviceSelect::Flagged(
+                        vec_d_candidatesCubTemp[g],
+                        cubbytes,
+                        cub::CountingInputIterator<int>(0),
+                        vec_d_candidateCanBeCorrected[g],
+                        vec_d_indices_of_corrected_candidates[g],
+                        vec_d_num_total_corrected_candidates[g].data(),
+                        vec_currentNumCandidates[g],
+                        streams[g]
+                    ));
 
                     CUDACHECK(cudaMemcpyAsync(
                         vec_h_num_total_corrected_candidates[g].data(),
@@ -3205,8 +3128,11 @@ namespace gpu{
                     cub::SwitchDevice sd{deviceIds[g]};
                     CUDACHECK(cudaStreamSynchronize(streams[g]));
 
-                    if((*vec_h_num_total_corrected_candidates[g]) > 0){
-                        vec_d_corrected_candidates[g].resize(decodedSequencePitchInBytes * (*vec_h_num_total_corrected_candidates[g]), streams[g]);
+                    const int numCorrectedCandidates = *vec_h_num_total_corrected_candidates[g];
+                    if(numCorrectedCandidates > 0){
+                        const int numCorrectedCandidates_rounded = getRoundedNumCorrectedCandidates(numCorrectedCandidates);
+                        resizeUninitialized(vec_d_corrected_candidates[g], decodedSequencePitchInBytes * numCorrectedCandidates_rounded, streams[g]);
+                        //vec_d_corrected_candidates[g].resize(decodedSequencePitchInBytes * numCorrectedCandidates_rounded, streams[g]);
 
                         callCorrectCandidatesKernel(
                             vec_d_corrected_candidates[g].data(),            
@@ -3219,7 +3145,7 @@ namespace gpu{
                             vec_d_indices_of_corrected_candidates[g],
                             vec_d_num_total_corrected_candidates[g].data(),
                             vec_d_anchorIndicesOfCandidates[g],
-                            *vec_h_num_total_corrected_candidates[g],
+                            numCorrectedCandidates,
                             encodedSequencePitchInInts,
                             decodedSequencePitchInBytes,
                             gpuReadStorage->getSequenceLengthUpperBound(),
@@ -3234,10 +3160,17 @@ namespace gpu{
                 if(hasAnchorsAndCandidates(g)){
                     cub::SwitchDevice sd{deviceIds[g]};
 
-                    if((*vec_h_num_total_corrected_candidates[g]) > 0){
-                        vec_d_numEditsPerCorrectedCandidate[g].resize((*vec_h_num_total_corrected_candidates[g]), streams[g]);
-                        std::size_t numEditsCandidates = SDIV(editsPitchInBytes * (*vec_h_num_total_corrected_candidates[g]), sizeof(EncodedCorrectionEdit));
-                        vec_d_editsPerCorrectedCandidate[g].resize(numEditsCandidates, streams[g]);
+                    const int numCorrectedCandidates = *vec_h_num_total_corrected_candidates[g];
+                    if(numCorrectedCandidates > 0){
+                        const int numCorrectedCandidates_rounded = getRoundedNumCorrectedCandidates(numCorrectedCandidates);
+                        resizeUninitialized(vec_d_numEditsPerCorrectedCandidate[g], numCorrectedCandidates_rounded, streams[g]);
+                        //vec_d_numEditsPerCorrectedCandidate[g].resize(numCorrectedCandidates, streams[g]);
+
+                        std::size_t numEditsRoundedCandidates = SDIV(editsPitchInBytes * numCorrectedCandidates_rounded, sizeof(EncodedCorrectionEdit));
+                        resizeUninitialized(vec_d_editsPerCorrectedCandidate[g], numEditsRoundedCandidates, streams[g]);
+
+                        // std::size_t numEditsCandidates = SDIV(editsPitchInBytes * numCorrectedCandidates, sizeof(EncodedCorrectionEdit));
+                        // vec_d_editsPerCorrectedCandidate[g].resize(numEditsCandidates, streams[g]);
 
                         callConstructSequenceCorrectionResultsKernel(
                             vec_d_editsPerCorrectedCandidate[g].data(),
@@ -3249,7 +3182,7 @@ namespace gpu{
                             vec_d_candidate_sequences_data[g],
                             vec_d_candidate_sequences_lengths[g],
                             vec_d_corrected_candidates[g].data(),
-                            (*vec_h_num_total_corrected_candidates[g]),
+                            numCorrectedCandidates,
                             true,
                             maxNumEditsPerSequence,
                             encodedSequencePitchInInts,
@@ -3260,14 +3193,6 @@ namespace gpu{
                     }
                 }
             }
-
-            for(int g = 0; g < numGpus; g++){
-                cub::SwitchDevice sd{deviceIds[g]};
-
-                //ensure release of memory on the correct device
-                vec_d_candidateCanBeCorrected[g].release();
-            }
-
         }
 
         void correctCandidatesForestGpu(const std::vector<cudaStream_t>& streams){
@@ -3279,13 +3204,6 @@ namespace gpu{
             const float min_coverage_threshold = std::max(1.0f,
                 programOptions->m_coverage / 6.0f * programOptions->estimatedCoverage);
             const int new_columns_to_correct = programOptions->new_columns_to_correct;
-
-            std::vector<rmm::device_uvector<bool>> vec_d_candidateCanBeCorrected;
-            for(int g = 0; g < numGpus; g++){
-                cub::SwitchDevice sd{deviceIds[g]};
-
-                vec_d_candidateCanBeCorrected.emplace_back(vec_currentNumCandidates[g], streams[g]);
-            }
 
             for(int g = 0; g < numGpus; g++){
                 if(hasAnchorsAndCandidates(g)){
@@ -3305,7 +3223,7 @@ namespace gpu{
                         vec_currentNumCandidates[g],
                         vec_d_numAnchors[g].data(),
                         vec_d_num_corrected_candidates_per_anchor[g].data(),
-                        vec_d_candidateCanBeCorrected[g].data()
+                        vec_d_candidateCanBeCorrected[g]
                     ); CUDACHECKASYNC;
                 }
             }
@@ -3318,7 +3236,7 @@ namespace gpu{
                     bool* d_excludeFlags = vec_d_hqAnchorCorrectionOfCandidateExists[g];
 
                     callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
-                        vec_d_candidateCanBeCorrected[g].data(),
+                        vec_d_candidateCanBeCorrected[g],
                         vec_d_num_corrected_candidates_per_anchor[g].data(),
                         vec_managedgpumsa[g]->multiMSAView(),
                         d_excludeFlags,
@@ -3363,15 +3281,29 @@ namespace gpu{
                 if(hasAnchorsAndCandidates(g)){
                     cub::SwitchDevice sd{deviceIds[g]};
 
-                    CubCallWrapper(rmm::mr::get_current_device_resource()).cubSelectFlagged(
+                    size_t cubbytes = 0;
+                    CUDACHECK(cub::DeviceSelect::Flagged(
+                        nullptr,
+                        cubbytes,
                         cub::CountingInputIterator<int>(0),
-                        vec_d_candidateCanBeCorrected[g].data(),
+                        vec_d_candidateCanBeCorrected[g],
                         vec_d_indices_of_corrected_candidates[g],
                         vec_d_num_total_corrected_candidates[g].data(),
                         vec_currentNumCandidates[g],
                         streams[g]
-                    );
-
+                    ));
+                    //cub temp is already allocated
+                    CUDACHECK(cub::DeviceSelect::Flagged(
+                        vec_d_candidatesCubTemp[g],
+                        cubbytes,
+                        cub::CountingInputIterator<int>(0),
+                        vec_d_candidateCanBeCorrected[g],
+                        vec_d_indices_of_corrected_candidates[g],
+                        vec_d_num_total_corrected_candidates[g].data(),
+                        vec_currentNumCandidates[g],
+                        streams[g]
+                    ));
+                    
                     CUDACHECK(cudaMemcpyAsync(
                         vec_h_num_total_corrected_candidates[g].data(),
                         vec_d_num_total_corrected_candidates[g].data(),
@@ -3393,13 +3325,18 @@ namespace gpu{
                 cub::SwitchDevice sd{deviceIds[g]};
                 CUDACHECK(cudaStreamSynchronize(streams[g]));
 
-                vec_d_corrected_candidates[g].resize(decodedSequencePitchInBytes * (*vec_h_num_total_corrected_candidates[g]), streams[g]);
+                const int numCorrectedCandidates = *vec_h_num_total_corrected_candidates[g];
+                const int numCorrectedCandidates_rounded = getRoundedNumCorrectedCandidates(numCorrectedCandidates);
+                resizeUninitialized(vec_d_corrected_candidates[g], decodedSequencePitchInBytes * numCorrectedCandidates_rounded, streams[g]);
+                // vec_d_corrected_candidates[g].resize(decodedSequencePitchInBytes * (*vec_h_num_total_corrected_candidates[g]), streams[g]);
+
                 vec_d_correctedCandidates_ptrs[g] = vec_d_corrected_candidates[g].data();
                 vec_multiMSA_views[g] = vec_managedgpumsa[g]->multiMSAView();
                 vec_gpuForest_classifierviews[g] = vec_gpuForestCandidate[g]->getClf();
                 vec_numCandidatesToProcess[g] = *vec_h_num_total_corrected_candidates[g];
             }
             callMsaCorrectCandidatesWithForestKernelMultiPhase(
+                vec_candidateForestCorrectionTemp,
                 vec_d_correctedCandidates_ptrs,
                 vec_multiMSA_views,
                 vec_gpuForest_classifierviews,
@@ -3425,10 +3362,17 @@ namespace gpu{
                 if(hasAnchorsAndCandidates(g)){
                     cub::SwitchDevice sd{deviceIds[g]};
 
-                    if((*vec_h_num_total_corrected_candidates[g]) > 0){
-                        vec_d_numEditsPerCorrectedCandidate[g].resize((*vec_h_num_total_corrected_candidates[g]), streams[g]);
-                        std::size_t numEditsCandidates = SDIV(editsPitchInBytes * (*vec_h_num_total_corrected_candidates[g]), sizeof(EncodedCorrectionEdit));
-                        vec_d_editsPerCorrectedCandidate[g].resize(numEditsCandidates, streams[g]);
+                    const int numCorrectedCandidates = *vec_h_num_total_corrected_candidates[g];
+                    if(numCorrectedCandidates > 0){
+                        const int numCorrectedCandidates_rounded = getRoundedNumCorrectedCandidates(numCorrectedCandidates);
+                        resizeUninitialized(vec_d_numEditsPerCorrectedCandidate[g], numCorrectedCandidates_rounded, streams[g]);
+                        //vec_d_numEditsPerCorrectedCandidate[g].resize(numCorrectedCandidates, streams[g]);
+
+                        std::size_t numEditsRoundedCandidates = SDIV(editsPitchInBytes * numCorrectedCandidates_rounded, sizeof(EncodedCorrectionEdit));
+                        resizeUninitialized(vec_d_editsPerCorrectedCandidate[g], numEditsRoundedCandidates, streams[g]);
+
+                        // std::size_t numEditsCandidates = SDIV(editsPitchInBytes * numCorrectedCandidates, sizeof(EncodedCorrectionEdit));
+                        // vec_d_editsPerCorrectedCandidate[g].resize(numEditsCandidates, streams[g]);
 
                         callConstructSequenceCorrectionResultsKernel(
                             vec_d_editsPerCorrectedCandidate[g].data(),
@@ -3440,7 +3384,7 @@ namespace gpu{
                             vec_d_candidate_sequences_data[g],
                             vec_d_candidate_sequences_lengths[g],
                             vec_d_corrected_candidates[g].data(),
-                            (*vec_h_num_total_corrected_candidates[g]),
+                            numCorrectedCandidates,
                             true,
                             maxNumEditsPerSequence,
                             encodedSequencePitchInInts,
@@ -3450,15 +3394,7 @@ namespace gpu{
                         );
                     }
                 }
-            }
-
-            for(int g = 0; g < numGpus; g++){
-                cub::SwitchDevice sd{deviceIds[g]};
-
-                //ensure release of memory on the correct device
-                vec_d_candidateCanBeCorrected[g].release();
-            }
-            
+            }            
         }
 
         static constexpr int getDoNotUseEditsValue() noexcept{
@@ -3498,6 +3434,29 @@ namespace gpu{
         }
         bool hasAnchorsAndCandidates(int g) const{
             return (hasAnchors(g) && hasCandidates(g));
+        }
+        int getRoundedNumCandidates(int numCandidates) const{
+            constexpr int roundUpTo = 10'000;
+            return SDIV(numCandidates, roundUpTo) * roundUpTo;
+        }
+        int getRoundedNumCorrectedCandidates(int numCorrectedCandidates) const{
+            constexpr int roundUpTo = 10'000;
+            return SDIV(numCorrectedCandidates, roundUpTo) * roundUpTo;
+        }
+
+        int getMaxSerializedBytesPerAnchor() const{
+            return sizeof(read_number) 
+                + sizeof(std::uint32_t) 
+                + sizeof(short) 
+                + sizeof(char) * gpuReadStorage->getSequenceLengthUpperBound();
+        }
+
+        int getMaxSerializedBytesPerCandidate() const{
+            return sizeof(read_number) 
+                + sizeof(std::uint32_t) 
+                + sizeof(short) 
+                + sizeof(char) * gpuReadStorage->getSequenceLengthUpperBound()
+                + sizeof(short);
         }
 
         std::vector<std::array<CudaEvent, 2>> vec_events;
@@ -3543,18 +3502,13 @@ namespace gpu{
         std::vector<rmm::device_uvector<read_number>> vec_d_indicesForGather;
 
         std::vector<rmm::device_uvector<bool>> vec_d_anchorContainsN;
-        std::vector<rmm::device_uvector<bool>> vec_d_candidateContainsN_;
-        std::vector<rmm::device_uvector<int>> vec_d_candidate_sequences_lengths_;
-        std::vector<rmm::device_uvector<unsigned int>> vec_d_candidate_sequences_data_;
-        std::vector<rmm::device_uvector<int>> vec_d_anchorIndicesOfCandidates_;
-        std::vector<rmm::device_uvector<int>> vec_d_alignment_overlaps_;
-        std::vector<rmm::device_uvector<int>> vec_d_alignment_shifts_;
-        std::vector<rmm::device_uvector<int>> vec_d_alignment_nOps_;
-        std::vector<rmm::device_uvector<AlignmentOrientation>> vec_d_alignment_best_alignment_flags_; 
         std::vector<rmm::device_uvector<int>> vec_d_indices;
+        std::vector<rmm::device_uvector<int>> vec_d_indices_tmp;
         std::vector<rmm::device_uvector<int>> vec_d_indices_per_anchor;
+        std::vector<rmm::device_uvector<int>> vec_d_indices_per_anchor_tmp;        
         std::vector<rmm::device_uvector<int>> vec_d_indices_per_anchor_prefixsum;
         std::vector<rmm::device_uvector<int>> vec_d_num_indices;
+        std::vector<rmm::device_uvector<int>> vec_d_num_indices_tmp;
         std::vector<rmm::device_uvector<char>> vec_d_corrected_anchors;
         std::vector<rmm::device_uvector<char>> vec_d_corrected_candidates;
         std::vector<rmm::device_uvector<int>> vec_d_num_corrected_candidates_per_anchor;
@@ -3567,7 +3521,6 @@ namespace gpu{
         std::vector<rmm::device_uvector<EncodedCorrectionEdit>> vec_d_editsPerCorrectedanchor;
         std::vector<rmm::device_uvector<int>> vec_d_numEditsPerCorrectedanchor;
         std::vector<rmm::device_uvector<EncodedCorrectionEdit>> vec_d_editsPerCorrectedCandidate;
-        std::vector<rmm::device_uvector<bool>> vec_d_hqAnchorCorrectionOfCandidateExists_;
 
         std::vector<rmm::device_uvector<char>> vec_d_allCandidateData;
 
@@ -3583,25 +3536,31 @@ namespace gpu{
         std::vector<read_number*> vec_d_candidate_read_ids;
         std::vector<int*> vec_d_candidate_sequences_lengths;
         std::vector<unsigned int*> vec_d_candidate_sequences_data;
+        std::vector<bool*> vec_d_candidateCanBeCorrected;
+        std::vector<char*> vec_d_candidatesCubTemp;
+        
 
         
         std::vector<rmm::device_uvector<int>> vec_d_numEditsPerCorrectedCandidate;
         std::vector<rmm::device_uvector<int>> vec_d_indices_of_corrected_anchors;
         std::vector<rmm::device_uvector<int>> vec_d_num_indices_of_corrected_anchors;
-        std::vector<rmm::device_uvector<int>> vec_d_indices_of_corrected_candidates_;
         std::vector<rmm::device_uvector<int>> vec_d_totalNumEdits;
-        std::vector<rmm::device_uvector<bool>> vec_d_isPairedCandidate_;
 
         std::vector<rmm::device_uvector<int>> vec_d_numAnchors;
         std::vector<rmm::device_uvector<int>> vec_d_numCandidates;
         std::vector<rmm::device_uvector<read_number>> vec_d_anchorReadIds;
         std::vector<rmm::device_uvector<unsigned int>> vec_d_anchor_sequences_data;
         std::vector<rmm::device_uvector<int>> vec_d_anchor_sequences_lengths;
-        std::vector<rmm::device_uvector<read_number>> vec_d_candidate_read_ids_;
         std::vector<rmm::device_uvector<int>> vec_d_candidates_per_anchor;
         std::vector<rmm::device_uvector<int>> vec_d_candidates_per_anchor_prefixsum; 
 
         std::vector<std::unique_ptr<ManagedGPUMultiMSA>> vec_managedgpumsa;
+
+        //temp storage for serialized corrected sequences
+        std::vector<rmm::device_uvector<char>> vec_d_tempSerializedCorrectedSequences;
+
+        std::vector<AnchorForestCorrectionTempStorage> vec_anchorForestCorrectionTemp;
+        std::vector<CandidateForestCorrectionTempStorage> vec_candidateForestCorrectionTemp;
 
         PinnedBuffer<char> h_tempstorage;
 

@@ -838,7 +838,7 @@ public:
                     gpuErrorCorrector.correct(input, *rawOutputPtr, streams);
                     nvtx::pop_range();
 
-                    gpuErrorCorrector.releaseCandidateMemory(streams);
+                    //gpuErrorCorrector.releaseCandidateMemory(streams);
 
                     for(int g = 0; g < numGpus; g++){
                         cub::SwitchDevice sd{deviceIds[g]};
@@ -1553,7 +1553,7 @@ public:
                     CUDACHECK(cudaStreamSynchronize(streams[g]));
                 }
 
-                gpuErrorCorrector.releaseCandidateMemory(streams);
+                //gpuErrorCorrector.releaseCandidateMemory(streams);
 
                 freeInputs.push(inputPtr);
                 constructOutput(rawOutputPtr); 

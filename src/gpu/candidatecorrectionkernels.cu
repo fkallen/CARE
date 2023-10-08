@@ -26,6 +26,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/device_scalar.hpp>
 #include <rmm/mr/device/device_memory_resource.hpp>
+#include <gpu/rmm_utilities.cuh>
 
 
 namespace cg = cooperative_groups;
@@ -432,16 +433,7 @@ namespace gpu{
         }
     }
 
-    struct MismatchPositionsRaw{
-        int maxPositions;
-        char* origBase;
-        char* consensusBase;
-        int* position;
-        int* anchorIndex;
-        int* candidateIndex;
-        int* destinationIndex;
-        int* numPositions;
-    };
+
 
     struct MismatchPositions{
         int maxPositions;
@@ -462,7 +454,9 @@ namespace gpu{
             candidateIndex(maxPositions, stream, mr),
             destinationIndex(maxPositions, stream, mr),
             numPositions(0, stream, mr)
-        {}
+        {
+
+        }
 
         operator MismatchPositionsRaw(){
             return MismatchPositionsRaw{
@@ -477,6 +471,9 @@ namespace gpu{
             };
         }
     };
+
+
+    
 
     template<int BLOCKSIZE, int groupsize>
     __global__
@@ -2088,6 +2085,7 @@ namespace gpu{
 
 
     void callMsaCorrectCandidatesWithForestKernelMultiPhase(
+        std::vector<CandidateForestCorrectionTempStorage>& vec_correctionTempStorage,
         std::vector<char*>& vec_d_correctedCandidates,
         const std::vector<GPUMultiMSA>& vec_multiMSA,
         const std::vector<GpuForest::Clf>& vec_gpuForest,
@@ -2114,16 +2112,10 @@ namespace gpu{
 
         const int numGpus = deviceIds.size();
         std::vector<int> vec_numSMs(numGpus);
-        std::vector<MismatchPositions> vec_mismatchPositions;
-        std::vector<rmm::device_uvector<GpuMSAProperties>> vec_d_msaPropertiesPerPosition;
-        std::vector<rmm::device_uvector<float>> vec_d_featuresTransposed;
 
         for(int g = 0; g < numGpus; g++){
             cub::SwitchDevice sd{deviceIds[g]};
             CUDACHECK(cudaDeviceGetAttribute(&vec_numSMs[g], cudaDevAttrMultiProcessorCount, deviceIds[g]));
-            vec_mismatchPositions.emplace_back(0, streams[g]);
-            vec_d_msaPropertiesPerPosition.emplace_back(0, streams[g]);
-            vec_d_featuresTransposed.emplace_back(0, streams[g]);
         }
 
         for(int g = 0; g < numGpus; g++){
@@ -2178,11 +2170,15 @@ namespace gpu{
                     blocksize, 
                     smemCountMismatches
                 ));
+                CUDACHECK(cudaMemsetAsync(
+                    vec_correctionTempStorage[g].d_numMismatches.data(),
+                    0,
+                    sizeof(int),
+                    streams[g]
+                ));
 
                 dim3 blockCountMismatches = blocksize;
                 dim3 gridCountMismatches = std::min(maxBlocksPerSMCountMismatches * vec_numSMs[g], SDIV(vec_numCandidatesToProcess[g], (blocksize / groupsize)));
-
-                rmm::device_scalar<int> d_numMismatches(0, streams[g]);
 
                 //helpers::GpuTimer timercountMismatchesKernel(stream, "countMismatchesKernel");
 
@@ -2196,14 +2192,14 @@ namespace gpu{
                     vec_numCandidatesToProcess[g],
                     encodedSequencePitchInInts,
                     decodedSequencePitchInBytes,
-                    d_numMismatches.data()
+                    vec_correctionTempStorage[g].d_numMismatches.data()
                 );
                 CUDACHECKASYNC;
                 //timercountMismatchesKernel.print();
 
                 CUDACHECK(cudaMemcpyAsync(
                     h_numMismatchesPerGpu + g,
-                    d_numMismatches.data(),
+                    vec_correctionTempStorage[g].d_numMismatches.data(),
                     sizeof(int),
                     D2H,
                     streams[g]
@@ -2230,7 +2226,14 @@ namespace gpu{
                     dim3 blockFindMismatches = blocksize;
                     dim3 gridFindMismatches = std::min(maxBlocksPerSMFindMismatches * vec_numSMs[g], SDIV(vec_numCandidatesToProcess[g], (blocksize / groupsize)));
 
-                    vec_mismatchPositions[g] = std::move(MismatchPositions(numMismatches, streams[g]));
+                    CUDACHECK(cudaMemsetAsync(
+                        vec_correctionTempStorage[g].d_numMismatches.data(),
+                        0,
+                        sizeof(int),
+                        streams[g]
+                    ));
+
+                    vec_correctionTempStorage[g].resize(numMismatches, streams[g]);
 
                     //helpers::GpuTimer timerfindMismatchesKernel(stream, "findMismatchesKernel");
 
@@ -2245,7 +2248,7 @@ namespace gpu{
                         vec_d_anchorIndicesOfCandidates[g],
                         encodedSequencePitchInInts,
                         decodedSequencePitchInBytes,
-                        vec_mismatchPositions[g]
+                        vec_correctionTempStorage[g].rawMismatchPositions
                     );
                     CUDACHECKASYNC;
                     //timerfindMismatchesKernel.print();
@@ -2271,9 +2274,6 @@ namespace gpu{
                     dim3 blockMsaProps = blocksize;
                     dim3 gridMsaProps = std::min(maxBlocksPerSMMsaProps * vec_numSMs[g], SDIV(numMismatches, (blocksize / groupsize)));
 
-                    rmm::device_uvector<GpuMSAProperties>& d_msaPropertiesPerPosition = vec_d_msaPropertiesPerPosition[g];
-                    d_msaPropertiesPerPosition.resize(numMismatches, streams[g]);
-                    //CUDACHECK(cudaStreamSynchronize(stream));
                     //helpers::GpuTimer timermsaprops(stream, "msapropsKernel");
 
                     msaCorrectCandidatesWithForestKernel_multiphase_msapropsKernel<blocksize, groupsize>
@@ -2281,8 +2281,8 @@ namespace gpu{
                         vec_multiMSA[g],
                         vec_d_shifts[g],
                         vec_d_candidateSequencesLengths[g],
-                        vec_mismatchPositions[g],
-                        d_msaPropertiesPerPosition.data()
+                        vec_correctionTempStorage[g].rawMismatchPositions,
+                        vec_correctionTempStorage[g].d_msaPropertiesPerPosition
                     );
                     CUDACHECKASYNC;
                     //timermsaprops.print();
@@ -2309,20 +2309,17 @@ namespace gpu{
                     dim3 blockExtract = blocksize;
                     dim3 gridExtract = std::min(maxBlocksPerSMExtract * vec_numSMs[g], SDIV(numMismatches, blocksize));
 
-                    rmm::device_uvector<float>& d_featuresTransposed = vec_d_featuresTransposed[g];
-                    d_featuresTransposed.resize(numMismatches * cands_extractor::numFeatures(), streams[g]);
-
                     //helpers::GpuTimer timerextract(stream, "extractKernel");
 
                     msaCorrectCandidatesWithForestKernel_multiphase_extractKernel<cands_extractor>
                         <<<gridExtract, blockExtract, smemExtract, streams[g]>>>(
-                        d_featuresTransposed.data(),
+                        vec_correctionTempStorage[g].d_featuresTransposed,
                         vec_multiMSA[g],
                         estimatedCoverage,
                         vec_d_shifts[g],
                         vec_d_candidateSequencesLengths[g],  
-                        vec_mismatchPositions[g],
-                        vec_d_msaPropertiesPerPosition[g].data()
+                        vec_correctionTempStorage[g].rawMismatchPositions,
+                        vec_correctionTempStorage[g].d_msaPropertiesPerPosition
                     );
                     CUDACHECKASYNC;
                     //timerextract.print();
@@ -2364,8 +2361,8 @@ namespace gpu{
                         vec_d_bestAlignmentFlags[g],
                         vec_d_candidateSequencesLengths[g],
                         decodedSequencePitchInBytes,
-                        vec_mismatchPositions[g],
-                        vec_d_featuresTransposed[g].data(),
+                        vec_correctionTempStorage[g].rawMismatchPositions,
+                        vec_correctionTempStorage[g].d_featuresTransposed,
                         useGlobalInsteadOfSmemCorrectThread,
                         cands_extractor::numFeatures()
                     );
@@ -2374,19 +2371,6 @@ namespace gpu{
                 }
             }
         }
-
-        for(int g = 0; g < numGpus; g++){
-            cub::SwitchDevice sd{deviceIds[g]};
-
-            //ensure release of memory on the correct device
-            MismatchPositions toDeallocate = std::move(vec_mismatchPositions[g]);
-            vec_d_msaPropertiesPerPosition[g].release();
-            vec_d_featuresTransposed[g].release();
-        }
-
-
-
-
     }
 
     void callFlagCandidatesToBeCorrectedKernel_async(

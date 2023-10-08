@@ -26,12 +26,14 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/device_scalar.hpp>
 #include <rmm/mr/device/device_memory_resource.hpp>
-
+#include <gpu/rmm_utilities.cuh>
 
 namespace cg = cooperative_groups;
 
 namespace care{
 namespace gpu{
+
+    
 
 
     __global__
@@ -1906,6 +1908,7 @@ namespace gpu{
 
 
     void callMsaCorrectAnchorsWithForestKernel_multiphase(
+        std::vector<AnchorForestCorrectionTempStorage>& vec_correctionTempStorage,
         std::vector<char*>& vec_d_correctedAnchors,
         std::vector<bool*>& vec_d_anchorIsCorrected,
         std::vector<AnchorHighQualityFlag*>& vec_d_isHighQualityAnchor,
@@ -1927,111 +1930,10 @@ namespace gpu{
         const std::vector<int>& deviceIds,
         int* h_tempstorage // sizeof(int) * deviceIds.size()
     ){
-        // std::cout << "Launch forests\n";
-        // {
-        //     cub::SwitchDevice sd(deviceIds[0]);
-        //     helpers::lambda_kernel<<<1,1,0, streams[0]>>>(
-        //         [
-        //             multiMSA = vec_multiMSA[0],
-        //             d_indices_per_anchor = vec_d_indices_per_anchor[0],
-        //             anchorSequencesData = vec_d_anchorSequencesData[0],
-        //             encodedSequencePitchInInts,
-        //             decodedSequencePitchInBytes,
-        //             estimatedErrorrate,
-        //             estimatedCoverage,
-        //             avg_support_threshold,
-        //             min_support_threshold,
-        //             min_coverage_threshold
-        //         ] __device__ (){
-        //             auto tgroup = cg::this_thread();
-        //             auto minreduce = [&](auto val){
-        //                 using T = decltype(val);
-        //                 return cg::reduce(tgroup, val, cg::less<T>{});
-        //             };
-            
-        //             auto maxreduce = [&](auto val){
-        //                 using T = decltype(val);
-        //                 return cg::reduce(tgroup, val, cg::greater<T>{});
-        //             };
-            
-        //             auto sumreduce = [&](auto val){
-        //                 using T = decltype(val);
-        //                 return cg::reduce(tgroup, val, cg::plus<T>{});
-        //             };
-
-        //             const int anchorIndex = 1707;
-
-                    
-        //             const int myNumIndices = d_indices_per_anchor[anchorIndex];
-        //             printf("myNumIndices %d .\n", myNumIndices);
-        //             if(myNumIndices > 0){
-
-        //                 const GpuSingleMSA msa = multiMSA.getSingleMSA(anchorIndex);                
-
-        //                 const int anchorColumnsBegin_incl = msa.columnProperties->anchorColumnsBegin_incl;
-        //                 const int anchorColumnsEnd_excl = msa.columnProperties->anchorColumnsEnd_excl;
-
-        //                 GpuMSAProperties msaProperties = msa.getMSAProperties(
-        //                     tgroup, 
-        //                     sumreduce,
-        //                     minreduce, 
-        //                     minreduce, 
-        //                     maxreduce,
-        //                     anchorColumnsBegin_incl,
-        //                     anchorColumnsEnd_excl
-        //                 );
-
-        //                 AnchorCorrectionQuality correctionQuality(avg_support_threshold, min_support_threshold, min_coverage_threshold, estimatedErrorrate);
-
-        //                 const bool isHQCorrection = correctionQuality.isHQCorrection(msaProperties.avg_support, msaProperties.min_support, msaProperties.min_coverage);
-
-        //                 printf("anchorColumnsBegin_incl %d, anchorColumnsEnd_excl %d isHQCorrection %d.\n", anchorColumnsBegin_incl, anchorColumnsEnd_excl, isHQCorrection);
-
-        //                 const int anchorLength = anchorColumnsEnd_excl - anchorColumnsBegin_incl;
-        //                 const unsigned int* const anchor = anchorSequencesData + std::size_t(anchorIndex) * encodedSequencePitchInInts;
-
-        //                 if(!isHQCorrection){
-        //                     printf("anchor seq: ");
-        //                     for (int i = tgroup.thread_rank(); i < anchorLength; i += tgroup.size()){
-        //                         const std::uint8_t origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(anchor, anchorLength, i);
-        //                         printf("%d ", int(origEncodedBase));
-        //                     }
-        //                     printf("\n");
-
-        //                     printf("conse seq: ");
-        //                     for (int i = tgroup.thread_rank(); i < anchorLength; i += tgroup.size()){
-        //                         const int msaPos = anchorColumnsBegin_incl + i;
-        //                         const std::uint8_t consensusEncodedBase = msa.consensus[msaPos];
-        //                         printf("%d ", int(consensusEncodedBase));
-        //                     }
-        //                     printf("\n");
-
-        //                     for (int i = tgroup.thread_rank(); i < anchorLength; i += tgroup.size()){
-        //                         const int msaPos = anchorColumnsBegin_incl + i;
-        //                         const std::uint8_t origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(anchor, anchorLength, i);
-        //                         const std::uint8_t consensusEncodedBase = msa.consensus[msaPos];
-
-        //                         if (origEncodedBase != consensusEncodedBase){                  
-        //                             printf("check: anchorIndex %d, position %d, orig %d, cons %d\n", anchorIndex, i, int(origEncodedBase), int(consensusEncodedBase));          
-        //                         }
-        //                     }
-
-        //                 }
-        //             }
-        //         }
-        //     );
-        //     CUDACHECK(cudaStreamSynchronize(streams[0]));
-        // }
 
         const int numGpus = deviceIds.size();
         std::vector<int> vec_numSMs(numGpus);
-        std::vector<rmm::device_uvector<int>> vec_d_numMismatches;
-        std::vector<rmm::device_uvector<GpuMSAProperties>> vec_d_msaProperties;
-        std::vector<rmm::device_uvector<int>> vec_d_mismatchAnchorIndices;
-        std::vector<rmm::device_uvector<int>> vec_d_mismatchPositionsInAnchors;
-        std::vector<rmm::device_buffer> vec_gmemFeaturesTransposedExtract;
-
-        //std::vector<rmm::device_uvector<int>> vec_d_numMismatchesPerAnchor;
+        
 
         int* const h_numMismatchesPerGpu = h_tempstorage;
 
@@ -2040,16 +1942,9 @@ namespace gpu{
             cub::SwitchDevice sd{deviceIds[g]};
 
             CUDACHECK(cudaDeviceGetAttribute(&vec_numSMs[g], cudaDevAttrMultiProcessorCount, deviceIds[g]));
-            vec_d_numMismatches.emplace_back(1, streams[g]);
-            vec_d_msaProperties.emplace_back(0, streams[g]);
-            vec_d_mismatchAnchorIndices.emplace_back(0, streams[g]);
-            vec_d_mismatchPositionsInAnchors.emplace_back(0, streams[g]);
-            vec_gmemFeaturesTransposedExtract.emplace_back(0, streams[g]);
-
-            //vec_d_numMismatchesPerAnchor.emplace_back(vec_numAnchors[g], streams[g]);
 
             CUDACHECK(cudaMemsetAsync(
-                vec_d_numMismatches[g].data(),
+                vec_correctionTempStorage[g].d_numMismatches,
                 0,
                 sizeof(int),
                 streams[g]
@@ -2073,19 +1968,10 @@ namespace gpu{
                     smeminit
                 ));
 
-                vec_d_msaProperties[g].resize(numAnchors, streams[g]);
-
                 dim3 blockinit(blocksizeinit);
                 dim3 gridinit(std::min(SDIV(numAnchors, blocksizeinit / groupsizeinit), maxBlocksPerSMinit * vec_numSMs[g]));
 
                 //helpers::GpuTimer timerinit(stream, "initkernel");
-
-                // CUDACHECK(cudaMemsetAsync(
-                //     vec_d_numMismatchesPerAnchor[g].data(),
-                //     0,
-                //     sizeof(int) * numAnchors,
-                //     streams[g]
-                // ));
 
                 msaCorrectAnchorsWithForestKernel_multiphase_initkernel<blocksizeinit, groupsizeinit>
                 <<<gridinit, blockinit, smeminit, streams[g]>>>(
@@ -2103,16 +1989,15 @@ namespace gpu{
                     avg_support_threshold,
                     min_support_threshold,
                     min_coverage_threshold,
-                    vec_d_msaProperties[g].data(),
-                    vec_d_numMismatches[g].data()
-                    //vec_d_numMismatchesPerAnchor[g].data()
+                    vec_correctionTempStorage[g].d_msaProperties,
+                    vec_correctionTempStorage[g].d_numMismatches
                 );
                 CUDACHECKASYNC;
                 //timerinit.print();
 
                 CUDACHECK(cudaMemcpyAsync(
                     h_numMismatchesPerGpu + g,
-                    vec_d_numMismatches[g].data(),
+                    vec_correctionTempStorage[g].d_numMismatches,
                     sizeof(int),
                     D2H,
                     streams[g]
@@ -2141,14 +2026,14 @@ namespace gpu{
                         smemgather
                     ));
 
+                    vec_correctionTempStorage[g].resize(numMismatches, streams[g]);
+
                     CUDACHECK(cudaMemsetAsync(
-                        vec_d_numMismatches[g].data(),
+                        vec_correctionTempStorage[g].d_numMismatches,
                         0,
                         sizeof(int),
                         streams[g]
                     ));
-                    vec_d_mismatchAnchorIndices[g].resize(numMismatches, streams[g]);
-                    vec_d_mismatchPositionsInAnchors[g].resize(numMismatches, streams[g]);
 
                     dim3 blockgather(blocksizegather);
                     dim3 gridgather(std::min(SDIV(numAnchors, blocksizegather / groupsizegather), maxBlocksPerSMgather * vec_numSMs[g]));
@@ -2169,10 +2054,9 @@ namespace gpu{
                         avg_support_threshold,
                         min_support_threshold,
                         min_coverage_threshold,
-                        vec_d_numMismatches[g].data(),
-                        vec_d_mismatchAnchorIndices[g].data(),
-                        vec_d_mismatchPositionsInAnchors[g].data()
-                        //vec_d_numMismatchesPerAnchor[g].data()
+                        vec_correctionTempStorage[g].d_numMismatches,
+                        vec_correctionTempStorage[g].d_mismatchAnchorIndices,
+                        vec_correctionTempStorage[g].d_mismatchPositionsInAnchors
                     );
                     CUDACHECKASYNC;
                     //timergather.print();
@@ -2201,8 +2085,6 @@ namespace gpu{
                         smemextract
                     ));
 
-                    vec_gmemFeaturesTransposedExtract[g].resize(featuresizeextract, streams[g]);
-
                     dim3 blockextract(blocksizeextract);
                     dim3 gridextract(std::min(SDIV(numMismatches, blocksizeextract), maxBlocksPerSMextract * vec_numSMs[g]));
 
@@ -2219,11 +2101,11 @@ namespace gpu{
                         avg_support_threshold,
                         min_support_threshold,
                         min_coverage_threshold,
-                        reinterpret_cast<float*>(vec_gmemFeaturesTransposedExtract[g].data()),
+                        vec_correctionTempStorage[g].d_featuresTransposed,
                         numMismatches,
-                        vec_d_mismatchAnchorIndices[g].data(),
-                        vec_d_mismatchPositionsInAnchors[g].data(),
-                        vec_d_msaProperties[g].data()
+                        vec_correctionTempStorage[g].d_mismatchAnchorIndices,
+                        vec_correctionTempStorage[g].d_mismatchPositionsInAnchors,
+                        vec_correctionTempStorage[g].d_msaProperties
                     );
                     CUDACHECKASYNC;
                     //timerextract.print();
@@ -2275,32 +2157,16 @@ namespace gpu{
                         min_coverage_threshold,
                         anchor_extractor::numFeatures(),
                         smemcorrectgroup == 0,
-                        reinterpret_cast<float*>(vec_gmemFeaturesTransposedExtract[g].data()),
+                        vec_correctionTempStorage[g].d_featuresTransposed,
                         numMismatches,
-                        vec_d_mismatchAnchorIndices[g].data(),
-                        vec_d_mismatchPositionsInAnchors[g].data()
+                        vec_correctionTempStorage[g].d_mismatchAnchorIndices,
+                        vec_correctionTempStorage[g].d_mismatchPositionsInAnchors
                     );
                     CUDACHECKASYNC;
                     //timercorrectgroup.print();
                 }
             }
         }
-
-        for(int g = 0; g < numGpus; g++){
-            cub::SwitchDevice sd{deviceIds[g]};
-
-            //ensure release of memory on the correct device
-            vec_d_numMismatches[g].release();
-            vec_d_msaProperties[g].release();
-            vec_d_mismatchAnchorIndices[g].release();
-            vec_d_mismatchPositionsInAnchors[g].release();
-            //vec_gmemFeaturesTransposedExtract[g].release();
-            auto toDeallocate = std::move(vec_gmemFeaturesTransposedExtract[g]);
-            
-            
-            //vec_d_numMismatchesPerAnchor[g].release();
-        }
-        
     }
 
 
