@@ -132,7 +132,7 @@ public:
         const std::vector<const int*>& vec_d_numValuesPerSequence,
         const std::vector<int*> vec_d_offsets, //numSequences + 1
         const std::vector<cudaStream_t>& streams,
-        const std::vector<int> callerDeviceIds,
+        const std::vector<int>& callerDeviceIds,
         const std::vector<rmm::mr::device_memory_resource*>& mrs
     ) const = 0;
 };

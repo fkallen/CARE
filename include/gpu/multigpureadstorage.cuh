@@ -936,7 +936,7 @@ public: //inherited GPUReadStorage interface
         const std::vector<int>& vec_numSequences,
         const std::vector<cudaStream_t>& streams,
         const std::vector<int>& callerDeviceIds,
-        const std::vector<rmm::mr::device_memory_resource*>& mrs
+        const std::vector<rmm::mr::device_memory_resource*>& /*mrs*/
     ) const override{
         nvtx::ScopedRange sr("multigpureadstorage::multi_gatherSequences", 4);
         if(hasHostSequences()) throw std::runtime_error("multi_gatherSequences cannot be used if some sequences are stored on the host");
@@ -1258,7 +1258,7 @@ public: //inherited GPUReadStorage interface
         const std::vector<int>& vec_numSequences,
         const std::vector<cudaStream_t>& streams,
         const std::vector<int>& callerDeviceIds,
-        const std::vector<rmm::mr::device_memory_resource*>& mrs
+        const std::vector<rmm::mr::device_memory_resource*>& /*mrs*/
     ) const override{
         nvtx::ScopedRange sr("multigpureadstorage::multi_gatherQualities", 4);
         if(hasHostQualities()) throw std::runtime_error("multi_gatherQualities cannot be used if some sequences are stored on the host");
