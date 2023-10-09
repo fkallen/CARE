@@ -5,27 +5,32 @@ HOSTLINKER=g++
 
 PREFIX = /usr/local
 
-CUB_INCDIR = ./dependencies/cub-1.17.0
-THRUST_INCDIR = ./dependencies/thrust-1.17.0
+CCCL_DIR = ./dependencies/cccl-2.2.0
+
+CUB_INCDIR = $(CCCL_DIR)/cub
+THRUST_INCDIR = $(CCCL_DIR)/thrust
+LIBCUDACXX_INCDIR = $(CCCL_DIR)/libcudacxx/include
 WARPCORE_INCDIR = ./dependencies/warpcore/include
 RMM_INCDIR = ./dependencies/rmm-22.06.01/include
 SPDLOG_INCDIR = ./dependencies/spdlog-1.10.0/include
 
 WARPCORE_FLAGS = -DCARE_HAS_WARPCORE -I$(WARPCORE_INCDIR)
 
+GPU_CUDA_LIB_INCLUDES = -I$(CUB_INCDIR) $(WARPCORE_FLAGS) -I$(RMM_INCDIR) -I$(SPDLOG_INCDIR)
+
 CXXFLAGS = 
 
 COMPILER_WARNINGS = -Wall -Wextra 
 COMPILER_DISABLED_WARNING = -Wno-terminate -Wno-class-memaccess
 
-CFLAGS_BASIC = $(COMPILER_WARNINGS) $(COMPILER_DISABLED_WARNING) -fopenmp -Iinclude -O3 -g -march=native -I$(THRUST_INCDIR)
-CFLAGS_DEBUG_BASIC = $(COMPILER_WARNINGS) $(COMPILER_DISABLED_WARNING) -fopenmp -g -Iinclude -O0 -march=native -I$(THRUST_INCDIR)
+CFLAGS_BASIC = $(COMPILER_WARNINGS) $(COMPILER_DISABLED_WARNING) -fopenmp -Iinclude -O3 -g -march=native -I$(THRUST_INCDIR) -I$(LIBCUDACXX_INCDIR)
+CFLAGS_DEBUG_BASIC = $(COMPILER_WARNINGS) $(COMPILER_DISABLED_WARNING) -fopenmp -g -Iinclude -O0 -march=native -I$(THRUST_INCDIR) -I$(LIBCUDACXX_INCDIR)
 
 CFLAGS_CPU = $(CFLAGS_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_OMP
 CFLAGS_CPU_DEBUG = $(CFLAGS_DEBUG_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_OMP
 
-NVCCFLAGS = -x cu -lineinfo --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_FLAGS) -I$(RMM_INCDIR) -I$(SPDLOG_INCDIR)
-NVCCFLAGS_DEBUG = -x cu --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_FLAGS) -I$(RMM_INCDIR) -I$(SPDLOG_INCDIR)
+NVCCFLAGS = -x cu -lineinfo --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) $(GPU_CUDA_LIB_INCLUDES)
+NVCCFLAGS_DEBUG = -x cu --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) $(GPU_CUDA_LIB_INCLUDES)
 
 LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt -lz -ldl
 LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -lz -ldl

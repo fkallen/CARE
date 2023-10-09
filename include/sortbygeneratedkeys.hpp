@@ -284,8 +284,7 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
             0,
             sizeof(KeyType) * 8,
             true,
-            stream,
-            false
+            stream
         );
     };
 

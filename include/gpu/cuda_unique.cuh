@@ -21,10 +21,25 @@
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
 
+//#include <cuda/functional>
 
 namespace care{
 namespace gpu{
 namespace cudauniquekernels{
+
+    template<class T>
+    struct GetElementSum{
+        const T* array1;
+        const T* array2;
+
+        __host__ __device__
+        GetElementSum(const T* a1, const T* a2) : array1(a1), array2(a2){}
+
+        __host__ __device__
+        T operator()(int index){
+            return array1[index] + array2[index];
+        }
+    };
 
 
     template<int blocksize, int elemsPerThread, class T, class OffsetIterator>
@@ -430,12 +445,13 @@ struct GpuSegmentedUnique{
             rmm::device_uvector<int> d_largeSegmentBeginOffsets(numLargestSegments + 1, stream, mr);
             auto d_largeSegmentEndOffsets = thrust::make_transform_iterator(
                 thrust::make_counting_iterator(0),
-                [
-                    d_largeSegmentLengths = d_largeSegmentLengths.data(),
-                    d_largeSegmentBeginOffsets = d_largeSegmentBeginOffsets.data()
-                ] __device__ (int index){
-                    return d_largeSegmentLengths[index] + d_largeSegmentBeginOffsets[index];
-                }
+                // cuda::proclaim_return_type<int>([
+                //     d_largeSegmentLengths = d_largeSegmentLengths.data(),
+                //     d_largeSegmentBeginOffsets = d_largeSegmentBeginOffsets.data()
+                // ] __device__ (int index){
+                //     return d_largeSegmentLengths[index] + d_largeSegmentBeginOffsets[index];
+                // })
+                cudauniquekernels::GetElementSum<int>{d_largeSegmentLengths.data(), d_largeSegmentBeginOffsets.data()}
             );
 
             thrust::gather(
@@ -723,12 +739,13 @@ struct GpuSegmentedUnique{
 
                 auto d_largeSegmentEndOffsets = thrust::make_transform_iterator(
                     thrust::make_counting_iterator(0),
-                    [
-                        d_largeSegmentLengths = vec_d_largeSegmentLengths[g],
-                        d_largeSegmentBeginOffsets = vec_d_largeSegmentBeginOffsets[g]
-                    ] __device__ (int index){
-                        return d_largeSegmentLengths[index] + d_largeSegmentBeginOffsets[index];
-                    }
+                    // cuda::proclaim_return_type<int>([
+                    //     d_largeSegmentLengths = vec_d_largeSegmentLengths[g],
+                    //     d_largeSegmentBeginOffsets = vec_d_largeSegmentBeginOffsets[g]
+                    // ] __device__ (int index){
+                    //     return d_largeSegmentLengths[index] + d_largeSegmentBeginOffsets[index];
+                    // })
+                    cudauniquekernels::GetElementSum<int>{vec_d_largeSegmentLengths[g], vec_d_largeSegmentBeginOffsets[g]}
                 );
 
                 CUDACHECK(cub::DeviceSegmentedSort::SortKeys(
