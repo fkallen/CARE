@@ -180,6 +180,10 @@ namespace care{
 
             //Merge corrected reads with input file to generate output file
 
+            //helpers::CpuTimer shrinktimer("shrinktofit");
+            partialResults.shrink_to_fit();
+            //shrinktimer.print();
+
             const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
             const auto partialResultMemUsage = partialResults.getMemoryInfo();
 

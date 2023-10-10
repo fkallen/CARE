@@ -50,8 +50,8 @@ public:
 
     MemoryUsage getMemoryInfo() const{
         MemoryUsage result;
-        result.host += databuffer->getCapacityInMemoryInBytes();
-        result.host += offsetbuffer->getCapacityInMemoryInBytes();
+        result.host += sizeof(std::uint8_t) * databuffer->capacity();
+        result.host += sizeof(std::size_t) * offsetbuffer->capacity();
         return result;
     }
 
@@ -99,6 +99,11 @@ public:
 
     std::size_t offsetBytes() const noexcept{
         return sizeof(std::size_t) * offsetbuffer->size();
+    }
+
+    void shrink_to_fit(){
+        databuffer->shrink_to_fit();
+        offsetbuffer->shrink_to_fit();
     }
 
 

@@ -152,7 +152,6 @@ namespace care{
         int numEdits;
     };
 
-
     struct EncodedTempCorrectedSequence{
         std::uint32_t encodedflags{}; //contains size of data in bytes, and boolean flags
         read_number readId{};
@@ -610,6 +609,74 @@ namespace care{
             }
         }
 
+        void decodeFromEncodedSerializedPtr(const std::uint8_t* ptr){
+
+            std::memcpy(&readId, ptr, sizeof(read_number));
+            ptr += sizeof(read_number);
+
+            std::uint32_t encodedflags;
+            std::memcpy(&encodedflags, ptr, sizeof(std::uint32_t));
+            ptr += sizeof(std::uint32_t);
+
+            hq = (encodedflags >> 31) & std::uint32_t(1);
+            useEdits = (encodedflags >> 30) & std::uint32_t(1);
+            type = TempCorrectedSequenceType((encodedflags >> 29) & std::uint32_t(1));
+
+            if(useEdits){
+                short size;
+                std::memcpy(&size, ptr, sizeof(short));
+                ptr += sizeof(short);
+
+                numEdits = size;
+                assert(numEdits <= MAX_EDITS_TEMP_RESULTS);
+
+                std::memcpy(editPositions.data(), ptr, sizeof(short) * numEdits);
+                ptr += sizeof(short) * numEdits;
+                std::memcpy(editChars.data(), ptr, sizeof(char) * numEdits);
+                ptr += sizeof(char) * numEdits;
+
+                // edits.resize(size);
+
+                // for(auto& edit : edits){
+                //     short p;
+                //     std::memcpy(&p, ptr, sizeof(short));
+                //     edit.pos(p);
+                //     ptr += sizeof(short);
+                // }
+                // for(auto& edit : edits){
+                //     char c;
+                //     std::memcpy(&c, ptr, sizeof(char));
+                //     edit.base(c);
+                //     ptr += sizeof(char);
+                // }
+
+                // assert(ptr == newptr);
+                // for(int i = 0; i < numEdits; i++){
+                //     assert(edits[i].pos() == editPositions[i]);
+                //     assert(edits[i].base() == editChars[i]);
+                // }
+            }else{
+                short length;
+                std::memcpy(&length, ptr, sizeof(short));
+                ptr += sizeof(short);
+
+                sequence.resize(length);
+                sequence.replace(0, length, (const char*)ptr, length);
+
+                ptr += sizeof(char) * length;
+            }
+
+            if(type == TempCorrectedSequenceType::Anchor){
+                ; //nothing
+            }else{
+                short shiftShort;
+                std::memcpy(&shiftShort, ptr, sizeof(short));
+                ptr += sizeof(short);
+
+                shift = shiftShort;
+            }
+        }
+
         bool writeToBinaryStream(std::ostream& os) const{
             os.write(reinterpret_cast<const char*>(&readId), sizeof(read_number));
             
@@ -692,11 +759,14 @@ namespace care{
         bool hq = false; //if anchor
         bool useEdits = false;
         TempCorrectedSequenceType type = TempCorrectedSequenceType::Anchor;
+        short numEdits = 0;
         int shift = 0; //if candidate
         read_number readId = 0;
 
         std::string sequence = "";
         std::vector<CorrectionEdit> edits;
+        std::array<char, MAX_EDITS_TEMP_RESULTS> editChars;
+        std::array<short, MAX_EDITS_TEMP_RESULTS> editPositions;
 
 
         

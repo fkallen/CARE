@@ -37,6 +37,11 @@ namespace care{
     //At least gpuReadStorageHeadroomPerGPU bytes per GPU will not be used by gpuReadStorage
     constexpr std::size_t gpuReadStorageHeadroomPerGPU = std::size_t(1) << 30;
 
+    //Corrected sequences are cached. When the hamming distance between a original sequence 
+    //and its corrected sequence is at most MAX_EDITS_TEMP_RESULTS,
+    //only the mismatching positions and characters are stored to save memory
+    constexpr int MAX_EDITS_TEMP_RESULTS = 16;
+
 
 //##################################################
 

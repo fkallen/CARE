@@ -915,6 +915,10 @@ namespace care{
 
             //Merge corrected reads with input file to generate output file
 
+            //helpers::CpuTimer shrinktimer("shrinktofit");
+            partialResults.shrink_to_fit();
+            //shrinktimer.print();
+
             const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
             const auto partialResultMemUsage = partialResults.getMemoryInfo();
 
@@ -930,7 +934,7 @@ namespace care{
             if(memoryForSorting > 1*(std::size_t(1) << 30)){
                 memoryForSorting = memoryForSorting - 1*(std::size_t(1) << 30);
             }
-            //std::cerr << "memoryForSorting = " << memoryForSorting << "\n";     
+            std::cerr << "memoryForSorting = " << memoryForSorting << "\n";     
 
             std::cout << "STEP 3: Constructing output file(s)" << std::endl;
 

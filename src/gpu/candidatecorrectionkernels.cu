@@ -1413,7 +1413,7 @@ namespace gpu{
                     d_numEditsPerCorrectedCandidate[destinationIndex] = doNotUseEditsValue;
                 }
             }else{
-                const int maxEdits = min(candidate_length / 7, numEditsThreshold);
+                const int maxEdits = MAX_EDITS_TEMP_RESULTS; //min(candidate_length / 7, numEditsThreshold);
 
                 auto countAndSaveEditInSmem = [&](const int posInSequence, const char correctedNuc){
                     cg::coalesced_group g = cg::coalesced_threads();

@@ -1648,7 +1648,7 @@ private:
             TempCorrectedSequence tmp;
             
             if(!originalReadContainsN){
-                const int maxEdits = correctedlength / 7;
+                const int maxEdits = MAX_EDITS_TEMP_RESULTS;
                 int edits = 0;
                 for(int i = 0; i < correctedlength && edits <= maxEdits; i++){
                     if(correctedSequenceString[i] != task.decodedAnchor[i]){
@@ -1718,7 +1718,7 @@ private:
                     
                     assert(uncorrectedCandidateLength == correctedCandidateLength);
                     
-                    const int maxEdits = correctedCandidateLength / 7;
+                    const int maxEdits = MAX_EDITS_TEMP_RESULTS;
                     int edits = 0;
                     if(candidateIsForward){
                         for(int pos = 0; pos < correctedCandidateLength && edits <= maxEdits; pos++){
