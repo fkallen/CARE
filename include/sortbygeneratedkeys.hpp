@@ -250,10 +250,10 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
 
     std::cerr << "sortValuesByGeneratedKeysViaSortByKeyDevice \n";
 
-    if(std::size_t(std::numeric_limits<int>::max()) < std::size_t(numValues)){
-        std::cerr << numValues << " > " << std::numeric_limits<int>::max() << "\n";
-        return false;
-    }
+    // if(std::size_t(std::numeric_limits<int>::max()) < std::size_t(numValues)){
+    //     std::cerr << numValues << " > " << std::numeric_limits<int>::max() << "\n";
+    //     return false;
+    // }
     
     if(pinnedTransferBufferSize > memoryLimitBytes){
         return false;
@@ -265,40 +265,19 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     std::size_t sizeOfKeys = SDIV(sizeof(KeyType) * numValues, sizeof(std::size_t)) * sizeof(std::size_t);
     std::size_t sizeOfValues = SDIV(sizeof(ValueType) * numValues, sizeof(std::size_t)) * sizeof(std::size_t);
 
-    // Need to explicitly instanciate radix sort for OffsetT = IndexType. 
-    // The default API only uses OffsetT = int which may be insufficient to enumerate keys
-    auto DeviceRadixSort_SortPairs = [](
-        void* d_temp_storage, 
-        std::size_t& temp_storage_bytes, 
-        cub::DoubleBuffer<KeyType>& d_keys, 
-        cub::DoubleBuffer<ValueType>& d_values,
-        IndexType num_items,
-        cudaStream_t stream
-    ){
-        return cub::DispatchRadixSort<false, KeyType, ValueType, IndexType>::Dispatch(
-            d_temp_storage,
-            temp_storage_bytes,
-            d_keys,
-            d_values,
-            num_items,
-            0,
-            sizeof(KeyType) * 8,
-            true,
-            stream
-        );
-    };
-
     cub::DoubleBuffer<KeyType> d_keys_dbl{nullptr, nullptr};
     cub::DoubleBuffer<ValueType> d_values_dbl{nullptr, nullptr};
 
     std::size_t requiredCubSize = 0;
 
-    cudaError_t cubstatus = DeviceRadixSort_SortPairs(
+    cudaError_t cubstatus = cub::DeviceRadixSort::SortPairs(
         nullptr,
         requiredCubSize,
         d_keys_dbl,
         d_values_dbl,
         numValues,
+        0,
+        sizeof(KeyType) * 8,
         (cudaStream_t)0
     );
 
@@ -369,12 +348,14 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
 
     helpers::CpuTimer timer3("cub sort");
 
-    cubstatus = DeviceRadixSort_SortPairs(
+    cubstatus = cub::DeviceRadixSort::SortPairs(
         temp_allocations[4],
         requiredCubSize,
         d_keys_dbl,
         d_values_dbl,
         numValues,
+        0,
+        sizeof(KeyType) * 8,
         (cudaStream_t)0
     );
     CUDACHECK(cudaDeviceSynchronize());
