@@ -430,6 +430,7 @@ namespace care{
         bool valid = true;
 
         if(opt.batchsize % 2 != 0){
+            valid = false;
             std::cout << "Error: batchsize must be even\n";
         }
 

@@ -552,6 +552,49 @@ struct GpuSegmentedUnique{
 //     const std::vector<int>, 
 //     int *)
 
+    struct DeviceTempStorage{
+        DeviceTempStorage(std::vector<int> deviceIds_)
+            : DeviceTempStorage(deviceIds_, [&](){
+                return std::vector<cudaStream_t>(deviceIds_.size(), cudaStreamPerThread);
+            }())
+        {
+            const int numGpus = deviceIds.size();
+            for(int g = 0; g < numGpus; g++){
+                cub::SwitchDevice sd(deviceIds[g]);
+                CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
+            }
+        }
+
+        DeviceTempStorage(std::vector<int> deviceIds_, const std::vector<cudaStream_t>& streams) 
+            : deviceIds(std::move(deviceIds_)){
+            
+            const int numGpus = deviceIds.size();
+            for(int g = 0; g < numGpus; g++){
+                cub::SwitchDevice sd(deviceIds[g]);
+                vec_d_buffers.emplace_back(0, streams[g]);
+                vec_d_tempBuffersAfterSync.emplace_back(0, streams[g]);
+            }
+        }
+
+        ~DeviceTempStorage(){
+            const int numGpus = deviceIds.size();
+            for(int g = 0; g < numGpus; g++){
+                cub::SwitchDevice sd(deviceIds[g]);
+                vec_d_buffers[g].release();
+                vec_d_tempBuffersAfterSync[g].release();
+            }
+        }
+
+        DeviceTempStorage(const DeviceTempStorage&) = delete;
+        DeviceTempStorage(DeviceTempStorage&&) = default;
+        DeviceTempStorage& operator=(const DeviceTempStorage&) = delete;
+        DeviceTempStorage& operator=(DeviceTempStorage&&) = default;
+
+        std::vector<int> deviceIds;
+        std::vector<rmm::device_uvector<char>> vec_d_buffers;
+        std::vector<rmm::device_uvector<char>> vec_d_tempBuffersAfterSync;
+    };
+
     template<class T>
     static void unique(
         const std::vector<T*>& vec_d_items,
@@ -561,9 +604,10 @@ struct GpuSegmentedUnique{
         const std::vector<int>& vec_numSegments,
         const std::vector<const int*>& vec_d_begin_offsets,
         const std::vector<const int*>& vec_d_end_offsets,
-        const std::vector<cudaStream_t> streams,
+        const std::vector<cudaStream_t>& streams,
         const std::vector<int>& deviceIds,
-        int* h_tempstorage // numPartitions * deviceIds.size()
+        int* h_tempstorage, // numPartitions * deviceIds.size()
+        DeviceTempStorage& deviceTempStorage
     ){
         constexpr int numPartitions = 6;
         constexpr int boundaries[numPartitions]{128,256,512,1024,2048, std::numeric_limits<int>::max()};
@@ -572,7 +616,6 @@ struct GpuSegmentedUnique{
 
         const int numGpus = deviceIds.size();
 
-        std::vector<rmm::device_uvector<char>> vec_d_buffers;
         std::vector<int*> vec_d_segmentLengths(numGpus, nullptr);
         std::vector<int*> vec_d_allSegmentIds(numGpus, nullptr);
         std::vector<int*> vec_d_partitionSizes(numGpus, nullptr);
@@ -591,10 +634,10 @@ struct GpuSegmentedUnique{
             };
             const size_t totalBytes = bytes[0] + bytes[1] + bytes[2];
 
-            vec_d_buffers.emplace_back(totalBytes, streams[g]);
-            vec_d_segmentLengths[g] = reinterpret_cast<int*>(vec_d_buffers.back().data());
-            vec_d_allSegmentIds[g] = reinterpret_cast<int*>(vec_d_buffers.back().data() + bytes[0]);
-            vec_d_partitionSizes[g] = reinterpret_cast<int*>(vec_d_buffers.back().data() + bytes[0] + bytes[1]);
+            resizeUninitialized(deviceTempStorage.vec_d_buffers[g], totalBytes, streams[g]);
+            vec_d_segmentLengths[g] = reinterpret_cast<int*>(deviceTempStorage.vec_d_buffers[g].data());
+            vec_d_allSegmentIds[g] = reinterpret_cast<int*>(deviceTempStorage.vec_d_buffers[g].data() + bytes[0]);
+            vec_d_partitionSizes[g] = reinterpret_cast<int*>(deviceTempStorage.vec_d_buffers[g].data() + bytes[0] + bytes[1]);
 
             thrust::for_each(
                 rmm::exec_policy_nosync(streams[g]),
@@ -697,9 +740,9 @@ struct GpuSegmentedUnique{
                     allocations,
                     allocation_sizes
                 ));
-                vec_d_tempBuffersAfterSync.emplace_back(storage_bytes, streams[g]);
+                resizeUninitialized(deviceTempStorage.vec_d_tempBuffersAfterSync[g], storage_bytes, streams[g]);
                 CUDACHECK(cub::AliasTemporaries(
-                    vec_d_tempBuffersAfterSync.back().data(),
+                    deviceTempStorage.vec_d_tempBuffersAfterSync[g].data(),
                     storage_bytes,
                     allocations,
                     allocation_sizes
@@ -822,12 +865,6 @@ struct GpuSegmentedUnique{
 
         #undef runSmallSegment
 
-        for(int g = 0; g < numGpus; g++){
-            CUDACHECK(cudaSetDevice(deviceIds[g]));
-            vec_d_buffers[g].release();
-            vec_d_tempBuffersAfterSync[g].release();
-        }
-        
         CUDACHECK(cudaSetDevice(oldDeviceId));
     }
 

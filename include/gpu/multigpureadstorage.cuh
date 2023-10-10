@@ -159,14 +159,17 @@ public:
 
     struct TempData{
 
-        TempData() : event{cudaEventDisableTiming}{
+        TempData() 
+        : event{cudaEventDisableTiming},
+            d_tempStorage{0, cudaStreamPerThread}
+        {
             CUDACHECK(cudaGetDevice(&deviceId));
+            CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
         }
 
         ~TempData(){
-            // auto info = getMemoryInfo();
-            // std::cerr << "MultiGpuReadStorage::TempData: host: " << info.host 
-            //     << ", device[" << deviceId << "]: " << info.device[deviceId] << "\n";
+            cub::SwitchDevice sd(deviceId);
+            d_tempStorage.release();
         }
 
         MemoryUsage getMemoryInfo() const{
@@ -185,6 +188,8 @@ public:
         CudaEvent dependencyevent{};
         HostBuffer<char> pinnedBuffer{};
         std::array<CudaStream,2> streams{};
+
+        rmm::device_uvector<char> d_tempStorage;
 
         typename MultiGpu2dArray<unsigned int, IndexType>::Handle handleSequences{};
         typename MultiGpu2dArray<unsigned int, IndexType>::Handle handleQualities{};
@@ -1250,50 +1255,50 @@ public: //inherited GPUReadStorage interface
 
     }
 
-    void multi_gatherQualities(
-        std::vector<ReadStorageHandle>& vec_handle,
-        std::vector<char*>& vec_d_quality_data,
-        size_t out_quality_pitch,
-        const std::vector<read_number*>& vec_d_readIds,
-        const std::vector<int>& vec_numSequences,
-        const std::vector<cudaStream_t>& streams,
-        const std::vector<int>& callerDeviceIds,
-        const std::vector<rmm::mr::device_memory_resource*>& /*mrs*/
-    ) const override{
-        nvtx::ScopedRange sr("multigpureadstorage::multi_gatherQualities", 4);
-        if(hasHostQualities()) throw std::runtime_error("multi_gatherQualities cannot be used if some sequences are stored on the host");
+    // void multi_gatherQualities(
+    //     std::vector<ReadStorageHandle>& vec_handle,
+    //     std::vector<char*>& vec_d_quality_data,
+    //     size_t out_quality_pitch,
+    //     const std::vector<read_number*>& vec_d_readIds,
+    //     const std::vector<int>& vec_numSequences,
+    //     const std::vector<cudaStream_t>& streams,
+    //     const std::vector<int>& callerDeviceIds,
+    //     const std::vector<rmm::mr::device_memory_resource*>& /*mrs*/
+    // ) const override{
+    //     nvtx::ScopedRange sr("multigpureadstorage::multi_gatherQualities", 4);
+    //     if(hasHostQualities()) throw std::runtime_error("multi_gatherQualities cannot be used if some sequences are stored on the host");
 
-        const int numGpus = callerDeviceIds.size();
-        int totalNumSequences = 0;
-        for(int g = 0; g < numGpus; g++){
-            totalNumSequences += vec_numSequences[g];
-        }
-        if(totalNumSequences == 0) return;
+    //     const int numGpus = callerDeviceIds.size();
+    //     int totalNumSequences = 0;
+    //     for(int g = 0; g < numGpus; g++){
+    //         totalNumSequences += vec_numSequences[g];
+    //     }
+    //     if(totalNumSequences == 0) return;
 
-        std::vector<size_t> vec_destRowPitchInBytes(numGpus, out_quality_pitch);
-        std::vector<size_t> vec_numSequences_sizet(numGpus);
-        std::vector<unsigned int*> vec_d_quality_data_as_uint(numGpus);
-        std::vector<typename MultiGpu2dArray<unsigned int, IndexType>::Handle> vec_arrayhandle(numGpus);
-        for(int g = 0; g < numGpus; g++){
-            TempData* tempData = getTempDataFromHandle(vec_handle[g]);
-            assert(tempData->deviceId == callerDeviceIds[g]);
+    //     std::vector<size_t> vec_destRowPitchInBytes(numGpus, out_quality_pitch);
+    //     std::vector<size_t> vec_numSequences_sizet(numGpus);
+    //     std::vector<unsigned int*> vec_d_quality_data_as_uint(numGpus);
+    //     std::vector<typename MultiGpu2dArray<unsigned int, IndexType>::Handle> vec_arrayhandle(numGpus);
+    //     for(int g = 0; g < numGpus; g++){
+    //         TempData* tempData = getTempDataFromHandle(vec_handle[g]);
+    //         assert(tempData->deviceId == callerDeviceIds[g]);
 
-            vec_arrayhandle[g] = tempData->handleQualities;
-            vec_numSequences_sizet[g] = vec_numSequences[g];
-            vec_d_quality_data_as_uint[g] = reinterpret_cast<unsigned int*>(vec_d_quality_data[g]);
-        }
+    //         vec_arrayhandle[g] = tempData->handleQualities;
+    //         vec_numSequences_sizet[g] = vec_numSequences[g];
+    //         vec_d_quality_data_as_uint[g] = reinterpret_cast<unsigned int*>(vec_d_quality_data[g]);
+    //     }
 
-        qualitiesGpu.multi_gather(
-            vec_arrayhandle, 
-            vec_d_quality_data_as_uint, 
-            vec_destRowPitchInBytes, 
-            vec_d_readIds, 
-            vec_numSequences_sizet, 
-            streams,
-            callerDeviceIds
-        );
+    //     qualitiesGpu.multi_gather(
+    //         vec_arrayhandle, 
+    //         vec_d_quality_data_as_uint, 
+    //         vec_destRowPitchInBytes, 
+    //         vec_d_readIds, 
+    //         vec_numSequences_sizet, 
+    //         streams,
+    //         callerDeviceIds
+    //     );
 
-    }
+    // }
 
     void multi_gatherQualities(
         std::vector<ReadStorageHandle>& vec_handle,
@@ -1347,8 +1352,14 @@ public: //inherited GPUReadStorage interface
         }else{
             for(int g = 0; g < numGpus; g++){
                 cub::SwitchDevice sd(callerDeviceIds[g]);
-                vec_d_compressed[g] = reinterpret_cast<unsigned int*>(mrs[g]->allocate(
-                    vec_numSequences[g] * numColumnsCompressedQualitiesInts * sizeof(unsigned int), streams[g]));
+                constexpr int roundUpTo = 10000;
+                const int roundedNumSequences = SDIV(vec_numSequences[g], roundUpTo) * roundUpTo;
+                resizeUninitialized(
+                    vec_tempData[g]->d_tempStorage,
+                    sizeof(unsigned int) * roundedNumSequences * numColumnsCompressedQualitiesInts,
+                    streams[g]
+                );
+                vec_d_compressed[g] = reinterpret_cast<unsigned int*>(vec_tempData[g]->d_tempStorage.data());
                 vec_d_gatherdestination[g] = vec_d_compressed[g];
             }
             
@@ -1632,12 +1643,242 @@ public: //inherited GPUReadStorage interface
                         stream
                     );
                 }
-
-                mrs[g]->deallocate(vec_d_compressed[g], vec_numSequences[g] * numColumnsCompressedQualitiesInts * sizeof(unsigned int), stream);
             }
         }else{
             //all good
         }
+
+        for(int g = 0; g < numGpus; g++){
+            cub::SwitchDevice sd_(callerDeviceIds[g]);
+            cudaStream_t stream = streams[g];
+            TempData* const tempData = vec_tempData[g];
+            CUDACHECK(cudaEventRecord(tempData->event, stream));
+        }
+
+        
+    }
+
+
+    void multi_gatherContiguousQualities(
+        std::vector<ReadStorageHandle>& vec_handle,
+        std::vector<char*>& vec_d_quality_data,
+        size_t out_quality_pitch,
+        const std::vector<read_number>& vec_firstIndex,
+        const std::vector<int>& vec_numSequences,
+        const std::vector<cudaStream_t>& streams,
+        const std::vector<int>& callerDeviceIds,
+        const std::vector<rmm::mr::device_memory_resource*>& mrs
+    ) const override{
+        nvtx::ScopedRange sr("multigpureadstorage::multi_gatherContiguousQualities", 4);
+
+        const int numGpus = callerDeviceIds.size();
+        const int totalNumSequences = std::reduce(vec_numSequences.begin(), vec_numSequences.end());
+        if(totalNumSequences == 0) return;
+
+        std::vector<TempData*> vec_tempData(numGpus);
+        for(int g = 0; g < numGpus; g++){
+            TempData* tempData = getTempDataFromHandle(vec_handle[g]);
+            assert(tempData->deviceId == callerDeviceIds[g]);
+
+            vec_tempData[g] = tempData;
+        }
+
+        std::vector<bool> vec_hasSynchronized(numGpus, false);
+        auto resizeWithSync = [&](int g, auto& data, std::size_t size){
+            using W = decltype(*data.get());
+
+            const std::size_t currentCapacity = data.capacityInBytes();
+            const std::size_t newbytes = size * sizeof(W);
+            if(!vec_hasSynchronized[g] && currentCapacity < newbytes){
+                vec_tempData[g]->event.synchronize();
+                vec_hasSynchronized[g] = true;
+                //std::cerr << "SYNC" << "\n";
+            }
+            data.resize(size);
+        };
+
+        const int numColumnsCompressedQualitiesInts = qualitiesGpu.getNumColumns();
+
+        std::vector<std::size_t> vec_numGatherOnGpu(numGpus);
+        std::vector<std::size_t> vec_firstIndexOnGpu(numGpus);
+        std::vector<std::size_t> vec_numGatherOnHost(numGpus);
+        std::vector<std::size_t> vec_firstIndexOnHost(numGpus);
+
+        for(int g = 0; g < numGpus; g++){
+            vec_numGatherOnGpu[g] = vec_firstIndex[g] < qualitiesGpu.getNumRows() ? std::min(qualitiesGpu.getNumRows() - vec_firstIndex[g], std::size_t(vec_numSequences[g])) : 0;
+            vec_firstIndexOnGpu[g]  = vec_firstIndex[g] < qualitiesGpu.getNumRows() ? vec_firstIndex[g] : 0;
+            vec_numGatherOnHost[g]  = vec_numSequences[g] - vec_numGatherOnGpu[g];
+            vec_firstIndexOnHost[g]  = vec_firstIndex[g] + vec_numGatherOnGpu[g];
+        }
+
+        std::vector<unsigned int*> vec_d_gatherdestination(numGpus);
+        std::size_t gatherdestinationPitchInBytes = 0;
+        if(numQualityBits == 8){
+            for(int g = 0; g < numGpus; g++){
+                vec_d_gatherdestination[g] = reinterpret_cast<unsigned int*>(vec_d_quality_data[g]);
+            }
+            gatherdestinationPitchInBytes = out_quality_pitch;
+        }else{
+            for(int g = 0; g < numGpus; g++){
+                cub::SwitchDevice sd(callerDeviceIds[g]);
+                constexpr int roundUpTo = 10000;
+                const int roundedNumSequences = SDIV(vec_numSequences[g], roundUpTo) * roundUpTo;
+                resizeUninitialized(
+                    vec_tempData[g]->d_tempStorage,
+                    sizeof(unsigned int) * roundedNumSequences * numColumnsCompressedQualitiesInts,
+                    streams[g]
+                );
+                vec_d_gatherdestination[g] = reinterpret_cast<unsigned int*>(vec_tempData[g]->d_tempStorage.data());
+            }
+            
+            gatherdestinationPitchInBytes = numColumnsCompressedQualitiesInts * sizeof(unsigned int);
+        }
+
+        auto gpuGather = [&](){
+
+            for(int g = 0; g < numGpus; g++){
+                if(vec_numGatherOnGpu[g] > 0){
+                    cub::SwitchDevice sd_(callerDeviceIds[g]);
+
+                    qualitiesGpu.gatherContiguous(
+                        vec_tempData[g]->handleQualities,
+                        vec_d_gatherdestination[g],
+                        gatherdestinationPitchInBytes,
+                        vec_firstIndexOnGpu[g],
+                        vec_numGatherOnGpu[g],
+                        streams[g]
+                    );
+                }
+            }
+
+            if(numQualityBits != 8){
+                for(int g = 0; g < numGpus; g++){
+                    if(vec_numGatherOnGpu[g] > 0){
+                        cub::SwitchDevice sd_(callerDeviceIds[g]);
+
+                        const int maxLengthCompressedPitch = numColumnsCompressedQualitiesInts * sizeof(unsigned int) * 8 / numQualityBits;
+                        const int maxLengthUncompressedPitch = out_quality_pitch;
+                        const int l = std::min(maxLengthCompressedPitch, maxLengthUncompressedPitch);
+
+                        callDecompressQualityScoresKernel(
+                            vec_d_quality_data[g], 
+                            out_quality_pitch,
+                            vec_d_gatherdestination[g], 
+                            numColumnsCompressedQualitiesInts,
+                            thrust::make_constant_iterator(l),
+                            vec_numGatherOnGpu[g],
+                            numQualityBits,
+                            streams[g]
+                        );
+                    }
+                }
+            }
+        };
+
+
+        auto hostGather = [&](){
+            const std::size_t compressedMemoryForOneSeq = numColumnsCompressedQualitiesInts * sizeof(unsigned int);
+
+            for(int g = 0; g < numGpus; g++){
+                if(vec_numGatherOnHost[g] > 0){
+
+                    cub::SwitchDevice sd_(callerDeviceIds[g]);
+                    cudaStream_t stream = streams[g];
+                    TempData* const tempData = vec_tempData[g];
+                    auto* const mr = mrs[g];
+
+                    const int numSequences = vec_numSequences[g];
+
+                    if(numSequences == 0) continue;;
+
+                    constexpr std::size_t memorylimitbatch = 1 << 19; // 512KB
+                    const std::size_t batchsize = std::min(SDIV(memorylimitbatch, (compressedMemoryForOneSeq)), std::size_t(vec_numGatherOnHost[g]));
+
+                    CUDACHECK(cudaEventRecord(tempData->dependencyevent, stream));
+                    for(int i = 0; i < 2; i++){
+                        CUDACHECK(cudaStreamWaitEvent(tempData->streams[i], tempData->dependencyevent, 0));
+                    }
+
+                    resizeWithSync(g, tempData->pinnedBuffer, 2 * batchsize * compressedMemoryForOneSeq);
+
+                    std::array<unsigned int*, 2> hostpointers{ 
+                        (unsigned int*)(tempData->pinnedBuffer.data()), 
+                        (unsigned int*)(tempData->pinnedBuffer.data() + batchsize * compressedMemoryForOneSeq)
+                    };
+                    assert(hostpointers.size() == tempData->streams.size());
+
+                    const int numBatches = SDIV(vec_numGatherOnHost[g], batchsize);
+                    for(int b = 0; b < numBatches; b++){
+                        const int bufferIndex = b % 2;
+
+                        const int begin = b * batchsize;
+                        const int end = std::min(vec_numGatherOnHost[g], (b+1) * batchsize);
+                        const int sizeOfCurrentBatch = end - begin;
+
+                        std::vector<read_number> readIds(sizeOfCurrentBatch);
+                        std::iota(readIds.begin(), readIds.end(), vec_firstIndexOnHost[g] + begin);
+
+                        CUDACHECK(cudaStreamSynchronize(tempData->streams[bufferIndex])); // protect pinned buffer
+
+                        gatherHostQualitiesEncoded(
+                            tempData,
+                            readIds.data(),
+                            sizeOfCurrentBatch,
+                            hostpointers[bufferIndex],
+                            numColumnsCompressedQualitiesInts
+                        );
+
+                        if(gatherdestinationPitchInBytes == sizeof(unsigned int) * numColumnsCompressedQualitiesInts){
+                            CUDACHECK(cudaMemcpyAsync(
+                                ((char*)vec_d_gatherdestination[g]) + gatherdestinationPitchInBytes * begin,
+                                hostpointers[bufferIndex],
+                                sizeof(unsigned int) * numColumnsCompressedQualitiesInts * sizeOfCurrentBatch,
+                                H2D,
+                                tempData->streams[bufferIndex]
+                            ));
+                        }else{
+                            CUDACHECK(cudaMemcpy2DAsync(
+                                ((char*)vec_d_gatherdestination[g]) + gatherdestinationPitchInBytes * (vec_numGatherOnGpu[g] + begin),
+                                gatherdestinationPitchInBytes,
+                                hostpointers[bufferIndex],
+                                sizeof(unsigned int) * numColumnsCompressedQualitiesInts,
+                                sizeof(unsigned int) * numColumnsCompressedQualitiesInts,
+                                sizeOfCurrentBatch,
+                                H2D,
+                                tempData->streams[bufferIndex]
+                            ));
+                        }
+                    }
+
+                    CUDACHECK(cudaEventRecord(tempData->event, tempData->streams[0]));
+                    CUDACHECK(cudaStreamWaitEvent(stream, tempData->event, 0));
+                    CUDACHECK(cudaEventRecord(tempData->event, tempData->streams[1]));
+                    CUDACHECK(cudaStreamWaitEvent(stream, tempData->event, 0));
+                    
+                    if(numQualityBits != 8){
+
+                        const int maxLengthCompressedPitch = numColumnsCompressedQualitiesInts * sizeof(unsigned int) * 8 / numQualityBits;
+                        const int maxLengthUncompressedPitch = out_quality_pitch;
+                        const int l = std::min(maxLengthCompressedPitch, maxLengthUncompressedPitch);
+
+                        callDecompressQualityScoresKernel(
+                            vec_d_quality_data[g] + out_quality_pitch * vec_numGatherOnGpu[g], 
+                            out_quality_pitch,
+                            vec_d_gatherdestination[g] + numColumnsCompressedQualitiesInts * vec_numGatherOnGpu[g], 
+                            numColumnsCompressedQualitiesInts,
+                            thrust::make_constant_iterator(l),
+                            vec_numGatherOnHost[g],
+                            numQualityBits,
+                            stream
+                        );
+                    }
+                }
+            }
+        };
+
+
+        gpuGather();
+        hostGather();
 
         for(int g = 0; g < numGpus; g++){
             cub::SwitchDevice sd_(callerDeviceIds[g]);
@@ -1811,6 +2052,13 @@ public: //inherited GPUReadStorage interface
             d_gatherdestination = reinterpret_cast<unsigned int*>(d_quality_data);
             gatherdestinationPitchInBytes = out_quality_pitch;
         }else{
+            // constexpr int roundUpTo = 10000;
+            // const int roundedNumSequences = SDIV(numSequences, roundUpTo) * roundUpTo;
+            // resizeUninitialized(
+            //     tempData->d_tempStorage,
+            //     sizeof(unsigned int) * roundedNumSequences * numColumnsCompressedQualitiesInts,
+            //     stream
+            // );
             d_compressed = reinterpret_cast<unsigned int*>(mr->allocate(numSequences * numColumnsCompressedQualitiesInts * sizeof(unsigned int), stream));
             d_gatherdestination = d_compressed;
             gatherdestinationPitchInBytes = numColumnsCompressedQualitiesInts * sizeof(unsigned int);

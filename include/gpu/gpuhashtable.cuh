@@ -279,17 +279,17 @@ namespace gpu{
         }
 
         //query the same number of keys in multiple tables
-        //The output buffer of values is shared among all tables. the destination offset within the buffer is given by beginOffsets
+        //The output buffer of values is shared among all tables. 
+        //Values for k-th key in t-th table is written to outputOffset  maxResultsPerKeyPerTable * (t * numKeys + k)
         //This kernel expects a 2D grid of thread blocks. y dimension selects the table
-        template<class DeviceTableView, class Key, class Value, class OffsetIterator>
+        template<class DeviceTableView, class Key, class Value>
         __global__
         void retrieveCompactDirectKernel(
             const DeviceTableView* __restrict__ tables,
             const int numTables,
             const Key* __restrict__ querykeys,
             const int querykeysPitchInElements,
-            OffsetIterator outputBeginOffsets,
-            const int beginOffsetsPitchInElements,
+            int maxResultsPerKeyPerTable,
             const int numValuesPerKeyPitchInElements,
             const int numKeys,
             int* __restrict__ numValuesPerKey,
@@ -310,12 +310,11 @@ namespace gpu{
 
                 const DeviceTableView table = tables[tableid];
                 const Key* const myQueryKeys = querykeys + querykeysPitchInElements * tableid;
-                const int* const myNumValuesPerKey = numValuesPerKey + numValuesPerKeyPitchInElements * tableid;
-                const auto myBeginOffsets = outputBeginOffsets + beginOffsetsPitchInElements * tableid;
+                int* const myNumValuesPerKey = numValuesPerKey + numValuesPerKeyPitchInElements * tableid;
 
                 for(int k = tileId; k < numKeys; k += numTiles){
                     const Key key = myQueryKeys[k];
-                    const auto beginOffset = myBeginOffsets[k];
+                    const auto beginOffset = maxResultsPerKeyPerTable * (tableid * numKeys + k);
                     myNumValuesPerKey[k] = table.retrieve(tile, key, outValues + beginOffset);
                 }
             }

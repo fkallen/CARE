@@ -129,6 +129,30 @@ namespace gpu{
             // CUDACHECK(cudaDeviceSynchronize());
         }
 
+        struct DeviceTempStorage{
+            DeviceTempStorage(std::vector<int> deviceIds_)
+                : DeviceTempStorage(deviceIds_, [&](){
+                    return std::vector<cudaStream_t>(deviceIds_.size(), cudaStreamPerThread);
+                }())
+            {
+                const int numGpus = deviceIds_.size();
+                for(int g = 0; g < numGpus; g++){
+                    cub::SwitchDevice sd(deviceIds_[g]);
+                    CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
+                }
+            }
+            DeviceTempStorage(std::vector<int> deviceIds_, const std::vector<cudaStream_t>& streams)
+                : temp{std::move(deviceIds_), streams}
+                {}
+
+            DeviceTempStorage(const DeviceTempStorage&) = delete;
+            DeviceTempStorage(DeviceTempStorage&&) = default;
+            DeviceTempStorage& operator=(const DeviceTempStorage&) = delete;
+            DeviceTempStorage& operator=(DeviceTempStorage&&) = default;
+
+            GpuSegmentedUnique::DeviceTempStorage temp;
+        };
+
         static void keepDistinctAndNotMatching(
             const std::vector<const read_number*>& vec_d_dontMatchPerSegment,
             std::vector<cub::DoubleBuffer<read_number>>& vec_d_items,
@@ -138,7 +162,8 @@ namespace gpu{
             const std::vector<int>& vec_numItems,
             const std::vector<cudaStream_t>& streams,
             const std::vector<int>& deviceIds,
-            int* h_tempstorage // 128 * deviceIds.size()
+            int* h_tempstorage, // 128 * deviceIds.size()
+            DeviceTempStorage& deviceTempStorage
         ){
             nvtx::ScopedRange sr_("keepDistinctAndNotMatching",4);
             const int numGpus = deviceIds.size();
@@ -167,7 +192,8 @@ namespace gpu{
                 vec_d_numItemsPerSegmentPrefixSum_current_plus1,
                 streams,
                 deviceIds,
-                h_tempstorage
+                h_tempstorage,
+                deviceTempStorage.temp
             );
 
 
@@ -186,13 +212,25 @@ namespace gpu{
                             streams[g]
                         );
                     }
-
-                    CubCallWrapper(rmm::mr::get_current_device_resource()).cubInclusiveSum(
+                    size_t cubBytes = 0;
+                    CUDACHECK(cub::DeviceScan::InclusiveSum(
+                        nullptr,
+                        cubBytes,
                         vec_d_numItemsPerSegment[g].Alternate(),
                         vec_d_numItemsPerSegmentPrefixSum[g].Alternate() + 1,
                         vec_numSegments[g],
                         streams[g]
-                    );
+                    ));
+                    resizeUninitialized(deviceTempStorage.temp.vec_d_buffers[g], cubBytes, streams[g]);
+                    CUDACHECK(cub::DeviceScan::InclusiveSum(
+                        deviceTempStorage.temp.vec_d_buffers[g].data(),
+                        cubBytes,
+                        vec_d_numItemsPerSegment[g].Alternate(),
+                        vec_d_numItemsPerSegmentPrefixSum[g].Alternate() + 1,
+                        vec_numSegments[g],
+                        streams[g]
+                    ));
+
                     CUDACHECK(cudaMemsetAsync(
                         vec_d_numItemsPerSegmentPrefixSum[g].Alternate(), 
                         0, 

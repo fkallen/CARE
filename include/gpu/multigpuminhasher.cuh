@@ -328,6 +328,9 @@ namespace gpu{
 
             std::vector<rmm::device_uvector<char>> vec_d_singlegpuminhasherBuffers{}; // 1 for each data gpu
 
+            std::vector<rmm::device_uvector<char>> vec_d_callerTempBuffers; // 1 for each caller gpu
+            std::vector<rmm::device_uvector<char>> vec_d_targetTempBuffers; // 1 for each data gpu
+
             int* pinned_totalNumValuesPerTarget{};
             int* pinned_numValuesPerTargetPerCaller{};
             int* pinned_numValuesPerTarget_verticalPS{};
@@ -345,18 +348,25 @@ namespace gpu{
                     if(d < int(vec_d_singlegpuminhasherBuffers.size())){
                         cub::SwitchDevice sd(dataDeviceIds[d]);
                         vec_d_singlegpuminhasherBuffers[d].release();
+                        vec_d_targetTempBuffers[d].release();
                     }
                 } 
                 for(int g = 0; g < int(callerDeviceIds.size()); g++){
                     if(g < int(vec_d_numValuesPerSequence.size())){
                         cub::SwitchDevice sd(callerDeviceIds[g]);
                         vec_d_numValuesPerSequence[g].release();
+                        vec_d_callerTempBuffers[g].release();
                     }
                 } 
             }
 
             void setCallerDeviceIds(const std::vector<int>& ids){
                 if(callerDeviceIds != ids){
+                    for(int g = 0; g < int(callerDeviceIds.size()); g++){
+                        cub::SwitchDevice sd(callerDeviceIds[g]);
+                        vec_d_callerTempBuffers[g].release();
+                    }
+                    vec_d_callerTempBuffers.clear(); 
                     vec_callerStreamsPerDataGpu.clear();
                     vec_callerEventsPerDataGpu.clear();
                     vec_callerEvents.clear();
@@ -376,6 +386,10 @@ namespace gpu{
                     for(int g = 0; g < numCallerGpus; g++){
                         cub::SwitchDevice sd(ids[g]);
                         vec_callerEvents.emplace_back(cudaEventDisableTiming);
+
+                        vec_d_callerTempBuffers.emplace_back(0, cudaStreamPerThread);
+
+                        CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
 
                         for(int d = 0; d < numDataGpus; d++){
                             vec_callerStreamsPerDataGpu[g].emplace_back();
@@ -962,7 +976,7 @@ namespace gpu{
             const std::vector<int*>& vec_totalNumValues,
             const std::vector<cudaStream_t>& callerStreams,
             const std::vector<int>& callerDeviceIds,
-            const std::vector<rmm::mr::device_memory_resource*>& mrs
+            const std::vector<rmm::mr::device_memory_resource*>& /*mrs*/
         ) const {
             nvtx::ScopedRange sr_("multi_determineNumValues_peerCopy", 3);
             int oldDeviceId = 0;
@@ -991,8 +1005,6 @@ namespace gpu{
             }
 
 
-
-            std::vector<rmm::device_uvector<char>> vec_d_targetTempBuffers;
             std::vector<unsigned int*> vec_d_sequenceData2Bit_target;
             std::vector<int*> vec_d_sequenceLengths_target;
             std::vector<char*> vec_cubtemp_target;
@@ -1046,9 +1058,9 @@ namespace gpu{
                     allocations,
                     allocation_sizes
                 ));
-                vec_d_targetTempBuffers.emplace_back(storage_bytes, queryData->streams[d].getStream());
+                resizeUninitialized(queryData->vec_d_targetTempBuffers[d], storage_bytes, queryData->streams[d].getStream());
                 CUDACHECK(cub::AliasTemporaries(
-                    vec_d_targetTempBuffers.back().data(),
+                    queryData->vec_d_targetTempBuffers[d].data(),
                     storage_bytes,
                     allocations,
                     allocation_sizes
@@ -1139,7 +1151,7 @@ namespace gpu{
                     persistent_allocations,
                     persistent_allocation_sizes
                 ));
-                queryData->vec_d_singlegpuminhasherBuffers[d].resize(persistent_storage_bytes, queryData->streams[d].getStream());
+                resizeUninitialized(queryData->vec_d_singlegpuminhasherBuffers[d], persistent_storage_bytes, queryData->streams[d].getStream());
                 CUDACHECK(cub::AliasTemporaries(
                     queryData->vec_d_singlegpuminhasherBuffers[d].data(),
                     persistent_storage_bytes,
@@ -1222,44 +1234,26 @@ namespace gpu{
             for(int d = 0; d < numDataGpus; d++){
                 CUDACHECK(cudaSetDevice(deviceIds[d]));
                 const int numHashFunctions = sgpuMinhashers[d]->getNumberOfMaps();
-                rmm::device_uvector<int> d_numValuesPerSequence_target(totalNumSequencesForAllGpus, queryData->streams[d].getStream());
+
+                resizeUninitialized(queryData->vec_d_numValuesPerSequence[d], totalNumSequencesForAllGpus, queryData->streams[d].getStream());
 
                 if(totalNumSequencesForAllGpus > 0){
 
                     sgpuminhasherkernels::accumulateNumValuesPerSequenceKernel<<<SDIV(totalNumSequencesForAllGpus, 256), 256, 0, queryData->streams[d]>>>(
                         vec_d_numValuesPerSequencePerHash[d],
                         vec_d_numValuesPerSequencePerHashExclPSVert[d],
-                        d_numValuesPerSequence_target.data(),
+                        queryData->vec_d_numValuesPerSequence[d].data(),
                         totalNumSequencesForAllGpus,
                         numHashFunctions
                     );
                     CUDACHECKASYNC;
                 }
-
-                queryData->vec_d_numValuesPerSequence.push_back(std::move(d_numValuesPerSequence_target));
             }
 
-            // for(int d = 0; d < numDataGpus; d++){
-            //     CUDACHECK(cudaSetDevice(deviceIds[d]));
-            //     const int numHashFunctions = sgpuMinhashers[d]->getNumberOfMaps();
-            //     CubCallWrapper(rmm::mr::get_current_device_resource()).cubReduceSum(
-            //         queryData->vec_d_numValuesPerSequence[d].data(),
-            //         queryData->pinned_totalNumValuesPerTarget + d, //write to pinned memory
-            //         totalNumSequencesForAllGpus, 
-            //         queryData->streams[d]
-            //     );
-
-            //     //CUDACHECK(cudaEventRecord(queryData->events[d], queryData->streams[d]));                
-            // }
 
             for(int d = 0; d < numDataGpus; d++){
                 CUDACHECK(cudaSetDevice(deviceIds[d]));
-                // CubCallWrapper(rmm::mr::get_current_device_resource()).cubReduceSum(
-                //     queryData->vec_d_numValuesPerSequence[d].data(),
-                //     queryData->pinned_totalNumValuesPerTarget + d, //write to pinned memory
-                //     totalNumSequencesForAllGpus, 
-                //     queryData->streams[d]
-                // );
+
                 cub::DeviceReduce::Sum(
                     vec_cubtemp_target[d],
                     vec_cubtempbytes_target[d],
@@ -1274,7 +1268,6 @@ namespace gpu{
 
 
             //send num values per sequence back to caller gpus
-            std::vector<rmm::device_uvector<char>> vec_d_callerTempBuffers;
             std::vector<int*> vec_d_numValuesPerSequencePerDataGpu(numCallerGpus, nullptr);
             std::vector<void*> vec_d_cubReduceTemp(numCallerGpus, nullptr);
             std::vector<size_t> vec_d_cubReduceTempBytes(numCallerGpus, 0);
@@ -1302,9 +1295,9 @@ namespace gpu{
                         allocations,
                         allocation_sizes
                     ));
-                    vec_d_callerTempBuffers.emplace_back(storage_bytes, callerStreams[g], mrs[g]);
+                    resizeUninitialized(queryData->vec_d_callerTempBuffers[g], storage_bytes, callerStreams[g]);
                     CUDACHECK(cub::AliasTemporaries(
-                        vec_d_callerTempBuffers.back().data(),
+                        queryData->vec_d_callerTempBuffers[g].data(),
                         storage_bytes,
                         allocations,
                         allocation_sizes
@@ -1369,12 +1362,7 @@ namespace gpu{
                 // );
             }
 
-            for(int d = 0; d < numDataGpus; d++){
-                CUDACHECK(cudaSetDevice(deviceIds[d]));
-                vec_d_targetTempBuffers[d].release();
-            }
-
-             //wait for transfers and dealloc target data
+            //wait for transfers
             for(int d = 0; d < numDataGpus; d++){
                 CUDACHECK(cudaSetDevice(deviceIds[d]));
                 CUDACHECK(cudaStreamSynchronize(queryData->streams[d]));
@@ -1429,8 +1417,6 @@ namespace gpu{
                 CUDACHECK(cudaStreamSynchronize(callerStreams[g]));
 
                 *vec_totalNumValues[g] = queryData->pinned_totalNumValuesPerCaller[g];
-
-                vec_d_callerTempBuffers[g].release();
             }
 
             // {
@@ -1456,7 +1442,7 @@ namespace gpu{
             const std::vector<int*>& vec_totalNumValues,
             const std::vector<cudaStream_t>& callerStreams,
             const std::vector<int>& callerDeviceIds,
-            const std::vector<rmm::mr::device_memory_resource*>& mrs
+            const std::vector<rmm::mr::device_memory_resource*>& /*mrs*/
         ) const {
             nvtx::ScopedRange sr_("multi_determineNumValues_directPeerAccess", 3);
             int oldDeviceId = 0;
@@ -1486,7 +1472,6 @@ namespace gpu{
 
 
 
-            std::vector<rmm::device_uvector<char>> vec_d_targetTempBuffers;
             std::vector<unsigned int*> vec_d_sequenceData2Bit_target;
             std::vector<int*> vec_d_sequenceLengths_target;
             std::vector<char*> vec_cubtemp_target;
@@ -1539,9 +1524,10 @@ namespace gpu{
                     allocations,
                     allocation_sizes
                 ));
-                vec_d_targetTempBuffers.emplace_back(storage_bytes, queryData->streams[d].getStream());
+                resizeUninitialized(queryData->vec_d_targetTempBuffers[d], storage_bytes, queryData->streams[d].getStream());
+
                 CUDACHECK(cub::AliasTemporaries(
-                    vec_d_targetTempBuffers.back().data(),
+                    queryData->vec_d_targetTempBuffers[d].data(),
                     storage_bytes,
                     allocations,
                     allocation_sizes
@@ -1601,7 +1587,6 @@ namespace gpu{
                 }
             }
 
-            std::vector<rmm::device_uvector<char>> vec_d_callerTempBuffers;
             std::vector<int*> vec_d_numValuesPerSequencePerDataGpu(numCallerGpus, nullptr);
             std::vector<void*> vec_d_cubReduceTemp(numCallerGpus, nullptr);
             std::vector<size_t> vec_d_cubReduceTempBytes(numCallerGpus, 0);
@@ -1629,9 +1614,9 @@ namespace gpu{
                         allocations,
                         allocation_sizes
                     ));
-                    vec_d_callerTempBuffers.emplace_back(storage_bytes, callerStreams[g], mrs[g]);
+                    resizeUninitialized(queryData->vec_d_callerTempBuffers[g], storage_bytes, callerStreams[g]);
                     CUDACHECK(cub::AliasTemporaries(
-                        vec_d_callerTempBuffers.back().data(),
+                        queryData->vec_d_callerTempBuffers[g].data(),
                         storage_bytes,
                         allocations,
                         allocation_sizes
@@ -1675,7 +1660,7 @@ namespace gpu{
                     persistent_allocations,
                     persistent_allocation_sizes
                 ));
-                queryData->vec_d_singlegpuminhasherBuffers[d].resize(persistent_storage_bytes, queryData->streams[d].getStream());
+                resizeUninitialized(queryData->vec_d_singlegpuminhasherBuffers[d], persistent_storage_bytes, queryData->streams[d].getStream());
                 CUDACHECK(cub::AliasTemporaries(
                     queryData->vec_d_singlegpuminhasherBuffers[d].data(),
                     persistent_storage_bytes,
@@ -1758,21 +1743,19 @@ namespace gpu{
             for(int d = 0; d < numDataGpus; d++){
                 CUDACHECK(cudaSetDevice(deviceIds[d]));
                 const int numHashFunctions = sgpuMinhashers[d]->getNumberOfMaps();
-                rmm::device_uvector<int> d_numValuesPerSequence_target(totalNumSequencesForAllGpus, queryData->streams[d].getStream());
+                resizeUninitialized(queryData->vec_d_numValuesPerSequence[d], totalNumSequencesForAllGpus, queryData->streams[d].getStream());
 
                 if(totalNumSequencesForAllGpus > 0){
 
                     sgpuminhasherkernels::accumulateNumValuesPerSequenceKernel<<<SDIV(totalNumSequencesForAllGpus, 256), 256, 0, queryData->streams[d]>>>(
                         vec_d_numValuesPerSequencePerHash[d],
                         vec_d_numValuesPerSequencePerHashExclPSVert[d],
-                        d_numValuesPerSequence_target.data(),
+                        queryData->vec_d_numValuesPerSequence[d].data(),
                         totalNumSequencesForAllGpus,
                         numHashFunctions
                     );
                     CUDACHECKASYNC;
                 }
-
-                queryData->vec_d_numValuesPerSequence.push_back(std::move(d_numValuesPerSequence_target));
             }
 
             for(int d = 0; d < numDataGpus; d++){
@@ -1842,12 +1825,7 @@ namespace gpu{
                 // );
             }
 
-            for(int d = 0; d < numDataGpus; d++){
-                CUDACHECK(cudaSetDevice(deviceIds[d]));
-                vec_d_targetTempBuffers[d].release();
-            }
-
-            //wait for transfers and dealloc target data
+            //wait for transfers
             for(int d = 0; d < numDataGpus; d++){
                 CUDACHECK(cudaSetDevice(deviceIds[d]));
                 CUDACHECK(cudaStreamSynchronize(queryData->streams[d]));
@@ -1895,8 +1873,6 @@ namespace gpu{
                 CUDACHECK(cudaStreamSynchronize(callerStreams[g]));
 
                 *vec_totalNumValues[g] = queryData->pinned_totalNumValuesPerCaller[g];
-
-                vec_d_callerTempBuffers[g].release();
             }
 
 
@@ -2104,7 +2080,7 @@ namespace gpu{
             const std::vector<int*> vec_d_offsets, //numSequences + 1
             const std::vector<cudaStream_t>& streams,
             const std::vector<int> callerDeviceIds,
-            const std::vector<rmm::mr::device_memory_resource*>& mrs
+            const std::vector<rmm::mr::device_memory_resource*>& /*mrs*/
         ) const {
             nvtx::ScopedRange sr_("multi_retrieveValues_peerCopy", 3);
 
@@ -2151,7 +2127,6 @@ namespace gpu{
             //     CUDACHECK(cudaEventRecord(queryData->events[d], queryData->streams[d]));
             // }
 
-            std::vector<rmm::device_uvector<char>> vec_d_callerTempBuffers;
             std::vector<read_number*> vec_d_allValues(numCallerGpus, nullptr);
             std::vector<int*> vec_d_numValuesPerSequencePerGpu(numCallerGpus, nullptr);
             std::vector<int*> vec_d_offsetsPerSequencePerGpu(numCallerGpus, nullptr);
@@ -2163,7 +2138,10 @@ namespace gpu{
                 std::size_t allocation_sizes[4]{};
                 std::size_t storage_bytes = 0;
 
-                allocation_sizes[0] = sizeof(read_number) * (*vec_totalNumValues[g]);
+                constexpr int roundUpTo = 10000;
+                const int roundedTotalNumValues = SDIV((*vec_totalNumValues[g]), roundUpTo) * roundUpTo;
+
+                allocation_sizes[0] = sizeof(read_number) * roundedTotalNumValues;
                 allocation_sizes[1] = sizeof(int) * vec_numSequences[g] * numDataGpus;
                 allocation_sizes[2] = sizeof(int) * (vec_numSequences[g]+1) * numDataGpus;
 
@@ -2183,9 +2161,9 @@ namespace gpu{
                     allocation_sizes
                 ));
 
-                vec_d_callerTempBuffers.emplace_back(storage_bytes, streams[g], mrs[g]);
+                resizeUninitialized(queryData->vec_d_callerTempBuffers[g], storage_bytes, streams[g]);
                 CUDACHECK(cub::AliasTemporaries(
-                    vec_d_callerTempBuffers.back().data(),
+                    queryData->vec_d_callerTempBuffers[g].data(),
                     storage_bytes,
                     allocations,
                     allocation_sizes
@@ -2214,7 +2192,6 @@ namespace gpu{
             std::vector<int*> vec_d_numValuesPerSequencePerHash(numDataGpus, nullptr);
             std::vector<int*> vec_d_numValuesPerSequencePerHashExclPSVert(numDataGpus, nullptr);
 
-            std::vector<rmm::device_uvector<char>> vec_d_targetTempBuffers;
             std::vector<read_number*> vec_d_values_target(numDataGpus, nullptr);
             std::vector<int*> vec_d_offsets_target(numDataGpus, nullptr);
             std::vector<int*> vec_d_queryOffsetsPerSequencePerHash(numDataGpus, nullptr);
@@ -2251,8 +2228,10 @@ namespace gpu{
                 std::size_t storage_bytes = 0;
 
                 const int totalNumValuesTarget = queryData->pinned_totalNumValuesPerTarget[d];
+                constexpr int roundUpTo = 10000;
+                const int roundedTotalNumValuesTarget = SDIV(totalNumValuesTarget, roundUpTo) * roundUpTo;
 
-                allocation_sizes[0] = sizeof(read_number) * totalNumValuesTarget; // d_values_target
+                allocation_sizes[0] = sizeof(read_number) * roundedTotalNumValuesTarget; // d_values_target
                 allocation_sizes[1] = sizeof(int) * (totalNumSequencesForAllGpus + 1); // d_offsets_target
                 allocation_sizes[2] = sizeof(int) * totalNumSequencesForAllGpus * numHashFunctions; // d_queryOffsetsPerSequencePerHash
                 CUDACHECK(cub::DeviceScan::InclusiveSum(
@@ -2270,9 +2249,9 @@ namespace gpu{
                     allocations,
                     allocation_sizes
                 ));
-                vec_d_targetTempBuffers.emplace_back(storage_bytes, queryData->streams[d].getStream(), targetmr);
+                resizeUninitialized(queryData->vec_d_targetTempBuffers[d], storage_bytes, queryData->streams[d].getStream());
                 CUDACHECK(cub::AliasTemporaries(
-                    vec_d_targetTempBuffers.back().data(),
+                    queryData->vec_d_targetTempBuffers[d].data(),
                     storage_bytes,
                     allocations,
                     allocation_sizes
@@ -2293,13 +2272,6 @@ namespace gpu{
                     totalNumSequencesForAllGpus,
                     queryData->streams[d]
                 ));
-
-                // CubCallWrapper(targetmr).cubInclusiveSum(
-                //     queryData->vec_d_numValuesPerSequence[d].data(),
-                //     vec_d_offsets_target[d] + 1,
-                //     totalNumSequencesForAllGpus,
-                //     queryData->streams[d]
-                // );
             }
 
             for(int d = 0; d < numDataGpus; d++){
@@ -2558,17 +2530,10 @@ namespace gpu{
                 CUDACHECK(cudaSetDevice(callerDeviceIds[g]));
                 //wait until all work is done on caller gpu g . then release memory
                 CUDACHECK(cudaStreamSynchronize(streams[g]));
-                vec_d_callerTempBuffers[g].release();
             }
 
-            //work on all callers is done. all transfers from data gpus are complete. release memory on data gpus
-            for(int d = 0; d < numDataGpus; d++){
-                CUDACHECK(cudaSetDevice(deviceIds[d]));
-                queryData->vec_d_numValuesPerSequence[d].release();
-                vec_d_targetTempBuffers[d].release();
-            }
+            //work on all callers is done. all transfers from data gpus are complete
 
-            queryData->vec_d_numValuesPerSequence.clear();
 
             // {
             //     int N = 0;
@@ -2592,7 +2557,7 @@ namespace gpu{
             const std::vector<int*> vec_d_offsets, //numSequences + 1
             const std::vector<cudaStream_t>& streams,
             const std::vector<int> callerDeviceIds,
-            const std::vector<rmm::mr::device_memory_resource*>& mrs
+            const std::vector<rmm::mr::device_memory_resource*>& /*mrs*/
         ) const {
             nvtx::ScopedRange sr_("multi_retrieveValues_directPeerAccess", 3);
 
@@ -2624,22 +2589,7 @@ namespace gpu{
 
             int* h_numValuesPerTargetPerCaller = queryData->pinned_numValuesPerTargetPerCaller;
 
-            // for(int d = 0; d < numDataGpus; d++){
-            //     CUDACHECK(cudaSetDevice(deviceIds[d]));
-            //     auto* targetmr = rmm::mr::get_current_device_resource();
 
-            //     CubCallWrapper(targetmr).cubSegmentedReduceSum(
-            //         queryData->vec_d_numValuesPerSequence[d].data(),
-            //         h_numValuesPerTargetPerCaller + d * numCallerGpus, //write directly to pinned memory
-            //         numCallerGpus,
-            //         h_numSequencesPerCallerPS, //read from pinned memory
-            //         h_numSequencesPerCallerPS + 1,
-            //         queryData->streams[d]
-            //     );
-            //     CUDACHECK(cudaEventRecord(queryData->events[d], queryData->streams[d]));
-            // }
-
-            std::vector<rmm::device_uvector<char>> vec_d_callerTempBuffers;
             std::vector<read_number*> vec_d_allValues(numCallerGpus, nullptr);
             std::vector<int*> vec_d_numValuesPerSequencePerGpu(numCallerGpus, nullptr);
             std::vector<int*> vec_d_offsetsPerSequencePerGpu(numCallerGpus, nullptr);
@@ -2651,7 +2601,10 @@ namespace gpu{
                 std::size_t allocation_sizes[4]{};
                 std::size_t storage_bytes = 0;
 
-                allocation_sizes[0] = sizeof(read_number) * (*vec_totalNumValues[g]);
+                constexpr int roundUpTo = 10000;
+                const int roundedTotalNumValues = SDIV((*vec_totalNumValues[g]), roundUpTo) * roundUpTo;
+
+                allocation_sizes[0] = sizeof(read_number) * roundedTotalNumValues;
                 allocation_sizes[1] = sizeof(int) * vec_numSequences[g] * numDataGpus;
                 allocation_sizes[2] = sizeof(int) * (vec_numSequences[g]+1) * numDataGpus;
 
@@ -2671,9 +2624,9 @@ namespace gpu{
                     allocation_sizes
                 ));
 
-                vec_d_callerTempBuffers.emplace_back(storage_bytes, streams[g], mrs[g]);
+                resizeUninitialized(queryData->vec_d_callerTempBuffers[g], storage_bytes, streams[g]);
                 CUDACHECK(cub::AliasTemporaries(
-                    vec_d_callerTempBuffers.back().data(),
+                    queryData->vec_d_callerTempBuffers[g].data(),
                     storage_bytes,
                     allocations,
                     allocation_sizes
@@ -2702,7 +2655,6 @@ namespace gpu{
             std::vector<int*> vec_d_numValuesPerSequencePerHash(numDataGpus, nullptr);
             std::vector<int*> vec_d_numValuesPerSequencePerHashExclPSVert(numDataGpus, nullptr);
 
-            std::vector<rmm::device_uvector<char>> vec_d_targetTempBuffers;
             std::vector<read_number*> vec_d_values_target(numDataGpus, nullptr);
             std::vector<int*> vec_d_offsets_target(numDataGpus, nullptr);
             std::vector<int*> vec_d_queryOffsetsPerSequencePerHash(numDataGpus, nullptr);
@@ -2739,8 +2691,10 @@ namespace gpu{
                 std::size_t storage_bytes = 0;
 
                 const int totalNumValuesTarget = queryData->pinned_totalNumValuesPerTarget[d];
+                constexpr int roundUpTo = 10000;
+                const int roundedTotalNumValuesTarget = SDIV(totalNumValuesTarget, roundUpTo) * roundUpTo;
 
-                allocation_sizes[0] = sizeof(read_number) * totalNumValuesTarget; // d_values_target
+                allocation_sizes[0] = sizeof(read_number) * roundedTotalNumValuesTarget; // d_values_target
                 allocation_sizes[1] = sizeof(int) * (totalNumSequencesForAllGpus + 1); // d_offsets_target
                 allocation_sizes[2] = sizeof(int) * totalNumSequencesForAllGpus * numHashFunctions; // d_queryOffsetsPerSequencePerHash
                 CUDACHECK(cub::DeviceScan::InclusiveSum(
@@ -2758,9 +2712,9 @@ namespace gpu{
                     allocations,
                     allocation_sizes
                 ));
-                vec_d_targetTempBuffers.emplace_back(storage_bytes, queryData->streams[d].getStream(), targetmr);
+                resizeUninitialized(queryData->vec_d_targetTempBuffers[d], storage_bytes, queryData->streams[d].getStream());
                 CUDACHECK(cub::AliasTemporaries(
-                    vec_d_targetTempBuffers.back().data(),
+                    queryData->vec_d_targetTempBuffers[d].data(),
                     storage_bytes,
                     allocations,
                     allocation_sizes
@@ -3027,20 +2981,9 @@ namespace gpu{
 
             for(int g = 0; g < numCallerGpus; g++){
                 CUDACHECK(cudaSetDevice(callerDeviceIds[g]));
-                //wait until all work is done on caller gpu g . then release memory
+                //wait until all work is done on caller gpu g .
                 CUDACHECK(cudaStreamSynchronize(streams[g]));
-                vec_d_callerTempBuffers[g].release();
             }
-
-            //work on all callers is done. all transfers from data gpus are complete. release memory on data gpus
-            for(int d = 0; d < numDataGpus; d++){
-                CUDACHECK(cudaSetDevice(deviceIds[d]));
-                queryData->vec_d_numValuesPerSequence[d].release();
-                vec_d_targetTempBuffers[d].release();
-            }
-
-            queryData->vec_d_numValuesPerSequence.clear();
-
 
             CUDACHECK(cudaSetDevice(oldDeviceId));
         }
@@ -3296,6 +3239,8 @@ private:
                 ptr->dataDeviceIds.push_back(sgpuMinhashers[i]->getDeviceId());
                 ptr->singlegpuMinhasherHandles.emplace_back(std::make_unique<MinhasherHandle>(sgpuMinhashers[i]->makeMinhasherHandle()));
                 ptr->vec_d_singlegpuminhasherBuffers.emplace_back(0, cudaStreamPerThread);
+                ptr->vec_d_numValuesPerSequence.emplace_back(0, cudaStreamPerThread);
+                ptr->vec_d_targetTempBuffers.emplace_back(0, cudaStreamPerThread);
                 CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
             }
 
