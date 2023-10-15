@@ -32,7 +32,7 @@ CFLAGS_CPU_DEBUG = $(CFLAGS_DEBUG_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SY
 NVCCFLAGS = -x cu -lineinfo --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) $(GPU_CUDA_LIB_INCLUDES)
 NVCCFLAGS_DEBUG = -x cu --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) $(GPU_CUDA_LIB_INCLUDES)
 
-LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt -lz -ldl
+LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt -lz -ldl -lcuda
 LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -lz -ldl
 
 #sources for correct_cpu
