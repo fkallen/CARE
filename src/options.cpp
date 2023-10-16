@@ -216,12 +216,9 @@ namespace care{
             result.warpcore = pr["warpcore"].as<int>();
         }
 
-        if(pr.count("pureGpu")){
-            result.pureGpu = pr["pureGpu"].as<bool>();
-        }
-        if(pr.count("directPeerAccess")){
-            result.directPeerAccess = pr["directPeerAccess"].as<bool>();
-        }
+        // if(pr.count("directPeerAccess")){
+        //     result.directPeerAccess = pr["directPeerAccess"].as<bool>();
+        // }
 
         if(pr.count("gpuCorrectorThreadConfig")){
             std::string configString = pr["gpuCorrectorThreadConfig"].as<std::string>();
@@ -667,8 +664,7 @@ namespace care{
             stream << "GPU corrector thread config: " << gpuCorrectorThreadConfig.numCorrectors << ":" << gpuCorrectorThreadConfig.numHashers << "\n";
         }
         stream << "Maximum gpu memory for reads (per gpu): " << gpuMemoryLimitReads << "\n";   
-        stream << "pureGpu: " << pureGpu << "\n";
-        stream << "directPeerAccess: " << directPeerAccess << "\n";
+        //stream << "directPeerAccess: " << directPeerAccess << "\n";
     }
 
 
@@ -843,10 +839,9 @@ namespace care{
                 " Example: 2:8 . ", cxxopts::value<std::string>())
             ("gpuMemoryLimitReads", "Per-gpu memory limit in bytes to store the reads. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: All free memory.",
             cxxopts::value<std::string>())
-            ("pureGpu", "improved version",
-            cxxopts::value<bool>()->implicit_value("true"))
-            ("directPeerAccess", "Access peer memory directly instead of transfering it first",
-            cxxopts::value<bool>()->implicit_value("true"));
+            // ("directPeerAccess", "Access peer memory directly instead of transfering it first",
+            // cxxopts::value<bool>()->implicit_value("true"))
+            ;
 
             
             

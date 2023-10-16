@@ -48,8 +48,7 @@ namespace care
     //Options which can be parsed from command-line arguments
 
     struct ProgramOptions{
-        bool pureGpu = false;
-        bool directPeerAccess = false;
+        bool directPeerAccess = true;
         int min_overlap = 30;
         float maxErrorRate = 0.2f;
         float min_overlap_ratio = 0.30f;
