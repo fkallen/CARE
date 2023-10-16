@@ -4,7 +4,6 @@
 #include <array>
 #include <random>
 #include <forest.hpp>
-#include <logreg.hpp>
 #include <msa.hpp>
 #include <cpucorrectortask.hpp>
 #include <options.hpp>

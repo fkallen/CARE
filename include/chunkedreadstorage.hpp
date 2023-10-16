@@ -3,7 +3,6 @@
 
 #include <util.hpp>
 #include <config.hpp>
-#include <threadpool.hpp>
 #include <readlibraryio.hpp>
 #include <sequencehelpers.hpp>
 #include <concurrencyhelpers.hpp>

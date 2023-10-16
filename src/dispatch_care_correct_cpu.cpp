@@ -2,7 +2,6 @@
 #include <hpc_helpers.cuh>
 #include <config.hpp>
 #include <options.hpp>
-#include <singlehashminhasher.hpp>
 #include <correct_cpu.hpp>
 
 #include <minhasherlimit.hpp>

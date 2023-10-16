@@ -1,9 +1,8 @@
-#ifndef CARE_READSTORAGECONSTRUCTION2_HPP 
-#define CARE_READSTORAGECONSTRUCTION2_HPP
+#ifndef CARE_CHUNKED_READSTORAGE_CONSTRUCTION_HPP 
+#define CARE_CHUNKED_READSTORAGE_CONSTRUCTION_HPP
 
 #include <util.hpp>
 #include <config.hpp>
-#include <threadpool.hpp>
 #include <readlibraryio.hpp>
 #include <sequencehelpers.hpp>
 #include <concurrencyhelpers.hpp>
