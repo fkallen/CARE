@@ -49,53 +49,50 @@ namespace care
 
     struct ProgramOptions{
         bool directPeerAccess = true;
-        int min_overlap = 30;
-        float maxErrorRate = 0.2f;
-        float min_overlap_ratio = 0.30f;
         bool excludeAmbiguousReads = false;
         bool correctCandidates = false;
         bool useQualityScores = false;
         bool autodetectKmerlength = false;
         bool mustUseAllHashfunctions = false;
-        bool singlehash = false;
         bool outputCorrectionQualityLabels = false;
         bool gzoutput = false;
-        float estimatedCoverage = 1.0f;
-        float estimatedErrorrate = 0.06f; //this is not the error rate of the dataset
-        float m_coverage = 0.6f;
+        bool showProgress = false;
+        bool useGpuTables = 0;
+        bool replicateGpuReadData = false;
+        bool replicateGpuHashtables = false;
+        int min_overlap = 30;
         int batchsize = 1000;
         int new_columns_to_correct = 15;
         int kmerlength = 20;
         int numHashFunctions = 48;
-        CorrectionType correctionType = CorrectionType::Classic;
-        CorrectionType correctionTypeCands = CorrectionType::Classic;
+        int threads = 1;
+        int qualityScoreBits = 8;
+        float hashtableLoadfactor = 0.8f;
+        float maxErrorRate = 0.2f;
+        float min_overlap_ratio = 0.30f;
+        float estimatedCoverage = 1.0f;
+        float estimatedErrorrate = 0.06f; //this is not the error rate of the dataset
+        float m_coverage = 0.6f;
         float thresholdAnchor = .5f; // threshold for anchor classifier
         float thresholdCands = .5f;  // threshold for cands classifier
         float sampleRateAnchor = 1.f;
         float sampleRateCands = 0.01f;
         float pairedFilterThreshold = 0.06f;
-        bool showProgress = false;
-        bool canUseGpu = false;
-        bool replicateGpuReadData = false;
-        bool replicateGpuHashtables = false;
+        CorrectionType correctionType = CorrectionType::Classic;
+        CorrectionType correctionTypeCands = CorrectionType::Classic;
         GpuDataLayout gpuReadDataLayout = GpuDataLayout::EvenShare;
         GpuDataLayout gpuHashtableLayout = GpuDataLayout::EvenShare;
+        SequencePairType pairType = SequencePairType::SingleEnd;
 
-        GpuCorrectorThreadConfig gpuCorrectorThreadConfig;
 
-        int warpcore = 0;
-        int threads = 1;
+        std::uint32_t maxForestTreesAnchor = std::numeric_limits<std::uint32_t>::max();
+        std::uint32_t maxForestTreesCands = std::numeric_limits<std::uint32_t>::max();
         std::size_t fixedNumberOfReads = 0;
-        std::vector<int> deviceIds;
-        int qualityScoreBits = 8;
-        float hashtableLoadfactor = 0.8f;
         std::size_t memoryForHashtables = 0;
         std::size_t memoryTotalLimit = 0;
         std::size_t gpuMemoryLimitReads = std::numeric_limits<std::size_t>::max();
-        SequencePairType pairType = SequencePairType::SingleEnd;
-        uint32_t maxForestTreesAnchor = std::numeric_limits<uint32_t>::max();
-        uint32_t maxForestTreesCands = std::numeric_limits<uint32_t>::max();
         std::uint64_t nReads = 0;
+        GpuCorrectorThreadConfig gpuCorrectorThreadConfig;
         std::string outputdirectory = "";
         std::string save_binary_reads_to = "";
         std::string load_binary_reads_from = "";
@@ -106,6 +103,7 @@ namespace care
         std::string mlForestfileCands = "";
         std::string mlForestfilePrintAnchor = "anchorfeatures.txt";
         std::string mlForestfilePrintCands = "candidatefeatures.txt";
+        std::vector<int> deviceIds;
         std::vector<std::string> inputfiles;
         std::vector<std::string> outputfilenames;
 

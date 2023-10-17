@@ -114,10 +114,6 @@ namespace care{
             result.mustUseAllHashfunctions = pr["enforceHashmapCount"].as<bool>();
         }
 
-        if(pr.count("singlehash")){
-            result.singlehash = pr["singlehash"].as<bool>();
-        }
-
         if(pr.count("coverage")){
             result.estimatedCoverage = pr["coverage"].as<float>();
         }
@@ -206,14 +202,8 @@ namespace care{
             result.showProgress = pr["showProgress"].as<bool>();
         }
 
-        if(pr.count("gpu")){
-            result.deviceIds = pr["gpu"].as<std::vector<int>>();
-        }
-
-        result.canUseGpu = result.deviceIds.size() > 0;
-
-        if(pr.count("warpcore")){
-            result.warpcore = pr["warpcore"].as<int>();
+        if(pr.count("useGpuTables")){
+            result.useGpuTables = pr["useGpuTables"].as<bool>();
         }
 
         // if(pr.count("directPeerAccess")){
@@ -588,15 +578,8 @@ namespace care{
         //nothing
     }
 
-    void ProgramOptions::printMandatoryOptionsCorrectGpu(std::ostream& stream) const{
-        stream << "Can use GPU(s): " << canUseGpu << "\n";
-        if(canUseGpu){
-            stream << "GPU device ids: [";
-            for(int id : deviceIds){
-                stream << " " << id;
-            }
-            stream << " ]\n";
-        }
+    void ProgramOptions::printMandatoryOptionsCorrectGpu(std::ostream&) const{
+        //nothing
     }
 
     void ProgramOptions::printAdditionalOptions(std::ostream& stream) const{
@@ -628,7 +611,6 @@ namespace care{
         stream << "Hashtable load factor: " << hashtableLoadfactor << "\n";
         stream << "Fixed number of reads: " << fixedNumberOfReads << "\n";
         stream << "GZ compressed output: " << gzoutput << "\n";
-        //stream << "singlehash: " << singlehash << "\n";
         stream << "Correct candidate reads: " << correctCandidates << "\n";
         stream << "Output correction quality labels: " << outputCorrectionQualityLabels << "\n";
 	    stream << "Max shift for candidate correction: " << new_columns_to_correct << "\n";
@@ -653,7 +635,7 @@ namespace care{
 
     void ProgramOptions::printAdditionalOptionsCorrectGpu(std::ostream& stream) const{
         stream << "Batch size: " << batchsize << "\n";
-        stream << "Warpcore: " << warpcore << "\n";
+        stream << "Use GPU hashtables: " << useGpuTables << "\n";
 	    stream << "Replicate GPU reads: " << replicateGpuReadData << "\n";
         stream << "Replicate GPU hashtables " << replicateGpuHashtables << "\n";
         stream << "GPU read layout " << to_string(gpuReadDataLayout) << "\n";
@@ -716,9 +698,8 @@ namespace care{
         //nothing
     }
 
-    void addMandatoryOptionsCorrectGpu(cxxopts::Options& commandLineOptions){
-        commandLineOptions.add_options("Mandatory")
-		    ("g,gpu", "Comma-separated list of GPU device ids to be used. (Example: --gpu 0,1 to use GPU 0 and GPU 1)", cxxopts::value<std::vector<int>>());
+    void addMandatoryOptionsCorrectGpu(cxxopts::Options&){
+        //nothing
     }
 
 
@@ -779,7 +760,6 @@ namespace care{
             ("hashloadfactor", "Load factor of hashtables. 0.0 < hashloadfactor < 1.0. Smaller values can improve the runtime at the expense of greater memory usage."
                 "Default: " + std::to_string(ProgramOptions{}.hashtableLoadfactor), cxxopts::value<float>())
             ("fixedNumberOfReads", "Process only the first n reads. Default: " + tostring(ProgramOptions{}.fixedNumberOfReads), cxxopts::value<std::size_t>())
-            ("singlehash", "Use 1 hashtables with h smallest unique hashes. Default: " + tostring(ProgramOptions{}.singlehash), cxxopts::value<bool>())
             ("gzoutput", "gz compressed output (very slow). Default: " + tostring(ProgramOptions{}.gzoutput), cxxopts::value<bool>())
             ("correctionQualityLabels", "If set, correction quality label will be appended to output read headers. "
                 "Default: " + tostring(ProgramOptions{}.outputCorrectionQualityLabels),
@@ -825,12 +805,11 @@ namespace care{
             ("batchsize", "Number of reads to correct in a single batch. Must be greater than 0. "
 			    "Default: " + tostring(ProgramOptions{}.batchsize),
                 cxxopts::value<int>())		
-            ("warpcore", "Enable warpcore hash tables. 0: Disabled, 1: Enabled. "
-                "Default: " + tostring(ProgramOptions{}.warpcore),
-                cxxopts::value<int>())		
-            ("replicateGpuReadData", "If reads fit into the memory of a single GPU, allow its replication to other GPUs. This can improve the runtime when multiple GPUs are used."
+            ("useGpuTables", "Use GPU hashtables.",
+                cxxopts::value<bool>()->implicit_value("true"))		
+            ("replicateGpuReadData", "If gpuReadDataLayout == first fit, and reads fit into the memory of a single GPU, allow its replication to other GPUs. This can improve the runtime when multiple GPUs are used."
                 "Default: " + std::to_string(ProgramOptions{}.replicateGpuReadData), cxxopts::value<bool>())
-            ("replicateGpuHashtables", "Construct warpcore hashtables on a single GPU, then replicate them on each GPU"
+            ("replicateGpuHashtables", "Construct GPU hashtables on a single GPU, then replicate them on each GPU"
                 "Default: " + std::to_string(ProgramOptions{}.replicateGpuHashtables), cxxopts::value<bool>())
             ("gpuReadDataLayout", "GPU read layout. 0: first fit, 1: even share", cxxopts::value<int>())
             ("gpuHashtableLayout", "GPU hash table layout. 0: first fit, 1: even share", cxxopts::value<int>())

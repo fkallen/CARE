@@ -40,66 +40,7 @@
 namespace filesys = std::experimental::filesystem;
 
 namespace care{
-
-    namespace correction{
-
-        std::vector<int> getUsableDeviceIds(std::vector<int> deviceIds){
-            int nDevices;
-
-            CUDACHECK(cudaGetDeviceCount(&nDevices));
-
-            std::vector<int> invalidIds;
-
-            for(int id : deviceIds) {
-                if(id >= nDevices) {
-                    invalidIds.emplace_back(id);
-                    std::cout << "Found invalid device Id: " << id << std::endl;
-                }
-            }
-
-            if(invalidIds.size() > 0) {
-                std::cout << "Available GPUs on your machine:" << std::endl;
-                for(int j = 0; j < nDevices; j++) {
-                    cudaDeviceProp prop;
-                    CUDACHECK(cudaGetDeviceProperties(&prop, j));
-                    std::cout << "Id " << j << " : " << prop.name << std::endl;
-                }
-
-                for(int invalidid : invalidIds) {
-                    deviceIds.erase(std::find(deviceIds.begin(), deviceIds.end(), invalidid));
-                }
-            }
-
-            //check gpu restrictions of remaining gpus
-            invalidIds.clear();
-
-            for(int id : deviceIds){
-                cudaDeviceProp prop;
-                cudaGetDeviceProperties(&prop, id);
-
-                if(prop.major < 6){
-                    invalidIds.emplace_back(id);
-                    std::cerr << "Warning. Removing gpu id " << id << " because its not arch 6 or greater.\n";
-                }
-
-                if(prop.managedMemory != 1){
-                    invalidIds.emplace_back(id);
-                    std::cerr << "Warning. Removing gpu id " << id << " because it does not support managed memory. (may be required for hash table construction).\n";
-                }
-            }
-
-            if(invalidIds.size() > 0) {
-                for(int invalidid : invalidIds) {
-                    deviceIds.erase(std::find(deviceIds.begin(), deviceIds.end(), invalidid));
-                }
-            }
-
-            return deviceIds;
-        }
-
-    }
-
-    
+   
 
     template<class T>
     void printDataStructureMemoryUsage(const T& datastructure, const std::string& name){

@@ -1087,7 +1087,6 @@ namespace gpu{
             vec_gpuForestCandidate{std::move(vec_gpuForestCandidate_)},
             correctorthreadnumber(std::hash<std::thread::id>{}(std::this_thread::get_id()))
         {
-            std::cout << "MultiGpuErrorCorrector\n";
             const int numGpus = deviceIds.size();
 
 

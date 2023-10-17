@@ -378,7 +378,7 @@ public:
         }
 
         std::vector<std::future<void>> futures;
-
+        
         for(int i = 0; i < config.numHashers; i++){
             futures.emplace_back(
                 std::async(
@@ -662,8 +662,6 @@ SerializedObjectStorage correct_gpu_impl(
     const std::vector<GpuForest>& candidateForests
 ){
 
-    assert(programOptions.canUseGpu);
-    //assert(programOptions.max_candidates > 0);
     assert(programOptions.deviceIds.size() > 0);
 
     const auto& deviceIds = programOptions.deviceIds;
@@ -1011,7 +1009,10 @@ SerializedObjectStorage correct_gpu_impl(
             pipelineConfig.numCorrectors = numCorrectors;
             pipelineConfig.numHashers = numHashers;
 
-            std::cerr << "Use complex pipeline with " << numCorrectors << ":" << numHashers << "\n";
+            std::cerr << "\nWill use " << pipelineConfig.numHashers << " hasher(s), "
+                << pipelineConfig.numCorrectors << " corrector(s) "
+                << "\n";
+
             futures.emplace_back(std::async(
                 std::launch::async,
                 runComplexMultiGpuPipeline,
