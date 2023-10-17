@@ -1,4 +1,12 @@
-
+# CARE 2.3
+* Faster merge step during construction of output file
+* Use CCCL 2.2.0
+* Update program options for GPU version
+* GPUs are now specified via CUDA_VISIBLE_DEVICES environment variable
+* Massive refactoring to improve both single-GPU performance and greatly improve multi-GPU performance
+* Bugfixes:
+  * Fix potential race in gpu msa
+  * Fix memory consumption of gpu hash tables
 # CARE 2.2
 * CPU / GPU performance improvements
 * Add option to specify data layout for hash tables and reads when using multiple gpus

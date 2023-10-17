@@ -41,7 +41,7 @@ make install PREFIX=/my/custom/prefix
 
 
 
-# Run   
+# Run CARE CPU
 The simplest command which only includes mandatory options is
 
 ```
@@ -62,12 +62,21 @@ A more advanced usage could look like the following command. It enables progress
 ./care-cpu -i reads.fastq -d . -o correctedreads.fastq -c 30 --pairmode PE -p -q --qualityScoreBits 2 --excludeAmbiguous -m 22G -t 16 -k 20 -h 32 --candidateCorrection
 ```
 
-The equivalent execution of the GPU version using two GPUs would be:
+# Run CARE GPU
+CARE GPU attempts to use all visible devices in the system. The environment variable CUDA_VISIBLE_DEVICES can be used to control the visible devices. For multi-GPU execution, CARE requires that peer access is possible between all pairs of GPUs. It is further assumed that all GPUs are identical. For best performance, the GPUs should be fully connected via NVLink to avoid slow PCIe transfers.
+
+To execute CARE on GPUs 0 and 1:
 
 ```
-./care-gpu -i reads.fastq -d . -o correctedreads.fastq -c 30 --pairmode PE -p -q --qualityScoreBits 2 --excludeAmbiguous -m 22G -t 16 -k 20 -h 32 --candidateCorrection -g 0,1
+CUDA_VISIBLE_DEVICES=0,1 ./care-gpu --options...
 ```
-Note the additional mandatory parameter `-g` which accepts a comma-separated list of integers to indicate which GPUs can be used. The integers must be between 0 and N-1, where N is the number of available GPUs in the system.
+
+CARE GPU extends the program parameters with a set of gpu specific options.
+We used the following settings to process a dataset with 900M reads of length 100 using GPU hashtables on a multi-GPU server with 8 A100 GPUs.
+
+```
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 ./care-gpu ...fileOptions... ...forestOptions... -c 30 --pairmode PE --candidateCorrection --useQualityScores=true --qualityScoreBits 2 --useGpuTables --gpuCorrectorThreadConfig 4:0 --batchsize 65536 --gpuReadDataLayout 0 --replicateGpuReadData --gpuHashtableLayout 1 
+```
 
 
 # Specifying input files
@@ -109,6 +118,11 @@ The following list is a selection of usefull options.
                               is not a hard limit. Default: All free
                               memory.
 ```
+
+CARE GPU extends the list of options of CARE CPU. For example:
+`--batchsize` should be set to try to fully utilize the GPU. In our experiments on an A100 GPU, we observed good performance with a batchsize of 8192 * numGpus. 
+`--useGpuTables` opts in to GPU-sided hash tables which greatly improves the performance at the cost of greatly increased GPU memory usage.
+
 
 If an option allows multiple values to be specified, the option can be repeated with different values.
 As an alternative, multiple values can be separated by comma (,). Both ways can be used simultaneously.
