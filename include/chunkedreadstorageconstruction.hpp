@@ -23,6 +23,20 @@
 #include <map>
 #include <set>
 
+
+#ifdef __CUDACC__
+
+#include <gpu/sequenceconversionkernels.cuh>
+
+#include <rmm/mr/device/per_device_resource.hpp>
+#include <rmm/mr/device/cuda_async_memory_resource.hpp>
+#include <rmm/mr/device/pool_memory_resource.hpp>
+#include <rmm/mr/device/logging_resource_adaptor.hpp>
+#include <rmm/cuda_stream_pool.hpp>
+#include <gpu/rmm_utilities.cuh>
+
+#endif
+
 namespace care{
 
 std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
@@ -103,7 +117,7 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
             // std::vector<std::string> qualities{};
             std::vector<char> sequencesFlat{};
             std::vector<char> qualitiesFlat{};
-            std::vector<std::size_t> sequenceOffsets{};
+            std::vector<int> sequenceOffsets{};
         };
 
     
@@ -245,6 +259,8 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
         SimpleConcurrentQueue<EncodedBatch*> freeEncodedBatches;
         SimpleConcurrentQueue<EncodedBatch*> unprocessedEncodedBatches;
 
+        #ifndef __CUDACC__
+
         auto encoderThreadFunction = [&](){
             BatchFromFile* sbatch = unprocessedBatchFromFile.pop();
             EncodedBatch* encbatch = nullptr;
@@ -321,6 +337,144 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
             }
         };
 
+        #else
+
+        auto gpuEncoderThreadFunction = [&](){
+            //std::cout << "gpuEncoderThreadFunction\n";
+
+            BatchFromFile* sbatch = unprocessedBatchFromFile.pop();
+            EncodedBatch* encbatch = nullptr;
+
+            cudaStream_t stream = cudaStreamPerThread;
+
+            rmm::device_uvector<char> d_decodedSequences(0, stream);
+            rmm::device_uvector<unsigned int> d_encodedSequences(0, stream);
+            rmm::device_uvector<char> d_decodedQualities(0, stream);
+            rmm::device_uvector<unsigned int> d_encodedQualities(0, stream);
+            rmm::device_uvector<int> d_offsets(0, stream);
+
+            while(sbatch != nullptr){
+                encbatch = freeEncodedBatches.pop();
+                assert(encbatch != nullptr);
+
+                encbatch->validItems = sbatch->validItems;
+                encbatch->firstReadId = sbatch->firstReadId;
+                encbatch->sequenceLengths.resize(encbatch->validItems);
+                encbatch->ambiguousReadIds.clear();
+
+                int maxLength = 0;
+                int Ncount = 0;
+
+
+                for(int i = 0; i < sbatch->validItems; i++){
+                    const auto offsetBegin = sbatch->sequenceOffsets[i];
+                    const auto offsetEnd = sbatch->sequenceOffsets[i+1];
+                    const int length = offsetEnd - offsetBegin;
+                    maxLength = std::max(maxLength, length);
+                    encbatch->sequenceLengths[i] = length;
+                }
+
+                const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maxLength);
+                const std::size_t qualityPitchInInts = QualityCompressionHelper::getNumInts(maxLength, numQualityBits);
+
+                encbatch->encodedSequencePitchInInts = encodedSequencePitchInInts;
+                encbatch->encodedSequences.resize(encbatch->validItems * encodedSequencePitchInInts);
+                if(useQualityScores){
+                    encbatch->encodedQualityPitchInInts = qualityPitchInInts;
+                    encbatch->encodedQualities.resize(encbatch->validItems * qualityPitchInInts);
+                }
+
+                d_decodedSequences.resize(sbatch->sequenceOffsets[sbatch->validItems], stream);
+                d_encodedSequences.resize(encodedSequencePitchInInts * sbatch->validItems, stream);
+                d_offsets.resize(sbatch->validItems + 1, stream);
+                if(useQualityScores){
+                    d_decodedQualities.resize(sbatch->sequenceOffsets[sbatch->validItems], stream);
+                    d_encodedQualities.resize(qualityPitchInInts * sbatch->validItems, stream);
+                }
+
+                CUDACHECK(cudaMemcpyAsync(
+                    d_offsets.data(),
+                    sbatch->sequenceOffsets.data(),
+                    sizeof(int) * (sbatch->validItems + 1),
+                    H2D,
+                    stream
+                ));
+
+                for(int i = 0; i < sbatch->validItems; i++){
+                    const auto offsetBegin = sbatch->sequenceOffsets[i];
+                    const auto offsetEnd = sbatch->sequenceOffsets[i+1];
+
+                    char* const sequenceBegin = sbatch->sequencesFlat.data() + offsetBegin;
+                    char* const sequenceEnd = sbatch->sequencesFlat.data() + offsetEnd;
+                    const bool isAmbig = preprocessSequence(sequenceBegin, sequenceEnd, Ncount);
+                    if(isAmbig){
+                        const read_number readId = sbatch->firstReadId + i;
+                        encbatch->ambiguousReadIds.emplace_back(readId);
+                    }
+                }
+
+                CUDACHECK(cudaMemcpyAsync(
+                    d_decodedSequences.data(),
+                    sbatch->sequencesFlat.data(),
+                    sizeof(char) * sbatch->sequenceOffsets[sbatch->validItems],
+                    H2D,
+                    stream
+                ));
+
+                gpu::callEncodeSequencesTo2BitKernel(
+                    d_encodedSequences.data(),
+                    d_decodedSequences.data(),
+                    d_offsets.data(),
+                    encodedSequencePitchInInts,
+                    sbatch->validItems,
+                    8,
+                    stream
+                );
+                CUDACHECK(cudaMemcpyAsync(
+                    encbatch->encodedSequences.data(),
+                    d_encodedSequences.data(),
+                    sizeof(unsigned int) * encodedSequencePitchInInts * sbatch->validItems,
+                    D2H,
+                    stream
+                ));
+                if(useQualityScores){
+                    CUDACHECK(cudaMemcpyAsync(
+                        d_decodedQualities.data(),
+                        sbatch->qualitiesFlat.data(),
+                        sizeof(char) * sbatch->sequenceOffsets[sbatch->validItems],
+                        H2D,
+                        stream
+                    ));
+                    callCompressQualityScoresKernel(
+                        d_encodedQualities.data(), 
+                        qualityPitchInInts,
+                        d_decodedQualities.data(), 
+                        d_offsets.data(),
+                        sbatch->validItems,
+                        numQualityBits,
+                        stream
+                    );
+                    CUDACHECK(cudaMemcpyAsync(
+                        encbatch->encodedQualities.data(),
+                        d_encodedQualities.data(),
+                        sizeof(unsigned int) * qualityPitchInInts * sbatch->validItems,
+                        D2H,
+                        stream
+                    ));
+                }
+
+
+                CUDACHECK(cudaStreamSynchronize(stream));
+
+                freeBatchFromFile.push(sbatch);
+                unprocessedEncodedBatches.push(encbatch);           
+
+                sbatch = unprocessedBatchFromFile.pop();
+            }
+        };
+
+        #endif
+
         auto inserterThreadFunction = [&](){
             EncodedBatch* sbatch = unprocessedEncodedBatches.pop();
 
@@ -375,6 +529,20 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
 
         std::vector<std::future<void>> encoderFutures;
         std::vector<std::future<void>> inserterFutures;
+
+        #ifdef __CUDACC__
+
+        for(int i = 0; i < numEncoders; i++){
+            encoderFutures.emplace_back(
+                std::async(
+                    std::launch::async,
+                    gpuEncoderThreadFunction
+                    //encoderThreadFunction
+                )
+            );
+        }
+
+        #else
         
         for(int i = 0; i < numEncoders; i++){
             encoderFutures.emplace_back(
@@ -384,6 +552,8 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
                 )
             );
         }
+
+        #endif
 
         for(int i = 0; i < numInserters; i++){
             inserterFutures.emplace_back(

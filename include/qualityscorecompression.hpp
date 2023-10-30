@@ -179,6 +179,39 @@ struct QualityCompressorImpl{
 
     template<class Group>
     DEVICEQUALIFIER INLINEQUALIFIER
+    static void encodeQualityString_unaligned(Group& group, unsigned int* out, const char* quality, int length){
+        constexpr int ASCII_BASE = 33;
+
+        const int numInts = getNumInts(length);
+        constexpr int numQualsPerInts = sizeof(unsigned int) / bitsPerQual() * 8;
+
+        for(int n = group.thread_rank(); n < numInts; n += group.size()){
+
+            unsigned int data = 0;
+            const int pend = min(length, (n+1) * numQualsPerInts);
+
+            for(int p = n * numQualsPerInts; p < pend; p++){
+                const int Q = int(quality[p]) - ASCII_BASE;
+
+                for(unsigned int x = 0; x < (unsigned int)numBins(); x++){
+                    if(Q <= Config::binBoundary(x)){
+                        data = (data << bitsPerQual()) | x;
+                        break;
+                    }
+                }
+            }
+
+            if(n == numInts-1){
+                const int remaining = (n+1) * numQualsPerInts - length;
+                data <<= remaining * bitsPerQual();
+            }
+
+            out[n] = data;
+        }
+    }
+
+    template<class Group>
+    DEVICEQUALIFIER INLINEQUALIFIER
     static void decodeQualityToString(Group& group, char* quality, const unsigned int* encoded, int length){
         const int numInts = getNumInts(length);
         constexpr int numQualsPerInts = sizeof(unsigned int) / bitsPerQual() * 8;
@@ -259,6 +292,12 @@ struct QualityCompressor{
 
     template<class Group>
     DEVICEQUALIFIER INLINEQUALIFIER
+    static void encodeQualityString_unaligned(Group& group, unsigned int* out, const char* quality, int length){
+        Impl::encodeQualityString_unaligned(group, out, quality, length);
+    }
+
+    template<class Group>
+    DEVICEQUALIFIER INLINEQUALIFIER
     static void decodeQualityToString(Group& group, char* quality, const unsigned int* encoded, int length){
         Impl::decodeQualityToString(group, quality, encoded, length);
     }
@@ -307,6 +346,16 @@ struct QualityCompressor<8>{
         const int remaining = length - full * sizeof(int);
         for(int i = group.thread_rank(); i < remaining; i += group.size()){
             ((char*)out)[full * sizeof(int) + i] = quality[full * sizeof(int) + i];
+        }
+    }
+
+    template<class Group>
+    DEVICEQUALIFIER INLINEQUALIFIER
+    static void encodeQualityString_unaligned(Group& group, unsigned int* out, const char* quality, int length){
+        //copy quality to out
+        char* const out_as_char = reinterpret_cast<char*>(out);
+        for(int i = group.thread_rank(); i < length; i += group.size()){
+            out_as_char[i] = quality[i];
         }
     }
 
@@ -402,6 +451,32 @@ void compressQualityScoresKernel(
     }
 }
 
+template<int numBits, class OffsetIterator>
+__global__
+void compressQualityScoresKernel(
+    unsigned int* __restrict__ compressed, 
+    std::size_t compressedPitchInInts,
+    const char* __restrict__ quality, 
+    OffsetIterator offsets,
+    int numSequences
+){
+    constexpr int groupsize = QualityCompressionGroupSize<numBits>::value;
+    
+    auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+    const int numGroups = (gridDim.x * blockDim.x) / groupsize;
+    const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+
+    for(int s = groupId; s < numSequences; s += numGroups){
+        const int begin = offsets[s];
+        const int end = offsets[s+1];
+        const char* const myQuality = quality + begin;
+        unsigned int* const myCompressed = compressed + compressedPitchInInts * s;
+        const int myLength = end - begin;
+
+        QualityCompressor<numBits>::encodeQualityString_unaligned(group, myCompressed, myQuality, myLength);
+    }
+}
+
 
 
 template<int numBits, class LengthIterator>
@@ -431,6 +506,31 @@ void callCompressQualityScoresKernel(
     CUDACHECKASYNC;
 }
 
+template<int numBits, class OffsetIterator>
+void callCompressQualityScoresKernel(
+    unsigned int* __restrict__ compressed, 
+    std::size_t compressedPitchInInts,
+    const char* __restrict__ quality, 
+    OffsetIterator offsets,
+    int numSequences,
+    cudaStream_t stream
+){
+    constexpr int groupsize = QualityCompressionGroupSize<numBits>::value;
+    constexpr int blocksize = 128;
+    constexpr int groupsPerBlock = blocksize / groupsize;
+
+    const int numBlocks = SDIV(numSequences, groupsPerBlock);
+
+    compressQualityScoresKernel<numBits><<<numBlocks, blocksize, 0, stream>>>(
+        compressed,
+        compressedPitchInInts,
+        quality,
+        offsets,
+        numSequences
+    );
+    CUDACHECKASYNC;
+}
+
 template<class LengthIterator>
 void callCompressQualityScoresKernel(
     unsigned int* __restrict__ compressed, 
@@ -446,6 +546,27 @@ void callCompressQualityScoresKernel(
         case 1: callCompressQualityScoresKernel<1>(compressed, compressedPitchInInts, quality, qualityPitchInBytes, lengths, numSequences, stream); break;
         case 2: callCompressQualityScoresKernel<2>(compressed, compressedPitchInInts, quality, qualityPitchInBytes, lengths, numSequences, stream); break;
         case 8: callCompressQualityScoresKernel<8>(compressed, compressedPitchInInts, quality, qualityPitchInBytes, lengths, numSequences, stream); break;
+        default:
+            std::cerr << "callCompressQualityScoresKernel cannot be called with numBits = " << numBits << "\n";
+            assert(false);
+            break;
+    }
+}
+
+template<class OffsetIterator>
+void callCompressQualityScoresKernel(
+    unsigned int* __restrict__ compressed, 
+    std::size_t compressedPitchInInts,
+    const char* __restrict__ quality, 
+    OffsetIterator offsets,
+    int numSequences,
+    int numBits,
+    cudaStream_t stream
+){
+    switch(numBits){
+        case 1: callCompressQualityScoresKernel<1>(compressed, compressedPitchInInts, quality, offsets, numSequences, stream); break;
+        case 2: callCompressQualityScoresKernel<2>(compressed, compressedPitchInInts, quality, offsets, numSequences, stream); break;
+        case 8: callCompressQualityScoresKernel<8>(compressed, compressedPitchInInts, quality, offsets, numSequences, stream); break;
         default:
             std::cerr << "callCompressQualityScoresKernel cannot be called with numBits = " << numBits << "\n";
             assert(false);

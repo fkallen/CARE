@@ -433,6 +433,66 @@
             #endif
         }
 
+        template<class Group>
+        DEVICEQUALIFIER
+        static void encodeSingleSequenceTo2Bit_unaligned(
+            Group& group,
+            unsigned int* out,
+            const char* in,
+            int length
+        ){
+            #ifdef __CUDA_ARCH__
+            if(length > 0){
+                const int nInts = SequenceHelpers::getEncodedNumInts2Bit(length);
+                constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
+
+                for(int i = group.thread_rank(); i < nInts; i += group.size()){
+                    unsigned int data = 0;
+
+                    auto encodeNuc = [&](char nuc){
+                        switch(nuc) {
+                        case 'A':
+                            data = (data << 2) | SequenceHelpers::encodedbaseA();
+                            break;
+                        case 'C':
+                            data = (data << 2) | SequenceHelpers::encodedbaseC();
+                            break;
+                        case 'G':
+                            data = (data << 2) | SequenceHelpers::encodedbaseG();
+                            break;
+                        case 'T':
+                            data = (data << 2) | SequenceHelpers::encodedbaseT();
+                            break;
+                        default:
+                            data = (data << 2) | SequenceHelpers::encodedbaseA();
+                            break;
+                        }
+                    };
+
+                    if(i < nInts - 1){
+                        //not last iteration. int encodes 16 chars
+                        for(int p = 0; p < 16; p++){
+                            encodeNuc(in[i * basesPerInt + p]);
+                        }
+                    }else{        
+                        for(int nucIndex = i * basesPerInt; nucIndex < length; nucIndex++){
+                            encodeNuc(in[nucIndex]);
+                        }
+
+                        //pack bits of last integer into higher order bits
+                        int leftoverbits = 2 * (nInts * basesPerInt - length);
+                        if(leftoverbits > 0){
+                            data <<= leftoverbits;
+                        }
+
+                    }
+
+                    out[i] = data;
+                }
+            }
+            #endif
+        }
+
 
 
 
