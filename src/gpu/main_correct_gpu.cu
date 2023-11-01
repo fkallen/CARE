@@ -1,39 +1,25 @@
-#include <version.hpp>
 #include <config.hpp>
-
-#include <cxxopts/cxxopts.hpp>
 #include <options.hpp>
+#include <readlibraryio.hpp>
+#include <version.hpp>
+#include <gpu/cudaerrorcheck.cuh>
 #include <gpu/dispatch_care_correct_gpu.cuh>
 
-#include <threadpool.hpp>
+#include <cxxopts/cxxopts.hpp>
 
-#include <readlibraryio.hpp>
-
-#include <fstream>
+#include <algorithm>
 #include <iostream>
-#include <ios>
+#include <numeric>
 #include <string>
 #include <omp.h>
 
-#include <experimental/filesystem>
-
-namespace filesys = std::experimental::filesystem;
 
 using namespace care;
-
-void printCommandlineArguments(std::ostream& out, const cxxopts::ParseResult& parseresults){
-
-	const auto args = parseresults.arguments();
-	for(const auto& opt : args){
-		out << opt.key() << '=' << opt.value() << '\n';
-	}
-}
 
 bool checkMandatoryArguments(const cxxopts::ParseResult& parseresults){
 
 	const std::vector<std::string> mandatory = {
-		"inputfiles", "outdir", "outputfilenames", "coverage",
-		"gpu", "pairmode"
+		"inputfiles", "outdir", "outputfilenames", "coverage", "pairmode"
 	};
 
 	bool success = true;
@@ -57,6 +43,40 @@ std::string tostring(const bool& b){
 	return b ? "true" : "false";
 }
 
+
+std::vector<int> getAllDeviceIds(){
+	int numGpus = 0;
+	CUDACHECK(cudaGetDeviceCount(&numGpus));
+	std::vector<int> ids(numGpus);
+	std::iota(ids.begin(), ids.end(), 0);
+	return ids;
+}
+
+bool deviceIsSuitable(int deviceId){
+	cudaDeviceProp prop;
+	CUDACHECK(cudaGetDeviceProperties(&prop, deviceId));
+
+	if(prop.major < 6) return false;
+	if(prop.managedMemory != 1) return false;
+	if(prop.unifiedAddressing != 1) return false;
+	return true;
+}
+
+bool devicesHavePairwisePeerAccess(const std::vector<int>& deviceIds){
+	const int numGpus = deviceIds.size();
+	for(int i = 0; i < numGpus; i++){
+		for(int k = 0; k < numGpus; k++){
+			if(i != k){
+				const int device = deviceIds[i];
+				const int peerDevice = deviceIds[k];
+				int canAccessPeer = 0;
+				CUDACHECK(cudaDeviceCanAccessPeer(&canAccessPeer,  device, peerDevice));
+				if(canAccessPeer == 0) return false;
+			}
+		}
+	}
+	return true;
+}
 
 void listAvailableGpus(std::ostream& os){
 	int numGpus = 0;
@@ -125,8 +145,12 @@ int main(int argc, char** argv){
 
 	if(!programOptions.isValid()) throw std::runtime_error("Invalid program options!");
 
-    programOptions.deviceIds = correction::getUsableDeviceIds(programOptions.deviceIds);
-    programOptions.canUseGpu = programOptions.deviceIds.size() > 0;
+    programOptions.deviceIds = getAllDeviceIds();
+	programOptions.deviceIds.erase(
+		std::remove_if(programOptions.deviceIds.begin(), programOptions.deviceIds.end(), [](int id){ return !deviceIsSuitable(id); }), 
+		programOptions.deviceIds.end()
+	);
+    
 
 	if(programOptions.useQualityScores){
 		const bool hasQ = std::all_of(
@@ -182,9 +206,22 @@ int main(int argc, char** argv){
 	std::cout << std::noboolalpha;
 
 
-	if(!programOptions.canUseGpu){
-		std::cout << "No valid GPUs selected. Abort\n";
+	if(programOptions.deviceIds.empty()){
+		std::cout << "All available GPUs are not suitable. Abort\n";
 		std::exit(0);
+	}else{
+		std::cout << "List of detected suitable device(s): [";
+		for(auto x : programOptions.deviceIds){
+			std::cout << " " << x;
+		}
+		std::cout << " ]\n";
+
+		const bool peerOk = devicesHavePairwisePeerAccess(programOptions.deviceIds);
+		if(!peerOk){
+			std::cout << "The suitable available GPUs do not allow pair-wise peer access. Abort\n";
+			std::exit(0);
+		}
+		
 	}
 
     const int numThreads = programOptions.threads;

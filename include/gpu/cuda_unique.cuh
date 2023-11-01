@@ -21,10 +21,25 @@
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
 
+//#include <cuda/functional>
 
 namespace care{
 namespace gpu{
 namespace cudauniquekernels{
+
+    template<class T>
+    struct GetElementSum{
+        const T* array1;
+        const T* array2;
+
+        __host__ __device__
+        GetElementSum(const T* a1, const T* a2) : array1(a1), array2(a2){}
+
+        __host__ __device__
+        T operator()(int index){
+            return array1[index] + array2[index];
+        }
+    };
 
 
     template<int blocksize, int elemsPerThread, class T, class OffsetIterator>
@@ -430,12 +445,13 @@ struct GpuSegmentedUnique{
             rmm::device_uvector<int> d_largeSegmentBeginOffsets(numLargestSegments + 1, stream, mr);
             auto d_largeSegmentEndOffsets = thrust::make_transform_iterator(
                 thrust::make_counting_iterator(0),
-                [
-                    d_largeSegmentLengths = d_largeSegmentLengths.data(),
-                    d_largeSegmentBeginOffsets = d_largeSegmentBeginOffsets.data()
-                ] __device__ (int index){
-                    return d_largeSegmentLengths[index] + d_largeSegmentBeginOffsets[index];
-                }
+                // cuda::proclaim_return_type<int>([
+                //     d_largeSegmentLengths = d_largeSegmentLengths.data(),
+                //     d_largeSegmentBeginOffsets = d_largeSegmentBeginOffsets.data()
+                // ] __device__ (int index){
+                //     return d_largeSegmentLengths[index] + d_largeSegmentBeginOffsets[index];
+                // })
+                cudauniquekernels::GetElementSum<int>{d_largeSegmentLengths.data(), d_largeSegmentBeginOffsets.data()}
             );
 
             thrust::gather(
@@ -522,6 +538,334 @@ struct GpuSegmentedUnique{
         runSmallSegment(4, 128, 16)
 
         #undef runSmallSegment
+    }
+
+// (
+//     std::vector<care::read_number *>, 
+//     const std::vector<int>, 
+//     std::vector<care::read_number *>, 
+//     std::vector<int *>, 
+//     const std::vector<int, 
+//     std::vector<int *>, 
+//     std::vector<int *>, 
+//     const std::vector<cudaStream_t>, 
+//     const std::vector<int>, 
+//     int *)
+
+    struct DeviceTempStorage{
+        DeviceTempStorage(std::vector<int> deviceIds_)
+            : DeviceTempStorage(deviceIds_, [&](){
+                return std::vector<cudaStream_t>(deviceIds_.size(), cudaStreamPerThread);
+            }())
+        {
+            const int numGpus = deviceIds.size();
+            for(int g = 0; g < numGpus; g++){
+                cub::SwitchDevice sd(deviceIds[g]);
+                CUDACHECK(cudaStreamSynchronize(cudaStreamPerThread));
+            }
+        }
+
+        DeviceTempStorage(std::vector<int> deviceIds_, const std::vector<cudaStream_t>& streams) 
+            : deviceIds(std::move(deviceIds_)){
+            
+            const int numGpus = deviceIds.size();
+            for(int g = 0; g < numGpus; g++){
+                cub::SwitchDevice sd(deviceIds[g]);
+                vec_d_buffers.emplace_back(0, streams[g]);
+                vec_d_tempBuffersAfterSync.emplace_back(0, streams[g]);
+            }
+        }
+
+        ~DeviceTempStorage(){
+            const int numGpus = deviceIds.size();
+            for(int g = 0; g < numGpus; g++){
+                cub::SwitchDevice sd(deviceIds[g]);
+                vec_d_buffers[g].release();
+                vec_d_tempBuffersAfterSync[g].release();
+            }
+        }
+
+        DeviceTempStorage(const DeviceTempStorage&) = delete;
+        DeviceTempStorage(DeviceTempStorage&&) = default;
+        DeviceTempStorage& operator=(const DeviceTempStorage&) = delete;
+        DeviceTempStorage& operator=(DeviceTempStorage&&) = default;
+
+        std::vector<int> deviceIds;
+        std::vector<rmm::device_uvector<char>> vec_d_buffers;
+        std::vector<rmm::device_uvector<char>> vec_d_tempBuffersAfterSync;
+    };
+
+    template<class T>
+    static void unique(
+        const std::vector<T*>& vec_d_items,
+        const std::vector<int>& vec_numItems,
+        const std::vector<T*>& vec_d_unique_items,
+        const std::vector<int*>& vec_d_unique_lengths,
+        const std::vector<int>& vec_numSegments,
+        const std::vector<const int*>& vec_d_begin_offsets,
+        const std::vector<const int*>& vec_d_end_offsets,
+        const std::vector<cudaStream_t>& streams,
+        const std::vector<int>& deviceIds,
+        int* h_tempstorage, // numPartitions * deviceIds.size()
+        DeviceTempStorage& deviceTempStorage
+    ){
+        constexpr int numPartitions = 6;
+        constexpr int boundaries[numPartitions]{128,256,512,1024,2048, std::numeric_limits<int>::max()};
+        int oldDeviceId;
+        CUDACHECK(cudaGetDevice(&oldDeviceId));
+
+        const int numGpus = deviceIds.size();
+
+        std::vector<int*> vec_d_segmentLengths(numGpus, nullptr);
+        std::vector<int*> vec_d_allSegmentIds(numGpus, nullptr);
+        std::vector<int*> vec_d_partitionSizes(numGpus, nullptr);
+
+        int* const h_partitionsSizesPerGpu = h_tempstorage;
+
+        for(int g = 0; g < numGpus; g++){
+            CUDACHECK(cudaSetDevice(deviceIds[g]));
+            const int numSegments = vec_numSegments[g];
+            const int numSegmentsRounded = SDIV(numSegments, 128) * 128;
+
+            size_t bytes[3]{
+                SDIV(sizeof(int) * numSegments, 512) * 512, // d_segmentLengths
+                SDIV(sizeof(int) * numSegmentsRounded * numPartitions, 512) * 512, // d_allSegmentIds
+                SDIV(sizeof(int) * numPartitions, 512) * 512 // d_partitionSizes
+            };
+            const size_t totalBytes = bytes[0] + bytes[1] + bytes[2];
+
+            resizeUninitialized(deviceTempStorage.vec_d_buffers[g], totalBytes, streams[g]);
+            vec_d_segmentLengths[g] = reinterpret_cast<int*>(deviceTempStorage.vec_d_buffers[g].data());
+            vec_d_allSegmentIds[g] = reinterpret_cast<int*>(deviceTempStorage.vec_d_buffers[g].data() + bytes[0]);
+            vec_d_partitionSizes[g] = reinterpret_cast<int*>(deviceTempStorage.vec_d_buffers[g].data() + bytes[0] + bytes[1]);
+
+            thrust::for_each(
+                rmm::exec_policy_nosync(streams[g]),
+                thrust::make_counting_iterator(0),
+                thrust::make_counting_iterator(0) + numSegments,
+                [
+                    d_begin_offsets = vec_d_begin_offsets[g],
+                    d_end_offsets = vec_d_end_offsets[g],
+                    d_segmentLengths = vec_d_segmentLengths[g]
+                ] __device__ (int index){
+                    d_segmentLengths[index] = d_end_offsets[index] - d_begin_offsets[index];
+                }
+            );
+        }
+
+        for(int g = 0; g < numGpus; g++){
+            CUDACHECK(cudaSetDevice(deviceIds[g]));
+            auto thrustpolicy = rmm::exec_policy_nosync(streams[g]);
+            const int numSegments = vec_numSegments[g];
+            const int numSegmentsRounded = SDIV(numSegments, 128) * 128;
+
+            CUDACHECK(cudaMemsetAsync(vec_d_partitionSizes[g], 0, sizeof(int) * numPartitions, streams[g]));
+
+            thrust::for_each(
+                thrustpolicy,
+                thrust::make_counting_iterator(0),
+                thrust::make_counting_iterator(0) + numSegments,
+                [
+                    numSegmentsRounded = numSegmentsRounded,
+                    d_allSegmentIds = vec_d_allSegmentIds[g],
+                    d_partitionSizes = vec_d_partitionSizes[g],
+                    d_segmentLengths = vec_d_segmentLengths[g]
+                ] __device__ (int index){
+                    //constexpr int boundaries[numPartitions]{128,256,512,1024,2048, std::numeric_limits<int>::max()};
+                    const int length = d_segmentLengths[index];
+                    for(int i = 0; i < numPartitions; i++){
+                        if(length <= boundaries[i]){
+                            const int pos = atomicAdd(d_partitionSizes + i, 1);
+                            d_allSegmentIds[i * numSegmentsRounded + pos] = index;
+                            break;
+                        }
+                    }
+                }
+            );
+        }
+        for(int g = 0; g < numGpus; g++){
+            CUDACHECK(cudaSetDevice(deviceIds[g]));
+            int* const h_partitionSizes = h_partitionsSizesPerGpu + numPartitions * g;
+            CUDACHECK(cudaMemcpyAsync(
+                h_partitionSizes,
+                vec_d_partitionSizes[g],
+                sizeof(int) * numPartitions,
+                D2H,
+                streams[g]
+            ));
+        }
+
+        std::vector<rmm::device_uvector<char>> vec_d_tempBuffersAfterSync;
+        std::vector<int*> vec_d_largeSegmentLengths(numGpus, nullptr);
+        std::vector<int*> vec_d_largeSegmentBeginOffsets(numGpus, nullptr);
+        std::vector<void*> vec_d_cubSortTemp(numGpus, nullptr);
+        std::vector<size_t> vec_d_cubSortTempBytes(numGpus, 0);
+
+        for(int g = 0; g < numGpus; g++){
+            CUDACHECK(cudaSetDevice(deviceIds[g]));
+            CUDACHECK(cudaStreamSynchronize(streams[g]));
+
+            auto thrustpolicy = rmm::exec_policy_nosync(streams[g]);
+            int* const h_partitionSizes = h_partitionsSizesPerGpu + numPartitions * g;
+            const int numSegments = vec_numSegments[g];
+            const int numSegmentsRounded = SDIV(numSegments, 128) * 128;
+
+            cub::DoubleBuffer<T> d_items_dblbuf{vec_d_items[g], vec_d_unique_items[g]};
+
+            if(h_partitionSizes[numPartitions - 1] > 0){
+                const int numLargestSegments = h_partitionSizes[numPartitions - 1];
+                const int* d_largestSegmentIds = vec_d_allSegmentIds[g] + numSegmentsRounded * (numPartitions - 1);
+
+                void* allocations[3]{};
+                std::size_t allocation_sizes[3]{};
+                std::size_t storage_bytes = 0;
+
+                allocation_sizes[0] = sizeof(int) * numLargestSegments; // d_largeSegmentLengths
+                allocation_sizes[1] = sizeof(int) * (numLargestSegments + 1); // d_largeSegmentBeginOffsets
+
+                CUDACHECK(cub::DeviceSegmentedSort::SortKeys(
+                    nullptr,
+                    allocation_sizes[2],
+                    d_items_dblbuf,
+                    vec_numItems[g],
+                    numLargestSegments,
+                    (int*)nullptr,
+                    (int*)nullptr,
+                    streams[g]
+                ));
+
+                CUDACHECK(cub::AliasTemporaries(
+                    nullptr,
+                    storage_bytes,
+                    allocations,
+                    allocation_sizes
+                ));
+                resizeUninitialized(deviceTempStorage.vec_d_tempBuffersAfterSync[g], storage_bytes, streams[g]);
+                CUDACHECK(cub::AliasTemporaries(
+                    deviceTempStorage.vec_d_tempBuffersAfterSync[g].data(),
+                    storage_bytes,
+                    allocations,
+                    allocation_sizes
+                ));
+
+                vec_d_largeSegmentLengths[g] = reinterpret_cast<int*>(allocations[0]);
+                vec_d_largeSegmentBeginOffsets[g] = reinterpret_cast<int*>(allocations[1]);
+                vec_d_cubSortTemp[g] = reinterpret_cast<void*>(allocations[2]);
+                vec_d_cubSortTempBytes[g] = allocation_sizes[2];
+
+                thrust::gather(
+                    thrustpolicy,
+                    d_largestSegmentIds,
+                    d_largestSegmentIds + numLargestSegments,
+                    thrust::make_zip_iterator(
+                        vec_d_segmentLengths[g],
+                        vec_d_begin_offsets[g]
+                    ),
+                    thrust::make_zip_iterator(
+                        vec_d_largeSegmentLengths[g],
+                        vec_d_largeSegmentBeginOffsets[g]
+                    )
+                );
+            }else{
+                vec_d_tempBuffersAfterSync.emplace_back(0, streams[g]);
+            }
+        }
+
+        for(int g = 0; g < numGpus; g++){
+            CUDACHECK(cudaSetDevice(deviceIds[g]));
+            int* const h_partitionSizes = h_partitionsSizesPerGpu + numPartitions * g;
+
+            cub::DoubleBuffer<T> d_items_dblbuf{vec_d_items[g], vec_d_unique_items[g]};
+
+            if(h_partitionSizes[numPartitions - 1] > 0){
+                const int numLargestSegments = h_partitionSizes[numPartitions - 1];
+
+                auto d_largeSegmentEndOffsets = thrust::make_transform_iterator(
+                    thrust::make_counting_iterator(0),
+                    // cuda::proclaim_return_type<int>([
+                    //     d_largeSegmentLengths = vec_d_largeSegmentLengths[g],
+                    //     d_largeSegmentBeginOffsets = vec_d_largeSegmentBeginOffsets[g]
+                    // ] __device__ (int index){
+                    //     return d_largeSegmentLengths[index] + d_largeSegmentBeginOffsets[index];
+                    // })
+                    cudauniquekernels::GetElementSum<int>{vec_d_largeSegmentLengths[g], vec_d_largeSegmentBeginOffsets[g]}
+                );
+
+                CUDACHECK(cub::DeviceSegmentedSort::SortKeys(
+                    vec_d_cubSortTemp[g],
+                    vec_d_cubSortTempBytes[g],
+                    d_items_dblbuf,
+                    vec_numItems[g],
+                    numLargestSegments,
+                    vec_d_largeSegmentBeginOffsets[g],
+                    d_largeSegmentEndOffsets,
+                    streams[g]
+                ));
+            }
+        }
+        for(int g = 0; g < numGpus; g++){
+            CUDACHECK(cudaSetDevice(deviceIds[g]));
+
+            int* const h_partitionSizes = h_partitionsSizesPerGpu + numPartitions * g;
+            const int numSegments = vec_numSegments[g];
+            const int numSegmentsRounded = SDIV(numSegments, 128) * 128;
+            cub::DoubleBuffer<T> d_items_dblbuf{vec_d_items[g], vec_d_unique_items[g]};
+
+            if(h_partitionSizes[numPartitions - 1] > 0){
+                const int numLargestSegments = h_partitionSizes[numPartitions - 1];
+                const int* d_largestSegmentIds = vec_d_allSegmentIds[g] + numSegmentsRounded * (numPartitions - 1);
+
+                T* const output = vec_d_unique_items[g]; //if Current() == d_unique_items, operations will be inplace
+
+                cudauniquekernels::callMakeUniqueRangeFromSortedRangeKernel<128, 8>(
+                    output,
+                    vec_d_unique_lengths[g], 
+                    d_items_dblbuf.Current(), //input
+                    d_largestSegmentIds,
+                    numLargestSegments,
+                    vec_d_begin_offsets[g],
+                    vec_d_end_offsets[g],
+                    streams[g]
+                );
+            }
+        }
+
+        #define runSmallSegment(partitionIndex, blocksize_, itemsPerThread_) { \
+            for(int g = 0; g < numGpus; g++){ \
+                CUDACHECK(cudaSetDevice(deviceIds[g])); \
+                const std::string rangename = "small segments <= " + std::to_string(boundaries[partitionIndex]); \
+                int* const h_partitionSizes = h_partitionsSizesPerGpu + numPartitions * g; \
+                if(h_partitionSizes[partitionIndex] > 0){ \
+                    const int numSegments = vec_numSegments[g]; \
+                    const int numSegmentsRounded = SDIV(numSegments, 128) * 128; \
+                    constexpr int blocksize = blocksize_; \
+                    constexpr int itemsPerThread = itemsPerThread_; \
+                    static_assert(itemsPerThread > 0); \
+                    cudauniquekernels::callMakeUniqueRangeWithRegSortKernel<blocksize,itemsPerThread>( \
+                        vec_d_unique_items[g], \
+                        vec_d_unique_lengths[g],  \
+                        vec_d_items[g], \
+                        vec_d_allSegmentIds[g] + numSegmentsRounded * partitionIndex, \
+                        h_partitionSizes[partitionIndex], \
+                        vec_d_begin_offsets[g], \
+                        vec_d_end_offsets[g], \
+                        0, \
+                        sizeof(T) * 8, \
+                        streams[g] \
+                    ); \
+                } \
+            } \
+        }
+
+        runSmallSegment(0, 128, 1)
+        runSmallSegment(1, 128, 2)
+        runSmallSegment(2, 128, 4)
+        runSmallSegment(3, 128, 8)
+        runSmallSegment(4, 128, 16)
+
+        #undef runSmallSegment
+
+        CUDACHECK(cudaSetDevice(oldDeviceId));
     }
 
 };

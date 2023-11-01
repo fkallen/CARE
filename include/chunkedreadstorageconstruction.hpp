@@ -1,9 +1,8 @@
-#ifndef CARE_READSTORAGECONSTRUCTION2_HPP 
-#define CARE_READSTORAGECONSTRUCTION2_HPP
+#ifndef CARE_CHUNKED_READSTORAGE_CONSTRUCTION_HPP 
+#define CARE_CHUNKED_READSTORAGE_CONSTRUCTION_HPP
 
 #include <util.hpp>
 #include <config.hpp>
-#include <threadpool.hpp>
 #include <readlibraryio.hpp>
 #include <sequencehelpers.hpp>
 #include <concurrencyhelpers.hpp>
@@ -23,6 +22,20 @@
 #include <limits>
 #include <map>
 #include <set>
+
+
+#ifdef __CUDACC__
+
+#include <gpu/sequenceconversionkernels.cuh>
+
+#include <rmm/mr/device/per_device_resource.hpp>
+#include <rmm/mr/device/cuda_async_memory_resource.hpp>
+#include <rmm/mr/device/pool_memory_resource.hpp>
+#include <rmm/mr/device/logging_resource_adaptor.hpp>
+#include <rmm/cuda_stream_pool.hpp>
+#include <gpu/rmm_utilities.cuh>
+
+#endif
 
 namespace care{
 
@@ -64,29 +77,34 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
         );
                 
 
-        auto preprocessSequence = [&](std::string& sequence, int& Ncount){
+        //auto preprocessSequence = [&](std::string& sequence, int& Ncount){
+        auto preprocessSequence = [&](auto sequenceBegin, auto sequenceEnd, int& Ncount){
 
             auto isValidBase = [](char c){
                 constexpr std::array<char, 10> validBases{'A','C','G','T','a','c','g','t'};
                 return validBases.end() != std::find(validBases.begin(), validBases.end(), c);
             };
 
-            const int numundeterminedBasesInSequence = std::count_if(sequence.begin(), sequence.end(), [&](char c){
+            const int numundeterminedBasesInSequence = std::count_if(sequenceBegin, sequenceEnd, [&](char c){
                 return !isValidBase(c);
             });
 
             constexpr std::array<char, 4> bases = {'A', 'C', 'G', 'T'};
 
-            for(auto& c : sequence){
-                if(c == 'a') c = 'A';
-                else if(c == 'c') c = 'C';
-                else if(c == 'g') c = 'G';
-                else if(c == 't') c = 'T';
-                else if(!isValidBase(c)){
-                    c = bases[Ncount];
-                    Ncount = (Ncount + 1) % 4;
+            std::for_each(
+                sequenceBegin, 
+                sequenceEnd,
+                [&](char& c){            
+                    if(c == 'a') c = 'A';
+                    else if(c == 'c') c = 'C';
+                    else if(c == 'g') c = 'G';
+                    else if(c == 't') c = 'T';
+                    else if(!isValidBase(c)){
+                        c = bases[Ncount];
+                        Ncount = (Ncount + 1) % 4;
+                    }
                 }
-            }
+            );
 
             return numundeterminedBasesInSequence > 0;
         };
@@ -95,8 +113,11 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
         struct BatchFromFile{
             int validItems = 0;
             read_number firstReadId = 0;
-            std::vector<std::string> sequences{};
-            std::vector<std::string> qualities{};
+            // std::vector<std::string> sequences{};
+            // std::vector<std::string> qualities{};
+            std::vector<char> sequencesFlat{};
+            std::vector<char> qualitiesFlat{};
+            std::vector<int> sequenceOffsets{};
         };
 
     
@@ -117,10 +138,12 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
                 sbatch = freeBatchFromFile.pop();
                 sbatch->validItems = 0;
                 sbatch->firstReadId = readIdOffset;
-                sbatch->sequences.resize(fileParserMaxBatchsize);
+                sbatch->sequencesFlat.clear();
                 if(useQualityScores){
-                    sbatch->qualities.resize(fileParserMaxBatchsize);
+                    sbatch->qualitiesFlat.clear();
                 }
+                sbatch->sequenceOffsets.resize(1);
+                sbatch->sequenceOffsets[0] = 0;
             };
 
             initbatch();
@@ -132,11 +155,11 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
             forEachReadInFile(
                 filename,
                 [&](auto /*readnum*/, auto& read){
-
-                    std::swap(sbatch->sequences[sbatch->validItems], read.sequence);
+                    sbatch->sequencesFlat.insert(sbatch->sequencesFlat.end(), read.sequence.begin(), read.sequence.end());
                     if(useQualityScores){
-                        std::swap(sbatch->qualities[sbatch->validItems], read.quality);
+                        sbatch->qualitiesFlat.insert(sbatch->qualitiesFlat.end(), read.quality.begin(), read.quality.end());
                     }
+                    sbatch->sequenceOffsets.push_back(sbatch->sequencesFlat.size());
                     sbatch->validItems++;
 
                     if(sbatch->validItems >= fileParserMaxBatchsize){
@@ -153,9 +176,9 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
                 }
             );        
 
-            sbatch->sequences.resize(sbatch->validItems);
-            sbatch->qualities.resize(sbatch->validItems);
-            unprocessedBatchFromFile.push(sbatch);
+            if(sbatch->validItems > 0){
+                unprocessedBatchFromFile.push(sbatch);
+            }
 
             return totalNumberOfReads;
         };
@@ -173,10 +196,12 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
                 sbatch = freeBatchFromFile.pop();
                 sbatch->validItems = 0;
                 sbatch->firstReadId = readIdOffset;
-                sbatch->sequences.resize(fileParserMaxBatchsize);
+                sbatch->sequencesFlat.clear();
                 if(useQualityScores){
-                    sbatch->qualities.resize(fileParserMaxBatchsize);
+                    sbatch->qualitiesFlat.clear();
                 }
+                sbatch->sequenceOffsets.resize(1);
+                sbatch->sequenceOffsets[0] = 0;
             };
 
             initbatch();
@@ -189,10 +214,11 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
                 filename1, filename2,
                 [&](auto /*readnum*/, auto& read){
 
-                    std::swap(sbatch->sequences[sbatch->validItems], read.sequence);
+                    sbatch->sequencesFlat.insert(sbatch->sequencesFlat.end(), read.sequence.begin(), read.sequence.end());
                     if(useQualityScores){
-                        std::swap(sbatch->qualities[sbatch->validItems], read.quality);
+                        sbatch->qualitiesFlat.insert(sbatch->qualitiesFlat.end(), read.quality.begin(), read.quality.end());
                     }
+                    sbatch->sequenceOffsets.push_back(sbatch->sequencesFlat.size());
                     sbatch->validItems++;
 
                     if(sbatch->validItems >= fileParserMaxBatchsize){
@@ -209,9 +235,9 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
                 }
             );        
 
-            sbatch->sequences.resize(sbatch->validItems);
-            sbatch->qualities.resize(sbatch->validItems);
-            unprocessedBatchFromFile.push(sbatch);
+            if(sbatch->validItems > 0){
+                unprocessedBatchFromFile.push(sbatch);
+            }
 
             return totalNumberOfReads;
         };
@@ -232,6 +258,8 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
 
         SimpleConcurrentQueue<EncodedBatch*> freeEncodedBatches;
         SimpleConcurrentQueue<EncodedBatch*> unprocessedEncodedBatches;
+
+        #ifndef __CUDACC__
 
         auto encoderThreadFunction = [&](){
             BatchFromFile* sbatch = unprocessedBatchFromFile.pop();
@@ -260,7 +288,9 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
                 int Ncount = 0;
 
                 for(int i = 0; i < sbatch->validItems; i++){
-                    const int length = sbatch->sequences[i].length();
+                    const auto offsetBegin = sbatch->sequenceOffsets[i];
+                    const auto offsetEnd = sbatch->sequenceOffsets[i+1];
+                    const int length = offsetEnd - offsetBegin;
                     maxLength = std::max(maxLength, length);
                 }
 
@@ -270,10 +300,14 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
                 initEncBatch(sequencepitchInInts, qualityPitchInInts);
 
                 for(int i = 0; i < sbatch->validItems; i++){
-                    const int length = sbatch->sequences[i].length();
+                    const auto offsetBegin = sbatch->sequenceOffsets[i];
+                    const auto offsetEnd = sbatch->sequenceOffsets[i+1];
+                    const int length = offsetEnd - offsetBegin;
                     encbatch->sequenceLengths[i] = length;
 
-                    bool isAmbig = preprocessSequence(sbatch->sequences[i], Ncount);
+                    char* const sequenceBegin = sbatch->sequencesFlat.data() + offsetBegin;
+                    char* const sequenceEnd = sbatch->sequencesFlat.data() + offsetEnd;
+                    const bool isAmbig = preprocessSequence(sequenceBegin, sequenceEnd, Ncount);
                     if(isAmbig){
                         const read_number readId = sbatch->firstReadId + i;
                         encbatch->ambiguousReadIds.emplace_back(readId);
@@ -281,14 +315,14 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
 
                     SequenceHelpers::encodeSequence2Bit(
                         encbatch->encodedSequences.data() + i * sequencepitchInInts,
-                        sbatch->sequences[i].c_str(),
+                        sequenceBegin,
                         length
                     );
 
                     if(useQualityScores){
                         qualityCompressor.encodeQualityString(
                             encbatch->encodedQualities.data() + i * qualityPitchInInts,
-                            sbatch->qualities[i].data(),
+                            sbatch->qualitiesFlat.data() + offsetBegin,
                             length
                         );
                     }
@@ -302,6 +336,144 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
                 sbatch = unprocessedBatchFromFile.pop();
             }
         };
+
+        #else
+
+        auto gpuEncoderThreadFunction = [&](){
+            //std::cout << "gpuEncoderThreadFunction\n";
+
+            BatchFromFile* sbatch = unprocessedBatchFromFile.pop();
+            EncodedBatch* encbatch = nullptr;
+
+            cudaStream_t stream = cudaStreamPerThread;
+
+            rmm::device_uvector<char> d_decodedSequences(0, stream);
+            rmm::device_uvector<unsigned int> d_encodedSequences(0, stream);
+            rmm::device_uvector<char> d_decodedQualities(0, stream);
+            rmm::device_uvector<unsigned int> d_encodedQualities(0, stream);
+            rmm::device_uvector<int> d_offsets(0, stream);
+
+            while(sbatch != nullptr){
+                encbatch = freeEncodedBatches.pop();
+                assert(encbatch != nullptr);
+
+                encbatch->validItems = sbatch->validItems;
+                encbatch->firstReadId = sbatch->firstReadId;
+                encbatch->sequenceLengths.resize(encbatch->validItems);
+                encbatch->ambiguousReadIds.clear();
+
+                int maxLength = 0;
+                int Ncount = 0;
+
+
+                for(int i = 0; i < sbatch->validItems; i++){
+                    const auto offsetBegin = sbatch->sequenceOffsets[i];
+                    const auto offsetEnd = sbatch->sequenceOffsets[i+1];
+                    const int length = offsetEnd - offsetBegin;
+                    maxLength = std::max(maxLength, length);
+                    encbatch->sequenceLengths[i] = length;
+                }
+
+                const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maxLength);
+                const std::size_t qualityPitchInInts = QualityCompressionHelper::getNumInts(maxLength, numQualityBits);
+
+                encbatch->encodedSequencePitchInInts = encodedSequencePitchInInts;
+                encbatch->encodedSequences.resize(encbatch->validItems * encodedSequencePitchInInts);
+                if(useQualityScores){
+                    encbatch->encodedQualityPitchInInts = qualityPitchInInts;
+                    encbatch->encodedQualities.resize(encbatch->validItems * qualityPitchInInts);
+                }
+
+                d_decodedSequences.resize(sbatch->sequenceOffsets[sbatch->validItems], stream);
+                d_encodedSequences.resize(encodedSequencePitchInInts * sbatch->validItems, stream);
+                d_offsets.resize(sbatch->validItems + 1, stream);
+                if(useQualityScores){
+                    d_decodedQualities.resize(sbatch->sequenceOffsets[sbatch->validItems], stream);
+                    d_encodedQualities.resize(qualityPitchInInts * sbatch->validItems, stream);
+                }
+
+                CUDACHECK(cudaMemcpyAsync(
+                    d_offsets.data(),
+                    sbatch->sequenceOffsets.data(),
+                    sizeof(int) * (sbatch->validItems + 1),
+                    H2D,
+                    stream
+                ));
+
+                for(int i = 0; i < sbatch->validItems; i++){
+                    const auto offsetBegin = sbatch->sequenceOffsets[i];
+                    const auto offsetEnd = sbatch->sequenceOffsets[i+1];
+
+                    char* const sequenceBegin = sbatch->sequencesFlat.data() + offsetBegin;
+                    char* const sequenceEnd = sbatch->sequencesFlat.data() + offsetEnd;
+                    const bool isAmbig = preprocessSequence(sequenceBegin, sequenceEnd, Ncount);
+                    if(isAmbig){
+                        const read_number readId = sbatch->firstReadId + i;
+                        encbatch->ambiguousReadIds.emplace_back(readId);
+                    }
+                }
+
+                CUDACHECK(cudaMemcpyAsync(
+                    d_decodedSequences.data(),
+                    sbatch->sequencesFlat.data(),
+                    sizeof(char) * sbatch->sequenceOffsets[sbatch->validItems],
+                    H2D,
+                    stream
+                ));
+
+                gpu::callEncodeSequencesTo2BitKernel(
+                    d_encodedSequences.data(),
+                    d_decodedSequences.data(),
+                    d_offsets.data(),
+                    encodedSequencePitchInInts,
+                    sbatch->validItems,
+                    8,
+                    stream
+                );
+                CUDACHECK(cudaMemcpyAsync(
+                    encbatch->encodedSequences.data(),
+                    d_encodedSequences.data(),
+                    sizeof(unsigned int) * encodedSequencePitchInInts * sbatch->validItems,
+                    D2H,
+                    stream
+                ));
+                if(useQualityScores){
+                    CUDACHECK(cudaMemcpyAsync(
+                        d_decodedQualities.data(),
+                        sbatch->qualitiesFlat.data(),
+                        sizeof(char) * sbatch->sequenceOffsets[sbatch->validItems],
+                        H2D,
+                        stream
+                    ));
+                    callCompressQualityScoresKernel(
+                        d_encodedQualities.data(), 
+                        qualityPitchInInts,
+                        d_decodedQualities.data(), 
+                        d_offsets.data(),
+                        sbatch->validItems,
+                        numQualityBits,
+                        stream
+                    );
+                    CUDACHECK(cudaMemcpyAsync(
+                        encbatch->encodedQualities.data(),
+                        d_encodedQualities.data(),
+                        sizeof(unsigned int) * qualityPitchInInts * sbatch->validItems,
+                        D2H,
+                        stream
+                    ));
+                }
+
+
+                CUDACHECK(cudaStreamSynchronize(stream));
+
+                freeBatchFromFile.push(sbatch);
+                unprocessedEncodedBatches.push(encbatch);           
+
+                sbatch = unprocessedBatchFromFile.pop();
+            }
+        };
+
+        #endif
 
         auto inserterThreadFunction = [&](){
             EncodedBatch* sbatch = unprocessedEncodedBatches.pop();
@@ -357,6 +529,20 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
 
         std::vector<std::future<void>> encoderFutures;
         std::vector<std::future<void>> inserterFutures;
+
+        #ifdef __CUDACC__
+
+        for(int i = 0; i < numEncoders; i++){
+            encoderFutures.emplace_back(
+                std::async(
+                    std::launch::async,
+                    gpuEncoderThreadFunction
+                    //encoderThreadFunction
+                )
+            );
+        }
+
+        #else
         
         for(int i = 0; i < numEncoders; i++){
             encoderFutures.emplace_back(
@@ -366,6 +552,8 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
                 )
             );
         }
+
+        #endif
 
         for(int i = 0; i < numInserters; i++){
             inserterFutures.emplace_back(

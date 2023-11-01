@@ -358,7 +358,6 @@ public:
     using reference = value_type&;
     using const_reference = const value_type&;
 
-
     FileBackedUVector(std::size_t elements, std::size_t maxBytesInMemory, const std::string& backingfile)
         : buffer(sizeof(T) * elements, maxBytesInMemory, backingfile){
 
@@ -477,6 +476,11 @@ public:
         if(newcapacity > capacity()){
             grow(newcapacity);
         }
+    }
+
+    void shrink_to_fit(){
+        buffer.shrink_to_fit();
+        capacity_ = size();
     }
 };
 

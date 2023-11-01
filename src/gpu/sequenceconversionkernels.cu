@@ -444,6 +444,100 @@ namespace gpu{
             );
         }
     }
+
+    template<int groupsize>
+    __global__
+    void encodeSequencesTo2BitKernel(
+        unsigned int* __restrict__ encodedSequences,
+        const char* __restrict__ decodedSequences,
+        const int* __restrict__ d_sequenceInputOffsets,
+        size_t encodedSequencePitchInInts,
+        int numSequences
+    ){
+        auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+    
+        const int numGroups = (blockDim.x * gridDim.x) / group.size();
+        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / group.size();
+        const int groupIdInBlock = threadIdx.x / group.size();
+
+        //__shared__ char smemSequences[32][128];
+    
+        for(int a = groupId; a < numSequences; a += numGroups){
+            unsigned int* const out = encodedSequences + a * encodedSequencePitchInInts;
+            const int begin = d_sequenceInputOffsets[a];
+            const int end = d_sequenceInputOffsets[a+1];
+            const char* const gmem_in = decodedSequences + begin;
+            //char* const smem_in = &smemSequences[groupIdInBlock][0];
+            const char* const in = gmem_in;
+
+            const int length = end - begin;
+            //assert(length < 128);
+            // group.sync();
+            // for(int i = group.thread_rank(); i < length; i += group.size()){
+            //     smemSequences[groupIdInBlock][i] = gmem_in[i];
+            // }
+            // group.sync();
+            SequenceHelpers::encodeSingleSequenceTo2Bit_unaligned(
+                group,
+                out,
+                in,
+                length
+            );
+
+            // if(length > 0){
+            //     const int nInts = SequenceHelpers::getEncodedNumInts2Bit(length);
+            //     constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
+
+            //     for(int i = group.thread_rank(); i < nInts; i += group.size()){
+            //         unsigned int data = 0;
+
+            //         auto encodeNuc = [&](char nuc){
+            //             switch(nuc) {
+            //             case 'A':
+            //                 data = (data << 2) | SequenceHelpers::encodedbaseA();
+            //                 break;
+            //             case 'C':
+            //                 data = (data << 2) | SequenceHelpers::encodedbaseC();
+            //                 break;
+            //             case 'G':
+            //                 data = (data << 2) | SequenceHelpers::encodedbaseG();
+            //                 break;
+            //             case 'T':
+            //                 data = (data << 2) | SequenceHelpers::encodedbaseT();
+            //                 break;
+            //             default:
+            //                 data = (data << 2) | SequenceHelpers::encodedbaseA();
+            //                 break;
+            //             }
+            //         };
+
+            //         if(i < nInts - 1){
+            //             //not last iteration. int encodes 16 chars
+            //             __align__(16) char nucs[16];
+            //             ((int4*)nucs)[0] = *((const int4*)&in[i * 16]);
+
+            //             #pragma unroll
+            //             for(int p = 0; p < 16; p++){
+            //                 encodeNuc(nucs[p]);
+            //             }
+            //         }else{        
+            //             for(int nucIndex = i * basesPerInt; nucIndex < length; nucIndex++){
+            //                 encodeNuc(in[nucIndex]);
+            //             }
+
+            //             //pack bits of last integer into higher order bits
+            //             int leftoverbits = 2 * (nInts * basesPerInt - length);
+            //             if(leftoverbits > 0){
+            //                 data <<= leftoverbits;
+            //             }
+
+            //         }
+
+            //         out[i] = data;
+            //     }
+            // }
+        }
+    }
     
     void callEncodeSequencesTo2BitKernel(
         unsigned int* d_encodedSequences,
@@ -464,6 +558,41 @@ namespace gpu{
                 d_decodedSequences, \
                 d_sequenceLengths, \
                 decodedSequencePitchInBytes, \
+                encodedSequencePitchInInts, \
+                numSequences \
+            ); CUDACHECKASYNC; \
+        }
+    
+        switch(groupsize){
+            case 1: callkernel(1); break;
+            case 2: callkernel(2); break;
+            case 4: callkernel(4); break;
+            case 8: callkernel(8); break;
+            case 16: callkernel(16); break;
+            case 32: callkernel(32); break;
+            default: assert(false);
+        }
+    
+        #undef callkernel
+    }
+
+    void callEncodeSequencesTo2BitKernel(
+        unsigned int* d_encodedSequences,
+        const char* d_decodedSequences,
+        const int* d_sequenceInputOffsets, //sequence i from offset[i] to offset[i+1]
+        size_t encodedSequencePitchInInts,
+        int numSequences,
+        int groupsize,
+        cudaStream_t stream
+    ){
+        #define callkernel(s){ \
+            dim3 block = 256; \
+            dim3 grid = SDIV(numSequences, block.x / s); \
+                                                        \
+            encodeSequencesTo2BitKernel<s><<<grid, block, 0, stream>>>( \
+                d_encodedSequences, \
+                d_decodedSequences, \
+                d_sequenceInputOffsets, \
                 encodedSequencePitchInInts, \
                 numSequences \
             ); CUDACHECKASYNC; \

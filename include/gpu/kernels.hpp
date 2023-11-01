@@ -9,13 +9,17 @@
 #include <alignmentorientation.hpp>
 #include <correctedsequence.hpp>
 #include <gpu/forest_gpu.cuh>
+#include <gpu/classification_gpu.cuh>
 
 #include <config.hpp>
 #include <gpu/sequenceconversionkernels.cuh>
 
 #include <map>
 
-#include <rmm/mr/device/per_device_resource.hpp>
+#include <rmm/device_uvector.hpp>
+#include <rmm/device_scalar.hpp>
+#include <rmm/mr/device/device_memory_resource.hpp>
+#include <gpu/rmm_utilities.cuh>
 
 namespace care {
 namespace gpu {
@@ -23,6 +27,170 @@ namespace gpu {
 
 #ifdef __NVCC__
 
+struct AnchorForestCorrectionTempStorage{
+    int maxPositions{};
+    GpuMSAProperties* d_msaProperties{};
+    int* d_numMismatches{};
+    int* d_mismatchAnchorIndices{};
+    int* d_mismatchPositionsInAnchors{};
+    float* d_featuresTransposed{};
+
+    rmm::device_uvector<char> d_dataFixed;
+    rmm::device_uvector<char> d_dataDynamic;
+
+    AnchorForestCorrectionTempStorage(cudaStream_t stream, rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource())
+    :
+        d_dataFixed(0, stream, mr),
+        d_dataDynamic(0, stream, mr)
+    {
+    }
+
+    AnchorForestCorrectionTempStorage(const AnchorForestCorrectionTempStorage&) = delete;
+    AnchorForestCorrectionTempStorage(AnchorForestCorrectionTempStorage&&) = default;
+    AnchorForestCorrectionTempStorage& operator=(const AnchorForestCorrectionTempStorage&) = delete;
+    AnchorForestCorrectionTempStorage& operator=(AnchorForestCorrectionTempStorage&&) = default;
+
+    void setNumAnchors(int numAnchors, cudaStream_t stream){
+        size_t allocation_sizes[2]{};
+        allocation_sizes[0] = sizeof(GpuMSAProperties) * numAnchors; // d_msaProperties
+        allocation_sizes[1] = sizeof(int); // d_numMismatches
+
+        void* allocations[2]{};
+        size_t tempBytes = 0;
+        CUDACHECK(cub::AliasTemporaries(
+            nullptr,
+            tempBytes,
+            allocations,
+            allocation_sizes
+        ));
+
+        resizeUninitialized(d_dataFixed, tempBytes, stream);
+
+        CUDACHECK(cub::AliasTemporaries(
+            d_dataFixed.data(),
+            tempBytes,
+            allocations,
+            allocation_sizes
+        ));
+
+        d_msaProperties = reinterpret_cast<GpuMSAProperties*>(allocations[0]);
+        d_numMismatches = reinterpret_cast<int*>(allocations[1]);
+    }
+
+    void resize(int maxPos, cudaStream_t stream){
+        constexpr int roundUpTo = 10000;
+        const int roundedMaxPositions = SDIV(maxPos, roundUpTo) * roundUpTo;
+
+        size_t allocation_sizes[3]{};
+        allocation_sizes[0] = sizeof(int) * roundedMaxPositions; // d_mismatchAnchorIndices
+        allocation_sizes[1] = sizeof(int) * roundedMaxPositions; // d_mismatchPositionsInAnchors
+        allocation_sizes[2] = sizeof(float) * roundedMaxPositions * anchor_extractor::numFeatures(); // d_featuresTransposed
+
+        void* allocations[3]{};
+        size_t tempBytes = 0;
+        CUDACHECK(cub::AliasTemporaries(
+            nullptr,
+            tempBytes,
+            allocations,
+            allocation_sizes
+        ));
+
+        resizeUninitialized(d_dataDynamic, tempBytes, stream);
+
+        CUDACHECK(cub::AliasTemporaries(
+            d_dataDynamic.data(),
+            tempBytes,
+            allocations,
+            allocation_sizes
+        ));
+
+        maxPositions = maxPos;
+        d_mismatchAnchorIndices = reinterpret_cast<int*>(allocations[0]);
+        d_mismatchPositionsInAnchors = reinterpret_cast<int*>(allocations[1]);
+        d_featuresTransposed = reinterpret_cast<float*>(allocations[2]);
+    }
+};
+
+struct MismatchPositionsRaw{
+    int maxPositions{};
+    char* origBase{};
+    char* consensusBase{};
+    int* position{};
+    int* anchorIndex{};
+    int* candidateIndex{};
+    int* destinationIndex{};
+    int* numPositions{};
+};
+
+struct CandidateForestCorrectionTempStorage{
+    int maxPositions{};
+
+    GpuMSAProperties* d_msaPropertiesPerPosition{};
+    float* d_featuresTransposed{};
+    rmm::device_uvector<char> d_data;
+    rmm::device_uvector<int> d_numMismatches;
+    MismatchPositionsRaw rawMismatchPositions{};
+
+    CandidateForestCorrectionTempStorage(cudaStream_t stream, rmm::mr::device_memory_resource* mr = rmm::mr::get_current_device_resource())
+    :
+        d_data(0, stream, mr),
+        d_numMismatches(1, stream, mr)
+    {
+        rawMismatchPositions.numPositions = d_numMismatches.data();
+    }
+
+    CandidateForestCorrectionTempStorage(const CandidateForestCorrectionTempStorage&) = delete;
+    CandidateForestCorrectionTempStorage(CandidateForestCorrectionTempStorage&&) = default;
+    CandidateForestCorrectionTempStorage& operator=(const CandidateForestCorrectionTempStorage&) = delete;
+    CandidateForestCorrectionTempStorage& operator=(CandidateForestCorrectionTempStorage&&) = default;
+
+    void resize(int maxPositions, cudaStream_t stream){
+        constexpr int roundUpTo = 10000;
+        const int roundedMaxPositions = SDIV(maxPositions, roundUpTo) * roundUpTo;
+
+        size_t allocation_sizes[8]{};
+        allocation_sizes[0] = sizeof(char) * roundedMaxPositions; // origBase
+        allocation_sizes[1] = sizeof(char) * roundedMaxPositions; // consensusBase
+        allocation_sizes[2] = sizeof(int) * roundedMaxPositions; // position
+        allocation_sizes[3] = sizeof(int) * roundedMaxPositions; // anchorIndex
+        allocation_sizes[4] = sizeof(int) * roundedMaxPositions; // candidateIndex
+        allocation_sizes[5] = sizeof(int) * roundedMaxPositions; // destinationIndex
+        allocation_sizes[6] = sizeof(GpuMSAProperties) * roundedMaxPositions; // d_msaPropertiesPerPosition
+        allocation_sizes[7] = sizeof(float) * roundedMaxPositions * cands_extractor::numFeatures(); // d_featuresTransposed
+
+        void* allocations[8]{};
+        size_t tempBytes = 0;
+        CUDACHECK(cub::AliasTemporaries(
+            nullptr,
+            tempBytes,
+            allocations,
+            allocation_sizes
+        ));
+
+        resizeUninitialized(d_data, tempBytes, stream);
+
+        CUDACHECK(cub::AliasTemporaries(
+            d_data.data(),
+            tempBytes,
+            allocations,
+            allocation_sizes
+        ));
+
+        rawMismatchPositions.maxPositions = maxPositions;
+        rawMismatchPositions.origBase = reinterpret_cast<char*>(allocations[0]);
+        rawMismatchPositions.consensusBase = reinterpret_cast<char*>(allocations[1]);
+        rawMismatchPositions.position = reinterpret_cast<int*>(allocations[2]);
+        rawMismatchPositions.anchorIndex = reinterpret_cast<int*>(allocations[3]);
+        rawMismatchPositions.candidateIndex = reinterpret_cast<int*>(allocations[4]);
+        rawMismatchPositions.destinationIndex = reinterpret_cast<int*>(allocations[5]);
+        d_msaPropertiesPerPosition = reinterpret_cast<GpuMSAProperties*>(allocations[6]);
+        d_featuresTransposed = reinterpret_cast<float*>(allocations[7]);
+    }
+
+    // MismatchPositionsRaw getRawMismatchPositions() const{
+    //     return rawMismatchPositions
+    // }
+};
 
 
 struct AnchorHighQualityFlag{
@@ -371,6 +539,30 @@ void callMsaCorrectAnchorsWithForestKernel(
     cudaStream_t stream
 );
 
+void callMsaCorrectAnchorsWithForestKernel_multiphase(
+    std::vector<AnchorForestCorrectionTempStorage>& vec_correctionTempStorage,
+    std::vector<char*>& vec_d_correctedAnchors,
+    std::vector<bool*>& vec_d_anchorIsCorrected,
+    std::vector<AnchorHighQualityFlag*>& vec_d_isHighQualityAnchor,
+    const std::vector<GPUMultiMSA>& vec_multiMSA,
+    const std::vector<GpuForest::Clf>& vec_gpuForest,
+    float forestThreshold,
+    const std::vector<unsigned int*>& vec_d_anchorSequencesData,
+    const std::vector<int*>& vec_d_indices_per_anchor,
+    const std::vector<int>& vec_numAnchors,
+    int encodedSequencePitchInInts,
+    size_t decodedSequencePitchInBytes,
+    int /*maximumSequenceLength*/,
+    float estimatedErrorrate,
+    float estimatedCoverage,
+    float avg_support_threshold,
+    float min_support_threshold,
+    float min_coverage_threshold,
+    const std::vector<cudaStream_t>& streams,
+    const std::vector<int>& deviceIds,
+    int* h_tempstorage // sizeof(int) * deviceIds.size()
+);
+
 void callMsaCorrectCandidatesWithForestKernel(
     char* d_correctedCandidates,
     GPUMultiMSA multiMSA,
@@ -388,6 +580,28 @@ void callMsaCorrectCandidatesWithForestKernel(
     size_t decodedSequencePitchInBytes,
     int maximum_sequence_length,
     cudaStream_t stream
+);
+
+void callMsaCorrectCandidatesWithForestKernelMultiPhase(
+    std::vector<CandidateForestCorrectionTempStorage>& vec_correctionTempStorage,
+    std::vector<char*>& vec_d_correctedCandidates,
+    const std::vector<GPUMultiMSA>& vec_multiMSA,
+    const std::vector<GpuForest::Clf>& vec_gpuForest,
+    float forestThreshold,
+    float estimatedCoverage,
+    const std::vector<int*>& vec_d_shifts,
+    const std::vector<AlignmentOrientation*>& vec_d_bestAlignmentFlags,
+    const std::vector<unsigned int*>& vec_d_candidateSequencesData,
+    const std::vector<int*>& vec_d_candidateSequencesLengths,
+    const std::vector<int*>& vec_d_candidateIndicesOfCandidatesToBeCorrected,
+    const std::vector<int*>& vec_d_anchorIndicesOfCandidates,
+    const std::vector<int>& vec_numCandidatesToProcess,          
+    int encodedSequencePitchInInts,
+    size_t decodedSequencePitchInBytes,
+    int maximum_sequence_length,
+    const std::vector<cudaStream_t>& streams,
+    const std::vector<int>& deviceIds,
+    int* h_tempstorage // sizeof(int) * deviceIds.size()
 );
 
 void callConstructSequenceCorrectionResultsKernel(

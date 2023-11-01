@@ -222,6 +222,10 @@ protected:
 struct UncompressedWriter : public SequenceFileWriter{
     UncompressedWriter(const std::string& filename, FileFormat format);
 
+    ~UncompressedWriter(){
+        flush();
+    }
+
     void writeReadImpl(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality) override;
     void writeReadImpl(const std::string& header, const std::string& sequence, const std::string& quality) override;
     void writeImpl(const std::string& data) override;
@@ -229,7 +233,14 @@ struct UncompressedWriter : public SequenceFileWriter{
     bool isFastq;
     char delimHeader;
 
+    std::vector<char> charbuffer;
+
     std::ofstream ofs;
+
+    void flush(){
+        ofs.write(charbuffer.data(), charbuffer.size());
+        charbuffer.clear();
+    }
 };
 
 struct GZipWriter : public SequenceFileWriter{

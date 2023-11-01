@@ -2,7 +2,6 @@
 #include <hpc_helpers.cuh>
 #include <config.hpp>
 #include <options.hpp>
-#include <singlehashminhasher.hpp>
 #include <correct_cpu.hpp>
 
 #include <minhasherlimit.hpp>
@@ -179,6 +178,10 @@ namespace care{
         if(programOptions.correctionType != CorrectionType::Print && programOptions.correctionTypeCands != CorrectionType::Print){
 
             //Merge corrected reads with input file to generate output file
+
+            //helpers::CpuTimer shrinktimer("shrinktofit");
+            partialResults.shrink_to_fit();
+            //shrinktimer.print();
 
             const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
             const auto partialResultMemUsage = partialResults.getMemoryInfo();

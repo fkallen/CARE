@@ -71,7 +71,13 @@ private:
 
 template<class T>
 void resizeUninitialized(rmm::device_uvector<T>& vec, size_t newsize, rmm::cuda_stream_view stream){
-    vec = rmm::device_uvector<T>(newsize, stream, vec.memory_resource());
+    if(newsize <= vec.capacity()){
+        //resize without realloc
+        vec.resize(newsize, stream);
+    }else{
+        //create new vector to void copy of existing data
+        vec = rmm::device_uvector<T>(newsize, stream, vec.memory_resource());
+    }
 }
 
 template<class T>

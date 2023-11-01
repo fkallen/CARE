@@ -32,6 +32,25 @@ namespace cg = cooperative_groups;
 
 namespace care{
 namespace gpu{
+    // template<class T>
+    // struct IsGreaterThan{
+    //     T val;
+    //     __host__ __device__
+    //     IsGreaterThan(T v) : val(v){}
+
+    //     __host__ __device__
+    //     bool operator()(T other){
+    //         return other > val;
+    //     }
+    // };
+
+    struct IsGreaterThanZero{
+        template<class T>
+        __host__ __device__
+        bool operator()(T other){
+            return other > 0;
+        }
+    };
 
     namespace gpuhashtablekernels{
 
@@ -256,6 +275,48 @@ namespace gpu{
                     }
                 }
 
+            }
+        }
+
+        //query the same number of keys in multiple tables
+        //The output buffer of values is shared among all tables. 
+        //Values for k-th key in t-th table is written to outputOffset  maxResultsPerKeyPerTable * (t * numKeys + k)
+        //This kernel expects a 2D grid of thread blocks. y dimension selects the table
+        template<class DeviceTableView, class Key, class Value>
+        __global__
+        void retrieveCompactDirectKernel(
+            const DeviceTableView* __restrict__ tables,
+            const int numTables,
+            const Key* __restrict__ querykeys,
+            const int querykeysPitchInElements,
+            int maxResultsPerKeyPerTable,
+            const int numValuesPerKeyPitchInElements,
+            const int numKeys,
+            int* __restrict__ numValuesPerKey,
+            Value* __restrict__ outValues
+        ){
+            const int tid = threadIdx.x + blockDim.x * blockIdx.x;
+            const int stride = blockDim.x * gridDim.x;
+
+            constexpr int tilesize = DeviceTableView::cg_size();
+
+            assert(stride % tilesize == 0);
+
+            auto tile = cg::tiled_partition<tilesize>(cg::this_thread_block());
+            const int tileId = tid / tilesize;
+            const int numTiles = stride / tilesize;
+
+            for(int tableid = blockIdx.y; tableid < numTables; tableid += gridDim.y){
+
+                const DeviceTableView table = tables[tableid];
+                const Key* const myQueryKeys = querykeys + querykeysPitchInElements * tableid;
+                int* const myNumValuesPerKey = numValuesPerKey + numValuesPerKeyPitchInElements * tableid;
+
+                for(int k = tileId; k < numKeys; k += numTiles){
+                    const Key key = myQueryKeys[k];
+                    const auto beginOffset = maxResultsPerKeyPerTable * (tableid * numKeys + k);
+                    myNumValuesPerKey[k] = table.retrieve(tile, key, outValues + beginOffset);
+                }
             }
         }
 
@@ -803,9 +864,7 @@ namespace gpu{
                 ),
                 thrust::make_transform_iterator(
                     (int*)nullptr,
-                    []__device__(int num){
-                        return num > 0;
-                    }
+                    IsGreaterThanZero{}
                 ),
                 thrust::make_zip_iterator(
                     (Key*)nullptr,
@@ -987,9 +1046,7 @@ namespace gpu{
                 ),
                 thrust::make_transform_iterator(
                     d_tmp_numValuesPerKey,
-                    []__device__(int num){
-                        return num > 0;
-                    }
+                    IsGreaterThanZero{}
                 ),
                 thrust::make_zip_iterator(
                     d_filteredUniqueKeys,

@@ -82,7 +82,7 @@ namespace gpu{
                 }
                 group.sync();
 
-                const int maxEdits = min(length / 7, numEditsThreshold);
+                const int maxEdits = MAX_EDITS_TEMP_RESULTS; //min(length / 7, numEditsThreshold);
 
                 auto countAndSaveEditsWarp = [&](const int posInSequence, const char correctedNuc){
                     cg::coalesced_group g = cg::coalesced_threads();

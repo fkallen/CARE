@@ -63,12 +63,30 @@ namespace gpu{
             d_columnProperties_(0, stream, mr){
             #endif
 
+            CUDACHECK(cudaGetDevice(&deviceId));
+
             if(h_tempstorage != nullptr){
                 tempvalue = h_tempstorage;
             }else{
                 pinnedValue.resize(1);
                 tempvalue = pinnedValue.data();
             }
+        }
+
+        ~ManagedGPUMultiMSA(){
+            cub::SwitchDevice sd(deviceId);
+            #ifdef GPUMSAMANAGED_SINGLE_DATA_BUFFER
+            d_data.release();
+            #else
+            d_consensusEncoded_.release();
+            d_counts_.release();
+            d_coverages_.release();
+            d_origCoverages_.release();
+            d_weights_.release();
+            d_support_.release();
+            d_origWeights_.release();
+            d_columnProperties_.release();
+            #endif
         }
 
         void constructAndRefine(
@@ -268,6 +286,70 @@ namespace gpu{
             );
         }
 
+        void refine(
+            char* d_temp, //sizeof(bool) * maxNumCandidates,
+            int* d_newCandidatePositionsInSegments,
+            int* d_newNumCandidatePositionsInSegments,
+            int* d_newNumCandidates,
+            const int* d_alignment_overlaps,
+            const int* d_alignment_shifts,
+            const int* d_alignment_nOps,
+            const AlignmentOrientation* d_alignment_best_alignment_flags,
+            int* d_candidatePositionsInSegments,
+            int* d_numCandidatePositionsInSegments,
+            const int* d_segmentBeginOffsets,
+            const int* d_anchorSequencesLength,
+            const unsigned int* d_anchorSequences,
+            const char* d_anchorQualities,
+            int numAnchors,
+            const int* d_candidateSequencesLength,
+            const unsigned int* d_candidateSequences,
+            const char* d_candidateQualities,
+            const bool* d_isPairedCandidate,
+            int /*maxNumCandidates*/,
+            std::size_t encodedSequencePitchInInts,
+            std::size_t qualityPitchInBytes,
+            bool useQualityScores,
+            float desiredAlignmentMaxErrorRate,
+            int dataset_coverage,
+            int numIterations,
+            cudaStream_t stream
+        ){
+            //std::cerr << "thread " << std::this_thread::get_id() << " msa refine, stream " << stream << "\n";
+
+            bool* d_tmpflags = reinterpret_cast<bool*>(d_temp);
+
+            callMsaCandidateRefinementKernel_multiiter_async(
+                d_newCandidatePositionsInSegments,
+                d_newNumCandidatePositionsInSegments,
+                d_newNumCandidates,
+                multiMSA,
+                d_alignment_best_alignment_flags,
+                d_alignment_shifts,
+                d_alignment_nOps,
+                d_alignment_overlaps,
+                d_anchorSequences,
+                d_candidateSequences,
+                d_isPairedCandidate,
+                d_anchorSequencesLength,
+                d_candidateSequencesLength,
+                d_anchorQualities,
+                d_candidateQualities,
+                d_tmpflags,
+                d_segmentBeginOffsets,
+                desiredAlignmentMaxErrorRate,
+                numAnchors,
+                useQualityScores,
+                encodedSequencePitchInInts,
+                qualityPitchInBytes,
+                d_candidatePositionsInSegments,
+                d_numCandidatePositionsInSegments,
+                dataset_coverage,
+                numIterations,
+                stream
+            );
+        }
+
         void computeConsensusQuality(
             char* d_consensusQuality,
             int consensusQualityPitchInBytes,
@@ -306,8 +388,6 @@ namespace gpu{
         }
 
         MemoryUsage getMemoryInfo() const{
-            int deviceId;
-            CUDACHECK(cudaGetDevice(&deviceId));
 
             MemoryUsage info{};
             // auto handleHost = [&](const auto& h){
@@ -527,6 +607,7 @@ namespace gpu{
             #endif
         }
 
+        int deviceId = 0;
         int numMSAs{};
         int columnPitchInElements{};
         int* tempvalue{};

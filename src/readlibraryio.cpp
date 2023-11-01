@@ -56,31 +56,71 @@ UncompressedWriter::UncompressedWriter(const std::string& filename, FileFormat f
         delimHeader = '@';
     }
 
+    charbuffer.reserve(2*1024*1024);
+
 }
 
 void UncompressedWriter::writeReadImpl(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality){
-    ofs << delimHeader << name;
+    // ofs << delimHeader << name;
+    // if(comment.length() > 0){
+    //     ofs << ' ' << comment;
+    // }
+    // ofs << '\n' << sequence << '\n';
+    // if(format == FileFormat::FASTQ){
+    //     ofs << '+' << '\n'
+    //         << quality << '\n';
+    // }
+
+
+    charbuffer.push_back(delimHeader);
+    charbuffer.insert(charbuffer.end(), name.begin(), name.end());
     if(comment.length() > 0){
-        ofs << ' ' << comment;
+        charbuffer.push_back(' ');
+        charbuffer.insert(charbuffer.end(), comment.begin(), comment.end());
     }
-    ofs << '\n' << sequence << '\n';
+    charbuffer.push_back('\n');
+    charbuffer.insert(charbuffer.end(), sequence.begin(), sequence.end());
+    charbuffer.push_back('\n');
     if(format == FileFormat::FASTQ){
-        ofs << '+' << '\n'
-            << quality << '\n';
+        charbuffer.push_back('+');
+        charbuffer.push_back('\n');
+        charbuffer.insert(charbuffer.end(), quality.begin(), quality.end());
+        charbuffer.push_back('\n');
+    }
+
+    if(charbuffer.size() >= 2*1024*1024){
+        flush();
     }
 }
 
 void UncompressedWriter::writeReadImpl(const std::string& header, const std::string& sequence, const std::string& quality){
-    ofs << delimHeader << header;
-    ofs << '\n' << sequence << '\n';
+    // ofs << delimHeader << header;
+    // ofs << '\n' << sequence << '\n';
+    // if(format == FileFormat::FASTQ){
+    //     ofs << '+' << '\n'
+    //         << quality << '\n';
+    // }
+
+    charbuffer.push_back(delimHeader);
+    charbuffer.insert(charbuffer.end(), header.begin(), header.end());
+    charbuffer.push_back('\n');
+    charbuffer.insert(charbuffer.end(), sequence.begin(), sequence.end());
+    charbuffer.push_back('\n');
     if(format == FileFormat::FASTQ){
-        ofs << '+' << '\n'
-            << quality << '\n';
+        charbuffer.push_back('+');
+        charbuffer.push_back('\n');
+        charbuffer.insert(charbuffer.end(), quality.begin(), quality.end());
+        charbuffer.push_back('\n');
+    }
+
+    if(charbuffer.size() >= 2*1024*1024){
+        flush();
     }
 }
 
 void UncompressedWriter::writeImpl(const std::string& data){
-    ofs << data;
+    //ofs << data;
+    ofs.write(data.data(), data.size());
 }
 
 GZipWriter::GZipWriter(const std::string& filename, FileFormat format)

@@ -261,7 +261,7 @@ namespace gpu{
             GpuMinhasherType requestedType
         ){
             #ifdef CARE_HAS_WARPCORE
-                if(requestedType != GpuMinhasherType::Fake && programOptions.warpcore == 1 && programOptions.replicateGpuHashtables){
+                if(requestedType != GpuMinhasherType::Fake && programOptions.useGpuTables == 1 && programOptions.replicateGpuHashtables){
                     auto sgpuminhasher = std::make_unique<SingleGpuMinhasher>(
                         gpuReadStorage.getNumberOfReads(), 
                         calculateResultsPerMapThreshold(programOptions.estimatedCoverage), 
@@ -322,7 +322,8 @@ namespace gpu{
                             calculateResultsPerMapThreshold(programOptions.estimatedCoverage), 
                             programOptions.kmerlength,
                             programOptions.hashtableLoadfactor,
-                            programOptions.deviceIds
+                            programOptions.deviceIds,
+                            programOptions.directPeerAccess
                         );
 
                         gpuMinhasherType = GpuMinhasherType::Multi;
@@ -330,7 +331,7 @@ namespace gpu{
 
                     #endif
 
-                    if(requestedType == GpuMinhasherType::Fake || programOptions.warpcore == 0){
+                    if(requestedType == GpuMinhasherType::Fake || programOptions.useGpuTables == 0){
                         makeFake();
 
                     #ifdef CARE_HAS_WARPCORE

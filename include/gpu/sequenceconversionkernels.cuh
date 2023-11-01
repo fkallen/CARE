@@ -80,6 +80,16 @@ void callEncodeSequencesTo2BitKernel(
     cudaStream_t stream
 );
 
+void callEncodeSequencesTo2BitKernel(
+    unsigned int* d_encodedSequences,
+    const char* d_decodedSequences,
+    const int* d_sequenceInputOffsets,
+    size_t encodedSequencePitchInInts,
+    int numSequences,
+    int groupsize,
+    cudaStream_t stream
+);
+
 void callDecodeSequencesFrom2BitKernel(
     char* d_decodedSequences,
     const unsigned int* d_encodedSequences,

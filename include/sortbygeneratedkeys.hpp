@@ -14,6 +14,7 @@
 
 #ifdef __CUDACC__
 #include <cub/cub.cuh>
+#include <gpu/multideviceallocation.cuh>
 #endif
 
 #ifdef __CUDACC__
@@ -250,10 +251,10 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
 
     std::cerr << "sortValuesByGeneratedKeysViaSortByKeyDevice \n";
 
-    if(std::size_t(std::numeric_limits<int>::max()) < std::size_t(numValues)){
-        std::cerr << numValues << " > " << std::numeric_limits<int>::max() << "\n";
-        return false;
-    }
+    // if(std::size_t(std::numeric_limits<int>::max()) < std::size_t(numValues)){
+    //     std::cerr << numValues << " > " << std::numeric_limits<int>::max() << "\n";
+    //     return false;
+    // }
     
     if(pinnedTransferBufferSize > memoryLimitBytes){
         return false;
@@ -265,41 +266,19 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     std::size_t sizeOfKeys = SDIV(sizeof(KeyType) * numValues, sizeof(std::size_t)) * sizeof(std::size_t);
     std::size_t sizeOfValues = SDIV(sizeof(ValueType) * numValues, sizeof(std::size_t)) * sizeof(std::size_t);
 
-    // Need to explicitly instanciate radix sort for OffsetT = IndexType. 
-    // The default API only uses OffsetT = int which may be insufficient to enumerate keys
-    auto DeviceRadixSort_SortPairs = [](
-        void* d_temp_storage, 
-        std::size_t& temp_storage_bytes, 
-        cub::DoubleBuffer<KeyType>& d_keys, 
-        cub::DoubleBuffer<ValueType>& d_values,
-        IndexType num_items,
-        cudaStream_t stream
-    ){
-        return cub::DispatchRadixSort<false, KeyType, ValueType, IndexType>::Dispatch(
-            d_temp_storage,
-            temp_storage_bytes,
-            d_keys,
-            d_values,
-            num_items,
-            0,
-            sizeof(KeyType) * 8,
-            true,
-            stream,
-            false
-        );
-    };
-
     cub::DoubleBuffer<KeyType> d_keys_dbl{nullptr, nullptr};
     cub::DoubleBuffer<ValueType> d_values_dbl{nullptr, nullptr};
 
     std::size_t requiredCubSize = 0;
 
-    cudaError_t cubstatus = DeviceRadixSort_SortPairs(
+    cudaError_t cubstatus = cub::DeviceRadixSort::SortPairs(
         nullptr,
         requiredCubSize,
         d_keys_dbl,
         d_values_dbl,
         numValues,
+        0,
+        sizeof(KeyType) * 8,
         (cudaStream_t)0
     );
 
@@ -329,20 +308,82 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     //std::cerr << "free gpu mem: " << freeGpuMem << ", memoryLimitBytes: " << memoryLimitBytes << ", sizeOfKeys: " << sizeOfKeys << ", temp_storage_bytes: " << temp_storage_bytes << "\n";
 
     void* temp_storage = nullptr;
-    if(freeGpuMem > temp_storage_bytes){
-        cudaMalloc(&temp_storage, temp_storage_bytes);
-    }else if(freeGpuMem + memoryLimitBytes > temp_storage_bytes){
-        cudaMallocManaged(&temp_storage, temp_storage_bytes);
-        int deviceId = 0;
-        cudaGetDevice(&deviceId);
-        cudaMemAdvise(temp_storage, temp_storage_bytes, cudaMemAdviseSetAccessedBy, deviceId);      
-    }else{
-        return false;
+
+    int numGpus = 0;
+    CUDACHECK(cudaGetDeviceCount(&numGpus));
+    int currentDeviceId = 0; 
+    CUDACHECK(cudaGetDevice(&currentDeviceId));
+    assert(currentDeviceId == 0);
+    std::vector<size_t> freeMemPerGpu(numGpus);
+    for(int g = 0; g < numGpus; g++){
+        constexpr size_t safety = 512 * 1024 * 1024;
+        cub::SwitchDevice sd(g);
+        size_t tmp;
+        CUDACHECK(cudaMemGetInfo(&freeMemPerGpu[g], &tmp));
+        if(freeMemPerGpu[g] > safety){
+            freeMemPerGpu[g] -= safety;
+        }else{
+            freeMemPerGpu[g] = 0;
+        }
     }
+
+    const size_t freeMultiGpuMem = std::reduce(freeMemPerGpu.begin(), freeMemPerGpu.end());
+    CUdeviceptr multigpustorage = 0;
+    size_t totalMultiGpuAllocationSize = 0;
+    bool usesMultiGpuStorage = false;
+
+    if(freeMultiGpuMem > temp_storage_bytes){
+        std::vector<CUdevice> backingDeviceIds(numGpus);
+        std::iota(backingDeviceIds.begin(), backingDeviceIds.end(), 0);
+
+        std::vector<size_t> bytesPerGpu(numGpus);
+        size_t remaining = temp_storage_bytes;
+        for(int g = 0; g < numGpus; g++){
+            bytesPerGpu[g] = std::min(remaining, freeMemPerGpu[g]);
+            remaining -= bytesPerGpu[g];
+        }
+
+        CUresult multiallocstatus = multiDeviceAlloc(
+            &multigpustorage,
+            &totalMultiGpuAllocationSize,
+            backingDeviceIds,
+            bytesPerGpu,
+            std::vector<CUdevice>{0}
+        );
+
+        if(multiallocstatus != CUDA_SUCCESS){
+            const char* str;
+            cuGetErrorString(multiallocstatus, &str);
+            std::cout << str << "\n";
+        }else{
+            usesMultiGpuStorage = true;
+            temp_storage = (void*)multigpustorage;
+        }
+
+    }
+    if(!usesMultiGpuStorage){
+        if(freeGpuMem + memoryLimitBytes > temp_storage_bytes){
+            cudaMallocManaged(&temp_storage, temp_storage_bytes);
+            int deviceId = 0;
+            cudaGetDevice(&deviceId);
+            cudaMemAdvise(temp_storage, temp_storage_bytes, cudaMemAdviseSetAccessedBy, deviceId);      
+        }else{
+            return false;
+        }
+    }
+    //std::cout << "usesMultiGpuStorage " << usesMultiGpuStorage << "\n";
+
+    auto deallocTempStorage = [&](){
+        if(usesMultiGpuStorage){
+            multiDeviceFree(multigpustorage, totalMultiGpuAllocationSize);
+        }else{
+            cudaFree(temp_storage);
+        }
+    };
 
     if(cudaGetLastError() != cudaSuccess || temp_storage == nullptr){
         if(temp_storage != nullptr){
-            cudaFree(temp_storage);
+            deallocTempStorage();
         }
         return false;
     }
@@ -355,7 +396,7 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     );
     if(cubstatus != cudaSuccess){
         if(temp_storage != nullptr){
-            cudaFree(temp_storage);
+            deallocTempStorage();
         }
         return false;
     }
@@ -370,12 +411,14 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
 
     helpers::CpuTimer timer3("cub sort");
 
-    cubstatus = DeviceRadixSort_SortPairs(
+    cubstatus = cub::DeviceRadixSort::SortPairs(
         temp_allocations[4],
         requiredCubSize,
         d_keys_dbl,
         d_values_dbl,
         numValues,
+        0,
+        sizeof(KeyType) * 8,
         (cudaStream_t)0
     );
     CUDACHECK(cudaDeviceSynchronize());
@@ -383,7 +426,7 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     if(cubstatus != cudaSuccess){
         std::cerr << "cub::DeviceRadixSort::SortPairs error: " << cudaGetErrorString(cubstatus) << "\n";
         cudaGetLastError();
-        cudaFree(temp_storage);
+        deallocTempStorage();
         return false;
     }
 
@@ -397,7 +440,7 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     timer4.stop();
     //timer4.print();
 
-    CUDACHECK(cudaFree(temp_storage));
+    deallocTempStorage();
 
     cudaError_t cudastatus = cudaDeviceSynchronize();
 

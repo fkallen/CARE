@@ -48,6 +48,14 @@ namespace gpucorrectorkernels{
         const int numAnchors
     );
 
+    __global__ 
+    void copyMinhashResultsKernel(
+        int* __restrict__ d_numCandidates,
+        int* __restrict__ h_numCandidates,
+        const int* __restrict__ d_candidates_per_anchor_prefixsum,
+        const int numAnchors
+    );
+
     __global__
     void setAnchorIndicesOfCandidateskernel(
         int* __restrict__ d_anchorIndicesOfCandidates,

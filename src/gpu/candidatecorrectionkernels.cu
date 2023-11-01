@@ -26,6 +26,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/device_scalar.hpp>
 #include <rmm/mr/device/device_memory_resource.hpp>
+#include <gpu/rmm_utilities.cuh>
 
 
 namespace cg = cooperative_groups;
@@ -432,16 +433,7 @@ namespace gpu{
         }
     }
 
-    struct MismatchPositionsRaw{
-        int maxPositions;
-        char* origBase;
-        char* consensusBase;
-        int* position;
-        int* anchorIndex;
-        int* candidateIndex;
-        int* destinationIndex;
-        int* numPositions;
-    };
+
 
     struct MismatchPositions{
         int maxPositions;
@@ -462,7 +454,9 @@ namespace gpu{
             candidateIndex(maxPositions, stream, mr),
             destinationIndex(maxPositions, stream, mr),
             numPositions(0, stream, mr)
-        {}
+        {
+
+        }
 
         operator MismatchPositionsRaw(){
             return MismatchPositionsRaw{
@@ -477,6 +471,9 @@ namespace gpu{
             };
         }
     };
+
+
+    
 
     template<int BLOCKSIZE, int groupsize>
     __global__
@@ -1416,7 +1413,7 @@ namespace gpu{
                     d_numEditsPerCorrectedCandidate[destinationIndex] = doNotUseEditsValue;
                 }
             }else{
-                const int maxEdits = min(candidate_length / 7, numEditsThreshold);
+                const int maxEdits = MAX_EDITS_TEMP_RESULTS; //min(candidate_length / 7, numEditsThreshold);
 
                 auto countAndSaveEditInSmem = [&](const int posInSequence, const char correctedNuc){
                     cg::coalesced_group g = cg::coalesced_threads();
@@ -2084,6 +2081,296 @@ namespace gpu{
         );
 
         #endif
+    }
+
+
+    void callMsaCorrectCandidatesWithForestKernelMultiPhase(
+        std::vector<CandidateForestCorrectionTempStorage>& vec_correctionTempStorage,
+        std::vector<char*>& vec_d_correctedCandidates,
+        const std::vector<GPUMultiMSA>& vec_multiMSA,
+        const std::vector<GpuForest::Clf>& vec_gpuForest,
+        float forestThreshold,
+        float estimatedCoverage,
+        const std::vector<int*>& vec_d_shifts,
+        const std::vector<AlignmentOrientation*>& vec_d_bestAlignmentFlags,
+        const std::vector<unsigned int*>& vec_d_candidateSequencesData,
+        const std::vector<int*>& vec_d_candidateSequencesLengths,
+        const std::vector<int*>& vec_d_candidateIndicesOfCandidatesToBeCorrected,
+        const std::vector<int*>& vec_d_anchorIndicesOfCandidates,
+        const std::vector<int>& vec_numCandidatesToProcess,
+        int encodedSequencePitchInInts,
+        size_t decodedSequencePitchInBytes,
+        int maximum_sequence_length,
+        const std::vector<cudaStream_t>& streams,
+        const std::vector<int>& deviceIds,
+        int* h_tempstorage // sizeof(int) * deviceIds.size()
+    ){
+
+        constexpr int blocksize = 128;
+        constexpr int groupsize = 32;
+        constexpr int numGroupsPerBlock = blocksize / groupsize;
+
+        const int numGpus = deviceIds.size();
+        std::vector<int> vec_numSMs(numGpus);
+
+        for(int g = 0; g < numGpus; g++){
+            cub::SwitchDevice sd{deviceIds[g]};
+            CUDACHECK(cudaDeviceGetAttribute(&vec_numSMs[g], cudaDevAttrMultiProcessorCount, deviceIds[g]));
+        }
+
+        for(int g = 0; g < numGpus; g++){
+            cub::SwitchDevice sd{deviceIds[g]};
+            if(vec_numCandidatesToProcess[g] > 0){
+                int maxBlocksPerSMinit = 0;
+                const std::size_t dynamicsmemPitchInInts = SDIV(maximum_sequence_length, sizeof(int));
+                const std::size_t smeminit = numGroupsPerBlock * (sizeof(int) * dynamicsmemPitchInInts);
+
+                CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                    &maxBlocksPerSMinit,
+                    msaCorrectCandidatesWithForestKernel_multiphase_initCorrectedCandidatesKernel<blocksize, groupsize>,
+                    blocksize, 
+                    smeminit
+                ));
+
+                dim3 block1 = blocksize;
+                dim3 grid1 = maxBlocksPerSMinit * vec_numSMs[g];
+
+                //helpers::GpuTimer timerinitCorrectedCandidatesKernel(stream, "initCorrectedCandidatesKernel");
+
+                msaCorrectCandidatesWithForestKernel_multiphase_initCorrectedCandidatesKernel<blocksize, groupsize>
+                <<<grid1, block1, smeminit, streams[g]>>>(
+                    vec_d_correctedCandidates[g],
+                    vec_multiMSA[g],
+                    vec_d_shifts[g],
+                    vec_d_bestAlignmentFlags[g],
+                    vec_d_candidateSequencesData[g],
+                    vec_d_candidateSequencesLengths[g],
+                    vec_d_candidateIndicesOfCandidatesToBeCorrected[g],
+                    vec_numCandidatesToProcess[g],
+                    vec_d_anchorIndicesOfCandidates[g],         
+                    encodedSequencePitchInInts,
+                    decodedSequencePitchInBytes,
+                    dynamicsmemPitchInInts
+                );
+                CUDACHECKASYNC;
+                //timerinitCorrectedCandidatesKernel.print();
+            }
+        }
+
+        int* const h_numMismatchesPerGpu = h_tempstorage;
+        
+        for(int g = 0; g < numGpus; g++){
+            cub::SwitchDevice sd{deviceIds[g]};
+            if(vec_numCandidatesToProcess[g] > 0){
+                int maxBlocksPerSMCountMismatches = 0;
+                const std::size_t smemCountMismatches = 0;
+                CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                    &maxBlocksPerSMCountMismatches,
+                    msaCorrectCandidatesWithForestKernel_multiphase_countMismatchesKernel<blocksize, groupsize>,
+                    blocksize, 
+                    smemCountMismatches
+                ));
+                CUDACHECK(cudaMemsetAsync(
+                    vec_correctionTempStorage[g].d_numMismatches.data(),
+                    0,
+                    sizeof(int),
+                    streams[g]
+                ));
+
+                dim3 blockCountMismatches = blocksize;
+                dim3 gridCountMismatches = std::min(maxBlocksPerSMCountMismatches * vec_numSMs[g], SDIV(vec_numCandidatesToProcess[g], (blocksize / groupsize)));
+
+                //helpers::GpuTimer timercountMismatchesKernel(stream, "countMismatchesKernel");
+
+                msaCorrectCandidatesWithForestKernel_multiphase_countMismatchesKernel<blocksize, groupsize>
+                    <<<gridCountMismatches, blockCountMismatches, smemCountMismatches, streams[g]>>>(
+                    vec_d_correctedCandidates[g],
+                    vec_d_bestAlignmentFlags[g],
+                    vec_d_candidateSequencesData[g],
+                    vec_d_candidateSequencesLengths[g],
+                    vec_d_candidateIndicesOfCandidatesToBeCorrected[g],
+                    vec_numCandidatesToProcess[g],
+                    encodedSequencePitchInInts,
+                    decodedSequencePitchInBytes,
+                    vec_correctionTempStorage[g].d_numMismatches.data()
+                );
+                CUDACHECKASYNC;
+                //timercountMismatchesKernel.print();
+
+                CUDACHECK(cudaMemcpyAsync(
+                    h_numMismatchesPerGpu + g,
+                    vec_correctionTempStorage[g].d_numMismatches.data(),
+                    sizeof(int),
+                    D2H,
+                    streams[g]
+                ));
+            }
+        }
+        
+        for(int g = 0; g < numGpus; g++){
+            cub::SwitchDevice sd{deviceIds[g]};
+            if(vec_numCandidatesToProcess[g] > 0){
+                CUDACHECK(cudaStreamSynchronize(streams[g]));
+
+                const int numMismatches = h_numMismatchesPerGpu[g];
+                if(numMismatches > 0){
+                    const std::size_t smemFindMismatches = 0;
+                    int maxBlocksPerSMFindMismatches = 0;
+                    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                        &maxBlocksPerSMFindMismatches,
+                        msaCorrectCandidatesWithForestKernel_multiphase_findMismatchesKernel<blocksize, groupsize>,
+                        blocksize, 
+                        smemFindMismatches
+                    ));
+
+                    dim3 blockFindMismatches = blocksize;
+                    dim3 gridFindMismatches = std::min(maxBlocksPerSMFindMismatches * vec_numSMs[g], SDIV(vec_numCandidatesToProcess[g], (blocksize / groupsize)));
+
+                    CUDACHECK(cudaMemsetAsync(
+                        vec_correctionTempStorage[g].d_numMismatches.data(),
+                        0,
+                        sizeof(int),
+                        streams[g]
+                    ));
+
+                    vec_correctionTempStorage[g].resize(numMismatches, streams[g]);
+
+                    //helpers::GpuTimer timerfindMismatchesKernel(stream, "findMismatchesKernel");
+
+                    msaCorrectCandidatesWithForestKernel_multiphase_findMismatchesKernel<blocksize, groupsize>
+                        <<<gridFindMismatches, blockFindMismatches, smemFindMismatches, streams[g]>>>(
+                        vec_d_correctedCandidates[g],
+                        vec_d_bestAlignmentFlags[g],
+                        vec_d_candidateSequencesData[g],
+                        vec_d_candidateSequencesLengths[g],
+                        vec_d_candidateIndicesOfCandidatesToBeCorrected[g],
+                        vec_numCandidatesToProcess[g],
+                        vec_d_anchorIndicesOfCandidates[g],
+                        encodedSequencePitchInInts,
+                        decodedSequencePitchInBytes,
+                        vec_correctionTempStorage[g].rawMismatchPositions
+                    );
+                    CUDACHECKASYNC;
+                    //timerfindMismatchesKernel.print();
+                }
+            }
+        }
+
+        for(int g = 0; g < numGpus; g++){
+            cub::SwitchDevice sd{deviceIds[g]};
+            if(vec_numCandidatesToProcess[g] > 0){
+
+                const int numMismatches = h_numMismatchesPerGpu[g];
+                if(numMismatches > 0){
+                    const std::size_t smemMsaProps = 0;
+                    int maxBlocksPerSMMsaProps = 0;
+                    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                        &maxBlocksPerSMMsaProps,
+                        msaCorrectCandidatesWithForestKernel_multiphase_msapropsKernel<blocksize, groupsize>,
+                        blocksize, 
+                        smemMsaProps
+                    ));
+
+                    dim3 blockMsaProps = blocksize;
+                    dim3 gridMsaProps = std::min(maxBlocksPerSMMsaProps * vec_numSMs[g], SDIV(numMismatches, (blocksize / groupsize)));
+
+                    //helpers::GpuTimer timermsaprops(stream, "msapropsKernel");
+
+                    msaCorrectCandidatesWithForestKernel_multiphase_msapropsKernel<blocksize, groupsize>
+                        <<<gridMsaProps, blockMsaProps, smemMsaProps, streams[g]>>>(
+                        vec_multiMSA[g],
+                        vec_d_shifts[g],
+                        vec_d_candidateSequencesLengths[g],
+                        vec_correctionTempStorage[g].rawMismatchPositions,
+                        vec_correctionTempStorage[g].d_msaPropertiesPerPosition
+                    );
+                    CUDACHECKASYNC;
+                    //timermsaprops.print();
+                }
+            }
+        }
+
+
+        for(int g = 0; g < numGpus; g++){
+            cub::SwitchDevice sd{deviceIds[g]};
+            if(vec_numCandidatesToProcess[g] > 0){
+
+                const int numMismatches = h_numMismatchesPerGpu[g];
+                if(numMismatches > 0){
+                    const std::size_t smemExtract = 0;
+                    int maxBlocksPerSMExtract = 0;
+                    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                        &maxBlocksPerSMExtract,
+                        msaCorrectCandidatesWithForestKernel_multiphase_extractKernel<cands_extractor>,
+                        blocksize, 
+                        smemExtract
+                    ));
+
+                    dim3 blockExtract = blocksize;
+                    dim3 gridExtract = std::min(maxBlocksPerSMExtract * vec_numSMs[g], SDIV(numMismatches, blocksize));
+
+                    //helpers::GpuTimer timerextract(stream, "extractKernel");
+
+                    msaCorrectCandidatesWithForestKernel_multiphase_extractKernel<cands_extractor>
+                        <<<gridExtract, blockExtract, smemExtract, streams[g]>>>(
+                        vec_correctionTempStorage[g].d_featuresTransposed,
+                        vec_multiMSA[g],
+                        estimatedCoverage,
+                        vec_d_shifts[g],
+                        vec_d_candidateSequencesLengths[g],  
+                        vec_correctionTempStorage[g].rawMismatchPositions,
+                        vec_correctionTempStorage[g].d_msaPropertiesPerPosition
+                    );
+                    CUDACHECKASYNC;
+                    //timerextract.print();
+                }
+            }
+        }
+
+        for(int g = 0; g < numGpus; g++){
+            cub::SwitchDevice sd{deviceIds[g]};
+            if(vec_numCandidatesToProcess[g] > 0){
+
+                const int numMismatches = h_numMismatchesPerGpu[g];
+                if(numMismatches > 0){
+                    constexpr int maxSmemCorrect = 32 * 1024;
+
+                    const std::size_t blockFeaturesBytesCorrectThread = sizeof(float) * cands_extractor::numFeatures() * blocksize;
+                    bool useGlobalInsteadOfSmemCorrectThread = blockFeaturesBytesCorrectThread > maxSmemCorrect;
+                    const std::size_t smemCorrectThread = useGlobalInsteadOfSmemCorrectThread ? 0 : blockFeaturesBytesCorrectThread;
+                    assert(!useGlobalInsteadOfSmemCorrectThread);
+
+                    int maxBlocksPerSMCorrectThread = 0;
+                    CUDACHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                        &maxBlocksPerSMCorrectThread,
+                        msaCorrectCandidatesWithForestKernel_multiphase_correctKernelThread<blocksize, GpuForest::Clf>,
+                        blocksize, 
+                        smemCorrectThread
+                    ));
+
+                    dim3 blockCorrectThread = blocksize;
+                    dim3 gridCorrectThread = std::min(maxBlocksPerSMCorrectThread * vec_numSMs[g], SDIV(numMismatches, blocksize));
+
+                    //helpers::GpuTimer timercorrectThread(stream, "correctKernelThread");
+                    msaCorrectCandidatesWithForestKernel_multiphase_correctKernelThread<blocksize, GpuForest::Clf>
+                        <<<gridCorrectThread, blockCorrectThread, smemCorrectThread, streams[g]>>>(
+                        vec_d_correctedCandidates[g],
+                        vec_multiMSA[g],
+                        vec_gpuForest[g],
+                        forestThreshold,
+                        vec_d_bestAlignmentFlags[g],
+                        vec_d_candidateSequencesLengths[g],
+                        decodedSequencePitchInBytes,
+                        vec_correctionTempStorage[g].rawMismatchPositions,
+                        vec_correctionTempStorage[g].d_featuresTransposed,
+                        useGlobalInsteadOfSmemCorrectThread,
+                        cands_extractor::numFeatures()
+                    );
+                    CUDACHECKASYNC;
+                    //timercorrectThread.print();
+                }
+            }
+        }
     }
 
     void callFlagCandidatesToBeCorrectedKernel_async(

@@ -7,12 +7,6 @@
 
 namespace care{
 
-    namespace correction{
-
-        std::vector<int> getUsableDeviceIds(std::vector<int> deviceIds);
-
-    }
-
     void performCorrection(
         ProgramOptions programOptions
     );

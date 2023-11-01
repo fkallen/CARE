@@ -46,6 +46,53 @@ namespace gpu{
 
     namespace sgpuminhasherkernels{
 
+        template<class ValueType, class OffsetIter>
+        struct ConvertArrayOffsetToPointer{
+            ValueType* array;
+            OffsetIter offsets;
+
+            __host__ __device__
+            ConvertArrayOffsetToPointer(ValueType* arr, OffsetIter off) : array(arr), offsets(off){}
+
+            template<class Index>
+            __host__ __device__
+            ValueType* operator()(Index index){
+                return array + offsets[index];
+            }
+        };
+
+        template<class ValueType, class OffsetIter>
+        auto makeConvertArrayOffsetToPointer(ValueType* arr, OffsetIter off){
+            return ConvertArrayOffsetToPointer<ValueType, OffsetIter>{arr, off};
+        }
+
+        template<class ValueType>
+        struct ConvertToPointer{
+            ValueType* array;
+
+            __host__ __device__
+            ConvertToPointer(ValueType* arr) : array(arr){}
+
+            template<class Index>
+            __host__ __device__
+            ValueType* operator()(Index index){
+                return array + index;
+            }
+        };
+
+        struct MultiplyBy{
+            int val;
+
+            __host__ __device__
+            MultiplyBy(int i) : val(i){}
+
+            template<class Index>
+            __host__ __device__
+            int operator()(Index index){
+                return index * val;
+            }
+        };
+
         /*
             Insert kv-pairs [i * numKeysPerTable, (i+1) * numKeysPerTable] into table i .
             There are numKeysPerTable * numTables keys, and numKeysPerTable values.
@@ -233,13 +280,76 @@ namespace gpu{
             }
         }
 
+        // accumulate number of values per sequence in d_numValuesPerSequence
+        // calculate vertical exclusive prefix sum
+        template<int dummy=0>
+        __global__
+        void accumulateNumValuesPerSequenceKernel(
+            const int* __restrict__ d_numValuesPerSequencePerHash,
+            int* __restrict__ d_numValuesPerSequencePerHashExclPSVert,
+            int* __restrict__ d_numValuesPerSequence,
+            int numSequences,
+            int numHashFunctions
+        ){
+            const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+            const int stride = blockDim.x * gridDim.x;
+
+            for(int i = tid; i < numSequences; i += stride){
+                d_numValuesPerSequencePerHashExclPSVert[0 * numSequences + i] = 0;
+            }
+
+            for(int i = tid; i < numSequences; i += stride){
+                int vertPS = 0;
+                for(int k = 0; k < numHashFunctions; k++){
+                    const int num = d_numValuesPerSequencePerHash[k * numSequences + i];
+
+                    vertPS += num;
+                    if(k < numHashFunctions - 1){
+                        d_numValuesPerSequencePerHashExclPSVert[(k+1) * numSequences + i] = vertPS;
+                    }else{
+                        d_numValuesPerSequence[i] = vertPS;
+                    }
+                }
+            }
+        }
+
+        // compute destination offsets for each hashtable such that values of different tables 
+            // for the same sequence are stored contiguous in the result array
+
+        template<int dummy=0>
+        __global__
+        void computeQueryDestinationOffsetsKernel(
+            int* __restrict__ d_queryOffsetsPerSequencePerHash,
+            const int* __restrict__ d_numValuesPerSequencePerHashExclPSVert,
+            int numSequences,
+            int numHashFunctions,
+            const int* __restrict__ d_offsets
+        ){          
+            const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+            const int stride = blockDim.x * gridDim.x;
+
+            for(int i = tid; i < numSequences; i += stride){
+                
+                const int base = d_offsets[i];
+
+                //k == 0 is a copy from d_offsets
+                d_queryOffsetsPerSequencePerHash[0 * numSequences + i] = base;
+
+                for(int k = 1; k < numHashFunctions; k++){
+                    d_queryOffsetsPerSequencePerHash[k * numSequences + i] = base + d_numValuesPerSequencePerHashExclPSVert[k * numSequences + i];
+                }
+            }
+        }
+
 
     }
 
     class MultiGpuMinhasher; //forward declaration
+    class ReplicatedSingleGpuMinhasher; //forward declaration
 
     class SingleGpuMinhasher : public GpuMinhasher{
         friend class MultiGpuMinhasher;
+        friend class ReplicatedSingleGpuMinhasher;
     public:
         using Key = kmer_type;
         using Value = read_number;
@@ -249,7 +359,11 @@ namespace gpu{
         using DeviceSwitcher = cub::SwitchDevice;
 
         template<class T>
-        using HostBuffer = helpers::SimpleAllocationPinnedHost<T, 5>;
+        using HostBuffer = helpers::SimpleAllocationPinnedHost<T, 0>;
+
+        template<class T>
+        using DeviceBuffer = helpers::SimpleAllocationDevice<T, 0>;
+
         struct QueryData{
             enum class Stage{
                 None,
@@ -301,6 +415,14 @@ namespace gpu{
             result->resultsPerMapThreshold = resultsPerMapThreshold;
             result->h_currentHashFunctionNumbers.resize(h_currentHashFunctionNumbers.size());
             std::copy(h_currentHashFunctionNumbers.begin(), h_currentHashFunctionNumbers.end(), result->h_currentHashFunctionNumbers.begin());
+            result->d_currentHashFunctionNumbers.resize(h_currentHashFunctionNumbers.size());
+            CUDACHECK(cudaMemcpyAsync(
+                result->d_currentHashFunctionNumbers.data(),
+                result->h_currentHashFunctionNumbers.data(),
+                sizeof(int) * result->h_currentHashFunctionNumbers.size(),
+                H2D,
+                cudaStreamPerThread
+            ));
 
             std::size_t requiredTempBytes = 0;
             for(const auto& ptr : gpuHashTables){
@@ -351,7 +473,7 @@ namespace gpu{
             std::vector<int> tmpNumbers(h_currentHashFunctionNumbers.begin(), h_currentHashFunctionNumbers.end());
 
             for(int i = 0; i < numAdditionalTables; i++){
-                auto ptr = std::make_unique<GpuTable>(std::size_t(maxNumKeys / getLoad()),
+                auto ptr = std::make_unique<GpuTable>(maxNumKeys,
                     getLoad(),
                     resultsPerMapThreshold,
                     stream
@@ -377,6 +499,14 @@ namespace gpu{
 
             h_currentHashFunctionNumbers.resize(tmpNumbers.size());
             std::copy(tmpNumbers.begin(), tmpNumbers.end(), h_currentHashFunctionNumbers.begin());
+            d_currentHashFunctionNumbers.resize(h_currentHashFunctionNumbers.size());
+            CUDACHECK(cudaMemcpyAsync(
+                d_currentHashFunctionNumbers.data(),
+                h_currentHashFunctionNumbers.data(),
+                sizeof(int) * h_currentHashFunctionNumbers.size(),
+                H2D,
+                stream
+            ));
 
             return added;
         }
@@ -765,17 +895,17 @@ namespace gpu{
             int* const d_numValuesPerSequencePerHash = static_cast<int*>(persistent_allocations[1]);
             int* const d_numValuesPerSequencePerHashExclPSVert = static_cast<int*>(persistent_allocations[2]);
 
-            rmm::device_uvector<int> d_hashFunctionNumbers(numHashFunctions, stream, mr);
+            // rmm::device_uvector<int> d_hashFunctionNumbers(numHashFunctions, stream, mr);
 
             DeviceSwitcher ds(deviceId);
 
-            CUDACHECK(cudaMemcpyAsync(
-                d_hashFunctionNumbers.data(),
-                h_currentHashFunctionNumbers.data(), 
-                sizeof(int) * numHashFunctions, 
-                H2D, 
-                stream
-            ));           
+            // CUDACHECK(cudaMemcpyAsync(
+            //     d_hashFunctionNumbers.data(),
+            //     h_currentHashFunctionNumbers.data(), 
+            //     sizeof(int) * numHashFunctions, 
+            //     H2D, 
+            //     stream
+            // ));           
 
             GPUSequenceHasher<kmer_type> hasher;
 
@@ -786,7 +916,8 @@ namespace gpu{
                 d_sequenceLengths,
                 getKmerSize(),
                 getNumberOfMaps(),
-                d_hashFunctionNumbers.data(),
+                //d_hashFunctionNumbers.data(),
+                d_currentHashFunctionNumbers.data(),
                 stream,
                 mr
             );
@@ -843,30 +974,41 @@ namespace gpu{
 
             // accumulate number of values per sequence in d_numValuesPerSequence
             // calculate vertical exclusive prefix sum
-            helpers::lambda_kernel<<<SDIV(numSequences, 256), 256, 0, stream>>>(
-                [=] __device__ (){
-                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                    const int stride = blockDim.x * gridDim.x;
 
-                    for(int i = tid; i < numSequences; i += stride){
-                        d_numValuesPerSequencePerHashExclPSVert[0 * numSequences + i] = 0;
-                    }
-
-                    for(int i = tid; i < numSequences; i += stride){
-                        int vertPS = 0;
-                        for(int k = 0; k < numHashFunctions; k++){
-                            const int num = d_numValuesPerSequencePerHash[k * numSequences + i];
-
-                            vertPS += num;
-                            if(k < numHashFunctions - 1){
-                                d_numValuesPerSequencePerHashExclPSVert[(k+1) * numSequences + i] = vertPS;
-                            }else{
-                                d_numValuesPerSequence[i] = vertPS;
-                            }
-                        }
-                    }
-                }
+            sgpuminhasherkernels::accumulateNumValuesPerSequenceKernel<<<SDIV(numSequences, 256), 256, 0, stream>>>(
+                d_numValuesPerSequencePerHash,
+                d_numValuesPerSequencePerHashExclPSVert,
+                d_numValuesPerSequence,
+                numSequences,
+                numHashFunctions
             );
+            CUDACHECKASYNC;
+
+
+            // helpers::lambda_kernel<<<SDIV(numSequences, 256), 256, 0, stream>>>(
+            //     [=] __device__ (){
+            //         const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+            //         const int stride = blockDim.x * gridDim.x;
+
+            //         for(int i = tid; i < numSequences; i += stride){
+            //             d_numValuesPerSequencePerHashExclPSVert[0 * numSequences + i] = 0;
+            //         }
+
+            //         for(int i = tid; i < numSequences; i += stride){
+            //             int vertPS = 0;
+            //             for(int k = 0; k < numHashFunctions; k++){
+            //                 const int num = d_numValuesPerSequencePerHash[k * numSequences + i];
+
+            //                 vertPS += num;
+            //                 if(k < numHashFunctions - 1){
+            //                     d_numValuesPerSequencePerHashExclPSVert[(k+1) * numSequences + i] = vertPS;
+            //                 }else{
+            //                     d_numValuesPerSequence[i] = vertPS;
+            //                 }
+            //             }
+            //         }
+            //     }
+            // );
 
             rmm::device_scalar<int> d_totalNumValues(stream, mr);
 
@@ -884,6 +1026,7 @@ namespace gpu{
                 D2H,
                 stream
             ));
+            CUDACHECK(cudaStreamSynchronize(stream));
         }
 
         void retrieveValues(
@@ -942,30 +1085,14 @@ namespace gpu{
             // compute destination offsets for each hashtable such that values of different tables 
             // for the same sequence are stored contiguous in the result array
 
-            helpers::lambda_kernel<<<SDIV(numSequences, 256), 256, 0, stream>>>(
-                [
-                    d_queryOffsetsPerSequencePerHash = d_queryOffsetsPerSequencePerHash.data(),
-                    d_numValuesPerSequencePerHashExclPSVert,
-                    numSequences,
-                    numHashFunctions,
-                    d_offsets
-                ] __device__ (){
-                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                    const int stride = blockDim.x * gridDim.x;
-
-                    for(int i = tid; i < numSequences; i += stride){
-                        
-                        const int base = d_offsets[i];
-
-                        //k == 0 is a copy from d_offsets
-                        d_queryOffsetsPerSequencePerHash[0 * numSequences + i] = base;
-
-                        for(int k = 1; k < numHashFunctions; k++){
-                            d_queryOffsetsPerSequencePerHash[k * numSequences + i] = base + d_numValuesPerSequencePerHashExclPSVert[k * numSequences + i];
-                        }
-                    }
-                }
+            sgpuminhasherkernels::computeQueryDestinationOffsetsKernel<<<SDIV(numSequences, 256), 256, 0, stream>>>(
+                d_queryOffsetsPerSequencePerHash.data(),
+                d_numValuesPerSequencePerHashExclPSVert,
+                numSequences,
+                numHashFunctions,
+                d_offsets
             );
+            CUDACHECKASYNC
 
             //retrieve values
 
@@ -992,7 +1119,174 @@ namespace gpu{
                 resultsPerMapThreshold,
                 numSequences,
                 d_values
-            );
+            ); CUDACHECKASYNC;
+
+                #if 0
+                    CUDACHECK(cudaDeviceSynchronize());
+
+                    nvtx::push_range("directretrieve", 3);
+
+                    const int maxNumValuesPerSequence = numHashFunctions * getNumResultsPerMapThreshold();
+                    rmm::device_uvector<read_number> d_directValues(maxNumValuesPerSequence * numSequences, stream, mr);
+                    rmm::device_uvector<int> d_directNumValuesPerSequence(numSequences, stream, mr);
+                    rmm::device_uvector<int> d_directNumValuesPerSequenceExclPS(numSequences+1, stream, mr);
+                    rmm::device_uvector<int> d_directNumValuesPerSequencePerHash(numSequences * numHashFunctions, stream, mr);
+                    rmm::device_uvector<int> d_directNumValuesPerSequencePerHashExclPSVert(numSequences * numHashFunctions, stream, mr);
+                    rmm::device_uvector<int> d_directDstOffsetsPerSequencePerHash(numSequences * numHashFunctions, stream, mr);
+
+                    gpuhashtablekernels::retrieveCompactDirectKernel<<<grid, block, 0, stream>>>(
+                        d_deviceAccessibleTableViews.data(),
+                        numHashFunctions,
+                        d_signatures_transposed,
+                        signaturesPitchInElements,
+                        getNumResultsPerMapThreshold(),
+                        numValuesPerKeyPitchInElements,
+                        numSequences,
+                        d_directNumValuesPerSequencePerHash.data(),
+                        d_directValues.data()
+                    );
+
+                    // accumulate number of values per sequence in d_numValuesPerSequence
+                    // calculate vertical exclusive prefix sum
+
+                    sgpuminhasherkernels::accumulateNumValuesPerSequenceKernel<<<SDIV(numSequences, 256), 256, 0, stream>>>(
+                        d_directNumValuesPerSequencePerHash.data(),
+                        d_directNumValuesPerSequencePerHashExclPSVert.data(),
+                        d_directNumValuesPerSequence.data(),
+                        numSequences,
+                        numHashFunctions
+                    );
+                    CUDACHECKASYNC;
+
+                    CUDACHECK(cudaMemsetAsync(d_directNumValuesPerSequenceExclPS.data(), 0, sizeof(int), stream));
+
+                    CubCallWrapper(mr).cubInclusiveSum(
+                        d_directNumValuesPerSequence.data(),
+                        d_directNumValuesPerSequenceExclPS.data() + 1,
+                        numSequences,
+                        stream
+                    );
+
+                    sgpuminhasherkernels::computeQueryDestinationOffsetsKernel<<<SDIV(numSequences, 256), 256, 0, stream>>>(
+                        d_directDstOffsetsPerSequencePerHash.data(),
+                        d_directNumValuesPerSequencePerHashExclPSVert.data(),
+                        numSequences,
+                        numHashFunctions,
+                        d_directNumValuesPerSequenceExclPS.data()
+                    );
+                    CUDACHECKASYNC
+
+                    int directTotalNumValues = 0;
+                    CUDACHECK(cudaMemcpyAsync(
+                        &directTotalNumValues,
+                        d_directNumValuesPerSequenceExclPS.data() + numSequences,
+                        sizeof(int),
+                        D2H,
+                        stream
+                    ));
+                    CUDACHECK(cudaStreamSynchronize(stream));
+
+                    rmm::device_uvector<read_number> d_directCompactValues(directTotalNumValues, stream, mr);
+
+                    auto srcOffsets = thrust::make_transform_iterator(
+                        thrust::make_counting_iterator(0),
+                        sgpuminhasherkernels::MultiplyBy{getNumResultsPerMapThreshold()}
+                    );
+                    auto srcPointers = thrust::make_transform_iterator(
+                        srcOffsets,
+                        sgpuminhasherkernels::ConvertToPointer<read_number>(
+                            d_directValues.data()
+                        )
+                    );
+                    auto dstPointers = thrust::make_transform_iterator(
+                        d_directDstOffsetsPerSequencePerHash.data(),
+                        sgpuminhasherkernels::ConvertToPointer<read_number>(
+                            d_directCompactValues.data()                    
+                        )
+                    );
+                    auto copySizes = thrust::make_transform_iterator(
+                        d_directNumValuesPerSequencePerHash.data(),
+                        sgpuminhasherkernels::MultiplyBy{4}
+                    );
+                    size_t cubCopyTempBytes = 0;
+                    CUDACHECK(cub::DeviceMemcpy::Batched(
+                        nullptr,
+                        cubCopyTempBytes,
+                        srcPointers,
+                        dstPointers,
+                        copySizes,
+                        numSequences * numHashFunctions,
+                        stream
+                    ));
+                    rmm::device_uvector<char> d_cubCopyTemp(cubCopyTempBytes, stream, mr);
+                    CUDACHECK(cub::DeviceMemcpy::Batched(
+                        d_cubCopyTemp.data(),
+                        cubCopyTempBytes,
+                        srcPointers,
+                        dstPointers,
+                        copySizes,
+                        numSequences * numHashFunctions,
+                        stream
+                    ));
+
+                    nvtx::pop_range();
+
+
+                    assert(thrust::equal(
+                        rmm::exec_policy_nosync(stream, mr),
+                        d_numValuesPerSequence,
+                        d_numValuesPerSequence + numSequences,
+                        d_directNumValuesPerSequence.data()
+                    ));
+
+                    bool equalOffsets = thrust::equal(
+                        rmm::exec_policy_nosync(stream, mr),
+                        d_offsets,
+                        d_offsets + numSequences,
+                        d_directNumValuesPerSequenceExclPS.data()
+                    );
+
+                    assert(equalOffsets);
+
+
+                    assert(directTotalNumValues == totalNumValues);
+
+                    bool equalValues = thrust::equal(
+                        rmm::exec_policy_nosync(stream, mr),
+                        d_values,
+                        d_values + totalNumValues,
+                        d_directCompactValues.data()
+                    );
+
+
+                    if(!equalValues){
+                        std::vector<read_number> oldVals(totalNumValues);
+                        std::vector<read_number> newVals(totalNumValues);
+                        std::vector<int> offsets(numSequences+1);
+                        CUDACHECK(cudaMemcpy(oldVals.data(), d_values, sizeof(read_number) * totalNumValues, D2H));
+                        CUDACHECK(cudaMemcpy(newVals.data(), d_directCompactValues.data(), sizeof(read_number) * totalNumValues, D2H));
+                        CUDACHECK(cudaMemcpy(offsets.data(), d_offsets, sizeof(int) * (numSequences+1), D2H));
+
+                        for(int s = 0; s < numSequences; s++){
+                            const int begin = offsets[s];
+                            const int end = offsets[s+1];
+                            std::cout << "s = " << s << ", " << (end - begin) << " values\n";
+                            std::cout << "old\n";
+                            for(int x = begin; x < end; x++){
+                                std::cout << oldVals[x] << " ";
+                            }
+                            std::cout << "\n";
+                            std::cout << "new\n";
+                            for(int x = begin; x < end; x++){
+                                std::cout << newVals[x] << " ";
+                            }
+                            std::cout << "\n";
+                        }
+
+                    }
+                    assert(equalValues);
+                #endif
+
             }
             #else
 
@@ -1196,6 +1490,7 @@ private:
         int resultsPerMapThreshold{};
         float loadfactor{};
         HostBuffer<int> h_currentHashFunctionNumbers{};
+        DeviceBuffer<int> d_currentHashFunctionNumbers{};
         std::vector<std::unique_ptr<GpuTable>> gpuHashTables{};
         std::map<cudaStream_t, helpers::SimpleAllocationPinnedHost<GpuTable::DeviceTableInsertView>> h_insertTempMap{};
         std::map<cudaStream_t, helpers::SimpleAllocationDevice<GpuTable::DeviceTableInsertView>> d_insertTempMap{};
